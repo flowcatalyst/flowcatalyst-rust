@@ -1,0 +1,38 @@
+# FlowCatalyst Development Environment
+# Provides LocalStack (SQS emulation) for local testing
+
+services:
+  localstack:
+    container_name: fc-localstack
+    image: localstack/localstack:3.0
+    ports:
+      - "4566:4566"  # LocalStack main port
+    environment:
+      - SERVICES=sqs
+      - DEBUG=0
+      - AWS_DEFAULT_REGION=eu-west-1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "./localstack-init:/etc/localstack/init/ready.d"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Optional: Redis for standby mode testing
+  redis:
+    container_name: fc-redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  localstack-data:

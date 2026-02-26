@@ -1,0 +1,28 @@
+[package]
+name = "fc-router-bin"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fc-common = { path = "../../crates/fc-common" }
+fc-router = { path = "../../crates/fc-router" }
+fc-queue = { path = "../../crates/fc-queue", features = ["sqs"] }
+aws-config = { workspace = true }
+aws-sdk-sqs = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+dotenvy = "0.15.7"
+
+[features]
+default = []
+email = ["fc-router/email"]
+alb = ["fc-router/alb"]
+oidc-flow = ["fc-router/oidc-flow"]
+nats = ["fc-queue/nats"]

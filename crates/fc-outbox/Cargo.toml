@@ -1,0 +1,27 @@
+[package]
+name = "fc-outbox"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fc-common = { path = "../fc-common" }
+fc-standby = { path = "../fc-standby", optional = true }
+tokio = { workspace = true }
+sqlx = { workspace = true, optional = true }
+mongodb = { workspace = true, optional = true }
+futures = { version = "0.3", optional = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bson = { version = "2.9", features = ["chrono-0_4"], optional = true }
+reqwest = { workspace = true }
+
+[features]
+sqlite = ["dep:sqlx"]
+postgres = ["dep:sqlx"]
+mysql = ["dep:sqlx"]
+mongo = ["dep:mongodb", "dep:bson", "dep:futures"]
+standby = ["dep:fc-standby"]

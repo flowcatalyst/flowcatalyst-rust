@@ -1,0 +1,1302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowCatalyst Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2347a3f3'/%3E%3Cpath d='M17.5 13V6L8 17h6.5v7L24 13h-6.5z' fill='white' stroke='white' stroke-width='0.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Login Modal (for BasicAuth) -->
+        <div id="loginModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+            <div class="bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-semibold text-gray-900">Login Required</h3>
+                </div>
+                <div class="px-6 py-4">
+                    <div id="loginError" class="hidden mb-4 p-3 bg-red-100 text-red-700 rounded text-sm"></div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                            <input type="text" id="loginUsername" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                            <input type="password" id="loginPassword" class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                        </div>
+                    </div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end">
+                    <button id="loginBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm">
+                        Login
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Header -->
+        <div class="mb-8">
+            <div class="flex justify-between items-start mb-4">
+                <h1 class="text-3xl font-bold text-gray-900">Flow Catalyst Dashboard</h1>
+                <button id="logoutBtn" class="hidden bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded text-sm">
+                    Logout
+                </button>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div id="statusContainer" class="flex items-center cursor-pointer hover:opacity-70">
+                    <div id="statusIndicator" class="w-3 h-3 rounded-full mr-2"></div>
+                    <span id="statusText" class="text-sm font-medium">Loading...</span>
+                </div>
+                <span id="uptimeText" class="text-sm text-gray-600"></span>
+                <button id="refreshBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm">
+                    Refresh
+                </button>
+            </div>
+        </div>
+
+        <!-- Time Period Filter -->
+        <div class="mb-6 bg-white rounded-lg shadow p-6">
+            <div class="flex items-center space-x-4">
+                <label for="timePeriodSelect" class="text-sm font-medium text-gray-700">Time Period:</label>
+                <select id="timePeriodSelect" class="border border-gray-300 rounded px-3 py-2 text-sm">
+                    <option value="5min">Last 5 Minutes</option>
+                    <option value="30min" selected>Last 30 Minutes (Default)</option>
+                    <option value="all-time">All Time</option>
+                </select>
+                <span class="text-sm text-gray-500 ml-4">Note: Total Processed and System Health always show current state</span>
+            </div>
+        </div>
+
+        <!-- Health Status Modal -->
+        <div id="healthModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+            <div class="bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-semibold text-gray-900">System Status Details</h3>
+                </div>
+                <div class="px-6 py-4">
+                    <div id="modalContent" class="space-y-3"></div>
+                </div>
+                <div class="px-6 py-4 border-t border-gray-200 flex justify-end">
+                    <button onclick="document.getElementById('healthModal').classList.add('hidden')" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded text-sm">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Key Metrics Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex items-center">
+                    <div class="p-2 bg-blue-100 rounded-lg">
+                        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">Active Queues</p>
+                        <p id="activeQueues" class="text-2xl font-semibold text-gray-900">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex items-center">
+                    <div class="p-2 bg-green-100 rounded-lg">
+                        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">Total Processed</p>
+                        <p id="totalProcessed" class="text-2xl font-semibold text-gray-900">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex items-center">
+                    <div class="p-2 bg-yellow-100 rounded-lg">
+                        <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">Active Warnings</p>
+                        <p id="activeWarnings" class="text-2xl font-semibold text-gray-900">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex items-center">
+                    <div class="p-2 bg-red-100 rounded-lg">
+                        <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-4">
+                        <p class="text-sm font-medium text-gray-600">Circuit Breakers Open</p>
+                        <p id="circuitBreakersOpen" class="text-2xl font-semibold text-gray-900">-</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabbed Content Section -->
+        <div id="tabbedContentSection" class="bg-white rounded-lg shadow">
+            <!-- Tab Navigation -->
+            <div class="border-b border-gray-200">
+                <nav class="flex -mb-px">
+                    <button id="tabQueues" class="tab-button active px-6 py-4 text-sm font-medium border-b-2 border-blue-500 text-blue-600">
+                        Queue Statistics
+                    </button>
+                    <button id="tabPools" class="tab-button px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                        Pool Statistics
+                    </button>
+                    <button id="tabWarnings" class="tab-button px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                        Warnings
+                    </button>
+                    <button id="tabInFlight" class="tab-button px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                        In-Flight Messages
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Tab Content -->
+            <div id="tabContent">
+                <!-- Queue Statistics Tab -->
+                <div id="contentQueues" class="tab-content">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900">Queue Statistics</h3>
+                        <p class="text-sm text-gray-600">Messages processed per queue</p>
+                    </div>
+                    <!-- Queue Filter -->
+                    <div class="px-6 py-4 border-b border-gray-200 bg-white">
+                        <input type="text" id="queueFilterInput" placeholder="Filter by queue name..."
+                               class="border border-gray-300 rounded px-3 py-2 text-sm w-64">
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="queue" data-table="queue">
+                                        <div class="flex items-center">Queue <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="pending" data-table="queue">
+                                        <div class="flex items-center">Pending <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="inFlight" data-table="queue">
+                                        <div class="flex items-center">In-Flight <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="total" data-table="queue">
+                                        <div class="flex items-center">Total <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="success" data-table="queue">
+                                        <div class="flex items-center">Success <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="failed" data-table="queue">
+                                        <div class="flex items-center">Failed <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="successRate" data-table="queue">
+                                        <div class="flex items-center">Success Rate <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="queueStatsTable" class="bg-white divide-y divide-gray-200">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Pool Statistics Tab -->
+                <div id="contentPools" class="tab-content hidden">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <h3 class="text-lg font-semibold text-gray-900">Pool Statistics</h3>
+                                <p class="text-sm text-gray-600">Message processing pools</p>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-sm text-gray-600">View:</span>
+                                <select id="poolRateViewSelect" class="border border-gray-300 rounded px-3 py-2 text-sm">
+                                    <option value="success">Success Rate</option>
+                                    <option value="deferred">Deferred Rate (Rate Limited %)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Pool Filter -->
+                    <div class="px-6 py-4 border-b border-gray-200 bg-white">
+                        <input type="text" id="poolFilterInput" placeholder="Filter by pool name..."
+                               class="border border-gray-300 rounded px-3 py-2 text-sm w-64">
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="pool" data-table="pool">
+                                        <div class="flex items-center">Pool <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="workers" data-table="pool">
+                                        <div class="flex items-center">Workers <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="queueSize" data-table="pool">
+                                        <div class="flex items-center">Queue <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="rateLimited" data-table="pool">
+                                        <div class="flex items-center">Rate Limited <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="total" data-table="pool">
+                                        <div class="flex items-center">Total <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="success" data-table="pool">
+                                        <div class="flex items-center">Success <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th id="poolRateHeader" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="successRate" data-table="pool">
+                                        <div class="flex items-center"><span id="poolRateHeaderText">Success Rate</span> <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none" data-sort="avgTime" data-table="pool">
+                                        <div class="flex items-center">Avg Time <span class="sort-indicator ml-1"></span></div>
+                                    </th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="poolStatsTable" class="bg-white divide-y divide-gray-200">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Warnings Tab -->
+                <div id="contentWarnings" class="tab-content hidden">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-semibold text-gray-900">Active Warnings</h3>
+                            <div class="flex space-x-4">
+                                <select id="severityFilter" class="border border-gray-300 rounded px-3 py-2 text-sm">
+                                    <option value="">All Severities</option>
+                                    <option value="CRITICAL">CRITICAL</option>
+                                    <option value="ERROR">ERROR</option>
+                                    <option value="WARN">WARN</option>
+                                    <option value="INFO">INFO</option>
+                                </select>
+                                <input type="text" id="searchFilter" placeholder="Search warnings..."
+                                       class="border border-gray-300 rounded px-3 py-2 text-sm w-64">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Severity</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message</th>
+                                </tr>
+                            </thead>
+                            <tbody id="warningsTableBody" class="bg-white divide-y divide-gray-200">
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="noWarnings" class="hidden px-6 py-8 text-center text-gray-500">
+                        No active warnings
+                    </div>
+                </div>
+
+                <!-- In-Flight Messages Tab -->
+                <div id="contentInFlight" class="tab-content hidden">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-semibold text-gray-900">Messages Currently In-Flight</h3>
+                            <div class="flex space-x-4">
+                                <input type="text" id="messageIdFilter" placeholder="Search by message ID..."
+                                       class="border border-gray-300 rounded px-3 py-2 text-sm w-64">
+                                <button id="refreshInFlightBtn" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message ID</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Broker ID</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Queue</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pool</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Elapsed Time</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Added At</th>
+                                </tr>
+                            </thead>
+                            <tbody id="inFlightTable" class="bg-white divide-y divide-gray-200">
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="noInFlight" class="hidden px-6 py-8 text-center text-gray-500">
+                        No messages in flight
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pool Detail View (hidden by default) -->
+        <div id="contentPoolDetail" class="hidden bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <button id="poolDetailBackBtn" class="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center">
+                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                            Back to Pools
+                        </button>
+                        <h3 class="text-lg font-semibold text-gray-900">
+                            Pool: <span id="poolDetailCode" class="text-blue-600"></span>
+                        </h3>
+                    </div>
+                    <div id="poolDetailRateLimitSummary" class="text-sm text-gray-600"></div>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-b border-gray-200 bg-white">
+                <input type="text" id="poolDetailMessageFilter" placeholder="Search by message ID..."
+                       class="border border-gray-300 rounded px-3 py-2 text-sm w-64">
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message ID</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Broker ID</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Queue</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Elapsed Time</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Added At</th>
+                        </tr>
+                    </thead>
+                    <tbody id="poolDetailTable" class="bg-white divide-y divide-gray-200">
+                    </tbody>
+                </table>
+            </div>
+            <div id="noPoolDetailMessages" class="hidden px-6 py-8 text-center text-gray-500">
+                No in-flight messages for this pool
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class Dashboard {
+            constructor() {
+                this.basicAuth = null;
+                this.timePeriod = '30min';
+                this.poolRateView = 'success'; // 'success' or 'deferred'
+                this.data = {
+                    health: null,
+                    queueStats: {},
+                    poolStats: {},
+                    warnings: [],
+                    circuitBreakers: {}
+                };
+                this.filters = {
+                    severity: '',
+                    search: '',
+                    queueName: '',
+                    poolName: ''
+                };
+                this.sort = {
+                    queue: { column: 'successRate', direction: 'asc' },
+                    pool: { column: 'successRate', direction: 'asc' }
+                };
+                // Pool detail state
+                this.poolDetailCode = null;
+                this.poolDetailRefreshActive = false;
+                this.poolDetailInterval = null;
+                this.poolDetailMessages = null;
+
+                this.checkAuth();
+            }
+
+            async checkAuth() {
+                // Check for stored BasicAuth
+                const stored = localStorage.getItem('flowcatalyst_auth');
+                if (stored) {
+                    this.basicAuth = stored;
+                }
+
+                try {
+                    const response = await this.fetchWithAuth('/monitoring/health');
+
+                    if (response.ok) {
+                        this.showDashboard();
+                        return;
+                    }
+
+                    if (response.status === 401 || response.status === 403) {
+                        const authMode = response.headers.get('X-Auth-Mode');
+                        if (authMode === 'BASIC') {
+                            this.showLoginModal();
+                        } else if (authMode === 'OIDC') {
+                            // Redirect to OIDC login
+                            window.location.href = '/monitoring/health';
+                        } else {
+                            // No auth required
+                            this.showDashboard();
+                        }
+                        return;
+                    }
+
+                    // Other errors - try to show dashboard anyway
+                    this.showDashboard();
+                } catch (error) {
+                    console.error('Auth check failed:', error);
+                    // Try to show dashboard anyway
+                    this.showDashboard();
+                }
+            }
+
+            showLoginModal() {
+                document.getElementById('loginModal').classList.remove('hidden');
+                document.getElementById('loginBtn').addEventListener('click', () => this.handleLogin());
+                document.getElementById('loginPassword').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') this.handleLogin();
+                });
+            }
+
+            async handleLogin() {
+                const username = document.getElementById('loginUsername').value.trim();
+                const password = document.getElementById('loginPassword').value;
+                const errorDiv = document.getElementById('loginError');
+
+                if (!username || !password) {
+                    errorDiv.textContent = 'Please enter both username and password';
+                    errorDiv.classList.remove('hidden');
+                    return;
+                }
+
+                const encoded = btoa(`${username}:${password}`);
+                this.basicAuth = encoded;
+
+                try {
+                    const response = await this.fetchWithAuth('/monitoring/health');
+                    if (response.ok) {
+                        localStorage.setItem('flowcatalyst_auth', encoded);
+                        document.getElementById('loginModal').classList.add('hidden');
+                        this.showDashboard();
+                    } else {
+                        errorDiv.textContent = 'Invalid username or password';
+                        errorDiv.classList.remove('hidden');
+                        this.basicAuth = null;
+                    }
+                } catch (error) {
+                    errorDiv.textContent = 'Connection error. Please try again.';
+                    errorDiv.classList.remove('hidden');
+                }
+            }
+
+            logout() {
+                localStorage.removeItem('flowcatalyst_auth');
+                this.basicAuth = null;
+                window.location.reload();
+            }
+
+            showDashboard() {
+                document.getElementById('loginModal').classList.add('hidden');
+                if (this.basicAuth) {
+                    document.getElementById('logoutBtn').classList.remove('hidden');
+                }
+                this.init();
+                this.setupEventListeners();
+                this.setupTabListeners();
+                this.startPeriodicRefresh();
+            }
+
+            async fetchWithAuth(url) {
+                const headers = {};
+                if (this.basicAuth) {
+                    headers['Authorization'] = 'Basic ' + this.basicAuth;
+                }
+                return fetch(url, { headers, credentials: 'include' });
+            }
+
+            async init() {
+                await this.loadData();
+            }
+
+            setupTabListeners() {
+                const tabs = ['Queues', 'Pools', 'Warnings', 'InFlight'];
+                tabs.forEach(tab => {
+                    document.getElementById(`tab${tab}`).addEventListener('click', () => {
+                        this.switchTab(tab);
+                        if (tab === 'InFlight') this.loadInFlightMessages();
+                    });
+                });
+
+                document.getElementById('refreshInFlightBtn').addEventListener('click', () => this.loadInFlightMessages());
+                document.getElementById('messageIdFilter').addEventListener('input', (e) => this.filterInFlightMessages(e.target.value));
+            }
+
+            switchTab(tabName) {
+                document.querySelectorAll('.tab-button').forEach(btn => {
+                    btn.classList.remove('border-blue-500', 'text-blue-600');
+                    btn.classList.add('border-transparent', 'text-gray-500');
+                });
+                const activeBtn = document.getElementById(`tab${tabName}`);
+                activeBtn.classList.remove('border-transparent', 'text-gray-500');
+                activeBtn.classList.add('border-blue-500', 'text-blue-600');
+
+                document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
+                document.getElementById(`content${tabName}`).classList.remove('hidden');
+            }
+
+            setupEventListeners() {
+                document.getElementById('statusContainer').addEventListener('click', () => this.showHealthModal());
+                document.getElementById('refreshBtn').addEventListener('click', () => this.loadData());
+                document.getElementById('logoutBtn').addEventListener('click', () => this.logout());
+                document.getElementById('timePeriodSelect').addEventListener('change', (e) => {
+                    this.timePeriod = e.target.value;
+                    this.updateUI();
+                });
+                document.getElementById('severityFilter').addEventListener('change', (e) => {
+                    this.filters.severity = e.target.value;
+                    this.filterWarnings();
+                });
+                document.getElementById('searchFilter').addEventListener('input', (e) => {
+                    this.filters.search = e.target.value.toLowerCase();
+                    this.filterWarnings();
+                });
+                document.getElementById('queueFilterInput').addEventListener('input', (e) => {
+                    this.filters.queueName = e.target.value.toLowerCase();
+                    this.updateQueueStatsTable();
+                });
+                document.getElementById('poolFilterInput').addEventListener('input', (e) => {
+                    this.filters.poolName = e.target.value.toLowerCase();
+                    this.updatePoolStatsTable();
+                });
+                document.getElementById('poolRateViewSelect').addEventListener('change', (e) => {
+                    this.poolRateView = e.target.value;
+                    this.updatePoolRateView();
+                });
+
+                // Setup sortable column headers
+                document.querySelectorAll('th[data-sort]').forEach(th => {
+                    th.addEventListener('click', () => {
+                        const column = th.dataset.sort;
+                        const table = th.dataset.table;
+                        this.handleSort(table, column, th);
+                    });
+                });
+            }
+
+            handleSort(table, column, clickedTh) {
+                const sortState = this.sort[table];
+
+                // Toggle direction if same column, otherwise reset to asc
+                if (sortState.column === column) {
+                    sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    sortState.column = column;
+                    sortState.direction = 'asc';
+                }
+
+                // Update sort indicators
+                const tableEl = clickedTh.closest('table');
+                tableEl.querySelectorAll('th[data-sort] .sort-indicator').forEach(indicator => {
+                    indicator.textContent = '';
+                });
+                clickedTh.querySelector('.sort-indicator').textContent = sortState.direction === 'asc' ? '▲' : '▼';
+
+                // Re-render the table
+                if (table === 'queue') {
+                    this.updateQueueStatsTable();
+                } else if (table === 'pool') {
+                    this.updatePoolStatsTable();
+                }
+            }
+
+            sortQueueEntries(entries) {
+                const { column, direction } = this.sort.queue;
+                if (!column) return entries;
+
+                const multiplier = direction === 'asc' ? 1 : -1;
+
+                return [...entries].sort((a, b) => {
+                    const statsA = a[1];
+                    const statsB = b[1];
+                    let valA, valB;
+
+                    switch (column) {
+                        case 'queue':
+                            valA = this.extractQueueName(statsA.name).toLowerCase();
+                            valB = this.extractQueueName(statsB.name).toLowerCase();
+                            return multiplier * valA.localeCompare(valB);
+                        case 'pending':
+                            valA = statsA.pendingMessages || 0;
+                            valB = statsB.pendingMessages || 0;
+                            break;
+                        case 'inFlight':
+                            valA = statsA.messagesNotVisible || 0;
+                            valB = statsB.messagesNotVisible || 0;
+                            break;
+                        case 'total':
+                            valA = statsA.totalMessages || 0;
+                            valB = statsB.totalMessages || 0;
+                            break;
+                        case 'success':
+                            valA = statsA.totalConsumed || 0;
+                            valB = statsB.totalConsumed || 0;
+                            break;
+                        case 'failed':
+                            valA = statsA.totalFailed || 0;
+                            valB = statsB.totalFailed || 0;
+                            break;
+                        case 'successRate':
+                            valA = statsA.successRate || 1;
+                            valB = statsB.successRate || 1;
+                            break;
+                        default:
+                            return 0;
+                    }
+                    return multiplier * (valA - valB);
+                });
+            }
+
+            sortPoolEntries(entries) {
+                const { column, direction } = this.sort.pool;
+                if (!column) return entries;
+
+                const multiplier = direction === 'asc' ? 1 : -1;
+
+                return [...entries].sort((a, b) => {
+                    const statsA = a[1];
+                    const statsB = b[1];
+                    let valA, valB;
+
+                    switch (column) {
+                        case 'pool':
+                            valA = statsA.poolCode.toLowerCase();
+                            valB = statsB.poolCode.toLowerCase();
+                            return multiplier * valA.localeCompare(valB);
+                        case 'workers':
+                            valA = statsA.activeWorkers || 0;
+                            valB = statsB.activeWorkers || 0;
+                            break;
+                        case 'queueSize':
+                            valA = statsA.queueSize || 0;
+                            valB = statsB.queueSize || 0;
+                            break;
+                        case 'rateLimited':
+                            valA = statsA.totalRateLimited || 0;
+                            valB = statsB.totalRateLimited || 0;
+                            break;
+                        case 'total':
+                            valA = statsA.totalProcessed || 0;
+                            valB = statsB.totalProcessed || 0;
+                            break;
+                        case 'success':
+                            valA = statsA.totalSucceeded || 0;
+                            valB = statsB.totalSucceeded || 0;
+                            break;
+                        case 'successRate':
+                            valA = statsA.successRate || 1;
+                            valB = statsB.successRate || 1;
+                            break;
+                        case 'avgTime':
+                            valA = statsA.averageProcessingTimeMs || 0;
+                            valB = statsB.averageProcessingTimeMs || 0;
+                            break;
+                        default:
+                            return 0;
+                    }
+                    return multiplier * (valA - valB);
+                });
+            }
+
+            async loadData() {
+                try {
+                    const responses = await Promise.all([
+                        this.fetchWithAuth('/monitoring/health'),
+                        this.fetchWithAuth('/monitoring/queue-stats'),
+                        this.fetchWithAuth('/monitoring/pool-stats'),
+                        this.fetchWithAuth('/monitoring/warnings'),
+                        this.fetchWithAuth('/monitoring/circuit-breakers')
+                    ]);
+
+                    const [health, queueStats, poolStats, warnings, circuitBreakers] =
+                        await Promise.all(responses.map(r => r.json()));
+
+                    this.data = { health, queueStats, poolStats, warnings, circuitBreakers };
+                    this.updateUI();
+                } catch (error) {
+                    console.error('Failed to load data:', error);
+                    this.showError();
+                }
+            }
+
+            updateUI() {
+                this.updateStatus();
+                this.updateMetrics();
+                this.updateQueueStatsTable();
+                this.updatePoolStatsTable();
+                this.updateWarningsTable();
+                this.updateSortIndicators();
+            }
+
+            updateSortIndicators() {
+                // Update queue table sort indicator
+                const queueTable = document.getElementById('queueStatsTable')?.closest('table');
+                if (queueTable && this.sort.queue.column) {
+                    queueTable.querySelectorAll('th[data-sort] .sort-indicator').forEach(ind => ind.textContent = '');
+                    const queueTh = queueTable.querySelector(`th[data-sort="${this.sort.queue.column}"]`);
+                    if (queueTh) {
+                        queueTh.querySelector('.sort-indicator').textContent = this.sort.queue.direction === 'asc' ? '▲' : '▼';
+                    }
+                }
+
+                // Update pool table sort indicator
+                const poolTable = document.getElementById('poolStatsTable')?.closest('table');
+                if (poolTable && this.sort.pool.column) {
+                    poolTable.querySelectorAll('th[data-sort] .sort-indicator').forEach(ind => ind.textContent = '');
+                    const poolTh = poolTable.querySelector(`th[data-sort="${this.sort.pool.column}"]`);
+                    if (poolTh) {
+                        poolTh.querySelector('.sort-indicator').textContent = this.sort.pool.direction === 'asc' ? '▲' : '▼';
+                    }
+                }
+            }
+
+            updateStatus() {
+                const status = this.data.health.status;
+                const indicator = document.getElementById('statusIndicator');
+                const text = document.getElementById('statusText');
+                const uptimeText = document.getElementById('uptimeText');
+
+                const statusConfig = {
+                    'HEALTHY': { color: 'bg-green-500', text: 'System Healthy' },
+                    'WARNING': { color: 'bg-yellow-500', text: 'System Warning' },
+                    'DEGRADED': { color: 'bg-red-500', text: 'System Degraded' }
+                };
+
+                const config = statusConfig[status] || { color: 'bg-gray-500', text: 'Unknown' };
+                indicator.className = `w-3 h-3 rounded-full mr-2 ${config.color}`;
+                text.textContent = config.text;
+
+                const uptimeMs = this.data.health.uptimeMillis || 0;
+                const uptimeSeconds = Math.floor(uptimeMs / 1000);
+                const hours = Math.floor(uptimeSeconds / 3600);
+                const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+                const seconds = uptimeSeconds % 60;
+                uptimeText.textContent = `Uptime: ${hours}h ${minutes}m ${seconds}s`;
+            }
+
+            updateMetrics() {
+                const queueCount = Object.keys(this.data.queueStats).length;
+                document.getElementById('activeQueues').textContent = queueCount;
+
+                // Use pool stats for total processed (queue stats don't track totals yet)
+                const totalProcessed = Object.values(this.data.poolStats)
+                    .reduce((sum, stats) => sum + (stats.totalProcessed || 0), 0);
+                document.getElementById('totalProcessed').textContent = totalProcessed.toLocaleString();
+
+                document.getElementById('activeWarnings').textContent = this.data.warnings.length;
+
+                const openCircuitBreakers = Object.values(this.data.circuitBreakers)
+                    .filter(cb => cb.state === 'OPEN').length;
+                document.getElementById('circuitBreakersOpen').textContent = openCircuitBreakers;
+            }
+
+            extractQueueName(queueUrl) {
+                const parts = queueUrl.split('/');
+                return parts[parts.length - 1];
+            }
+
+            updatePoolRateView() {
+                // Update table header
+                const headerText = this.poolRateView === 'deferred' ? 'Deferred Rate' : 'Success Rate';
+                document.getElementById('poolRateHeaderText').textContent = headerText;
+
+                // Update table
+                this.updatePoolStatsTable();
+            }
+
+            getRateLimited(stats) {
+                switch (this.timePeriod) {
+                    case '5min':
+                        return stats.totalRateLimited5min !== undefined ? stats.totalRateLimited5min : stats.totalRateLimited;
+                    case '30min':
+                        return stats.totalRateLimited30min !== undefined ? stats.totalRateLimited30min : stats.totalRateLimited;
+                    default:
+                        return stats.totalRateLimited || 0;
+                }
+            }
+
+            updateQueueStatsTable() {
+                const tbody = document.getElementById('queueStatsTable');
+                let queueEntries = Object.entries(this.data.queueStats);
+
+                if (queueEntries.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-gray-500">No queue data available</td></tr>';
+                    return;
+                }
+
+                if (this.filters.queueName) {
+                    queueEntries = queueEntries.filter(([_, stats]) =>
+                        this.extractQueueName(stats.name).toLowerCase().includes(this.filters.queueName)
+                    );
+                }
+
+                if (queueEntries.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-gray-500">No queues match filter</td></tr>';
+                    return;
+                }
+
+                // Apply sorting
+                queueEntries = this.sortQueueEntries(queueEntries);
+
+                tbody.innerHTML = queueEntries.map(([_, stats]) => {
+                    const rate = (stats.successRate || 1) * 100;
+                    return `
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${this.extractQueueName(stats.name)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-blue-600">${(stats.pendingMessages || 0).toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-orange-600">${(stats.messagesNotVisible || 0).toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${(stats.totalMessages || 0).toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600">${(stats.totalConsumed || 0).toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600">${(stats.totalFailed || 0).toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            <span class="px-2 py-1 text-xs font-medium rounded-full ${
+                                rate >= 90 ? 'bg-green-100 text-green-800' :
+                                rate >= 75 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                            }">
+                                ${rate.toFixed(1)}%
+                            </span>
+                        </td>
+                    </tr>
+                `;
+                }).join('');
+            }
+
+            updatePoolStatsTable() {
+                const tbody = document.getElementById('poolStatsTable');
+                let poolEntries = Object.entries(this.data.poolStats);
+
+                if (poolEntries.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-gray-500">No pool data available</td></tr>';
+                    return;
+                }
+
+                if (this.filters.poolName) {
+                    poolEntries = poolEntries.filter(([_, stats]) =>
+                        stats.poolCode.toLowerCase().includes(this.filters.poolName)
+                    );
+                }
+
+                if (poolEntries.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-gray-500">No pools match filter</td></tr>';
+                    return;
+                }
+
+                // Apply sorting
+                poolEntries = this.sortPoolEntries(poolEntries);
+
+                tbody.innerHTML = poolEntries.map(([_, stats]) => {
+                    let rate, rateClass;
+                    if (this.poolRateView === 'deferred') {
+                        // Deferred Rate = Rate Limited / (Total Processed + Rate Limited) * 100
+                        const rateLimited = this.getRateLimited(stats);
+                        const processed = this.getTotal(stats, 'totalProcessed');
+                        const total = processed + rateLimited;
+                        rate = total > 0 ? (rateLimited / total) * 100 : 0;
+                        // For deferred rate, lower is better (inverted colors)
+                        rateClass = rate <= 10 ? 'bg-green-100 text-green-800' :
+                                   rate <= 25 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800';
+                    } else {
+                        rate = (this.getSuccessRate(stats) || 1) * 100;
+                        rateClass = rate >= 90 ? 'bg-green-100 text-green-800' :
+                                   rate >= 75 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800';
+                    }
+                    return `
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${stats.poolCode}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${stats.activeWorkers}/${stats.maxConcurrency}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-purple-600">${stats.queueSize}/${stats.maxQueueCapacity}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-orange-600">${(this.getRateLimited(stats) || 0).toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${(this.getTotal(stats, 'totalProcessed') || 0).toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-green-600">${(this.getTotal(stats, 'totalSucceeded') || 0).toLocaleString()}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            <span class="px-2 py-1 text-xs font-medium rounded-full ${rateClass}">
+                                ${rate.toFixed(1)}%
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${(stats.averageProcessingTimeMs || 0).toFixed(0)}ms</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <button onclick="window.dashboard.showPoolDetail('${stats.poolCode}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium hover:underline">View Messages</button>
+                        </td>
+                    </tr>
+                `;
+                }).join('');
+            }
+
+            updateWarningsTable() {
+                const tbody = document.getElementById('warningsTableBody');
+                const noWarnings = document.getElementById('noWarnings');
+
+                if (this.data.warnings.length === 0) {
+                    tbody.innerHTML = '';
+                    noWarnings.classList.remove('hidden');
+                    return;
+                }
+
+                noWarnings.classList.add('hidden');
+                this.filterWarnings();
+            }
+
+            renderWarnings(warnings) {
+                const tbody = document.getElementById('warningsTableBody');
+                tbody.innerHTML = warnings.map(warning => {
+                    const severityColor = warning.severity === 'ERROR' ? 'bg-red-100 text-red-800' :
+                                         warning.severity === 'WARN' ? 'bg-yellow-100 text-yellow-800' :
+                                         warning.severity === 'CRITICAL' ? 'bg-red-200 text-red-900' :
+                                         'bg-blue-100 text-blue-800';
+
+                    return `
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                ${new Date(warning.timestamp).toLocaleString()}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                <span class="px-2 py-1 ${severityColor} rounded text-xs font-medium">
+                                    ${warning.severity}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                ${warning.category}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 max-w-xs truncate">
+                                ${warning.source}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-900">
+                                ${warning.message}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            filterWarnings() {
+                let filtered = this.data.warnings;
+
+                // Apply time period filter (matches Java dashboard behaviour)
+                if (this.timePeriod !== 'all-time') {
+                    const now = Date.now();
+                    const timeThreshold = this.timePeriod === '5min' ? 5 * 60 * 1000 : 30 * 60 * 1000;
+                    filtered = filtered.filter(w => {
+                        const warningTime = new Date(w.timestamp).getTime();
+                        return (now - warningTime) <= timeThreshold;
+                    });
+                }
+
+                if (this.filters.severity) {
+                    filtered = filtered.filter(w => w.severity === this.filters.severity);
+                }
+
+                if (this.filters.search) {
+                    filtered = filtered.filter(w =>
+                        w.message.toLowerCase().includes(this.filters.search) ||
+                        w.category.toLowerCase().includes(this.filters.search) ||
+                        w.source.toLowerCase().includes(this.filters.search)
+                    );
+                }
+
+                this.renderWarnings(filtered);
+            }
+
+            showError() {
+                const indicator = document.getElementById('statusIndicator');
+                const text = document.getElementById('statusText');
+                indicator.className = 'w-3 h-3 rounded-full mr-2 bg-red-500';
+                text.textContent = 'Connection Error';
+            }
+
+            async loadInFlightMessages() {
+                try {
+                    const response = await this.fetchWithAuth('/monitoring/in-flight-messages?limit=100');
+                    if (!response.ok) throw new Error('Failed to load in-flight messages');
+                    const inFlightMessages = await response.json();
+                    this.data.inFlightMessages = inFlightMessages;
+                    this.renderInFlightMessages(inFlightMessages);
+                } catch (error) {
+                    console.error('Failed to load in-flight messages:', error);
+                    document.getElementById('inFlightTable').innerHTML = '';
+                    document.getElementById('noInFlight').classList.remove('hidden');
+                }
+            }
+
+            // Get success rate based on time period
+            getSuccessRate(stats) {
+                switch (this.timePeriod) {
+                    case '5min':
+                        return stats.successRate5min !== undefined ? stats.successRate5min : stats.successRate;
+                    case '30min':
+                        return stats.successRate30min !== undefined ? stats.successRate30min : stats.successRate;
+                    default:
+                        return stats.successRate;
+                }
+            }
+
+            getTotal(stats, field) {
+                switch (this.timePeriod) {
+                    case '5min':
+                        return stats[`${field}5min`] !== undefined ? stats[`${field}5min`] : stats[field];
+                    case '30min':
+                        return stats[`${field}30min`] !== undefined ? stats[`${field}30min`] : stats[field];
+                    default:
+                        return stats[field];
+                }
+            }
+
+            renderInFlightMessages(messages) {
+                const table = document.getElementById('inFlightTable');
+                const noMessages = document.getElementById('noInFlight');
+
+                if (!messages || messages.length === 0) {
+                    table.innerHTML = '';
+                    noMessages.classList.remove('hidden');
+                    return;
+                }
+
+                noMessages.classList.add('hidden');
+                table.innerHTML = messages.map(msg => {
+                    const addedAt = new Date(msg.addedToInPipelineAt);
+                    const elapsedSec = Math.floor(msg.elapsedTimeMs / 1000);
+                    const elapsedMin = Math.floor(elapsedSec / 60);
+                    const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedSec % 60}s` : `${elapsedSec}s`;
+                    const brokerIdShort = msg.brokerMessageId ? msg.brokerMessageId.substring(0, 12) + '...' : 'N/A';
+
+                    return `
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 text-sm text-blue-600 font-mono max-w-xs truncate" title="${msg.messageId}">
+                                ${msg.messageId}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-500 font-mono max-w-xs truncate" title="${msg.brokerMessageId || 'N/A'}">
+                                ${brokerIdShort}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-900">
+                                ${msg.queueId}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-900">
+                                ${msg.poolCode || 'N/A'}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-900">
+                                ${elapsedStr}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-500">
+                                ${addedAt.toLocaleString()}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            filterInFlightMessages(filter) {
+                if (!this.data.inFlightMessages) return;
+
+                let filtered = this.data.inFlightMessages;
+                if (filter && filter.trim()) {
+                    const lowerFilter = filter.toLowerCase();
+                    filtered = filtered.filter(msg =>
+                        msg.messageId.toLowerCase().includes(lowerFilter) ||
+                        msg.queueId.toLowerCase().includes(lowerFilter)
+                    );
+                }
+
+                this.renderInFlightMessages(filtered);
+            }
+
+            showHealthModal() {
+                const modal = document.getElementById('healthModal');
+                const modalContent = document.getElementById('modalContent');
+                const health = this.data.health;
+
+                if (!health) {
+                    modalContent.innerHTML = '<p class="text-gray-600">No health information available</p>';
+                } else if (health.status === 'HEALTHY') {
+                    modalContent.innerHTML = '<p class="text-green-600 font-medium">System is operating normally with no degradation</p>';
+                } else {
+                    const details = health.details || {};
+                    const reasons = details.degradationReason || 'No details available';
+                    const reasonsList = reasons ? reasons.split('; ').map(r => `<li class="text-red-600">${r}</li>`).join('') : '';
+
+                    modalContent.innerHTML = `
+                        <div class="space-y-3">
+                            <p class="font-semibold text-gray-900">Reasons for ${health.status} status:</p>
+                            <ul class="space-y-2">${reasonsList}</ul>
+                            <p class="text-sm text-gray-600 mt-4 pt-4 border-t border-gray-200">
+                                <strong>Details:</strong><br>
+                                Queues: ${details.totalQueues || 0} total, ${details.healthyQueues || 0} healthy<br>
+                                Pools: ${details.totalPools || 0} total, ${details.healthyPools || 0} healthy<br>
+                                Active Warnings: ${details.activeWarnings || 0} (${details.criticalWarnings || 0} critical)<br>
+                                Circuit Breakers Open: ${details.circuitBreakersOpen || 0}
+                            </p>
+                        </div>
+                    `;
+                }
+
+                modal.classList.remove('hidden');
+            }
+
+            showPoolDetail(poolCode) {
+                this.poolDetailCode = poolCode;
+                this.poolDetailRefreshActive = true;
+
+                // Hide main tabbed content, show pool detail view
+                document.getElementById('tabbedContentSection').classList.add('hidden');
+                document.getElementById('contentPoolDetail').classList.remove('hidden');
+
+                // Set header
+                document.getElementById('poolDetailCode').textContent = poolCode;
+
+                // Show rate limit summary from pool stats
+                const poolStats = this.data.poolStats[poolCode];
+                if (poolStats) {
+                    const total = poolStats.totalRateLimited || 0;
+                    const last5m = poolStats.totalRateLimited5min !== undefined ? poolStats.totalRateLimited5min : '-';
+                    const last30m = poolStats.totalRateLimited30min !== undefined ? poolStats.totalRateLimited30min : '-';
+                    document.getElementById('poolDetailRateLimitSummary').innerHTML =
+                        `Rate Limited: <span class="font-medium text-orange-600">${total.toLocaleString()}</span> total` +
+                        ` | <span class="font-medium">${typeof last5m === 'number' ? last5m.toLocaleString() : last5m}</span> (5m)` +
+                        ` | <span class="font-medium">${typeof last30m === 'number' ? last30m.toLocaleString() : last30m}</span> (30m)`;
+                }
+
+                // Setup back button
+                document.getElementById('poolDetailBackBtn').onclick = () => this.hidePoolDetail();
+
+                // Setup message filter
+                document.getElementById('poolDetailMessageFilter').value = '';
+                document.getElementById('poolDetailMessageFilter').oninput = (e) => {
+                    this.filterPoolDetailMessages(e.target.value);
+                };
+
+                // Load messages
+                this.loadPoolDetailMessages(poolCode);
+
+                // Start detail refresh interval (every 5s)
+                this.poolDetailInterval = setInterval(() => {
+                    if (this.poolDetailRefreshActive) {
+                        this.loadPoolDetailMessages(this.poolDetailCode);
+                    }
+                }, 5000);
+            }
+
+            hidePoolDetail() {
+                this.poolDetailRefreshActive = false;
+                if (this.poolDetailInterval) {
+                    clearInterval(this.poolDetailInterval);
+                    this.poolDetailInterval = null;
+                }
+
+                // Show main tabbed content, hide detail view
+                document.getElementById('contentPoolDetail').classList.add('hidden');
+                document.getElementById('tabbedContentSection').classList.remove('hidden');
+
+                // Ensure Pools tab is active
+                this.switchTab('Pools');
+            }
+
+            async loadPoolDetailMessages(poolCode) {
+                try {
+                    const response = await this.fetchWithAuth(`/monitoring/in-flight-messages?limit=500&poolCode=${encodeURIComponent(poolCode)}`);
+                    if (response.status === 401 || response.status === 403) {
+                        this.logout();
+                        return;
+                    }
+                    if (!response.ok) throw new Error('Failed to load pool detail messages');
+                    const messages = await response.json();
+                    this.poolDetailMessages = messages;
+                    this.renderPoolDetailMessages(messages);
+
+                    // Refresh rate limit summary from latest pool stats
+                    const poolStatsResp = await this.fetchWithAuth('/monitoring/pool-stats');
+                    if (poolStatsResp.ok) {
+                        this.data.poolStats = await poolStatsResp.json();
+                        const poolStats = this.data.poolStats[poolCode];
+                        if (poolStats) {
+                            const total = poolStats.totalRateLimited || 0;
+                            const last5m = poolStats.totalRateLimited5min !== undefined ? poolStats.totalRateLimited5min : '-';
+                            const last30m = poolStats.totalRateLimited30min !== undefined ? poolStats.totalRateLimited30min : '-';
+                            document.getElementById('poolDetailRateLimitSummary').innerHTML =
+                                `Rate Limited: <span class="font-medium text-orange-600">${total.toLocaleString()}</span> total` +
+                                ` | <span class="font-medium">${typeof last5m === 'number' ? last5m.toLocaleString() : last5m}</span> (5m)` +
+                                ` | <span class="font-medium">${typeof last30m === 'number' ? last30m.toLocaleString() : last30m}</span> (30m)`;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to load pool detail messages:', error);
+                    document.getElementById('poolDetailTable').innerHTML = '';
+                    document.getElementById('noPoolDetailMessages').classList.remove('hidden');
+                }
+            }
+
+            renderPoolDetailMessages(messages) {
+                const table = document.getElementById('poolDetailTable');
+                const noMessages = document.getElementById('noPoolDetailMessages');
+
+                if (!messages || messages.length === 0) {
+                    table.innerHTML = '';
+                    noMessages.classList.remove('hidden');
+                    return;
+                }
+
+                noMessages.classList.add('hidden');
+                table.innerHTML = messages.map(msg => {
+                    const addedAt = new Date(msg.addedToInPipelineAt);
+                    const elapsedSec = Math.floor(msg.elapsedTimeMs / 1000);
+                    const elapsedMin = Math.floor(elapsedSec / 60);
+                    const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedSec % 60}s` : `${elapsedSec}s`;
+                    const brokerIdShort = msg.brokerMessageId ? msg.brokerMessageId.substring(0, 12) + '...' : 'N/A';
+
+                    return `
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 text-sm text-blue-600 font-mono max-w-xs truncate" title="${msg.messageId}">
+                                ${msg.messageId}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-500 font-mono max-w-xs truncate" title="${msg.brokerMessageId || 'N/A'}">
+                                ${brokerIdShort}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-900">
+                                ${msg.queueId}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-900">
+                                ${elapsedStr}
+                            </td>
+                            <td class="px-6 py-4 text-sm text-gray-500">
+                                ${addedAt.toLocaleString()}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            filterPoolDetailMessages(filter) {
+                if (!this.poolDetailMessages) return;
+                let filtered = this.poolDetailMessages;
+                if (filter && filter.trim()) {
+                    const lowerFilter = filter.toLowerCase();
+                    filtered = filtered.filter(msg =>
+                        msg.messageId.toLowerCase().includes(lowerFilter) ||
+                        msg.queueId.toLowerCase().includes(lowerFilter)
+                    );
+                }
+                this.renderPoolDetailMessages(filtered);
+            }
+
+            startPeriodicRefresh() {
+                setInterval(() => this.loadData(), 5000);
+            }
+        }
+
+        // Initialize dashboard and expose globally so onclick handlers can access it
+        window.dashboard = new Dashboard();
+    </script>
+</body>
+</html>

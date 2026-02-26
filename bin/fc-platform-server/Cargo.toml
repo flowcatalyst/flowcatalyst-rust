@@ -1,0 +1,25 @@
+[package]
+name = "fc-platform-server"
+version.workspace = true
+edition.workspace = true
+description = "FlowCatalyst Platform Server - REST APIs for events, subscriptions, and administration"
+
+[dependencies]
+fc-common = { path = "../../crates/fc-common" }
+fc-platform = { path = "../../crates/fc-platform" }
+
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+mongodb = { workspace = true }
+sea-orm = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+utoipa-axum = { workspace = true }

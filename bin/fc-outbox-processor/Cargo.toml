@@ -1,0 +1,19 @@
+[package]
+name = "fc-outbox-processor"
+version.workspace = true
+edition.workspace = true
+description = "FlowCatalyst Outbox Processor - Reads from app database outbox and sends to FlowCatalyst API"
+
+[dependencies]
+fc-common = { path = "../../crates/fc-common" }
+fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres", "mongo"] }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+mongodb = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

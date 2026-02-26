@@ -1,0 +1,46 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+
+# JWT keys (auto-generated)
+.jwt-keys/
+
+# Node modules (for npm scripts)
+node_modules/
+package-lock.json
+
+# Local development databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Log files
+*.log
+logs/
+
+# Test coverage
+coverage/
+*.profraw
+*.profdata
+
+# Docker volumes / local data
+docker-data/
+localstack-data/
+
+# LocalStack
+.localstack/

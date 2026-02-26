@@ -1,0 +1,58 @@
+# FlowCatalyst Message Router - Rust
+# Multi-stage build with cargo-chef for cached dependency builds
+
+# Stage 1: Plan dependencies
+FROM lukemathwalker/cargo-chef:latest-rust-1.92-bookworm AS chef
+WORKDIR /app
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY bin ./bin
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 2: Build dependencies (cached layer)
+FROM chef AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Copy source and build (dependencies already cached)
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY bin ./bin
+RUN cargo build --release --bin fc-router-bin
+
+# Stage 3: Runtime
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/target/release/fc-router-bin /app/fc-router
+
+# Create non-root user
+RUN useradd -r -u 1000 -g root flowcatalyst
+USER flowcatalyst
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Run
+ENTRYPOINT ["/app/fc-router"]

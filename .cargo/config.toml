@@ -1,0 +1,39 @@
+# Cargo configuration for faster builds
+#
+# Linker setup:
+#   macOS:  brew install llvm && export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+#   Linux:  sudo apt install lld clang   (or: sudo dnf install lld clang)
+
+# Use lld linker on Linux (much faster than default ld)
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Use lld linker on macOS (requires: brew install llvm)
+# Uncomment if you have lld installed
+# [target.x86_64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[build]
+# Number of parallel jobs (adjust based on CPU cores)
+# jobs = 8
+
+[profile.dev]
+# Faster debug builds - reduced debug info
+debug = 1
+# Keep some optimizations for faster runtime during dev
+opt-level = 0
+
+[profile.dev.package."*"]
+# Optimize dependencies even in dev mode (they don't change often)
+opt-level = 2
+
+[profile.release]
+# Link-time optimization for smaller/faster release builds
+lto = "thin"
+codegen-units = 1

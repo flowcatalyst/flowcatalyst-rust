@@ -1,0 +1,17 @@
+[package]
+name = "fc-stream-processor"
+version.workspace = true
+edition.workspace = true
+description = "FlowCatalyst Stream Processor - PostgreSQL CQRS projection engine"
+
+[dependencies]
+fc-common = { path = "../../crates/fc-common" }
+fc-stream = { path = "../../crates/fc-stream" }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,63 @@
+[package]
+name = "fc-platform"
+version.workspace = true
+edition.workspace = true
+description = "FlowCatalyst Platform - Core domain models, services, and APIs"
+
+[dependencies]
+# Workspace dependencies
+fc-common = { path = "../fc-common" }
+fc-queue = { path = "../fc-queue" }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database (PostgreSQL - new)
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+
+# Database (MongoDB - transitional, will be removed once all repos are migrated)
+mongodb = { workspace = true }
+bson = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+utoipa-axum = { workspace = true }
+
+# Authentication
+jsonwebtoken = "9.2"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+argon2 = "0.5"
+rsa = { version = "0.9", features = ["pem"] }
+rand = "0.8"
+
+# HTTP client for OIDC
+reqwest = { version = "0.12", features = ["json"] }
+urlencoding = "2.1"
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+time = "0.3"
+
+# Regex for pattern matching
+regex = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }

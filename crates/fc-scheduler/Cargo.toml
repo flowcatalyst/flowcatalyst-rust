@@ -1,0 +1,31 @@
+[package]
+name = "fc-scheduler"
+version.workspace = true
+edition.workspace = true
+description = "FlowCatalyst Dispatch Scheduler - polls and dispatches pending jobs"
+
+[dependencies]
+fc-common = { path = "../fc-common" }
+fc-config = { path = "../fc-config" }
+fc-queue = { path = "../fc-queue" }
+fc-standby = { path = "../fc-standby" }
+
+tokio = { workspace = true }
+mongodb = { workspace = true }
+bson = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+hex = { workspace = true }
+metrics = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }

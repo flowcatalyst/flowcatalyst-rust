@@ -1,0 +1,36 @@
+[package]
+name = "fc-queue"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fc-common = { path = "../fc-common" }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true, optional = true }
+aws-sdk-sqs = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true }
+lapin = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+dashmap = { workspace = true, optional = true }
+async-nats = { workspace = true, optional = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+default = []
+sqlite = ["dep:sqlx"]
+sqs = ["dep:aws-sdk-sqs", "dep:aws-config"]
+activemq = ["dep:lapin", "dep:futures", "dep:dashmap"]
+nats = ["dep:async-nats", "dep:dashmap", "dep:futures"]
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { workspace = true }

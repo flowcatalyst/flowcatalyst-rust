@@ -1,0 +1,28 @@
+{
+  "name": "@flowcatalyst/rust-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FlowCatalyst Rust Platform - Development Scripts",
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names \"PLATFORM,STREAMS\" --prefix-colors \"blue,magenta\" \"npm run dev:platform\" \"npm run dev:stream-processor\"",
+    "dev:platform": "FC_MONGO_URL='mongodb://localhost:27017/?replicaSet=rs0&directConnection=true' FC_MONGO_DB=flowcatalyst FC_API_PORT=8080 FC_METRICS_PORT=9090 RUST_LOG=info cargo run -p fc-platform-server",
+    "dev:stream-processor": "wait-on http://localhost:8080/health && FC_MONGO_URL='mongodb://localhost:27017/?replicaSet=rs0&directConnection=true' FC_MONGO_DB=flowcatalyst FC_METRICS_PORT=9091 RUST_LOG=info cargo run -p fc-stream-processor",
+    "dev:db": "docker compose -f ../docker-compose.dev.yml up -d",
+    "dev:db:stop": "docker compose -f ../docker-compose.dev.yml down",
+    "dev:full": "npm run dev:db && sleep 5 && npm run dev",
+    "dev:watch": "concurrently --kill-others-on-fail --names \"PLATFORM,STREAMS\" --prefix-colors \"blue,magenta\" \"npm run dev:watch:platform\" \"npm run dev:watch:stream-processor\"",
+    "dev:watch:platform": "FC_MONGO_URL='mongodb://localhost:27017/?replicaSet=rs0&directConnection=true' FC_MONGO_DB=flowcatalyst FC_API_PORT=8080 FC_METRICS_PORT=9090 RUST_LOG=info cargo watch -x 'run -p fc-platform-server'",
+    "dev:watch:stream-processor": "wait-on http://localhost:8080/health && FC_MONGO_URL='mongodb://localhost:27017/?replicaSet=rs0&directConnection=true' FC_MONGO_DB=flowcatalyst FC_METRICS_PORT=9091 RUST_LOG=info cargo watch -x 'run -p fc-stream-processor'",
+    "build": "cargo build --release -p fc-platform-server -p fc-stream-processor",
+    "build:all": "cargo build --release --workspace",
+    "start": "concurrently --kill-others-on-fail --names \"PLATFORM,STREAMS\" --prefix-colors \"blue,magenta\" \"npm run start:platform\" \"npm run start:stream-processor\"",
+    "start:platform": "FC_MONGO_URL='mongodb://localhost:27017/?replicaSet=rs0&directConnection=true' FC_MONGO_DB=flowcatalyst FC_API_PORT=8080 FC_METRICS_PORT=9090 ./target/release/fc-platform-server",
+    "start:stream-processor": "wait-on http://localhost:8080/health && FC_MONGO_URL='mongodb://localhost:27017/?replicaSet=rs0&directConnection=true' FC_MONGO_DB=flowcatalyst FC_METRICS_PORT=9091 ./target/release/fc-stream-processor",
+    "test": "cargo test --workspace",
+    "clean": "cargo clean"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "wait-on": "^8.0.0"
+  }
+}

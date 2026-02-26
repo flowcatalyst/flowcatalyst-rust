@@ -1,0 +1,59 @@
+[package]
+name = "fc-router"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fc-common = { path = "../fc-common" }
+fc-queue = { path = "../fc-queue" }
+fc-standby = { path = "../fc-standby" }
+fc-stream = { path = "../fc-stream" }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+reqwest = { workspace = true }
+dashmap = { workspace = true }
+indexmap = { workspace = true }
+futures = { workspace = true }
+governor = { workspace = true }
+nonzero_ext = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+utoipa-axum = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+base64 = "0.22"
+rand = { workspace = true }
+failsafe = { workspace = true }
+urlencoding = "2.1"
+jsonwebtoken = "9"
+lettre = { workspace = true, optional = true }
+aws-sdk-elasticloadbalancingv2 = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true }
+
+[features]
+default = []
+email = ["dep:lettre"]
+alb = ["dep:aws-sdk-elasticloadbalancingv2", "dep:aws-config"]
+oidc-flow = []
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+wiremock = { workspace = true }
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+bytes = { workspace = true }

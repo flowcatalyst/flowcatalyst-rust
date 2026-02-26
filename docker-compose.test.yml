@@ -1,0 +1,63 @@
+version: '3.8'
+
+# Test infrastructure for FlowCatalyst Rust integration tests
+# Usage: docker-compose -f docker-compose.test.yml up -d
+
+services:
+  # LocalStack for AWS SQS testing
+  localstack:
+    image: localstack/localstack:3.0
+    container_name: fc-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs
+      - DEBUG=0
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DEFAULT_REGION=us-east-1
+    volumes:
+      - "${TMPDIR:-/tmp}/localstack:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ActiveMQ for AMQP testing
+  activemq:
+    image: apache/activemq-artemis:2.31.2
+    container_name: fc-activemq
+    ports:
+      - "5672:5672"   # AMQP
+      - "61616:61616" # OpenWire
+      - "8161:8161"   # Web Console
+    environment:
+      - ARTEMIS_USER=admin
+      - ARTEMIS_PASSWORD=admin
+      - AMQ_EXTRA_ARGS=--nio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8161/console"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Redis for leader election testing
+  redis:
+    image: redis:7-alpine
+    container_name: fc-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Echo server for HTTP mediation testing
+  echo-server:
+    image: hashicorp/http-echo:0.2.3
+    container_name: fc-echo
+    ports:
+      - "5678:5678"
+    command: ["-listen=:5678", "-text=OK"]
