@@ -41,6 +41,8 @@ impl LoginAttemptRepository {
         date_to: Option<&str>,
         page: u64,
         page_size: u64,
+        sort_field: Option<&str>,
+        sort_order: Option<&str>,
     ) -> Result<(Vec<LoginAttempt>, u64)> {
         let mut q = iam_login_attempts::Entity::find();
 
@@ -69,8 +71,22 @@ impl LoginAttemptRepository {
 
         let total = q.clone().count(&self.db).await?;
 
-        let results = q
-            .order_by_desc(iam_login_attempts::Column::AttemptedAt)
+        // Resolve sort column (whitelist to prevent SQL injection)
+        let column = match sort_field {
+            Some("identifier") => iam_login_attempts::Column::Identifier,
+            Some("outcome") => iam_login_attempts::Column::Outcome,
+            Some("attempt_type") => iam_login_attempts::Column::AttemptType,
+            // Default to attempted_at for unknown or missing values
+            _ => iam_login_attempts::Column::AttemptedAt,
+        };
+
+        let is_asc = matches!(sort_order, Some("asc"));
+
+        let results = if is_asc {
+            q.order_by_asc(column)
+        } else {
+            q.order_by_desc(column)
+        }
             .offset(page * page_size)
             .limit(page_size)
             .all(&self.db)

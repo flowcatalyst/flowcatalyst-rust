@@ -270,6 +270,34 @@ impl DispatchJobRepository {
         Ok(count)
     }
 
+    /// Find distinct non-null subscription IDs
+    pub async fn find_distinct_subscription_ids(&self) -> Result<Vec<String>> {
+        use sea_orm::QuerySelect;
+        let results: Vec<(Option<String>,)> = msg_dispatch_jobs::Entity::find()
+            .select_only()
+            .column(msg_dispatch_jobs::Column::SubscriptionId)
+            .group_by(msg_dispatch_jobs::Column::SubscriptionId)
+            .order_by_asc(msg_dispatch_jobs::Column::SubscriptionId)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(results.into_iter().filter_map(|(t,)| t).collect())
+    }
+
+    /// Find distinct non-null event type codes
+    pub async fn find_distinct_event_type_codes(&self) -> Result<Vec<String>> {
+        use sea_orm::QuerySelect;
+        let results: Vec<(String,)> = msg_dispatch_jobs::Entity::find()
+            .select_only()
+            .column(msg_dispatch_jobs::Column::Code)
+            .group_by(msg_dispatch_jobs::Column::Code)
+            .order_by_asc(msg_dispatch_jobs::Column::Code)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(results.into_iter().map(|(t,)| t).collect())
+    }
+
     /// Find recent dispatch jobs with pagination (for debug/admin)
     pub async fn find_recent_paged(&self, page: u32, size: u32) -> Result<Vec<DispatchJob>> {
         let rows = msg_dispatch_jobs::Entity::find()

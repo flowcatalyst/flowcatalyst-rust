@@ -15,7 +15,9 @@ use std::collections::HashSet;
 
 use crate::event_type::entity::{EventType, EventTypeStatus, SpecVersion, SpecVersionStatus};
 use crate::event_type::repository::EventTypeRepository;
+use crate::event_type::operations::{SyncEventTypesUseCase, SyncEventTypesCommand};
 use crate::application::repository::ApplicationRepository;
+use crate::usecase::ExecutionContext;
 use crate::shared::error::PlatformError;
 use crate::shared::api_common::CreatedResponse;
 use crate::shared::middleware::Authenticated;
@@ -222,6 +224,28 @@ pub struct BffAggregateFilterQuery {
 pub struct BffEventTypesState {
     pub event_type_repo: Arc<EventTypeRepository>,
     pub application_repo: Option<Arc<ApplicationRepository>>,
+    pub sync_use_case: Arc<SyncEventTypesUseCase>,
+}
+
+// ── Sync request DTO ──────────────────────────────────────────────────────
+
+/// Request body for sync-platform endpoint
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BffSyncPlatformRequest {
+    /// Application code to sync event types for
+    pub application_code: String,
+}
+
+/// Response for sync-platform endpoint
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BffSyncPlatformResponse {
+    pub application_code: String,
+    pub created: u32,
+    pub updated: u32,
+    pub deleted: u32,
+    pub synced_codes: Vec<String>,
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────
@@ -759,6 +783,50 @@ pub async fn deprecate_schema(
     Ok(Json(event_type.into()))
 }
 
+// ── Sync endpoint ─────────────────────────────────────────────────────────
+
+/// Trigger a platform-side sync of event types for an application
+#[utoipa::path(
+    post,
+    path = "/sync-platform",
+    tag = "bff-event-types",
+    operation_id = "postBffEventTypesSyncPlatform",
+    request_body = BffSyncPlatformRequest,
+    responses(
+        (status = 200, description = "Event types synced", body = BffSyncPlatformResponse),
+        (status = 400, description = "Validation error")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn sync_platform(
+    State(state): State<BffEventTypesState>,
+    auth: Authenticated,
+    Json(req): Json<BffSyncPlatformRequest>,
+) -> Result<Json<BffSyncPlatformResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+
+    let command = SyncEventTypesCommand {
+        application_code: req.application_code,
+        event_types: vec![],
+        remove_unlisted: true,
+    };
+
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+
+    match state.sync_use_case.execute(command, ctx).await {
+        crate::usecase::UseCaseResult::Success(event) => {
+            Ok(Json(BffSyncPlatformResponse {
+                application_code: event.application_code,
+                created: event.created,
+                updated: event.updated,
+                deleted: event.deleted,
+                synced_codes: event.synced_codes,
+            }))
+        }
+        crate::usecase::UseCaseResult::Failure(err) => Err(err.into()),
+    }
+}
+
 // ── Filter endpoints ──────────────────────────────────────────────────────
 
 /// Get distinct applications from event types (for filter dropdown)
@@ -891,6 +959,7 @@ pub async fn get_filter_aggregates(
 pub fn bff_event_types_router(state: BffEventTypesState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(create_event_type, list_event_types))
+        .routes(routes!(sync_platform))
         .routes(routes!(get_filter_applications))
         .routes(routes!(get_filter_subdomains))
         .routes(routes!(get_filter_aggregates))

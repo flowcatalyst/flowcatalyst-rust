@@ -25,6 +25,10 @@ pub struct LoginAttemptsQuery {
     pub date_to: Option<String>,
     pub page: Option<u64>,
     pub page_size: Option<u64>,
+    #[serde(rename = "sortField")]
+    pub sort_field: Option<String>,
+    #[serde(rename = "sortOrder")]
+    pub sort_order: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -86,6 +90,8 @@ pub struct LoginAttemptsState {
         ("date_to" = Option<String>, Query, description = "Filter to date"),
         ("page" = Option<u64>, Query, description = "Page number"),
         ("page_size" = Option<u64>, Query, description = "Page size"),
+        ("sortField" = Option<String>, Query, description = "Sort field (attempted_at, identifier, outcome, attempt_type)"),
+        ("sortOrder" = Option<String>, Query, description = "Sort order (asc or desc, default: desc)"),
     ),
     responses(
         (status = 200, description = "Login attempts list", body = LoginAttemptsListResponse),
@@ -109,6 +115,8 @@ async fn list_login_attempts(
         query.date_to.as_deref(),
         page,
         page_size,
+        query.sort_field.as_deref(),
+        query.sort_order.as_deref(),
     ).await?;
 
     Ok(Json(LoginAttemptsListResponse {

@@ -138,6 +138,6 @@ impl JwksCache {
 
 impl Default for JwksCache {
     fn default() -> Self {
-        Self::new(3600) // 1 hour default TTL
+        Self::new(900) // 15 minute default TTL
     }
 }

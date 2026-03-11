@@ -9,6 +9,34 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+
+/// Client IP address, extracted from X-Forwarded-For or X-Real-IP headers.
+/// Equivalent to Express.js `req.ip` with `trust proxy` enabled.
+#[derive(Debug, Clone)]
+pub struct ClientIp(pub Option<String>);
+
+impl<S> FromRequestParts<S> for ClientIp
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        // X-Forwarded-For: client, proxy1, proxy2 — take the first (leftmost) IP
+        if let Some(forwarded) = parts.headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            if let Some(client_ip) = forwarded.split(',').next().map(|s| s.trim().to_string()) {
+                if !client_ip.is_empty() {
+                    return Ok(ClientIp(Some(client_ip)));
+                }
+            }
+        }
+        // Fallback: X-Real-IP (set by nginx)
+        if let Some(real_ip) = parts.headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+            return Ok(ClientIp(Some(real_ip.to_string())));
+        }
+        Ok(ClientIp(None))
+    }
+}
 use std::sync::Arc;
 use crate::{AuthService, AuthorizationService, AuthContext};
 use crate::shared::api_common::ApiError;

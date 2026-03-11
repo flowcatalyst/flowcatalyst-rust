@@ -14,7 +14,7 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 
 # Encryption
-aes-gcm = "0.10"
+aes-gcm = { workspace = true }
 base64 = "0.22"
 rand = { workspace = true }
 

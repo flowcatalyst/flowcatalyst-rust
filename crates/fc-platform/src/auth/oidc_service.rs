@@ -160,7 +160,7 @@ impl OidcService {
         Self {
             http_client: reqwest::Client::new(),
             providers: Arc::new(RwLock::new(HashMap::new())),
-            jwks_cache_ttl_secs: 3600, // 1 hour
+            jwks_cache_ttl_secs: 900, // 15 minutes
         }
     }
 

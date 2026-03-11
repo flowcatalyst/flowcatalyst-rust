@@ -183,24 +183,18 @@ pub async fn get_openid_configuration(
 pub async fn get_jwks(
     State(state): State<WellKnownState>,
 ) -> Json<JwksResponse> {
-    // Build JWKS from RSA components if available
-    let keys = match (state.auth_service.key_id(), state.auth_service.rsa_components()) {
-        (Some(kid), Some(components)) => {
-            // RS256 mode - return the public key with full components
-            vec![JwkKey {
-                kty: "RSA".to_string(),
-                key_use: "sig".to_string(),
-                kid: Some(kid.to_string()),
-                alg: "RS256".to_string(),
-                n: Some(components.n.clone()),
-                e: Some(components.e.clone()),
-            }]
-        }
-        _ => {
-            // HS256 mode - no public keys to expose
-            vec![]
-        }
-    };
+    // Build JWKS from all active keys (current + previous for rotation)
+    let keys: Vec<JwkKey> = state.auth_service.all_jwks_keys()
+        .into_iter()
+        .map(|(kid, components)| JwkKey {
+            kty: "RSA".to_string(),
+            key_use: "sig".to_string(),
+            kid: Some(kid.to_string()),
+            alg: "RS256".to_string(),
+            n: Some(components.n.clone()),
+            e: Some(components.e.clone()),
+        })
+        .collect();
 
     Json(JwksResponse { keys })
 }

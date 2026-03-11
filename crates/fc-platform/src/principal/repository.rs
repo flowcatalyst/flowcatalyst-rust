@@ -271,6 +271,23 @@ impl PrincipalRepository {
         self.hydrate_principals(results).await
     }
 
+    /// Batch-lookup principal names by IDs. Returns a map of id -> name.
+    pub async fn find_names_by_ids(&self, ids: &[String]) -> Result<std::collections::HashMap<String, String>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        use sea_orm::QuerySelect;
+        let results: Vec<(String, String)> = iam_principals::Entity::find()
+            .select_only()
+            .column(iam_principals::Column::Id)
+            .column(iam_principals::Column::Name)
+            .filter(iam_principals::Column::Id.is_in(ids.to_vec()))
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(results.into_iter().collect())
+    }
+
     /// Count principals with email ending in the given domain
     pub async fn count_by_email_domain(&self, domain: &str) -> Result<i64> {
         let count = iam_principals::Entity::find()

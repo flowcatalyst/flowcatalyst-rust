@@ -753,12 +753,115 @@ pub async fn get_dispatch_job_attempts(
     Ok(Json(attempts))
 }
 
+// ============================================================================
+// Filter Options Endpoint
+// ============================================================================
+
+/// Filter options for dispatch jobs dropdowns
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchJobFilterOptionsResponse {
+    pub statuses: Vec<String>,
+    pub modes: Vec<String>,
+    pub subscription_ids: Vec<String>,
+    pub event_type_codes: Vec<String>,
+}
+
+/// Get filter options for dispatch jobs
+///
+/// Returns distinct values for filter dropdowns (statuses, modes, subscriptionIds, eventTypeCodes).
+#[utoipa::path(
+    get,
+    path = "/filter-options",
+    tag = "dispatch-jobs",
+    operation_id = "getApiAdminDispatchJobsFilterOptions",
+    responses(
+        (status = 200, description = "Filter options", body = DispatchJobFilterOptionsResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_filter_options(
+    State(state): State<DispatchJobsState>,
+    auth: Authenticated,
+) -> Result<Json<DispatchJobFilterOptionsResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_read_dispatch_jobs(&auth.0)?;
+
+    // Statuses and modes are known enums
+    let statuses = vec![
+        "PENDING".to_string(),
+        "QUEUED".to_string(),
+        "IN_PROGRESS".to_string(),
+        "COMPLETED".to_string(),
+        "FAILED".to_string(),
+        "EXPIRED".to_string(),
+    ];
+    let modes = vec![
+        "IMMEDIATE".to_string(),
+        "NEXT_ON_ERROR".to_string(),
+        "BLOCK_ON_ERROR".to_string(),
+    ];
+
+    // Query distinct values from the database
+    let subscription_ids = state.dispatch_job_repo.find_distinct_subscription_ids().await?;
+    let event_type_codes = state.dispatch_job_repo.find_distinct_event_type_codes().await?;
+
+    Ok(Json(DispatchJobFilterOptionsResponse {
+        statuses,
+        modes,
+        subscription_ids,
+        event_type_codes,
+    }))
+}
+
+// ============================================================================
+// Raw Endpoint
+// ============================================================================
+
+/// Get raw dispatch job data by ID
+///
+/// Returns the full DispatchJob entity serialized directly as JSON (not the DTO).
+#[utoipa::path(
+    get,
+    path = "/{id}/raw",
+    tag = "dispatch-jobs",
+    operation_id = "getApiAdminDispatchJobsByIdRaw",
+    params(
+        ("id" = String, Path, description = "Dispatch job ID")
+    ),
+    responses(
+        (status = 200, description = "Raw dispatch job data"),
+        (status = 404, description = "Dispatch job not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_dispatch_job_raw(
+    State(state): State<DispatchJobsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<DispatchJob>, PlatformError> {
+    crate::shared::authorization_service::checks::can_read_dispatch_jobs_raw(&auth.0)?;
+
+    let job = state.dispatch_job_repo.find_by_id(&id).await?
+        .ok_or_else(|| PlatformError::not_found("DispatchJob", &id))?;
+
+    // Check client access
+    if let Some(ref cid) = job.client_id {
+        if !auth.0.can_access_client(cid) {
+            return Err(PlatformError::forbidden("No access to this dispatch job"));
+        }
+    }
+
+    Ok(Json(job))
+}
+
 /// Create dispatch jobs router
 pub fn dispatch_jobs_router(state: DispatchJobsState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(list_dispatch_jobs, create_dispatch_job))
         .routes(routes!(batch_create_dispatch_jobs))
+        .routes(routes!(get_filter_options))
         .routes(routes!(get_dispatch_job))
+        .routes(routes!(get_dispatch_job_raw))
         .routes(routes!(get_dispatch_job_attempts))
         .routes(routes!(get_jobs_for_event))
         .with_state(state)

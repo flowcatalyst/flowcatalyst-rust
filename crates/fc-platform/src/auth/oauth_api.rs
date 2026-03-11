@@ -233,8 +233,8 @@ pub async fn authorize(
         }
     };
 
-    // Validate redirect_uri
-    if !client.redirect_uris.contains(&req.redirect_uri) {
+    // Validate redirect_uri (exact match first, then wildcard pattern matching)
+    if !matches_redirect_uri(&req.redirect_uri, &client.redirect_uris) {
         return (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -956,6 +956,75 @@ pub async fn issue_code(
     })?;
 
     Ok(auth_code_str)
+}
+
+/// Check if a redirect URI matches any of the registered URIs.
+/// Supports exact matches and wildcard patterns where `*` matches a single
+/// subdomain segment (e.g. `https://*.example.com/callback` matches
+/// `https://app.example.com/callback` but not `https://a.b.example.com/callback`).
+fn matches_redirect_uri(uri: &str, registered: &[String]) -> bool {
+    // Exact match first
+    if registered.contains(&uri.to_string()) {
+        return true;
+    }
+
+    // Wildcard pattern matching
+    for pattern in registered {
+        if !pattern.contains('*') {
+            continue;
+        }
+        if wildcard_matches(uri, pattern) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Match a URI against a pattern containing `*` wildcards.
+/// Each `*` matches exactly one subdomain segment (no dots).
+fn wildcard_matches(uri: &str, pattern: &str) -> bool {
+    // Split pattern on '*' and verify the URI matches all parts in order
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.is_empty() {
+        return false;
+    }
+
+    // The URI must start with the first part
+    let Some(remainder) = uri.strip_prefix(parts[0]) else {
+        return false;
+    };
+
+    let mut remaining = remainder;
+    for (i, part) in parts[1..].iter().enumerate() {
+        let is_last = i == parts.len() - 2;
+        if is_last {
+            // Last part must match the end exactly
+            if !remaining.ends_with(part) {
+                return false;
+            }
+            // The wildcard segment (between previous part and this part) must not contain dots
+            let wildcard_segment = &remaining[..remaining.len() - part.len()];
+            if wildcard_segment.contains('.') || wildcard_segment.is_empty() {
+                return false;
+            }
+            return true;
+        } else {
+            // Find the next occurrence of this part
+            if let Some(pos) = remaining.find(part) {
+                let wildcard_segment = &remaining[..pos];
+                if wildcard_segment.contains('.') || wildcard_segment.is_empty() {
+                    return false;
+                }
+                remaining = &remaining[pos + part.len()..];
+            } else {
+                return false;
+            }
+        }
+    }
+
+    // If pattern ends with '*', remaining must be a single segment (no dots)
+    !remaining.contains('.') && !remaining.is_empty()
 }
 
 fn error_redirect(redirect_uri: &str, error: &str, description: &str, state: Option<&str>) -> Response {

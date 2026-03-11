@@ -29,6 +29,8 @@ pub mod bff_roles_api;
 pub mod bff_event_types_api;
 
 // Services
+pub mod email_service;
+pub mod encryption_service;
 pub mod authorization_service;
 pub mod dispatch_service;
 pub mod projections_service;
@@ -37,7 +39,7 @@ pub mod role_sync_service;
 // Re-export commonly used items
 pub use error::{PlatformError, Result};
 pub use tsid::{TsidGenerator, EntityType};
-pub use middleware::{Authenticated, AppState};
+pub use middleware::{Authenticated, AppState, ClientIp};
 pub use api_common::{PaginationParams, PaginatedResponse};
 pub use health_api::health_router;
 pub use well_known_api::well_known_router;

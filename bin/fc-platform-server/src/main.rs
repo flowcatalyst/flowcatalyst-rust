@@ -9,7 +9,7 @@
 //!
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
-//! | `FC_API_PORT` | `8080` | HTTP API port |
+//! | `FC_API_PORT` | `3000` | HTTP API port |
 //! | `FC_METRICS_PORT` | `9090` | Metrics/health port |
 //! | `FC_DATABASE_URL` | `postgresql://localhost:5432/flowcatalyst` | PostgreSQL connection URL |
 //! | `FC_JWT_PRIVATE_KEY_PATH` | - | Path to RSA private key PEM |
@@ -28,6 +28,7 @@ use axum::{
 use utoipa_axum::router::OpenApiRouter;
 use tower_http::cors::{CorsLayer, AllowOrigin};
 use tower_http::trace::TraceLayer;
+use tower_http::services::{ServeDir, ServeFile};
 use axum::http::{Method, HeaderValue, header as http_header};
 use anyhow::Result;
 use tracing::info;
@@ -130,7 +131,7 @@ async fn main() -> Result<()> {
     info!("Starting FlowCatalyst Platform Server");
 
     // Configuration from environment
-    let api_port: u16 = env_or_parse("FC_API_PORT", 8080);
+    let api_port: u16 = env_or_parse("FC_API_PORT", 3000);
     let metrics_port: u16 = env_or_parse("FC_METRICS_PORT", 9090);
     let database_url = env_or("FC_DATABASE_URL", "postgresql://localhost:5432/flowcatalyst");
     let jwt_issuer = env_or("FC_JWT_ISSUER", "flowcatalyst");
@@ -249,15 +250,21 @@ async fn main() -> Result<()> {
         public_key_path.as_deref(),
     )?;
 
+    // Load previous public key for JWT key rotation (optional)
+    let previous_public_key = std::env::var("FC_JWT_PUBLIC_KEY_PATH_PREVIOUS").ok()
+        .and_then(|p| std::fs::read_to_string(&p).ok())
+        .or_else(|| std::env::var("FLOWCATALYST_JWT_PUBLIC_KEY_PREVIOUS").ok());
+
     let auth_config = AuthConfig {
         rsa_private_key: Some(private_key),
         rsa_public_key: Some(public_key),
+        rsa_public_key_previous: previous_public_key,
         secret_key: String::new(),
         issuer: jwt_issuer,
         audience: "flowcatalyst".to_string(),
-        access_token_expiry_secs: 3600,
-        session_token_expiry_secs: 28800,
-        refresh_token_expiry_secs: 86400 * 30,
+        access_token_expiry_secs: env_or_parse("FC_ACCESS_TOKEN_EXPIRY_SECS", 3600),
+        session_token_expiry_secs: env_or_parse("FC_SESSION_TOKEN_EXPIRY_SECS", 28800),
+        refresh_token_expiry_secs: env_or_parse("FC_REFRESH_TOKEN_EXPIRY_SECS", 86400 * 30),
     };
     let auth_service = Arc::new(AuthService::new(auth_config));
     let authz_service = Arc::new(AuthorizationService::new(role_repo.clone()));
@@ -363,7 +370,7 @@ async fn main() -> Result<()> {
         pending_auth_repo,
         password_service.clone(),
     );
-    let audit_logs_state = AuditLogsState { audit_log_repo: audit_log_repo.clone() };
+    let audit_logs_state = AuditLogsState { audit_log_repo: audit_log_repo.clone(), principal_repo: principal_repo.clone() };
 
     // Create Service Account use cases
     let create_sa_use_case = Arc::new(CreateServiceAccountUseCase::new(
@@ -430,8 +437,8 @@ async fn main() -> Result<()> {
     // New domain API states (before moves)
     let connections_state = ConnectionsState { connection_repo };
     let cors_state = CorsState { cors_repo };
-    let idp_state = IdentityProvidersState { idp_repo };
-    let edm_state = EmailDomainMappingsState { edm_repo };
+    let idp_state = IdentityProvidersState { idp_repo: idp_repo.clone() };
+    let edm_state = EmailDomainMappingsState { edm_repo, idp_repo };
     let platform_config_state = PlatformConfigState { config_repo: platform_config_repo };
     let config_access_state = ConfigAccessState { access_repo: platform_config_access_repo };
     let login_attempts_state = LoginAttemptsState { login_attempt_repo };
@@ -456,11 +463,16 @@ async fn main() -> Result<()> {
         application_repo: application_repo.clone(),
         role_repo: role_repo.clone(),
     };
+    let email_service: Arc<dyn fc_platform::shared::email_service::EmailService> =
+        Arc::from(fc_platform::shared::email_service::create_email_service());
     let password_reset_state = PasswordResetApiState {
         password_reset_repo,
         principal_repo: principal_repo.clone(),
         password_service: password_service.clone(),
         unit_of_work: unit_of_work.clone(),
+        email_service: email_service.clone(),
+        external_base_url: std::env::var("FC_EXTERNAL_BASE_URL")
+            .unwrap_or_else(|_| format!("http://localhost:{}", api_port)),
     };
 
     // Build API states with use cases
@@ -525,6 +537,7 @@ async fn main() -> Result<()> {
     let bff_event_types_state = BffEventTypesState {
         event_type_repo: event_type_repo.clone(),
         application_repo: Some(application_repo.clone()),
+        sync_use_case: sync_event_types_use_case.clone(),
     };
 
     let monitoring_state = MonitoringState {
@@ -613,6 +626,8 @@ async fn main() -> Result<()> {
         // Public routes (no auth required)
         .nest("/api/public", public_router())
         .nest("/auth/password-reset", password_reset_router(password_reset_state))
+        // Health check on API port (for load balancers / K8s probes)
+        .route("/health", get(health_handler))
         // OpenAPI / Swagger UI with auto-collected paths
         .merge(SwaggerUi::new("/swagger-ui").url("/q/openapi", openapi))
         // Auth middleware
@@ -662,6 +677,17 @@ async fn main() -> Result<()> {
                 .allow_credentials(true)
                 .max_age(std::time::Duration::from_secs(86400))
         });
+
+    // Static frontend serving (SPA fallback)
+    let app = if let Ok(static_dir) = std::env::var("FC_STATIC_DIR") {
+        let index_path = std::path::PathBuf::from(&static_dir).join("index.html");
+        info!(dir = %static_dir, "Serving static frontend files");
+        app.fallback_service(
+            ServeDir::new(&static_dir).not_found_service(ServeFile::new(index_path))
+        )
+    } else {
+        app
+    };
 
     // Start API server
     let api_addr = format!("0.0.0.0:{}", api_port);

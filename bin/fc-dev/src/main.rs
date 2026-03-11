@@ -35,7 +35,7 @@ use fc_queue::EmbeddedQueue;
 // fc_outbox used for EnhancedOutboxProcessor (TODO: wire up)
 
 // Platform imports
-use fc_platform::service::{AuthService, AuthConfig, AuthorizationService, AuditService, PasswordService};
+use fc_platform::service::{AuthService, AuthConfig, AuthorizationService, AuditService, PasswordService, OidcService, OidcSyncService};
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::api::{
     EventsState, events_router,
@@ -64,16 +64,24 @@ use fc_platform::api::{
     LoginAttemptsState, login_attempts_router,
     MeState, me_router,
     SdkEventsState, sdk_events_batch_router,
+    SdkClientsState, sdk_clients_router,
+    SdkPrincipalsState, sdk_principals_router,
+    SdkRolesState, sdk_roles_router,
     WellKnownState, well_known_router,
     ClientSelectionState, client_selection_router,
     ApplicationRolesSdkState, application_roles_sdk_router,
     public_router,
+    platform_config_router,
     PasswordResetApiState, password_reset_router,
     SdkSyncState, sdk_sync_router,
     SdkAuditBatchState, sdk_audit_batch_router,
     SdkDispatchJobsState, sdk_dispatch_jobs_batch_router,
     BffRolesState, bff_roles_router,
     BffEventTypesState, bff_event_types_router,
+    AuthState, auth_router,
+    OAuthState, oauth_router,
+    OidcLoginApiState, oidc_login_router,
+    event_type_filters_router,
 };
 use fc_platform::repository::{
     EventRepository, EventTypeRepository, DispatchJobRepository, DispatchPoolRepository,
@@ -86,6 +94,9 @@ use fc_platform::repository::{
     EmailDomainMappingRepository, PlatformConfigRepository, PlatformConfigAccessRepository,
     LoginAttemptRepository,
     PasswordResetTokenRepository,
+    OidcLoginStateRepository,
+    RefreshTokenRepository,
+    AuthorizationCodeRepository,
 };
 use fc_platform::usecase::PgUnitOfWork;
 use fc_platform::operations::{
@@ -108,7 +119,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 #[command(about = "FlowCatalyst Development Monolith - All components in one binary")]
 struct Args {
     /// API server port
-    #[arg(long, env = "FC_API_PORT", default_value = "8080")]
+    #[arg(long, env = "FC_API_PORT", default_value = "3000")]
     api_port: u16,
 
     /// Metrics server port
@@ -238,6 +249,16 @@ async fn main() -> Result<()> {
     let pg_db = fc_platform::shared::database::create_connection(&args.database_url).await
         .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {}", e))?;
 
+    // Run PostgreSQL migrations
+    fc_platform::shared::database::run_migrations(&pg_db).await
+        .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
+
+    // Seed development data
+    let seeder = fc_platform::seed::DevDataSeeder::new(pg_db.clone());
+    if let Err(e) = seeder.seed().await {
+        tracing::warn!("Dev data seeding skipped (data may already exist): {}", e);
+    }
+
     // 8b. Initialize all repositories
     let event_repo = Arc::new(EventRepository::new(&pg_db));
     let event_type_repo = Arc::new(EventTypeRepository::new(&pg_db));
@@ -265,6 +286,10 @@ async fn main() -> Result<()> {
     let platform_config_access_repo = Arc::new(PlatformConfigAccessRepository::new(&pg_db));
     let login_attempt_repo = Arc::new(LoginAttemptRepository::new(&pg_db));
     let password_reset_repo = Arc::new(PasswordResetTokenRepository::new(&pg_db));
+    let oidc_login_state_repo = Arc::new(OidcLoginStateRepository::new(&pg_db));
+    let refresh_token_repo = Arc::new(RefreshTokenRepository::new(&pg_db));
+    let auth_code_repo = Arc::new(AuthorizationCodeRepository::new(&pg_db));
+    let pending_auth_repo = Arc::new(fc_platform::PendingAuthRepository::new(&pg_db));
     info!("Platform repositories initialized");
 
     // 8b2. Create UnitOfWork for atomic commits
@@ -306,12 +331,16 @@ async fn main() -> Result<()> {
     let auth_config = AuthConfig {
         rsa_private_key: Some(private_key),
         rsa_public_key: Some(public_key),
+        rsa_public_key_previous: None, // Dev mode: no key rotation
         secret_key: String::new(),
         issuer: "flowcatalyst".to_string(),
         audience: "flowcatalyst".to_string(),
-        access_token_expiry_secs: 3600,      // 1 hour (PT1H)
-        session_token_expiry_secs: 28800,    // 8 hours (PT8H)
-        refresh_token_expiry_secs: 86400 * 30, // 30 days (P30D)
+        access_token_expiry_secs: std::env::var("FC_ACCESS_TOKEN_EXPIRY_SECS")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(3600),
+        session_token_expiry_secs: std::env::var("FC_SESSION_TOKEN_EXPIRY_SECS")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(28800),
+        refresh_token_expiry_secs: std::env::var("FC_REFRESH_TOKEN_EXPIRY_SECS")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(86400 * 30),
     };
     let auth_service = Arc::new(AuthService::new(auth_config));
     let authz_service = Arc::new(AuthorizationService::new(role_repo.clone()));
@@ -364,15 +393,15 @@ async fn main() -> Result<()> {
         idp_role_mapping_repo: idp_role_mapping_repo.clone(),
         principal_repo: Some(principal_repo.clone()),
     };
-    let audit_logs_state = AuditLogsState { audit_log_repo: audit_log_repo.clone() };
+    let audit_logs_state = AuditLogsState { audit_log_repo: audit_log_repo.clone(), principal_repo: principal_repo.clone() };
     // New domain API states
     let connections_state = ConnectionsState { connection_repo };
     let cors_state = CorsState { cors_repo };
-    let idp_state = IdentityProvidersState { idp_repo };
-    let edm_state = EmailDomainMappingsState { edm_repo };
+    let idp_state = IdentityProvidersState { idp_repo: idp_repo.clone() };
+    let edm_state = EmailDomainMappingsState { edm_repo: edm_repo.clone(), idp_repo: idp_repo.clone() };
     let platform_config_state = PlatformConfigState { config_repo: platform_config_repo };
     let config_access_state = ConfigAccessState { access_repo: platform_config_access_repo };
-    let login_attempts_state = LoginAttemptsState { login_attempt_repo };
+    let login_attempts_state = LoginAttemptsState { login_attempt_repo: login_attempt_repo.clone() };
     let me_state = MeState {
         client_repo: client_repo.clone(),
         application_repo: application_repo.clone(),
@@ -394,11 +423,56 @@ async fn main() -> Result<()> {
         application_repo: application_repo.clone(),
         role_repo: role_repo.clone(),
     };
+    let email_service: Arc<dyn fc_platform::shared::email_service::EmailService> =
+        Arc::from(fc_platform::shared::email_service::create_email_service());
     let password_reset_state = PasswordResetApiState {
         password_reset_repo,
         principal_repo: principal_repo.clone(),
-        password_service,
+        password_service: password_service.clone(),
         unit_of_work: unit_of_work.clone(),
+        email_service: email_service.clone(),
+        external_base_url: format!("http://localhost:{}", args.api_port),
+    };
+
+    // Auth/OAuth/OIDC states
+    let oidc_sync_service = Arc::new(OidcSyncService::new(
+        principal_repo.clone(),
+        idp_role_mapping_repo.clone(),
+    ));
+    let oidc_service = Arc::new(OidcService::new());
+    let oidc_login_state = OidcLoginApiState::new(
+        anchor_domain_repo.clone(),
+        idp_repo.clone(),
+        edm_repo.clone(),
+        oidc_login_state_repo,
+        oidc_sync_service,
+        auth_service.clone(),
+        unit_of_work.clone(),
+    ).with_session_cookie_settings("fc_session", false, "Lax", 86400);
+    let embedded_auth_state = AuthState::new(
+        auth_service.clone(),
+        principal_repo.clone(),
+        password_service.clone(),
+        refresh_token_repo.clone(),
+        edm_repo.clone(),
+        idp_repo.clone(),
+        login_attempt_repo.clone(),
+    );
+    let oauth_state = OAuthState::new(
+        oauth_client_repo.clone(),
+        principal_repo.clone(),
+        auth_service.clone(),
+        oidc_service,
+        auth_code_repo,
+        refresh_token_repo,
+        pending_auth_repo,
+        password_service,
+    );
+    let sdk_clients_state = SdkClientsState { client_repo: client_repo.clone() };
+    let sdk_principals_state = SdkPrincipalsState { principal_repo: principal_repo.clone() };
+    let sdk_roles_state = SdkRolesState {
+        role_repo: role_repo.clone(),
+        application_repo: application_repo.clone(),
     };
 
     let applications_state = ApplicationsState {
@@ -460,6 +534,7 @@ async fn main() -> Result<()> {
     let bff_event_types_state = BffEventTypesState {
         event_type_repo: event_type_repo.clone(),
         application_repo: Some(application_repo.clone()),
+        sync_use_case: sync_event_types_use_case.clone(),
     };
 
     // Monitoring state with leader election and circuit breakers
@@ -477,7 +552,7 @@ async fn main() -> Result<()> {
         .nest("/bff/events", events_router(events_state).into())
         .nest("/bff/event-types", event_types_router(event_types_state).into())
         .nest("/bff/dispatch-jobs", dispatch_jobs_router(dispatch_jobs_state).into())
-        .nest("/bff/filter-options", filter_options_router(filter_options_state).into())
+        .nest("/bff/filter-options", filter_options_router(filter_options_state.clone()).into())
         .nest("/bff/roles", roles_router(roles_state.clone()).into())
         // Debug BFF APIs (raw data access)
         .nest("/bff/debug/events", debug_events_router(debug_state.clone()).into())
@@ -505,6 +580,9 @@ async fn main() -> Result<()> {
         .nest("/api/admin/login-attempts", login_attempts_router(login_attempts_state).into())
         .nest("/api/me", me_router(me_state).into())
         .nest("/api/sdk/events", sdk_events_batch_router(sdk_events_state).into())
+        .nest("/api/sdk/clients", sdk_clients_router(sdk_clients_state).into())
+        .nest("/api/sdk/principals", sdk_principals_router(sdk_principals_state).into())
+        .nest("/api/sdk/roles", sdk_roles_router(sdk_roles_state).into())
         .nest("/.well-known", well_known_router(well_known_state).into())
         .nest("/auth/client", client_selection_router(client_selection_state).into())
         .nest("/api/applications", application_roles_sdk_router(application_roles_sdk_state).into())
@@ -515,7 +593,14 @@ async fn main() -> Result<()> {
         .nest("/bff/event-types", bff_event_types_router(bff_event_types_state).into())
         // Public routes (no auth required)
         .nest("/api/public", public_router().into())
+        .nest("/auth", auth_router(embedded_auth_state).into())
+        .nest("/auth", oidc_login_router(oidc_login_state).into())
+        .nest("/oauth", oauth_router(oauth_state).into())
         .nest("/auth/password-reset", password_reset_router(password_reset_state).into())
+        .nest("/api/config", platform_config_router().into())
+        .nest("/bff/event-types/filters", event_type_filters_router(filter_options_state.clone()).into())
+        // Health check on API port (for load balancers / K8s probes)
+        .route("/health", get(health_handler))
         // Monitoring APIs
         .nest("/api/monitoring", monitoring_router(monitoring_state).into())
         // Add auth middleware

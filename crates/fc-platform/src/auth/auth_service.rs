@@ -69,6 +69,9 @@ pub struct AuthConfig {
     /// RSA public key PEM content (for RS256)
     pub rsa_public_key: Option<String>,
 
+    /// Previous RSA public key PEM (for key rotation — validation only)
+    pub rsa_public_key_previous: Option<String>,
+
     /// JWT secret key for HS256 (fallback for development)
     pub secret_key: String,
 
@@ -93,6 +96,7 @@ impl Default for AuthConfig {
         Self {
             rsa_private_key: None,
             rsa_public_key: None,
+            rsa_public_key_previous: None,
             secret_key: String::new(),
             issuer: "flowcatalyst".to_string(),
             audience: "flowcatalyst".to_string(),
@@ -231,15 +235,39 @@ pub struct RsaPublicKeyComponents {
     pub e: String,
 }
 
-/// Authentication service for token management
+/// A single signing/verification key with its metadata
+#[derive(Clone)]
+struct KeyEntry {
+    decoding_key: DecodingKey,
+    key_id: String,
+    rsa_components: Option<RsaPublicKeyComponents>,
+}
+
+/// Authentication service for token management.
+///
+/// Supports JWT key rotation: signs with the current key, validates against
+/// both current and previous keys. The JWKS endpoint exposes all active public keys
+/// so clients can verify tokens signed by either key during rotation.
+///
+/// ## Key Rotation Procedure
+/// 1. Set `FC_JWT_PRIVATE_KEY_PATH_PREVIOUS` / `FLOWCATALYST_JWT_PRIVATE_KEY_PREVIOUS`
+///    and `FC_JWT_PUBLIC_KEY_PATH_PREVIOUS` / `FLOWCATALYST_JWT_PUBLIC_KEY_PREVIOUS`
+///    to the current keys
+/// 2. Set the primary key paths/env vars to the new keys
+/// 3. Restart — new tokens signed with new key, old tokens still validate
+/// 4. After max token TTL passes (e.g., 30 days for refresh tokens), remove previous keys
 pub struct AuthService {
     config: AuthConfig,
+    /// Current key for signing new tokens
     encoding_key: EncodingKey,
+    /// Current key for validation
     decoding_key: DecodingKey,
     algorithm: Algorithm,
     key_id: Option<String>,
     /// RSA public key components for JWKS (only set when using RS256)
     rsa_components: Option<RsaPublicKeyComponents>,
+    /// Previous keys — used for validation only (not signing), exposed in JWKS
+    previous_keys: Vec<KeyEntry>,
 }
 
 impl AuthService {
@@ -270,7 +298,28 @@ impl AuthService {
             algorithm: Algorithm::RS256,
             key_id: Some(key_id),
             rsa_components: Some(rsa_components),
+            previous_keys: Vec::new(),
         })
+    }
+
+    /// Add a previous RSA key pair for validation-only (key rotation).
+    /// The previous key will be used to validate existing tokens and exposed in JWKS.
+    pub fn add_previous_rsa_key(&mut self, public_key_pem: &str) -> Result<()> {
+        let decoding_key = DecodingKey::from_rsa_pem(public_key_pem.as_bytes())
+            .map_err(|e| PlatformError::Internal {
+                message: format!("Invalid previous RSA public key: {}", e)
+            })?;
+        let key_id = Self::generate_key_id(public_key_pem);
+        let rsa_components = Self::extract_rsa_components(public_key_pem)?;
+
+        info!("Added previous RSA key for rotation (key_id: {})", key_id);
+
+        self.previous_keys.push(KeyEntry {
+            decoding_key,
+            key_id,
+            rsa_components: Some(rsa_components),
+        });
+        Ok(())
     }
 
     /// Extract RSA public key components (n, e) for JWKS
@@ -308,16 +357,26 @@ impl AuthService {
             algorithm: Algorithm::HS256,
             key_id: None,
             rsa_components: None,
+            previous_keys: Vec::new(),
         }
     }
 
-    /// Create auth service - uses RSA if keys provided, falls back to HMAC
+    /// Create auth service - uses RSA if keys provided, falls back to HMAC.
+    /// Automatically loads previous key for rotation if configured.
     pub fn new(config: AuthConfig) -> Self {
         if let (Some(ref private_key), Some(ref public_key)) =
             (&config.rsa_private_key, &config.rsa_public_key)
         {
             match Self::new_with_rsa(config.clone(), private_key, public_key) {
-                Ok(service) => return service,
+                Ok(mut service) => {
+                    // Load previous key for rotation if configured
+                    if let Some(ref prev_pub) = config.rsa_public_key_previous {
+                        if let Err(e) = service.add_previous_rsa_key(prev_pub) {
+                            warn!("Failed to load previous RSA key for rotation: {}", e);
+                        }
+                    }
+                    return service;
+                }
                 Err(e) => {
                     warn!("Failed to initialize RSA keys, falling back to HMAC: {}", e);
                 }
@@ -327,13 +386,13 @@ impl AuthService {
         Self::new_with_secret(config)
     }
 
-    /// Generate key ID from public key (8 char SHA-256 hash, like Java)
+    /// Generate key ID from public key (22 char base64url SHA-256 hash)
     fn generate_key_id(public_key_pem: &str) -> String {
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
         hasher.update(public_key_pem.as_bytes());
         let hash = hasher.finalize();
-        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &hash[..6])
+        base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &hash[..16])
     }
 
     /// Get the key ID (for JWKS)
@@ -341,9 +400,24 @@ impl AuthService {
         self.key_id.as_deref()
     }
 
-    /// Get the RSA public key components (for JWKS)
+    /// Get the RSA public key components (for JWKS) — current key only
     pub fn rsa_components(&self) -> Option<&RsaPublicKeyComponents> {
         self.rsa_components.as_ref()
+    }
+
+    /// Get all JWKS entries (current + previous keys for rotation).
+    /// Returns Vec of (key_id, rsa_components) pairs.
+    pub fn all_jwks_keys(&self) -> Vec<(&str, &RsaPublicKeyComponents)> {
+        let mut keys = Vec::new();
+        if let (Some(kid), Some(components)) = (&self.key_id, &self.rsa_components) {
+            keys.push((kid.as_str(), components));
+        }
+        for prev in &self.previous_keys {
+            if let Some(ref components) = prev.rsa_components {
+                keys.push((&prev.key_id, components));
+            }
+        }
+        keys
     }
 
     /// Get the algorithm being used
@@ -389,23 +463,44 @@ impl AuthService {
             roles: principal.roles.iter().map(|r| r.role.clone()).collect(),
         };
 
-        let header = Header::new(self.algorithm);
+        let mut header = Header::new(self.algorithm);
+        header.kid = self.key_id.clone();
         encode(&header, &claims, &self.encoding_key)
             .map_err(|e| PlatformError::Internal { message: format!("Failed to encode JWT: {}", e) })
     }
 
-    /// Validate an access token and extract claims
+    /// Validate an access token and extract claims.
+    /// Tries the current key first, then falls back to previous keys (for key rotation).
     pub fn validate_token(&self, token: &str) -> Result<AccessTokenClaims> {
         let mut validation = Validation::new(self.algorithm);
         validation.set_issuer(&[&self.config.issuer]);
         validation.set_audience(&[&self.config.audience]);
 
-        decode::<AccessTokenClaims>(token, &self.decoding_key, &validation)
-            .map(|data| data.claims)
-            .map_err(|e| match e.kind() {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature => PlatformError::TokenExpired,
-                _ => PlatformError::InvalidToken { message: format!("{}", e) },
-            })
+        // Try current key first
+        match decode::<AccessTokenClaims>(token, &self.decoding_key, &validation) {
+            Ok(data) => return Ok(data.claims),
+            Err(e) => {
+                // If expired, don't bother trying other keys
+                if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) {
+                    return Err(PlatformError::TokenExpired);
+                }
+                // If no previous keys, fail immediately
+                if self.previous_keys.is_empty() {
+                    return Err(PlatformError::InvalidToken { message: format!("{}", e) });
+                }
+            }
+        }
+
+        // Try previous keys (rotation fallback)
+        for prev in &self.previous_keys {
+            if let Ok(data) = decode::<AccessTokenClaims>(token, &prev.decoding_key, &validation) {
+                return Ok(data.claims);
+            }
+        }
+
+        Err(PlatformError::InvalidToken {
+            message: "Token signature invalid with all available keys".to_string(),
+        })
     }
 
     /// Check if claims grant access to a specific client

@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use super::entity::{EmailDomainMapping, ScopeType};
 use super::repository::EmailDomainMappingRepository;
+use crate::identity_provider::repository::IdentityProviderRepository;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -53,13 +54,14 @@ pub struct EmailDomainMappingResponse {
     pub granted_client_ids: Vec<String>,
     pub required_oidc_tenant_id: Option<String>,
     pub allowed_role_ids: Vec<String>,
+    pub identity_provider_name: Option<String>,
     pub sync_roles_from_idp: bool,
     pub created_at: String,
     pub updated_at: String,
 }
 
-impl From<EmailDomainMapping> for EmailDomainMappingResponse {
-    fn from(m: EmailDomainMapping) -> Self {
+impl EmailDomainMappingResponse {
+    fn from_entity(m: EmailDomainMapping, identity_provider_name: Option<String>) -> Self {
         Self {
             id: m.id,
             email_domain: m.email_domain,
@@ -70,10 +72,17 @@ impl From<EmailDomainMapping> for EmailDomainMappingResponse {
             granted_client_ids: m.granted_client_ids,
             required_oidc_tenant_id: m.required_oidc_tenant_id,
             allowed_role_ids: m.allowed_role_ids,
+            identity_provider_name,
             sync_roles_from_idp: m.sync_roles_from_idp,
             created_at: m.created_at.to_rfc3339(),
             updated_at: m.updated_at.to_rfc3339(),
         }
+    }
+}
+
+impl From<EmailDomainMapping> for EmailDomainMappingResponse {
+    fn from(m: EmailDomainMapping) -> Self {
+        Self::from_entity(m, None)
     }
 }
 
@@ -87,6 +96,7 @@ pub struct EmailDomainMappingsListResponse {
 #[derive(Clone)]
 pub struct EmailDomainMappingsState {
     pub edm_repo: Arc<EmailDomainMappingRepository>,
+    pub idp_repo: Arc<IdentityProviderRepository>,
 }
 
 /// Create a new email domain mapping
@@ -141,8 +151,25 @@ pub async fn list_email_domain_mappings(
 ) -> Result<Json<EmailDomainMappingsListResponse>, PlatformError> {
     let mappings = state.edm_repo.find_all().await?;
     let total = mappings.len();
+
+    // Batch-lookup identity provider names
+    let idp_ids: Vec<String> = mappings.iter().map(|m| m.identity_provider_id.clone()).collect();
+    let mut idp_name_map = std::collections::HashMap::new();
+    for idp_id in &idp_ids {
+        if !idp_name_map.contains_key(idp_id) {
+            if let Some(idp) = state.idp_repo.find_by_id(idp_id).await? {
+                idp_name_map.insert(idp_id.clone(), idp.name);
+            }
+        }
+    }
+
+    let responses = mappings.into_iter().map(|m| {
+        let name = idp_name_map.get(&m.identity_provider_id).cloned();
+        EmailDomainMappingResponse::from_entity(m, name)
+    }).collect();
+
     Ok(Json(EmailDomainMappingsListResponse {
-        mappings: mappings.into_iter().map(|m| m.into()).collect(),
+        mappings: responses,
         total,
     }))
 }
@@ -169,7 +196,9 @@ pub async fn get_email_domain_mapping(
 ) -> Result<Json<EmailDomainMappingResponse>, PlatformError> {
     let edm = state.edm_repo.find_by_id(&id).await?
         .ok_or_else(|| PlatformError::not_found("EmailDomainMapping", &id))?;
-    Ok(Json(edm.into()))
+    let idp_name = state.idp_repo.find_by_id(&edm.identity_provider_id).await?
+        .map(|idp| idp.name);
+    Ok(Json(EmailDomainMappingResponse::from_entity(edm, idp_name)))
 }
 
 /// Lookup email domain mapping by domain
@@ -194,7 +223,9 @@ pub async fn lookup_email_domain_mapping(
 ) -> Result<Json<EmailDomainMappingResponse>, PlatformError> {
     let edm = state.edm_repo.find_by_email_domain(&domain).await?
         .ok_or_else(|| PlatformError::not_found("EmailDomainMapping", &domain))?;
-    Ok(Json(edm.into()))
+    let idp_name = state.idp_repo.find_by_id(&edm.identity_provider_id).await?
+        .map(|idp| idp.name);
+    Ok(Json(EmailDomainMappingResponse::from_entity(edm, idp_name)))
 }
 
 /// Update an email domain mapping

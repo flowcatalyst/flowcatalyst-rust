@@ -40,6 +40,7 @@ mongodb = "3.2"
 bson = { version = "2.15", features = ["chrono-0_4"] }
 aws-sdk-sqs = "1.91"
 aws-config = "1.8"
+aes-gcm = "0.10"
 async-trait = "0.1"
 anyhow = "1.0"
 thiserror = "2.0"

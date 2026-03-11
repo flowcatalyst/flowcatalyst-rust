@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AuditLog;
 use crate::AuditLogRepository;
+use crate::PrincipalRepository;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -56,8 +57,8 @@ impl From<AuditLog> for AuditLogResponse {
             operation: log.operation,
             entity_type: log.entity_type,
             entity_id: entity_id_opt,
-            principal_id: log.principal_id.clone(),
-            principal_name: log.principal_id,
+            principal_id: log.principal_id,
+            principal_name: log.principal_name,
             application_id: log.application_id,
             client_id: log.client_id,
             performed_at: log.performed_at.to_rfc3339(),
@@ -75,8 +76,8 @@ impl From<AuditLog> for AuditLogDetailResponse {
             entity_type: log.entity_type,
             entity_id: entity_id_opt,
             operation_json: op_json,
-            principal_id: log.principal_id.clone(),
-            principal_name: log.principal_id,
+            principal_id: log.principal_id,
+            principal_name: log.principal_name,
             application_id: log.application_id,
             client_id: log.client_id,
             performed_at: log.performed_at.to_rfc3339(),
@@ -164,8 +165,45 @@ fn default_page_size() -> i32 { 50 }
 #[derive(Clone)]
 pub struct AuditLogsState {
     pub audit_log_repo: Arc<AuditLogRepository>,
+    pub principal_repo: Arc<PrincipalRepository>,
 }
 
+
+/// Enrich audit logs with principal names from a batch lookup.
+async fn enrich_principal_names(
+    logs: &mut [AuditLog],
+    principal_repo: &PrincipalRepository,
+) {
+    let principal_ids: Vec<String> = logs.iter()
+        .filter_map(|l| l.principal_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    if principal_ids.is_empty() {
+        return;
+    }
+
+    if let Ok(name_map) = principal_repo.find_names_by_ids(&principal_ids).await {
+        for log in logs.iter_mut() {
+            if let Some(pid) = &log.principal_id {
+                log.principal_name = name_map.get(pid).cloned();
+            }
+        }
+    }
+}
+
+/// Enrich a single audit log with principal name.
+async fn enrich_single_principal_name(
+    log: &mut AuditLog,
+    principal_repo: &PrincipalRepository,
+) {
+    if let Some(pid) = &log.principal_id {
+        if let Ok(name_map) = principal_repo.find_names_by_ids(&[pid.clone()]).await {
+            log.principal_name = name_map.get(pid).cloned();
+        }
+    }
+}
 
 #[allow(dead_code)]
 fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
@@ -238,8 +276,10 @@ pub async fn get_audit_log(
 ) -> Result<Json<AuditLogDetailResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
-    let log = state.audit_log_repo.find_by_id(&id).await?
+    let mut log = state.audit_log_repo.find_by_id(&id).await?
         .ok_or_else(|| PlatformError::not_found("AuditLog", &id))?;
+
+    enrich_single_principal_name(&mut log, &state.principal_repo).await;
 
     Ok(Json(log.into()))
 }
@@ -268,7 +308,7 @@ pub async fn list_audit_logs(
     let skip = (page * page_size) as u64;
     let limit = page_size as i64;
 
-    let logs = state.audit_log_repo.search(
+    let mut logs = state.audit_log_repo.search(
         query.entity_type.as_deref(),
         query.entity_id.as_deref(),
         query.operation.as_deref(),
@@ -284,6 +324,8 @@ pub async fn list_audit_logs(
         query.operation.as_deref(),
         query.principal_id.as_deref(),
     ).await?;
+
+    enrich_principal_names(&mut logs, &state.principal_repo).await;
 
     let audit_logs: Vec<AuditLogResponse> = logs.into_iter()
         .map(|l| l.into())
@@ -319,8 +361,10 @@ pub async fn get_entity_audit_logs(
 ) -> Result<Json<EntityAuditLogsResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
-    let logs = state.audit_log_repo.find_by_entity(&entity_type, &entity_id, 1000).await?;
+    let mut logs = state.audit_log_repo.find_by_entity(&entity_type, &entity_id, 1000).await?;
     let total = logs.len() as i64;
+
+    enrich_principal_names(&mut logs, &state.principal_repo).await;
 
     let audit_logs: Vec<AuditLogResponse> = logs.into_iter()
         .map(|l| l.into())
@@ -358,7 +402,9 @@ pub async fn get_principal_audit_logs(
         return Err(PlatformError::forbidden("Cannot view other principal's audit logs"));
     }
 
-    let logs = state.audit_log_repo.find_by_principal(&principal_id, 1000).await?;
+    let mut logs = state.audit_log_repo.find_by_principal(&principal_id, 1000).await?;
+
+    enrich_principal_names(&mut logs, &state.principal_repo).await;
 
     let response: Vec<AuditLogResponse> = logs.into_iter()
         .map(|l| l.into())
@@ -384,7 +430,9 @@ pub async fn get_recent_audit_logs(
 ) -> Result<Json<Vec<AuditLogResponse>>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
-    let logs = state.audit_log_repo.find_recent(100).await?;
+    let mut logs = state.audit_log_repo.find_recent(100).await?;
+
+    enrich_principal_names(&mut logs, &state.principal_repo).await;
 
     let response: Vec<AuditLogResponse> = logs.into_iter()
         .map(|l| l.into())

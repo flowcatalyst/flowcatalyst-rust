@@ -12,6 +12,9 @@ pub struct AuditLog {
     pub operation: String,
     pub operation_json: Option<serde_json::Value>,
     pub principal_id: Option<String>,
+    /// Enriched from principals table (not stored in audit log)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub principal_name: Option<String>,
     pub application_id: Option<String>,
     pub client_id: Option<String>,
     pub performed_at: DateTime<Utc>,
@@ -32,6 +35,7 @@ impl AuditLog {
             operation: operation.into(),
             operation_json,
             principal_id,
+            principal_name: None,
             application_id: None,
             client_id: None,
             performed_at: Utc::now(),
@@ -73,6 +77,7 @@ impl From<crate::entities::aud_logs::Model> for AuditLog {
             operation: m.operation,
             operation_json: m.operation_json.map(Into::into),
             principal_id: m.principal_id,
+            principal_name: None,
             application_id: m.application_id,
             client_id: m.client_id,
             performed_at: m.performed_at.with_timezone(&Utc),

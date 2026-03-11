@@ -166,6 +166,8 @@ pub struct SubscriptionResponse {
     pub max_retries: u32,
     pub service_account_id: Option<String>,
     pub data_only: bool,
+    pub application_code: Option<String>,
+    pub client_scoped: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -195,6 +197,8 @@ impl From<Subscription> for SubscriptionResponse {
             max_retries: s.max_retries as u32,
             service_account_id: s.service_account_id,
             data_only: s.data_only,
+            application_code: s.application_code,
+            client_scoped: s.client_scoped,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
         }

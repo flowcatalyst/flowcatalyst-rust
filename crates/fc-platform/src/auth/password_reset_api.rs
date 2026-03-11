@@ -18,6 +18,7 @@ use crate::principal::repository::PrincipalRepository;
 use crate::principal::operations::events::PasswordResetCompleted;
 use crate::auth::password_service::PasswordService;
 use crate::shared::error::PlatformError;
+use crate::shared::email_service::{EmailService, EmailMessage};
 use crate::{PgUnitOfWork, UnitOfWork};
 
 #[derive(Clone)]
@@ -26,6 +27,9 @@ pub struct PasswordResetApiState {
     pub principal_repo: Arc<PrincipalRepository>,
     pub password_service: Arc<PasswordService>,
     pub unit_of_work: Arc<PgUnitOfWork>,
+    pub email_service: Arc<dyn EmailService>,
+    /// Base URL for constructing reset links (e.g. "https://app.flowcatalyst.io")
+    pub external_base_url: String,
 }
 
 // -- Request / Response DTOs --
@@ -110,12 +114,29 @@ async fn request_reset(
             );
             state.password_reset_repo.create(&reset_token).await?;
 
-            // In production, send an email with the raw_token here.
-            // For now, log it (development convenience).
-            info!(
-                principal_id = %principal.id,
-                "Password reset token created (raw token not sent — email sending not implemented)"
+            // Send password reset email
+            let reset_link = format!(
+                "{}/auth/password-reset?token={}",
+                state.external_base_url, raw_token
             );
+            let email = EmailMessage {
+                to: body.email.clone(),
+                subject: "Reset your password".to_string(),
+                html_body: format!(
+                    "<p>You requested a password reset.</p>\
+                     <p><a href=\"{}\">Click here to reset your password</a></p>\
+                     <p>This link expires in 15 minutes.</p>\
+                     <p>If you did not request this, you can safely ignore this email.</p>",
+                    reset_link
+                ),
+                text_body: Some(format!(
+                    "You requested a password reset.\n\nReset link: {}\n\nThis link expires in 15 minutes.",
+                    reset_link
+                )),
+            };
+            if let Err(e) = state.email_service.send(&email).await {
+                warn!(principal_id = %principal.id, error = %e, "Failed to send password reset email");
+            }
         } else {
             // Principal not found — do nothing (silent success)
             warn!(email = %body.email, "Password reset requested for unknown email");
