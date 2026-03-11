@@ -22,13 +22,13 @@ use crate::shared::middleware::Authenticated;
 #[serde(rename_all = "camelCase")]
 pub struct AuditLogResponse {
     pub id: String,
-    /// Operation name (Java calls this "operation")
     pub operation: String,
     pub entity_type: String,
     pub entity_id: Option<String>,
     pub principal_id: Option<String>,
-    /// Principal name (resolved from principal entity)
     pub principal_name: Option<String>,
+    pub application_id: Option<String>,
+    pub client_id: Option<String>,
     pub performed_at: String,
 }
 
@@ -40,22 +40,26 @@ pub struct AuditLogDetailResponse {
     pub operation: String,
     pub entity_type: String,
     pub entity_id: Option<String>,
-    /// Full operation payload as JSON string
     pub operation_json: Option<String>,
     pub principal_id: Option<String>,
     pub principal_name: Option<String>,
+    pub application_id: Option<String>,
+    pub client_id: Option<String>,
     pub performed_at: String,
 }
 
 impl From<AuditLog> for AuditLogResponse {
     fn from(log: AuditLog) -> Self {
+        let entity_id_opt = if log.entity_id.is_empty() { None } else { Some(log.entity_id) };
         Self {
             id: log.id,
             operation: log.operation,
             entity_type: log.entity_type,
-            entity_id: log.entity_id,
+            entity_id: entity_id_opt,
             principal_id: log.principal_id.clone(),
-            principal_name: log.principal_id.clone(),
+            principal_name: log.principal_id,
+            application_id: log.application_id,
+            client_id: log.client_id,
             performed_at: log.performed_at.to_rfc3339(),
         }
     }
@@ -63,14 +67,18 @@ impl From<AuditLog> for AuditLogResponse {
 
 impl From<AuditLog> for AuditLogDetailResponse {
     fn from(log: AuditLog) -> Self {
+        let entity_id_opt = if log.entity_id.is_empty() { None } else { Some(log.entity_id) };
+        let op_json = log.operation_json.map(|v| serde_json::to_string(&v).unwrap_or_default());
         Self {
             id: log.id,
             operation: log.operation,
             entity_type: log.entity_type,
-            entity_id: log.entity_id,
-            operation_json: log.operation_json,
+            entity_id: entity_id_opt,
+            operation_json: op_json,
             principal_id: log.principal_id.clone(),
-            principal_name: log.principal_id.clone(),
+            principal_name: log.principal_id,
+            application_id: log.application_id,
+            client_id: log.client_id,
             performed_at: log.performed_at.to_rfc3339(),
         }
     }
@@ -98,6 +106,20 @@ pub struct EntityTypesResponse {
 #[serde(rename_all = "camelCase")]
 pub struct OperationsResponse {
     pub operations: Vec<String>,
+}
+
+/// Application IDs response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationIdsResponse {
+    pub application_ids: Vec<String>,
+}
+
+/// Client IDs response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientIdsResponse {
+    pub client_ids: Vec<String>,
 }
 
 /// Entity audit logs response
@@ -155,7 +177,7 @@ fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
     get,
     path = "/entity-types",
     tag = "audit-logs",
-    operation_id = "getApiAdminPlatformAuditLogsEntityTypes",
+    operation_id = "getApiAdminAuditLogsEntityTypes",
     responses(
         (status = 200, description = "List of distinct entity types", body = EntityTypesResponse)
     ),
@@ -177,7 +199,7 @@ pub async fn get_entity_types(
     get,
     path = "/operations",
     tag = "audit-logs",
-    operation_id = "getApiAdminPlatformAuditLogsOperations",
+    operation_id = "getApiAdminAuditLogsOperations",
     responses(
         (status = 200, description = "List of distinct operations", body = OperationsResponse)
     ),
@@ -199,7 +221,7 @@ pub async fn get_operations(
     get,
     path = "/{id}",
     tag = "audit-logs",
-    operation_id = "getApiAdminPlatformAuditLogsById",
+    operation_id = "getApiAdminAuditLogsById",
     params(
         ("id" = String, Path, description = "Audit log ID")
     ),
@@ -227,7 +249,7 @@ pub async fn get_audit_log(
     get,
     path = "",
     tag = "audit-logs",
-    operation_id = "getApiAdminPlatformAuditLogs",
+    operation_id = "getApiAdminAuditLogs",
     params(AuditLogsQuery),
     responses(
         (status = 200, description = "List of audit logs", body = AuditLogListResponse)
@@ -280,7 +302,7 @@ pub async fn list_audit_logs(
     get,
     path = "/entity/{entity_type}/{entity_id}",
     tag = "audit-logs",
-    operation_id = "getApiAdminPlatformAuditLogsEntityByEntityTypeByEntityId",
+    operation_id = "getApiAdminAuditLogsEntityByEntityTypeByEntityId",
     params(
         ("entity_type" = String, Path, description = "Entity type"),
         ("entity_id" = String, Path, description = "Entity ID")
@@ -317,7 +339,7 @@ pub async fn get_entity_audit_logs(
     get,
     path = "/principal/{principal_id}",
     tag = "audit-logs",
-    operation_id = "getApiAdminPlatformAuditLogsPrincipalByPrincipalId",
+    operation_id = "getApiAdminAuditLogsPrincipalByPrincipalId",
     params(
         ("principal_id" = String, Path, description = "Principal ID")
     ),
@@ -350,7 +372,7 @@ pub async fn get_principal_audit_logs(
     get,
     path = "/recent",
     tag = "audit-logs",
-    operation_id = "getApiAdminPlatformAuditLogsRecent",
+    operation_id = "getApiAdminAuditLogsRecent",
     responses(
         (status = 200, description = "Recent audit logs", body = Vec<AuditLogResponse>)
     ),
@@ -371,12 +393,58 @@ pub async fn get_recent_audit_logs(
     Ok(Json(response))
 }
 
+/// Get distinct application IDs
+#[utoipa::path(
+    get,
+    path = "/application-ids",
+    tag = "audit-logs",
+    operation_id = "getApiAdminAuditLogsApplicationIds",
+    responses(
+        (status = 200, description = "List of distinct application IDs", body = ApplicationIdsResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_application_ids(
+    State(state): State<AuditLogsState>,
+    auth: Authenticated,
+) -> Result<Json<ApplicationIdsResponse>, PlatformError> {
+    crate::checks::require_anchor(&auth.0)?;
+
+    let application_ids = state.audit_log_repo.find_distinct_application_ids().await?;
+
+    Ok(Json(ApplicationIdsResponse { application_ids }))
+}
+
+/// Get distinct client IDs
+#[utoipa::path(
+    get,
+    path = "/client-ids",
+    tag = "audit-logs",
+    operation_id = "getApiAdminAuditLogsClientIds",
+    responses(
+        (status = 200, description = "List of distinct client IDs", body = ClientIdsResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_client_ids(
+    State(state): State<AuditLogsState>,
+    auth: Authenticated,
+) -> Result<Json<ClientIdsResponse>, PlatformError> {
+    crate::checks::require_anchor(&auth.0)?;
+
+    let client_ids = state.audit_log_repo.find_distinct_client_ids().await?;
+
+    Ok(Json(ClientIdsResponse { client_ids }))
+}
+
 /// Create audit logs router
 pub fn audit_logs_router(state: AuditLogsState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(list_audit_logs))
         .routes(routes!(get_entity_types))
         .routes(routes!(get_operations))
+        .routes(routes!(get_application_ids))
+        .routes(routes!(get_client_ids))
         .routes(routes!(get_recent_audit_logs))
         .routes(routes!(get_audit_log))
         .routes(routes!(get_entity_audit_logs))

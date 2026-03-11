@@ -8,7 +8,6 @@
 //!   Client Admin:   alice@acme.com / DevPassword123!
 //!   Regular User:   bob@acme.com / DevPassword123!
 
-use mongodb::Database;
 use sea_orm::DatabaseConnection;
 use tracing::info;
 
@@ -26,23 +25,19 @@ use crate::auth::password_service::{PasswordService, Argon2Config, PasswordPolic
 const DEV_PASSWORD: &str = "DevPassword123!";
 
 /// Development data seeder
-///
-/// During the MongoDB → PostgreSQL migration, the seeder holds both database connections.
-/// Migrated repositories (Client) use `pg_db`, others still use MongoDB `db`.
 pub struct DevDataSeeder {
-    db: Database,
     pg_db: DatabaseConnection,
     password_service: PasswordService,
 }
 
 impl DevDataSeeder {
-    pub fn new(db: Database, pg_db: DatabaseConnection) -> Self {
+    pub fn new(pg_db: DatabaseConnection) -> Self {
         // Use testing config for faster seeding, but still Argon2id
         let password_service = PasswordService::new(
             Argon2Config::testing(),
             PasswordPolicy::lenient(),
         );
-        Self { db, pg_db, password_service }
+        Self { pg_db, password_service }
     }
 
     /// Seed all development data
@@ -69,7 +64,7 @@ impl DevDataSeeder {
     }
 
     async fn seed_anchor_domain(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let repo = AnchorDomainRepository::new(&self.db);
+        let repo = AnchorDomainRepository::new(&self.pg_db);
 
         if repo.find_by_domain("flowcatalyst.local").await?.is_some() {
             return Ok(());
@@ -113,7 +108,7 @@ impl DevDataSeeder {
     }
 
     async fn seed_auth_configs(&self, _clients: &SeedClients) -> Result<(), Box<dyn std::error::Error>> {
-        let repo = ClientAuthConfigRepository::new(&self.db);
+        let repo = ClientAuthConfigRepository::new(&self.pg_db);
 
         self.create_auth_config_if_not_exists(&repo, "flowcatalyst.local").await?;
         self.create_auth_config_if_not_exists(&repo, "acme.com").await?;
@@ -263,14 +258,14 @@ impl DevDataSeeder {
             return Ok(());
         }
 
-        let grant = ClientAccessGrant::new(principal_id, client_id);
+        let grant = ClientAccessGrant::new(principal_id, client_id, "system");
         repo.insert(&grant).await?;
 
         Ok(())
     }
 
     async fn seed_applications(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let repo = ApplicationRepository::new(&self.db);
+        let repo = ApplicationRepository::new(&self.pg_db);
 
         self.create_application_if_not_exists(&repo, "tms", "Transport Management System",
             "End-to-end transportation planning, execution, and optimization").await?;
@@ -307,7 +302,7 @@ impl DevDataSeeder {
     }
 
     async fn seed_event_types(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let repo = EventTypeRepository::new(&self.db);
+        let repo = EventTypeRepository::new(&self.pg_db);
 
         // TMS - Transport Management Events
         self.create_event_type(&repo, "tms:planning:load:created", "Load Created",

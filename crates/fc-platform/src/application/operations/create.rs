@@ -7,19 +7,9 @@ use crate::{Application, ApplicationType};
 use crate::ApplicationRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
-    unit_of_work::HasId,
 };
 use super::events::ApplicationCreated;
 
-impl HasId for Application {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn collection_name() -> &'static str {
-        "applications"
-    }
-}
 
 /// Command for creating a new application.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,8 +107,6 @@ impl<U: UnitOfWork> CreateApplicationUseCase<U> {
             application = application.with_icon_url(url);
         }
 
-        application.created_by = Some(ctx.principal_id.clone());
-
         // Create domain event
         let app_type = match application.application_type {
             ApplicationType::Integration => "INTEGRATION",
@@ -141,6 +129,7 @@ impl<U: UnitOfWork> CreateApplicationUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::unit_of_work::HasId;
 
     #[test]
     fn test_command_serialization() {
@@ -161,6 +150,5 @@ mod tests {
     fn test_application_has_id() {
         let app = Application::new("test", "Test");
         assert!(!app.id().is_empty());
-        assert_eq!(Application::collection_name(), "applications");
     }
 }

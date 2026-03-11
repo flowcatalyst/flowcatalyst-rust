@@ -80,11 +80,11 @@ impl<U: UnitOfWork> SuspendClientUseCase<U> {
             }
         };
 
-        // Business rule: cannot suspend a deleted client
-        if client.status == ClientStatus::Deleted {
+        // Business rule: cannot suspend an inactive client
+        if client.status == ClientStatus::Inactive {
             return UseCaseResult::failure(UseCaseError::business_rule(
-                "CANNOT_SUSPEND_DELETED",
-                "Cannot suspend a deleted client",
+                "CANNOT_SUSPEND_INACTIVE",
+                "Cannot suspend an inactive client",
             ));
         }
 

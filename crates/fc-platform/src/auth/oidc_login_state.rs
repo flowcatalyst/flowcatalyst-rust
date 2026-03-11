@@ -6,7 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc, Duration};
-use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
 /// OIDC login state for authorization code flow
 ///
@@ -18,16 +17,17 @@ use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OidcLoginState {
-    /// Random state parameter - also used as MongoDB _id
-    /// This is the primary key and CSRF token
-    #[serde(rename = "_id")]
+    /// Random state parameter - primary key and CSRF token
     pub state: String,
 
     /// The email domain that initiated this login
     pub email_domain: String,
 
-    /// The ClientAuthConfig ID used for this login
-    pub auth_config_id: String,
+    /// The IdentityProvider ID used for this login
+    pub identity_provider_id: String,
+
+    /// The EmailDomainMapping ID that matched this login
+    pub email_domain_mapping_id: String,
 
     /// Nonce for ID token validation (prevents replay attacks)
     pub nonce: String,
@@ -71,14 +71,16 @@ pub struct OidcLoginState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_nonce: Option<String>,
 
+    /// OIDC interaction UID (optional, for interaction-based flows)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interaction_uid: Option<String>,
+
     // ==================== Timestamps ====================
 
     /// When this state was created
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 
     /// When this state expires (10 minutes from creation)
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub expires_at: DateTime<Utc>,
 }
 
@@ -90,7 +92,8 @@ impl OidcLoginState {
     pub fn new(
         state: impl Into<String>,
         email_domain: impl Into<String>,
-        auth_config_id: impl Into<String>,
+        identity_provider_id: impl Into<String>,
+        email_domain_mapping_id: impl Into<String>,
         nonce: impl Into<String>,
         code_verifier: impl Into<String>,
     ) -> Self {
@@ -98,7 +101,8 @@ impl OidcLoginState {
         Self {
             state: state.into(),
             email_domain: email_domain.into().to_lowercase(),
-            auth_config_id: auth_config_id.into(),
+            identity_provider_id: identity_provider_id.into(),
+            email_domain_mapping_id: email_domain_mapping_id.into(),
             nonce: nonce.into(),
             code_verifier: code_verifier.into(),
             return_url: None,
@@ -109,6 +113,7 @@ impl OidcLoginState {
             oauth_code_challenge: None,
             oauth_code_challenge_method: None,
             oauth_nonce: None,
+            interaction_uid: None,
             created_at: now,
             expires_at: now + Duration::seconds(STATE_EXPIRY_SECONDS),
         }
@@ -158,6 +163,31 @@ impl OidcLoginState {
     }
 }
 
+/// Conversion from SeaORM model
+impl From<crate::entities::iam_oidc_login_states::Model> for OidcLoginState {
+    fn from(m: crate::entities::iam_oidc_login_states::Model) -> Self {
+        Self {
+            state: m.state,
+            email_domain: m.email_domain,
+            identity_provider_id: m.identity_provider_id,
+            email_domain_mapping_id: m.email_domain_mapping_id,
+            nonce: m.nonce,
+            code_verifier: m.code_verifier,
+            return_url: m.return_url,
+            oauth_client_id: m.oauth_client_id,
+            oauth_redirect_uri: m.oauth_redirect_uri,
+            oauth_scope: m.oauth_scope,
+            oauth_state: m.oauth_state,
+            oauth_code_challenge: m.oauth_code_challenge,
+            oauth_code_challenge_method: m.oauth_code_challenge_method,
+            oauth_nonce: m.oauth_nonce,
+            interaction_uid: m.interaction_uid,
+            created_at: m.created_at.with_timezone(&Utc),
+            expires_at: m.expires_at.with_timezone(&Utc),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,14 +197,16 @@ mod tests {
         let state = OidcLoginState::new(
             "random-state-123",
             "example.com",
-            "config-id-456",
+            "idp-456",
+            "edm-789",
             "nonce-789",
             "verifier-abc",
         );
 
         assert_eq!(state.state, "random-state-123");
         assert_eq!(state.email_domain, "example.com");
-        assert_eq!(state.auth_config_id, "config-id-456");
+        assert_eq!(state.identity_provider_id, "idp-456");
+        assert_eq!(state.email_domain_mapping_id, "edm-789");
         assert_eq!(state.nonce, "nonce-789");
         assert_eq!(state.code_verifier, "verifier-abc");
         assert!(!state.is_expired());
@@ -187,7 +219,8 @@ mod tests {
         let state = OidcLoginState::new(
             "state",
             "example.com",
-            "config-id",
+            "idp-id",
+            "edm-id",
             "nonce",
             "verifier",
         ).with_oauth_params(
@@ -209,7 +242,8 @@ mod tests {
         let state = OidcLoginState::new(
             "state",
             "EXAMPLE.COM",
-            "config-id",
+            "idp-id",
+            "edm-id",
             "nonce",
             "verifier",
         );

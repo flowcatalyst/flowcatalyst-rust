@@ -4,7 +4,6 @@
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
 /// OAuth client type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +21,15 @@ impl Default for OAuthClientType {
     }
 }
 
+impl OAuthClientType {
+    pub fn as_str(&self) -> &'static str {
+        match self { Self::Public => "PUBLIC", Self::Confidential => "CONFIDENTIAL" }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s { "CONFIDENTIAL" => Self::Confidential, _ => Self::Public }
+    }
+}
+
 /// OAuth grant type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,12 +40,31 @@ pub enum GrantType {
     Password,
 }
 
+impl GrantType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AuthorizationCode => "authorization_code",
+            Self::ClientCredentials => "client_credentials",
+            Self::RefreshToken => "refresh_token",
+            Self::Password => "password",
+        }
+    }
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "authorization_code" => Some(Self::AuthorizationCode),
+            "client_credentials" => Some(Self::ClientCredentials),
+            "refresh_token" => Some(Self::RefreshToken),
+            "password" => Some(Self::Password),
+            _ => None,
+        }
+    }
+}
+
 /// OAuth client entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthClient {
     /// TSID as Crockford Base32 string
-    #[serde(rename = "_id")]
     pub id: String,
 
     /// OAuth client_id (public identifier)
@@ -83,9 +110,7 @@ pub struct OAuthClient {
     pub active: bool,
 
     /// Audit fields
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub updated_at: DateTime<Utc>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,7 +125,7 @@ impl OAuthClient {
     pub fn new(client_id: impl Into<String>, client_name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::OAuthClient),
             client_id: client_id.into(),
             client_name: client_name.into(),
             client_type: OAuthClientType::Public,
@@ -170,5 +195,32 @@ impl OAuthClient {
             // Exact match or pattern match (for localhost with varying ports)
             allowed == uri || (allowed.contains("*") && uri.starts_with(&allowed.replace("*", "")))
         })
+    }
+}
+
+/// Conversion from SeaORM model — redirect_uris, grant_types, application_ids loaded separately
+impl From<crate::entities::oauth_clients::Model> for OAuthClient {
+    fn from(m: crate::entities::oauth_clients::Model) -> Self {
+        let default_scopes: Vec<String> = m.default_scopes
+            .map(|s| s.split(',').filter(|v| !v.is_empty()).map(String::from).collect())
+            .unwrap_or_default();
+
+        Self {
+            id: m.id,
+            client_id: m.client_id,
+            client_name: m.client_name,
+            client_type: OAuthClientType::from_str(&m.client_type),
+            client_secret_ref: m.client_secret_ref,
+            redirect_uris: vec![], // loaded separately
+            grant_types: vec![],   // loaded separately
+            default_scopes,
+            pkce_required: m.pkce_required,
+            application_ids: vec![], // loaded separately
+            service_account_principal_id: m.service_account_principal_id,
+            active: m.active,
+            created_at: m.created_at.with_timezone(&Utc),
+            updated_at: m.updated_at.with_timezone(&Utc),
+            created_by: None,
+        }
     }
 }

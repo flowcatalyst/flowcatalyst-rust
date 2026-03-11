@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::usecase::ExecutionContext;
 use crate::usecase::domain_event::EventMetadata;
 use crate::TsidGenerator;
+use crate::EntityType;
 use crate::impl_domain_event;
 use crate::client::entity::ClientStatus;
 
@@ -35,7 +36,7 @@ impl ClientCreated {
         identifier: &str,
         description: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.client.{}", client_id);
         let message_group = format!("platform:client:{}", client_id);
 
@@ -87,7 +88,7 @@ impl ClientUpdated {
         name: Option<&str>,
         description: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.client.{}", client_id);
         let message_group = format!("platform:client:{}", client_id);
 
@@ -130,7 +131,7 @@ impl ClientActivated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, client_id: &str, previous_status: ClientStatus) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.client.{}", client_id);
         let message_group = format!("platform:client:{}", client_id);
 
@@ -172,7 +173,7 @@ impl ClientSuspended {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, client_id: &str, reason: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.client.{}", client_id);
         let message_group = format!("platform:client:{}", client_id);
 
@@ -191,6 +192,96 @@ impl ClientSuspended {
             ),
             client_id: client_id.to_string(),
             reason: reason.to_string(),
+        }
+    }
+}
+
+/// Event emitted when a client is deleted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientDeleted {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub client_id: String,
+    pub name: String,
+    pub identifier: String,
+}
+
+impl_domain_event!(ClientDeleted);
+
+impl ClientDeleted {
+    const EVENT_TYPE: &'static str = "platform:iam:client:deleted";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(ctx: &ExecutionContext, client_id: &str, name: &str, identifier: &str) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.client.{}", client_id);
+        let message_group = format!("platform:client:{}", client_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id,
+                Self::EVENT_TYPE,
+                Self::SPEC_VERSION,
+                Self::SOURCE,
+                subject,
+                message_group,
+                ctx.execution_id.clone(),
+                ctx.correlation_id.clone(),
+                ctx.causation_id.clone(),
+                ctx.principal_id.clone(),
+            ),
+            client_id: client_id.to_string(),
+            name: name.to_string(),
+            identifier: identifier.to_string(),
+        }
+    }
+}
+
+/// Event emitted when a note is added to a client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientNoteAdded {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub client_id: String,
+    pub category: String,
+    pub text: String,
+    pub author: String,
+}
+
+impl_domain_event!(ClientNoteAdded);
+
+impl ClientNoteAdded {
+    const EVENT_TYPE: &'static str = "platform:iam:client:note-added";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(ctx: &ExecutionContext, client_id: &str, category: &str, text: &str, author: &str) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.client.{}", client_id);
+        let message_group = format!("platform:client:{}", client_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id,
+                Self::EVENT_TYPE,
+                Self::SPEC_VERSION,
+                Self::SOURCE,
+                subject,
+                message_group,
+                ctx.execution_id.clone(),
+                ctx.correlation_id.clone(),
+                ctx.causation_id.clone(),
+                ctx.principal_id.clone(),
+            ),
+            client_id: client_id.to_string(),
+            category: category.to_string(),
+            text: text.to_string(),
+            author: author.to_string(),
         }
     }
 }

@@ -172,7 +172,7 @@ impl EventMetadataBuilder {
     /// - `causation_id` from context (if present)
     /// - `principal_id` from context
     pub fn from(mut self, ctx: &super::ExecutionContext) -> Self {
-        self.event_id = Some(crate::shared::tsid::TsidGenerator::generate());
+        self.event_id = Some(crate::shared::tsid::TsidGenerator::generate(crate::EntityType::Event));
         self.execution_id = Some(ctx.execution_id.clone());
         self.correlation_id = Some(ctx.correlation_id.clone());
         self.causation_id = ctx.causation_id.clone();
@@ -245,7 +245,7 @@ impl EventMetadataBuilder {
     /// - principal_id
     pub fn build(self) -> EventMetadata {
         EventMetadata {
-            event_id: self.event_id.unwrap_or_else(|| crate::shared::tsid::TsidGenerator::generate()),
+            event_id: self.event_id.unwrap_or_else(|| crate::shared::tsid::TsidGenerator::generate(crate::EntityType::Event)),
             event_type: self.event_type.expect("event_type is required"),
             spec_version: self.spec_version.expect("spec_version is required"),
             source: self.source.expect("source is required"),
@@ -262,7 +262,7 @@ impl EventMetadataBuilder {
     /// Try to build the EventMetadata, returning an error if fields are missing.
     pub fn try_build(self) -> Result<EventMetadata, &'static str> {
         Ok(EventMetadata {
-            event_id: self.event_id.unwrap_or_else(|| crate::shared::tsid::TsidGenerator::generate()),
+            event_id: self.event_id.unwrap_or_else(|| crate::shared::tsid::TsidGenerator::generate(crate::EntityType::Event)),
             event_type: self.event_type.ok_or("event_type is required")?,
             spec_version: self.spec_version.ok_or("spec_version is required")?,
             source: self.source.ok_or("source is required")?,

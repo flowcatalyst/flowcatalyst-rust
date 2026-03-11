@@ -1,257 +1,260 @@
-//! Event Type Entity
-//!
-//! Defines event types with schema versioning.
-//! Code format: {application}:{subdomain}:{aggregate}:{event}
+//! EventType Entity — matches TypeScript EventType domain
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
-/// Event type status (matches Java EventTypeStatus)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EventTypeStatus {
-    /// Event type is active and can have new events created
-    #[serde(rename = "CURRENT")]
     Current,
-    /// Event type is archived - no new events can be created
-    #[serde(rename = "ARCHIVE")]
-    Archive,
+    Archived,
 }
 
 impl Default for EventTypeStatus {
-    fn default() -> Self {
-        Self::Current
+    fn default() -> Self { Self::Current }
+}
+
+impl EventTypeStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self { Self::Current => "CURRENT", Self::Archived => "ARCHIVED" }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s { "ARCHIVED" => Self::Archived, _ => Self::Current }
     }
 }
 
-/// Schema version status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum EventTypeSource {
+    Code,
+    Api,
+    Ui,
+}
+
+impl Default for EventTypeSource {
+    fn default() -> Self { Self::Ui }
+}
+
+impl EventTypeSource {
+    pub fn as_str(&self) -> &'static str {
+        match self { Self::Code => "CODE", Self::Api => "API", Self::Ui => "UI" }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s { "CODE" => Self::Code, "API" => Self::Api, _ => Self::Ui }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SpecVersionStatus {
-    /// Schema is being finalized (can still be modified)
     Finalising,
-    /// Schema is finalized and immutable
-    Finalized,
-    /// Schema is deprecated (should migrate away)
+    Current,
     Deprecated,
 }
 
 impl Default for SpecVersionStatus {
-    fn default() -> Self {
-        Self::Finalising
+    fn default() -> Self { Self::Finalising }
+}
+
+impl SpecVersionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Finalising => "FINALISING",
+            Self::Current => "CURRENT",
+            Self::Deprecated => "DEPRECATED",
+        }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "CURRENT" => Self::Current,
+            "DEPRECATED" => Self::Deprecated,
+            _ => Self::Finalising,
+        }
     }
 }
 
-/// Schema version for an event type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SchemaType {
+    #[serde(rename = "JSON_SCHEMA")]
+    JsonSchema,
+    #[serde(rename = "XSD")]
+    Xsd,
+    #[serde(rename = "PROTO")]
+    Proto,
+}
+
+impl Default for SchemaType {
+    fn default() -> Self { Self::JsonSchema }
+}
+
+impl SchemaType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::JsonSchema => "JSON_SCHEMA",
+            Self::Xsd => "XSD",
+            Self::Proto => "PROTO",
+        }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "XSD" | "XML_SCHEMA" => Self::Xsd,
+            "PROTO" | "PROTOBUF" => Self::Proto,
+            _ => Self::JsonSchema,
+        }
+    }
+}
+
+/// Schema version stored in msg_event_type_spec_versions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpecVersion {
-    /// Version number (1, 2, 3, ...)
-    pub version: u32,
-
-    /// JSON Schema definition
-    pub schema: serde_json::Value,
-
-    /// Version status
-    #[serde(default)]
+    pub id: String,
+    pub event_type_id: String,
+    pub version: String,
+    pub mime_type: String,
+    pub schema_content: Option<serde_json::Value>,
+    pub schema_type: SchemaType,
     pub status: SpecVersionStatus,
-
-    /// Description of changes in this version
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-
-    /// When this version was created
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
-
-    /// When this version was finalized
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
-    pub finalized_at: Option<DateTime<Utc>>,
-
-    /// When this version was deprecated
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
-    pub deprecated_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl SpecVersion {
-    pub fn new(version: u32, schema: serde_json::Value) -> Self {
+    pub fn new(event_type_id: impl Into<String>, version: impl Into<String>, schema_content: Option<serde_json::Value>) -> Self {
+        let now = Utc::now();
         Self {
-            version,
-            schema,
+            id: crate::TsidGenerator::generate(crate::EntityType::Schema),
+            event_type_id: event_type_id.into(),
+            version: version.into(),
+            mime_type: "application/schema+json".to_string(),
+            schema_content,
+            schema_type: SchemaType::JsonSchema,
             status: SpecVersionStatus::Finalising,
-            description: None,
-            created_at: Utc::now(),
-            finalized_at: None,
-            deprecated_at: None,
+            created_at: now,
+            updated_at: now,
         }
     }
 
-    pub fn is_finalized(&self) -> bool {
-        self.status == SpecVersionStatus::Finalized
-    }
+    pub fn is_current(&self) -> bool { self.status == SpecVersionStatus::Current }
+    pub fn is_deprecated(&self) -> bool { self.status == SpecVersionStatus::Deprecated }
+}
 
-    pub fn is_deprecated(&self) -> bool {
-        self.status == SpecVersionStatus::Deprecated
+impl From<crate::entities::msg_event_type_spec_versions::Model> for SpecVersion {
+    fn from(m: crate::entities::msg_event_type_spec_versions::Model) -> Self {
+        Self {
+            id: m.id,
+            event_type_id: m.event_type_id,
+            version: m.version,
+            mime_type: m.mime_type,
+            schema_content: m.schema_content.map(Into::into),
+            schema_type: SchemaType::from_str(&m.schema_type),
+            status: SpecVersionStatus::from_str(&m.status),
+            created_at: m.created_at.with_timezone(&Utc),
+            updated_at: m.updated_at.with_timezone(&Utc),
+        }
     }
 }
 
-/// Event type definition
+/// EventType domain entity — matches TypeScript EventType interface
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventType {
-    /// TSID as Crockford Base32 string
-    #[serde(rename = "_id")]
     pub id: String,
-
-    /// Globally unique code
-    /// Format: {application}:{subdomain}:{aggregate}:{event}
-    /// Example: "orders:fulfillment:shipment:shipped"
     pub code: String,
-
-    /// Human-readable name
     pub name: String,
-
-    /// Description of the event type
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-
-    /// Application code (extracted from code)
-    pub application: String,
-
-    /// Subdomain (extracted from code)
-    pub subdomain: String,
-
-    /// Aggregate (extracted from code)
-    pub aggregate: String,
-
-    /// Event name (extracted from code)
-    pub event_name: String,
-
-    /// Schema versions (ordered by version number)
-    #[serde(default)]
     pub spec_versions: Vec<SpecVersion>,
-
-    /// Current status
-    #[serde(default)]
     pub status: EventTypeStatus,
-
-    /// Multi-tenant: Client ID (null = anchor-level/shared)
+    pub source: EventTypeSource,
+    pub client_scoped: bool,
+    pub application: String,
+    pub subdomain: String,
+    pub aggregate: String,
+    /// Derived from code (4th segment)
+    pub event_name: String,
+    /// Optional client scoping
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-
-    /// Audit fields
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
-    pub created_at: DateTime<Utc>,
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
-    pub updated_at: DateTime<Utc>,
-
-    /// Who created this
+    /// Who created this event type
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl EventType {
-    /// Create a new event type from a code
+    /// Create from a colon-separated code (application:subdomain:aggregate:event) and name.
+    /// Returns Err if the code format is invalid.
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Result<Self, String> {
         let code = code.into();
         let parts: Vec<&str> = code.split(':').collect();
-
         if parts.len() != 4 {
-            return Err(format!(
-                "Invalid event type code format. Expected 'application:subdomain:aggregate:event', got '{}'",
-                code
-            ));
+            return Err("Event type code must follow format: application:subdomain:aggregate:event".to_string());
         }
-
+        for part in &parts {
+            if part.trim().is_empty() {
+                return Err("Event type code segments cannot be empty".to_string());
+            }
+        }
+        let application = parts[0].to_string();
+        let subdomain = parts[1].to_string();
+        let aggregate = parts[2].to_string();
+        let event_name = parts[3].to_string();
         let now = Utc::now();
         Ok(Self {
-            id: crate::TsidGenerator::generate(),
-            code: code.clone(),
+            id: crate::TsidGenerator::generate(crate::EntityType::EventType),
+            code,
             name: name.into(),
             description: None,
-            application: parts[0].to_string(),
-            subdomain: parts[1].to_string(),
-            aggregate: parts[2].to_string(),
-            event_name: parts[3].to_string(),
             spec_versions: vec![],
             status: EventTypeStatus::Current,
+            source: EventTypeSource::Ui,
+            client_scoped: false,
+            application,
+            subdomain,
+            aggregate,
+            event_name,
             client_id: None,
+            created_by: None,
             created_at: now,
             updated_at: now,
-            created_by: None,
         })
     }
 
-    /// Add a new schema version
-    pub fn add_schema_version(&mut self, schema: serde_json::Value) -> &SpecVersion {
-        let next_version = self.spec_versions.iter().map(|v| v.version).max().unwrap_or(0) + 1;
-        let spec = SpecVersion::new(next_version, schema);
-        self.spec_versions.push(spec);
-        self.updated_at = Utc::now();
-        self.spec_versions.last().unwrap()
-    }
+    pub fn with_description(mut self, desc: impl Into<String>) -> Self { self.description = Some(desc.into()); self }
+    pub fn with_client_id(mut self, id: impl Into<String>) -> Self { self.client_id = Some(id.into()); self }
 
-    /// Get the latest finalized schema version
-    pub fn latest_finalized_version(&self) -> Option<&SpecVersion> {
-        self.spec_versions
-            .iter()
-            .filter(|v| v.is_finalized())
-            .max_by_key(|v| v.version)
-    }
-
-    /// Get a specific schema version
-    pub fn get_version(&self, version: u32) -> Option<&SpecVersion> {
-        self.spec_versions.iter().find(|v| v.version == version)
-    }
-
-    /// Get a mutable reference to a specific schema version
-    pub fn get_version_mut(&mut self, version: u32) -> Option<&mut SpecVersion> {
-        self.spec_versions.iter_mut().find(|v| v.version == version)
-    }
-
-    /// Finalize a schema version
-    pub fn finalize_version(&mut self, version: u32) -> Result<(), String> {
-        let spec = self.get_version_mut(version)
-            .ok_or_else(|| format!("Version {} not found", version))?;
-
-        if spec.is_finalized() {
-            return Err(format!("Version {} is already finalized", version));
-        }
-
-        spec.status = SpecVersionStatus::Finalized;
-        spec.finalized_at = Some(Utc::now());
-        self.updated_at = Utc::now();
-        Ok(())
-    }
-
-    /// Deprecate a schema version
-    pub fn deprecate_version(&mut self, version: u32) -> Result<(), String> {
-        let spec = self.get_version_mut(version)
-            .ok_or_else(|| format!("Version {} not found", version))?;
-
-        if spec.is_deprecated() {
-            return Err(format!("Version {} is already deprecated", version));
-        }
-
-        spec.status = SpecVersionStatus::Deprecated;
-        spec.deprecated_at = Some(Utc::now());
-        self.updated_at = Utc::now();
-        Ok(())
-    }
-
-    /// Archive this event type
     pub fn archive(&mut self) {
-        self.status = EventTypeStatus::Archive;
+        self.status = EventTypeStatus::Archived;
         self.updated_at = Utc::now();
     }
 
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
+    pub fn add_schema_version(&mut self, version: SpecVersion) {
+        self.spec_versions.push(version);
+        self.updated_at = Utc::now();
     }
+}
 
-    pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
-        self.client_id = Some(client_id.into());
-        self
+impl From<crate::entities::msg_event_types::Model> for EventType {
+    fn from(m: crate::entities::msg_event_types::Model) -> Self {
+        let event_name = m.code.split(':').nth(3).unwrap_or("").to_string();
+        Self {
+            id: m.id,
+            code: m.code,
+            name: m.name,
+            description: m.description,
+            spec_versions: vec![], // loaded separately
+            status: EventTypeStatus::from_str(&m.status),
+            source: EventTypeSource::from_str(&m.source),
+            client_scoped: m.client_scoped,
+            application: m.application,
+            subdomain: m.subdomain,
+            aggregate: m.aggregate,
+            event_name,
+            client_id: None, // not stored in DB; derived from context
+            created_by: None, // not stored in msg_event_types
+            created_at: m.created_at.with_timezone(&Utc),
+            updated_at: m.updated_at.with_timezone(&Utc),
+        }
     }
 }

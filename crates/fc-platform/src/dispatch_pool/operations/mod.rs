@@ -8,6 +8,7 @@ pub mod create;
 pub mod update;
 pub mod archive;
 pub mod delete;
+pub mod sync;
 
 // Re-export events
 pub use events::{
@@ -15,6 +16,7 @@ pub use events::{
     DispatchPoolUpdated,
     DispatchPoolArchived,
     DispatchPoolDeleted,
+    DispatchPoolsSynced,
 };
 
 // Re-export commands and use cases
@@ -36,4 +38,10 @@ pub use archive::{
 pub use delete::{
     DeleteDispatchPoolCommand,
     DeleteDispatchPoolUseCase,
+};
+
+pub use sync::{
+    SyncDispatchPoolsCommand,
+    SyncDispatchPoolsUseCase,
+    SyncDispatchPoolInput,
 };

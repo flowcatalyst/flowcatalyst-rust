@@ -6,6 +6,7 @@
 pub mod config_entity;
 pub mod config_repository;
 pub mod config_api;
+pub mod operations;
 
 // Core auth
 pub mod auth_service;
@@ -24,10 +25,14 @@ pub mod oidc_login_state_repository;
 pub mod oidc_login_api;
 pub mod oidc_service;
 pub mod oidc_sync_service;
+pub mod jwks_cache;
 
 // Authorization codes
 pub mod authorization_code;
 pub mod authorization_code_repository;
+
+// Password reset API
+pub mod password_reset_api;
 
 // Refresh tokens
 pub mod refresh_token;

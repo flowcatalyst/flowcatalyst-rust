@@ -8,6 +8,9 @@ pub mod create;
 pub mod update;
 pub mod activate;
 pub mod deactivate;
+pub mod delete;
+pub mod enable_for_client;
+pub mod disable_for_client;
 
 // Re-export events
 pub use events::{
@@ -15,26 +18,17 @@ pub use events::{
     ApplicationUpdated,
     ApplicationActivated,
     ApplicationDeactivated,
+    ApplicationDeleted,
+    ApplicationEnabledForClient,
+    ApplicationDisabledForClient,
     ApplicationServiceAccountProvisioned,
 };
 
 // Re-export commands and use cases
-pub use create::{
-    CreateApplicationCommand,
-    CreateApplicationUseCase,
-};
-
-pub use update::{
-    UpdateApplicationCommand,
-    UpdateApplicationUseCase,
-};
-
-pub use activate::{
-    ActivateApplicationCommand,
-    ActivateApplicationUseCase,
-};
-
-pub use deactivate::{
-    DeactivateApplicationCommand,
-    DeactivateApplicationUseCase,
-};
+pub use create::{CreateApplicationCommand, CreateApplicationUseCase};
+pub use update::{UpdateApplicationCommand, UpdateApplicationUseCase};
+pub use activate::{ActivateApplicationCommand, ActivateApplicationUseCase};
+pub use deactivate::{DeactivateApplicationCommand, DeactivateApplicationUseCase};
+pub use delete::{DeleteApplicationCommand, DeleteApplicationUseCase};
+pub use enable_for_client::{EnableApplicationForClientCommand, EnableApplicationForClientUseCase};
+pub use disable_for_client::{DisableApplicationForClientCommand, DisableApplicationForClientUseCase};

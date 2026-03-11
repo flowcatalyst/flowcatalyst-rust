@@ -212,6 +212,10 @@ pub struct Principal {
     #[serde(default)]
     pub assigned_clients: Vec<String>,
 
+    /// Accessible application IDs (loaded from iam_principal_application_access)
+    #[serde(default)]
+    pub accessible_application_ids: Vec<String>,
+
     /// Audit fields
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -243,7 +247,7 @@ impl Principal {
         let now = Utc::now();
 
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::Principal),
             principal_type: PrincipalType::User,
             scope,
             client_id: None,
@@ -254,6 +258,7 @@ impl Principal {
             service_account_id: None,
             roles: vec![],
             assigned_clients: vec![],
+            accessible_application_ids: vec![],
             created_at: now,
             updated_at: now,
             external_identity: None,
@@ -264,7 +269,7 @@ impl Principal {
     pub fn new_service(service_account_id: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::Principal),
             principal_type: PrincipalType::Service,
             scope: UserScope::Anchor,
             client_id: None,
@@ -275,6 +280,7 @@ impl Principal {
             service_account_id: Some(service_account_id.into()),
             roles: vec![],
             assigned_clients: vec![],
+            accessible_application_ids: vec![],
             created_at: now,
             updated_at: now,
             external_identity: None,
@@ -373,6 +379,48 @@ impl Principal {
     }
 }
 
+/// Client access grant — tracks which principals have access to which clients
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientAccessGrant {
+    pub id: String,
+    pub principal_id: String,
+    pub client_id: String,
+    pub granted_by: String,
+    pub granted_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl ClientAccessGrant {
+    pub fn new(principal_id: impl Into<String>, client_id: impl Into<String>, granted_by: impl Into<String>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: crate::TsidGenerator::generate(crate::EntityType::Principal),
+            principal_id: principal_id.into(),
+            client_id: client_id.into(),
+            granted_by: granted_by.into(),
+            granted_at: now,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+impl From<crate::entities::iam_client_access_grants::Model> for ClientAccessGrant {
+    fn from(m: crate::entities::iam_client_access_grants::Model) -> Self {
+        Self {
+            id: m.id,
+            principal_id: m.principal_id,
+            client_id: m.client_id,
+            granted_by: m.granted_by,
+            granted_at: m.granted_at.with_timezone(&Utc),
+            created_at: m.created_at.with_timezone(&Utc),
+            updated_at: m.updated_at.with_timezone(&Utc),
+        }
+    }
+}
+
 /// Convert from SeaORM model to domain entity
 /// Note: roles and assigned_clients must be loaded separately from junction tables
 impl From<crate::entities::iam_principals::Model> for Principal {
@@ -421,6 +469,7 @@ impl From<crate::entities::iam_principals::Model> for Principal {
             service_account_id: m.service_account_id,
             roles: vec![], // Must be loaded from iam_principal_roles
             assigned_clients: vec![], // Must be loaded from iam_client_access_grants
+            accessible_application_ids: vec![], // Must be loaded from junction table
             created_at: m.created_at.naive_utc().and_utc(),
             updated_at: m.updated_at.naive_utc().and_utc(),
             external_identity,

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::usecase::ExecutionContext;
 use crate::usecase::domain_event::EventMetadata;
 use crate::TsidGenerator;
+use crate::EntityType;
 use crate::impl_domain_event;
 use crate::principal::entity::UserScope;
 
@@ -42,7 +43,7 @@ impl UserCreated {
         scope: UserScope,
         client_id: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.user.{}", principal_id);
         let message_group = format!("platform:user:{}", principal_id);
         let email_domain = extract_email_domain(email);
@@ -215,7 +216,7 @@ impl UserUpdated {
         name: Option<&str>,
         email: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.user.{}", principal_id);
         let message_group = format!("platform:user:{}", principal_id);
 
@@ -257,7 +258,7 @@ impl UserActivated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.user.{}", principal_id);
         let message_group = format!("platform:user:{}", principal_id);
 
@@ -299,7 +300,7 @@ impl UserDeactivated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str, reason: Option<&str>) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.user.{}", principal_id);
         let message_group = format!("platform:user:{}", principal_id);
 
@@ -340,7 +341,7 @@ impl UserDeleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.user.{}", principal_id);
         let message_group = format!("platform:user:{}", principal_id);
 
@@ -389,7 +390,7 @@ impl RolesAssigned {
         added: Vec<String>,
         removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.user.{}", principal_id);
         let message_group = format!("platform:user:{}", principal_id);
 
@@ -408,6 +409,234 @@ impl RolesAssigned {
             ),
             principal_id: principal_id.to_string(),
             roles,
+            added,
+            removed,
+        }
+    }
+}
+
+/// Event emitted when client access is granted to a user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientAccessGranted {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub principal_id: String,
+    pub client_id: String,
+}
+
+impl_domain_event!(ClientAccessGranted);
+
+impl ClientAccessGranted {
+    const EVENT_TYPE: &'static str = "platform:iam:user:client-access-granted";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(ctx: &ExecutionContext, principal_id: &str, client_id: &str) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.user.{}", principal_id);
+        let message_group = format!("platform:user:{}", principal_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            principal_id: principal_id.to_string(),
+            client_id: client_id.to_string(),
+        }
+    }
+}
+
+/// Event emitted when client access is revoked from a user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientAccessRevoked {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub principal_id: String,
+    pub client_id: String,
+}
+
+impl_domain_event!(ClientAccessRevoked);
+
+impl ClientAccessRevoked {
+    const EVENT_TYPE: &'static str = "platform:iam:user:client-access-revoked";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(ctx: &ExecutionContext, principal_id: &str, client_id: &str) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.user.{}", principal_id);
+        let message_group = format!("platform:user:{}", principal_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            principal_id: principal_id.to_string(),
+            client_id: client_id.to_string(),
+        }
+    }
+}
+
+/// Event emitted when a user logs in via OIDC.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserLoggedIn {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub principal_id: String,
+    pub email: String,
+    pub email_domain: String,
+    pub scope: String,
+    pub identity_provider_id: String,
+    pub login_method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+}
+
+impl_domain_event!(UserLoggedIn);
+
+impl UserLoggedIn {
+    const EVENT_TYPE: &'static str = "platform:iam:user:logged-in";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(
+        ctx: &ExecutionContext,
+        principal_id: &str,
+        email: &str,
+        scope: UserScope,
+        identity_provider_id: &str,
+        client_id: Option<&str>,
+    ) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.user.{}", principal_id);
+        let message_group = format!("platform:user:{}", principal_id);
+        let email_domain = extract_email_domain(email);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id,
+                Self::EVENT_TYPE,
+                Self::SPEC_VERSION,
+                Self::SOURCE,
+                subject,
+                message_group,
+                ctx.execution_id.clone(),
+                ctx.correlation_id.clone(),
+                ctx.causation_id.clone(),
+                ctx.principal_id.clone(),
+            ),
+            principal_id: principal_id.to_string(),
+            email: email.to_string(),
+            email_domain,
+            scope: format!("{:?}", scope).to_uppercase(),
+            identity_provider_id: identity_provider_id.to_string(),
+            login_method: "OIDC".to_string(),
+            client_id: client_id.map(String::from),
+        }
+    }
+}
+
+/// Event emitted when principals are synced from an application SDK.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrincipalsSynced {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub application_code: String,
+    pub created: u32,
+    pub updated: u32,
+    pub deactivated: u32,
+    pub synced_emails: Vec<String>,
+}
+
+impl_domain_event!(PrincipalsSynced);
+
+impl PrincipalsSynced {
+    const EVENT_TYPE: &'static str = "platform:iam:principals:synced";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(
+        ctx: &ExecutionContext,
+        application_code: &str,
+        created: u32,
+        updated: u32,
+        deactivated: u32,
+        synced_emails: Vec<String>,
+    ) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.application.{}", application_code);
+        let message_group = format!("platform:application:{}", application_code);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            application_code: application_code.to_string(),
+            created,
+            updated,
+            deactivated,
+            synced_emails,
+        }
+    }
+}
+
+/// Event emitted when application access is assigned to a user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationAccessAssigned {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub user_id: String,
+    pub application_ids: Vec<String>,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+impl_domain_event!(ApplicationAccessAssigned);
+
+impl ApplicationAccessAssigned {
+    const EVENT_TYPE: &'static str = "platform:iam:user:application-access-assigned";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(
+        ctx: &ExecutionContext,
+        user_id: &str,
+        application_ids: Vec<String>,
+        added: Vec<String>,
+        removed: Vec<String>,
+    ) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.user.{}", user_id);
+        let message_group = format!("platform:user:{}", user_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            user_id: user_id.to_string(),
+            application_ids,
             added,
             removed,
         }

@@ -1,126 +1,186 @@
-//! ApplicationClientConfig Repository
+//! ApplicationClientConfig Repository — PostgreSQL via SeaORM
 
-use mongodb::{Collection, Database, bson::doc};
-use futures::TryStreamExt;
-use crate::ApplicationClientConfig;
+use async_trait::async_trait;
+use sea_orm::*;
+use sea_orm::sea_query::OnConflict;
+use chrono::Utc;
+
+use super::client_config::ApplicationClientConfig;
+use crate::entities::app_client_configs;
 use crate::shared::error::Result;
+use crate::usecase::unit_of_work::{HasId, PgPersist};
 
 pub struct ApplicationClientConfigRepository {
-    collection: Collection<ApplicationClientConfig>,
+    db: DatabaseConnection,
 }
 
 impl ApplicationClientConfigRepository {
-    pub fn new(db: &Database) -> Self {
-        Self {
-            collection: db.collection("application_client_configs"),
-        }
+    pub fn new(db: &DatabaseConnection) -> Self {
+        Self { db: db.clone() }
     }
 
     pub async fn insert(&self, config: &ApplicationClientConfig) -> Result<()> {
-        self.collection.insert_one(config).await?;
+        let model = app_client_configs::ActiveModel {
+            id: Set(config.id.clone()),
+            application_id: Set(config.application_id.clone()),
+            client_id: Set(config.client_id.clone()),
+            enabled: Set(config.enabled),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+        };
+        app_client_configs::Entity::insert(model).exec(&self.db).await?;
         Ok(())
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<ApplicationClientConfig>> {
-        Ok(self.collection.find_one(doc! { "_id": id }).await?)
+        let result = app_client_configs::Entity::find_by_id(id).one(&self.db).await?;
+        Ok(result.map(ApplicationClientConfig::from))
     }
 
     pub async fn find_by_application(&self, application_id: &str) -> Result<Vec<ApplicationClientConfig>> {
-        let cursor = self.collection
-            .find(doc! { "applicationId": application_id })
+        let results = app_client_configs::Entity::find()
+            .filter(app_client_configs::Column::ApplicationId.eq(application_id))
+            .all(&self.db)
             .await?;
-        Ok(cursor.try_collect().await?)
+        Ok(results.into_iter().map(ApplicationClientConfig::from).collect())
     }
 
     pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<ApplicationClientConfig>> {
-        let cursor = self.collection
-            .find(doc! { "clientId": client_id })
+        let results = app_client_configs::Entity::find()
+            .filter(app_client_configs::Column::ClientId.eq(client_id))
+            .all(&self.db)
             .await?;
-        Ok(cursor.try_collect().await?)
+        Ok(results.into_iter().map(ApplicationClientConfig::from).collect())
     }
 
     pub async fn find_by_application_and_client(
         &self,
         application_id: &str,
-        client_id: &str
+        client_id: &str,
     ) -> Result<Option<ApplicationClientConfig>> {
-        Ok(self.collection.find_one(doc! {
-            "applicationId": application_id,
-            "clientId": client_id
-        }).await?)
+        let result = app_client_configs::Entity::find()
+            .filter(app_client_configs::Column::ApplicationId.eq(application_id))
+            .filter(app_client_configs::Column::ClientId.eq(client_id))
+            .one(&self.db)
+            .await?;
+        Ok(result.map(ApplicationClientConfig::from))
     }
 
     pub async fn find_enabled_for_client(&self, client_id: &str) -> Result<Vec<ApplicationClientConfig>> {
-        let cursor = self.collection
-            .find(doc! { "clientId": client_id, "enabled": true })
+        let results = app_client_configs::Entity::find()
+            .filter(app_client_configs::Column::ClientId.eq(client_id))
+            .filter(app_client_configs::Column::Enabled.eq(true))
+            .all(&self.db)
             .await?;
-        Ok(cursor.try_collect().await?)
+        Ok(results.into_iter().map(ApplicationClientConfig::from).collect())
+    }
+
+    pub async fn enable_for_client(&self, application_id: &str, client_id: &str) -> Result<ApplicationClientConfig> {
+        // Check if exists
+        let existing = self.find_by_application_and_client(application_id, client_id).await?;
+        if let Some(config) = existing {
+            // Update
+            let model = app_client_configs::ActiveModel {
+                id: Set(config.id.clone()),
+                application_id: NotSet,
+                client_id: NotSet,
+                enabled: Set(true),
+                created_at: NotSet,
+                updated_at: Set(Utc::now().into()),
+            };
+            app_client_configs::Entity::update(model).exec(&self.db).await?;
+            Ok(self.find_by_id(&config.id).await?.unwrap())
+        } else {
+            // Insert new
+            let config = ApplicationClientConfig::new(application_id, client_id);
+            self.insert(&config).await?;
+            Ok(config)
+        }
+    }
+
+    pub async fn disable_for_client(&self, application_id: &str, client_id: &str) -> Result<bool> {
+        let existing = self.find_by_application_and_client(application_id, client_id).await?;
+        if let Some(config) = existing {
+            let model = app_client_configs::ActiveModel {
+                id: Set(config.id),
+                application_id: NotSet,
+                client_id: NotSet,
+                enabled: Set(false),
+                created_at: NotSet,
+                updated_at: Set(Utc::now().into()),
+            };
+            app_client_configs::Entity::update(model).exec(&self.db).await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub async fn update(&self, config: &ApplicationClientConfig) -> Result<()> {
-        self.collection
-            .replace_one(doc! { "_id": &config.id }, config)
-            .await?;
+        let model = app_client_configs::ActiveModel {
+            id: Set(config.id.clone()),
+            application_id: Set(config.application_id.clone()),
+            client_id: Set(config.client_id.clone()),
+            enabled: Set(config.enabled),
+            created_at: NotSet,
+            updated_at: Set(Utc::now().into()),
+        };
+        app_client_configs::Entity::update(model).exec(&self.db).await?;
         Ok(())
     }
 
     pub async fn delete(&self, id: &str) -> Result<bool> {
-        let result = self.collection.delete_one(doc! { "_id": id }).await?;
-        Ok(result.deleted_count > 0)
+        let result = app_client_configs::Entity::delete_by_id(id).exec(&self.db).await?;
+        Ok(result.rows_affected > 0)
     }
 
     pub async fn delete_by_application_and_client(
         &self,
         application_id: &str,
-        client_id: &str
+        client_id: &str,
     ) -> Result<bool> {
-        let result = self.collection.delete_one(doc! {
-            "applicationId": application_id,
-            "clientId": client_id
-        }).await?;
-        Ok(result.deleted_count > 0)
+        let result = app_client_configs::Entity::delete_many()
+            .filter(app_client_configs::Column::ApplicationId.eq(application_id))
+            .filter(app_client_configs::Column::ClientId.eq(client_id))
+            .exec(&self.db)
+            .await?;
+        Ok(result.rows_affected > 0)
     }
+}
 
-    /// Enable an application for a client (upsert)
-    pub async fn enable_for_client(&self, application_id: &str, client_id: &str) -> Result<()> {
-        use mongodb::options::UpdateOptions;
+// ── PgPersist for ApplicationClientConfig ────────────────────────────────────
 
-        let options = UpdateOptions::builder().upsert(true).build();
-        self.collection.update_one(
-            doc! {
-                "applicationId": application_id,
-                "clientId": client_id
-            },
-            doc! {
-                "$set": {
-                    "enabled": true,
-                    "updatedAt": mongodb::bson::DateTime::now()
-                },
-                "$setOnInsert": {
-                    "_id": crate::shared::tsid::TsidGenerator::generate(),
-                    "applicationId": application_id,
-                    "clientId": client_id,
-                    "createdAt": mongodb::bson::DateTime::now()
-                }
-            }
-        ).with_options(options).await?;
+impl HasId for ApplicationClientConfig {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl PgPersist for ApplicationClientConfig {
+    async fn pg_upsert(&self, txn: &DatabaseTransaction) -> Result<()> {
+        let model = app_client_configs::ActiveModel {
+            id: Set(self.id.clone()),
+            application_id: Set(self.application_id.clone()),
+            client_id: Set(self.client_id.clone()),
+            enabled: Set(self.enabled),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+        };
+        app_client_configs::Entity::insert(model)
+            .on_conflict(
+                OnConflict::column(app_client_configs::Column::Id)
+                    .update_columns([
+                        app_client_configs::Column::Enabled,
+                        app_client_configs::Column::UpdatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(txn)
+            .await?;
         Ok(())
     }
 
-    /// Disable an application for a client
-    pub async fn disable_for_client(&self, application_id: &str, client_id: &str) -> Result<()> {
-        self.collection.update_one(
-            doc! {
-                "applicationId": application_id,
-                "clientId": client_id
-            },
-            doc! {
-                "$set": {
-                    "enabled": false,
-                    "updatedAt": mongodb::bson::DateTime::now()
-                }
-            }
-        ).await?;
+    async fn pg_delete(&self, txn: &DatabaseTransaction) -> Result<()> {
+        app_client_configs::Entity::delete_by_id(&self.id).exec(txn).await?;
         Ok(())
     }
 }

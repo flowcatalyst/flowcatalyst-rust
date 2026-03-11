@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::usecase::ExecutionContext;
 use crate::usecase::domain_event::EventMetadata;
 use crate::TsidGenerator;
+use crate::EntityType;
 use crate::impl_domain_event;
 
 /// Event emitted when a new subscription is created.
@@ -16,7 +17,7 @@ pub struct SubscriptionCreated {
     pub subscription_id: String,
     pub code: String,
     pub name: String,
-    pub target: String,
+    pub connection_id: String,
     pub event_types: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
@@ -34,11 +35,11 @@ impl SubscriptionCreated {
         subscription_id: &str,
         code: &str,
         name: &str,
-        target: &str,
+        connection_id: &str,
         event_types: Vec<String>,
         client_id: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.subscription.{}", subscription_id);
         let message_group = format!("platform:subscription:{}", subscription_id);
 
@@ -58,7 +59,7 @@ impl SubscriptionCreated {
             subscription_id: subscription_id.to_string(),
             code: code.to_string(),
             name: name.to_string(),
-            target: target.to_string(),
+            connection_id: connection_id.to_string(),
             event_types,
             client_id: client_id.map(String::from),
         }
@@ -75,8 +76,6 @@ pub struct SubscriptionUpdated {
     pub subscription_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
     pub event_types_added: Vec<String>,
     pub event_types_removed: Vec<String>,
 }
@@ -92,11 +91,10 @@ impl SubscriptionUpdated {
         ctx: &ExecutionContext,
         subscription_id: &str,
         name: Option<&str>,
-        target: Option<&str>,
         event_types_added: Vec<String>,
         event_types_removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.subscription.{}", subscription_id);
         let message_group = format!("platform:subscription:{}", subscription_id);
 
@@ -115,7 +113,6 @@ impl SubscriptionUpdated {
             ),
             subscription_id: subscription_id.to_string(),
             name: name.map(String::from),
-            target: target.map(String::from),
             event_types_added,
             event_types_removed,
         }
@@ -141,7 +138,7 @@ impl SubscriptionPaused {
     const SOURCE: &'static str = "platform:subscription";
 
     pub fn new(ctx: &ExecutionContext, subscription_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.subscription.{}", subscription_id);
         let message_group = format!("platform:subscription:{}", subscription_id);
 
@@ -183,7 +180,7 @@ impl SubscriptionResumed {
     const SOURCE: &'static str = "platform:subscription";
 
     pub fn new(ctx: &ExecutionContext, subscription_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.subscription.{}", subscription_id);
         let message_group = format!("platform:subscription:{}", subscription_id);
 
@@ -225,7 +222,7 @@ impl SubscriptionDeleted {
     const SOURCE: &'static str = "platform:subscription";
 
     pub fn new(ctx: &ExecutionContext, subscription_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.subscription.{}", subscription_id);
         let message_group = format!("platform:subscription:{}", subscription_id);
 
@@ -244,6 +241,55 @@ impl SubscriptionDeleted {
             ),
             subscription_id: subscription_id.to_string(),
             code: code.to_string(),
+        }
+    }
+}
+
+/// Event emitted when subscriptions are synced from an application SDK.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionsSynced {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub application_code: String,
+    pub created: u32,
+    pub updated: u32,
+    pub deleted: u32,
+    pub synced_codes: Vec<String>,
+}
+
+impl_domain_event!(SubscriptionsSynced);
+
+impl SubscriptionsSynced {
+    const EVENT_TYPE: &'static str = "platform:subscription:synced";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:subscription";
+
+    pub fn new(
+        ctx: &ExecutionContext,
+        application_code: &str,
+        created: u32,
+        updated: u32,
+        deleted: u32,
+        synced_codes: Vec<String>,
+    ) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.application.{}", application_code);
+        let message_group = format!("platform:application:{}", application_code);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            application_code: application_code.to_string(),
+            created,
+            updated,
+            deleted,
+            synced_codes,
         }
     }
 }

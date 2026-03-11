@@ -166,6 +166,7 @@ pub struct EventReadResponse {
 
 impl From<EventRead> for EventReadResponse {
     fn from(e: EventRead) -> Self {
+        let event_name = e.event_type.split(':').nth(3).map(String::from);
         Self {
             id: e.id,
             event_type: e.event_type,
@@ -175,12 +176,12 @@ impl From<EventRead> for EventReadResponse {
             application: e.application,
             subdomain: e.subdomain,
             aggregate: e.aggregate,
-            event_name: e.event_name,
+            event_name,
             message_group: e.message_group,
             correlation_id: e.correlation_id,
             client_id: e.client_id,
             client_name: e.client_name,
-            created_at: e.created_at.to_rfc3339(),
+            created_at: e.projected_at.to_rfc3339(),
         }
     }
 }
@@ -218,7 +219,7 @@ pub struct EventsState {
     post,
     path = "",
     tag = "events",
-    operation_id = "postApiBffEvents",
+    operation_id = "postApiAdminEvents",
     request_body = CreateEventRequest,
     responses(
         (status = 201, description = "Event created", body = CreateEventResponse),
@@ -312,7 +313,7 @@ pub async fn create_event(
     get,
     path = "/{id}",
     tag = "events",
-    operation_id = "getApiBffEventsById",
+    operation_id = "getApiAdminEventsById",
     params(
         ("id" = String, Path, description = "Event ID")
     ),
@@ -347,7 +348,7 @@ pub async fn get_event(
     get,
     path = "",
     tag = "events",
-    operation_id = "getApiBffEvents",
+    operation_id = "getApiAdminEvents",
     params(EventsQuery),
     responses(
         (status = 200, description = "List of events", body = Vec<EventResponse>)
@@ -364,12 +365,12 @@ pub async fn list_events(
     let events = if let Some(ref corr_id) = query.correlation_id {
         state.event_repo.find_by_correlation_id(corr_id).await?
     } else if let Some(ref event_type) = query.event_type {
-        state.event_repo.find_by_type(event_type, query.pagination.size() as i64).await?
+        state.event_repo.find_by_type(event_type, query.pagination.size() as u64).await?
     } else if let Some(ref client_id) = query.client_id {
         if !auth.0.can_access_client(client_id) {
             return Err(PlatformError::forbidden(format!("No access to client: {}", client_id)));
         }
-        state.event_repo.find_by_client(client_id, query.pagination.size() as i64).await?
+        state.event_repo.find_by_client(client_id, query.pagination.size() as u64).await?
     } else {
         // Return empty for now - need proper listing with pagination
         vec![]
@@ -419,7 +420,7 @@ pub struct BatchCreateResponse {
     post,
     path = "/batch",
     tag = "events",
-    operation_id = "postApiBffEventsBatch",
+    operation_id = "postApiAdminEventsBatch",
     request_body = BatchCreateEventsRequest,
     responses(
         (status = 201, description = "Events created", body = BatchCreateResponse),

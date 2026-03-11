@@ -7,8 +7,6 @@ pub mod tsid;
 pub mod middleware;
 pub mod api_common;
 pub mod database;
-pub mod indexes;
-
 // APIs
 pub mod health_api;
 pub mod well_known_api;
@@ -18,6 +16,16 @@ pub mod monitoring_api;
 pub mod filter_options_api;
 pub mod client_selection_api;
 pub mod application_roles_sdk_api;
+pub mod me_api;
+pub mod batch_api;
+pub mod sdk_clients_api;
+pub mod sdk_principals_api;
+pub mod sdk_roles_api;
+pub mod sdk_sync_api;
+pub mod sdk_audit_batch_api;
+pub mod public_api;
+pub mod bff_roles_api;
+pub mod bff_event_types_api;
 
 // Services
 pub mod authorization_service;
@@ -27,7 +35,7 @@ pub mod role_sync_service;
 
 // Re-export commonly used items
 pub use error::{PlatformError, Result};
-pub use tsid::TsidGenerator;
+pub use tsid::{TsidGenerator, EntityType};
 pub use middleware::{Authenticated, AppState};
 pub use api_common::{PaginationParams, PaginatedResponse};
 pub use health_api::health_router;

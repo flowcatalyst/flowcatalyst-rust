@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
-/// Webhook authentication type
+/// Webhook authentication type — matches TypeScript WebhookAuthType
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum WebhookAuthType {
@@ -259,7 +259,7 @@ impl ServiceAccount {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::ServiceAccount),
             code: code.into(),
             name: name.into(),
             description: None,

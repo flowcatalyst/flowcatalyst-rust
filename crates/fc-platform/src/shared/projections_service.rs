@@ -51,7 +51,7 @@ impl EventProjectionWriter {
         };
 
         // Parse event type code to extract components
-        let (application, subdomain, aggregate, event_name) = parse_event_type_code(&event.event_type);
+        let (application, subdomain, aggregate, _event_name) = parse_event_type_code(&event.event_type);
 
         // Create read projection
         let projection = EventRead {
@@ -63,12 +63,11 @@ impl EventProjectionWriter {
             application,
             subdomain,
             aggregate,
-            event_name,
             message_group: event.message_group.clone(),
             correlation_id: event.correlation_id.clone(),
             client_id: event.client_id.clone(),
             client_name,
-            created_at: event.created_at,
+            projected_at: event.created_at,
         };
 
         // Check if projection exists

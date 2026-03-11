@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::usecase::ExecutionContext;
 use crate::usecase::domain_event::EventMetadata;
 use crate::TsidGenerator;
+use crate::EntityType;
 use crate::impl_domain_event;
 
 /// Event emitted when a new service account is created.
@@ -36,7 +37,7 @@ impl ServiceAccountCreated {
         application_id: Option<&str>,
         client_ids: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.serviceaccount.{}", service_account_id);
         let message_group = format!("platform:serviceaccount:{}", service_account_id);
 
@@ -93,7 +94,7 @@ impl ServiceAccountUpdated {
         client_ids_added: Vec<String>,
         client_ids_removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.serviceaccount.{}", service_account_id);
         let message_group = format!("platform:serviceaccount:{}", service_account_id);
 
@@ -138,7 +139,7 @@ impl ServiceAccountDeleted {
     const SOURCE: &'static str = "platform:serviceaccount";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.serviceaccount.{}", service_account_id);
         let message_group = format!("platform:serviceaccount:{}", service_account_id);
 
@@ -186,7 +187,7 @@ impl ServiceAccountRolesAssigned {
         roles_added: Vec<String>,
         roles_removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.serviceaccount.{}", service_account_id);
         let message_group = format!("platform:serviceaccount:{}", service_account_id);
 
@@ -229,7 +230,7 @@ impl ServiceAccountTokenRegenerated {
     const SOURCE: &'static str = "platform:serviceaccount";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.serviceaccount.{}", service_account_id);
         let message_group = format!("platform:serviceaccount:{}", service_account_id);
 
@@ -271,7 +272,7 @@ impl ServiceAccountSecretRegenerated {
     const SOURCE: &'static str = "platform:serviceaccount";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.serviceaccount.{}", service_account_id);
         let message_group = format!("platform:serviceaccount:{}", service_account_id);
 

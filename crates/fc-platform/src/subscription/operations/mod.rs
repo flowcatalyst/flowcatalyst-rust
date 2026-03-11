@@ -8,6 +8,7 @@ pub mod update;
 pub mod pause;
 pub mod resume;
 pub mod delete;
+pub mod sync;
 
 pub use events::*;
 pub use create::{CreateSubscriptionCommand, CreateSubscriptionUseCase, EventTypeBindingInput};
@@ -15,3 +16,4 @@ pub use update::{UpdateSubscriptionCommand, UpdateSubscriptionUseCase};
 pub use pause::{PauseSubscriptionCommand, PauseSubscriptionUseCase};
 pub use resume::{ResumeSubscriptionCommand, ResumeSubscriptionUseCase};
 pub use delete::{DeleteSubscriptionCommand, DeleteSubscriptionUseCase};
+pub use sync::{SyncSubscriptionsCommand, SyncSubscriptionsUseCase, SyncSubscriptionInput};

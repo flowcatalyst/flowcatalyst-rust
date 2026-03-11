@@ -5,7 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc, Duration};
-use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 use crate::TsidGenerator;
 
 /// Default refresh token expiry: 30 days
@@ -21,7 +20,6 @@ const REFRESH_TOKEN_EXPIRY_DAYS: i64 = 30;
 #[serde(rename_all = "camelCase")]
 pub struct RefreshToken {
     /// TSID as primary key
-    #[serde(rename = "_id")]
     pub id: String,
 
     /// The actual token value (cryptographically random, hashed for storage)
@@ -48,7 +46,7 @@ pub struct RefreshToken {
     pub revoked: bool,
 
     /// When the token was revoked (if revoked)
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub revoked_at: Option<DateTime<Utc>>,
 
     /// Token family ID for rotation tracking.
@@ -64,15 +62,13 @@ pub struct RefreshToken {
     pub replaced_by: Option<String>,
 
     /// When the token was created
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 
     /// When the token expires
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub expires_at: DateTime<Utc>,
 
     /// When the token was last used (for monitoring/security)
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<DateTime<Utc>>,
 
     /// IP address of the client that created this token
@@ -95,7 +91,7 @@ impl RefreshToken {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: TsidGenerator::generate(),
+            id: TsidGenerator::generate_untyped(),
             token_hash: token_hash.into(),
             principal_id: principal_id.into(),
             oauth_client_id: None,
@@ -217,6 +213,8 @@ impl RefreshToken {
         (raw_token, entity)
     }
 }
+
+// Note: Conversion from oauth_oidc_payloads is handled in RefreshTokenRepository::from_model
 
 #[cfg(test)]
 mod tests {

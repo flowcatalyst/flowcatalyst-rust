@@ -10,6 +10,7 @@ members = [
     "crates/fc-platform",
     "crates/fc-scheduler",
     "crates/fc-secrets",
+    "crates/fc-sdk",
     "bin/fc-dev",
     "bin/fc-router",
     "bin/fc-platform-server",
@@ -79,7 +80,7 @@ utoipa-axum = "0.1"
 
 # Test dependencies
 testcontainers = "0.26"
-testcontainers-modules = { version = "0.14", features = ["localstack", "redis"] }
+testcontainers-modules = { version = "0.14", features = ["localstack", "redis", "postgres"] }
 wiremock = "0.5"
 tokio-test = "0.4"
 tempfile = "3.10"

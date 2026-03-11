@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
-use crate::{EventTypeBinding, DispatchMode, SubscriptionStatus};
+use crate::{EventTypeBinding, SubscriptionStatus};
+use crate::subscription::entity::DispatchMode;
 use crate::SubscriptionRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
@@ -26,10 +27,6 @@ pub struct UpdateSubscriptionCommand {
     /// New description (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-
-    /// New target URL (optional)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
 
     /// New event types (replaces existing if provided)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,7 +87,6 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
         // Validation: at least one field to update
         if command.name.is_none()
             && command.description.is_none()
-            && command.target.is_none()
             && command.event_types.is_none()
             && command.dispatch_pool_id.is_none()
             && command.service_account_id.is_none()
@@ -122,17 +118,8 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
             }
         };
 
-        // Business rule: can only update active or paused subscriptions
-        if subscription.status == SubscriptionStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
-                "CANNOT_UPDATE_ARCHIVED",
-                "Cannot update an archived subscription",
-            ));
-        }
-
         // Track changes
         let mut updated_name: Option<&str> = None;
-        let mut updated_target: Option<&str> = None;
         let mut event_types_added: Vec<String> = Vec::new();
         let mut event_types_removed: Vec<String> = Vec::new();
 
@@ -149,14 +136,6 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
             let changed = subscription.description.as_deref() != Some(desc.as_str());
             if changed {
                 subscription.description = Some(desc.clone());
-            }
-        }
-
-        if let Some(ref target) = command.target {
-            let target = target.trim();
-            if target != subscription.target {
-                subscription.target = target.to_string();
-                updated_target = Some(target);
             }
         }
 
@@ -204,11 +183,11 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
         }
 
         if let Some(retries) = command.max_retries {
-            subscription.max_retries = retries;
+            subscription.max_retries = retries as i32;
         }
 
         if let Some(timeout) = command.timeout_seconds {
-            subscription.timeout_seconds = timeout;
+            subscription.timeout_seconds = timeout as i32;
         }
 
         if let Some(data_only) = command.data_only {
@@ -222,7 +201,6 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
             &ctx,
             &subscription.id,
             updated_name,
-            updated_target,
             event_types_added,
             event_types_removed,
         );
@@ -242,7 +220,6 @@ mod tests {
             subscription_id: "sub-123".to_string(),
             name: Some("New Name".to_string()),
             description: None,
-            target: Some("https://new.example.com/webhook".to_string()),
             event_types: None,
             dispatch_pool_id: None,
             service_account_id: None,

@@ -13,6 +13,10 @@ use std::sync::Arc;
 
 use crate::{EventType, SpecVersion};
 use crate::EventTypeRepository;
+use crate::event_type::operations::{
+    SyncEventTypesCommand, SyncEventTypesUseCase, SyncEventTypeInput,
+};
+use crate::usecase::{ExecutionContext, UseCaseResult};
 use crate::shared::error::PlatformError;
 use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
 use crate::shared::middleware::Authenticated;
@@ -101,10 +105,9 @@ pub struct EventTypeListResponse {
 impl From<SpecVersion> for SpecVersionResponse {
     fn from(v: SpecVersion) -> Self {
         Self {
-            // Convert u32 version to string format (e.g., 1 -> "1.0")
-            version: format!("{}.0", v.version),
+            version: v.version,
             status: format!("{:?}", v.status).to_uppercase(),
-            schema: Some(v.schema),
+            schema: v.schema_content,
         }
     }
 }
@@ -146,10 +149,51 @@ pub struct EventTypesQuery {
     pub status: Option<String>,
 }
 
+/// Sync event types request (admin)
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncEventTypesRequest {
+    /// Application code
+    pub application_code: String,
+    /// Event types to sync
+    pub event_types: Vec<SyncEventTypeInputRequest>,
+}
+
+/// A single event type input for sync
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncEventTypeInputRequest {
+    /// Full code (application:subdomain:aggregate:event)
+    pub code: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Sync query parameters
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct SyncQuery {
+    /// Remove items not in the sync list
+    #[serde(default)]
+    pub remove_unlisted: bool,
+}
+
+/// Sync result response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncResultResponse {
+    pub created: u32,
+    pub updated: u32,
+    pub deleted: u32,
+}
+
 /// Event types service state
 #[derive(Clone)]
 pub struct EventTypesState {
     pub event_type_repo: Arc<EventTypeRepository>,
+    pub sync_use_case: Arc<SyncEventTypesUseCase>,
 }
 
 /// Create a new event type
@@ -157,7 +201,7 @@ pub struct EventTypesState {
     post,
     path = "",
     tag = "event-types",
-    operation_id = "postApiBffEventTypes",
+    operation_id = "postApiAdminEventTypes",
     request_body = CreateEventTypeRequest,
     responses(
         (status = 201, description = "Event type created", body = CreatedResponse),
@@ -198,7 +242,8 @@ pub async fn create_event_type(
         event_type = event_type.with_client_id(cid);
     }
     if let Some(schema) = req.schema {
-        event_type.add_schema_version(schema);
+        let spec = SpecVersion::new(&event_type.id, "1.0", Some(schema));
+        event_type.add_schema_version(spec);
     }
 
     let id = event_type.id.clone();
@@ -212,7 +257,7 @@ pub async fn create_event_type(
     get,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "getApiBffEventTypesById",
+    operation_id = "getApiAdminEventTypesById",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -247,7 +292,7 @@ pub async fn get_event_type(
     get,
     path = "/by-code/{code}",
     tag = "event-types",
-    operation_id = "getApiBffEventTypesByCodeByCode",
+    operation_id = "getApiAdminEventTypesByCodeByCode",
     params(
         ("code" = String, Path, description = "Event type code")
     ),
@@ -282,7 +327,7 @@ pub async fn get_event_type_by_code(
     get,
     path = "",
     tag = "event-types",
-    operation_id = "getApiBffEventTypes",
+    operation_id = "getApiAdminEventTypes",
     params(EventTypesQuery),
     responses(
         (status = 200, description = "List of event types", body = EventTypeListResponse)
@@ -321,7 +366,7 @@ pub async fn list_event_types(
     put,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "putApiBffEventTypesById",
+    operation_id = "putApiAdminEventTypesById",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -371,7 +416,7 @@ pub async fn update_event_type(
     post,
     path = "/{id}/versions",
     tag = "event-types",
-    operation_id = "postApiBffEventTypesByIdVersions",
+    operation_id = "postApiAdminEventTypesByIdSchemas",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -400,7 +445,9 @@ pub async fn add_schema_version(
         }
     }
 
-    event_type.add_schema_version(req.schema);
+    let next_version = format!("{}.0", event_type.spec_versions.len() + 1);
+    let spec = SpecVersion::new(&event_type.id, &next_version, Some(req.schema));
+    event_type.add_schema_version(spec);
     state.event_type_repo.update(&event_type).await?;
 
     Ok(Json(event_type.into()))
@@ -411,7 +458,7 @@ pub async fn add_schema_version(
     delete,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "deleteApiBffEventTypesById",
+    operation_id = "deleteApiAdminEventTypesById",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -446,6 +493,53 @@ pub async fn delete_event_type(
     Ok(Json(SuccessResponse::ok()))
 }
 
+/// Sync event types
+#[utoipa::path(
+    post,
+    path = "/sync",
+    tag = "event-types",
+    operation_id = "postApiAdminEventTypesSync",
+    params(SyncQuery),
+    request_body = SyncEventTypesRequest,
+    responses(
+        (status = 200, description = "Event types synced", body = SyncResultResponse),
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Application not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn sync_event_types(
+    State(state): State<EventTypesState>,
+    auth: Authenticated,
+    Query(query): Query<SyncQuery>,
+    Json(req): Json<SyncEventTypesRequest>,
+) -> Result<Json<SyncResultResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
+
+    let command = SyncEventTypesCommand {
+        application_code: req.application_code,
+        event_types: req.event_types.into_iter().map(|et| SyncEventTypeInput {
+            code: et.code,
+            name: et.name,
+            description: et.description,
+        }).collect(),
+        remove_unlisted: query.remove_unlisted,
+    };
+
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+
+    match state.sync_use_case.execute(command, ctx).await {
+        UseCaseResult::Success(event) => {
+            Ok(Json(SyncResultResponse {
+                created: event.created,
+                updated: event.updated,
+                deleted: event.deleted,
+            }))
+        }
+        UseCaseResult::Failure(err) => Err(err.into()),
+    }
+}
+
 /// Create event types router
 pub fn event_types_router(state: EventTypesState) -> OpenApiRouter {
     OpenApiRouter::new()
@@ -453,5 +547,6 @@ pub fn event_types_router(state: EventTypesState) -> OpenApiRouter {
         .routes(routes!(get_event_type, update_event_type, delete_event_type))
         .routes(routes!(get_event_type_by_code))
         .routes(routes!(add_schema_version))
+        .routes(routes!(sync_event_types))
         .with_state(state)
 }

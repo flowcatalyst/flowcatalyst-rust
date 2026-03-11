@@ -70,13 +70,6 @@ impl<U: UnitOfWork> PauseSubscriptionUseCase<U> {
             ));
         }
 
-        if subscription.status == SubscriptionStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
-                "CANNOT_PAUSE_ARCHIVED",
-                "Cannot pause an archived subscription",
-            ));
-        }
-
         // Pause the subscription
         subscription.pause();
 

@@ -4,7 +4,7 @@
 //! Base path: /api/admin/platform/service-accounts
 
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put},
     extract::{State, Path, Query},
     http::StatusCode,
     response::IntoResponse,
@@ -216,6 +216,7 @@ pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     get,
     path = "",
     tag = "service-accounts",
+    operation_id = "getApiAdminServiceAccounts",
     params(
         ("clientId" = Option<String>, Query, description = "Filter by client ID"),
         ("applicationId" = Option<String>, Query, description = "Filter by application ID"),
@@ -261,6 +262,7 @@ pub async fn list_service_accounts<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "service-accounts",
+    operation_id = "getApiAdminServiceAccountsById",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -286,6 +288,7 @@ pub async fn get_service_account<U: UnitOfWork>(
     get,
     path = "/code/{code}",
     tag = "service-accounts",
+    operation_id = "getApiAdminServiceAccountsCodeByCode",
     params(
         ("code" = String, Path, description = "Service account code")
     ),
@@ -311,6 +314,7 @@ pub async fn get_service_account_by_code<U: UnitOfWork>(
     post,
     path = "",
     tag = "service-accounts",
+    operation_id = "postApiAdminServiceAccounts",
     request_body = CreateServiceAccountRequest,
     responses(
         (status = 201, description = "Service account created", body = CreateServiceAccountResponse),
@@ -355,6 +359,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "service-accounts",
+    operation_id = "putApiAdminServiceAccountsById",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -396,6 +401,7 @@ pub async fn update_service_account<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "service-accounts",
+    operation_id = "deleteApiAdminServiceAccountsById",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -420,11 +426,46 @@ pub async fn delete_service_account<U: UnitOfWork>(
     }
 }
 
+/// Update auth token (regenerate via PUT)
+#[utoipa::path(
+    put,
+    path = "/{id}/auth-token",
+    tag = "service-accounts",
+    operation_id = "putApiAdminServiceAccountsByIdAuthToken",
+    params(
+        ("id" = String, Path, description = "Service account ID")
+    ),
+    responses(
+        (status = 200, description = "Token regenerated", body = RegenerateTokenResponse),
+        (status = 404, description = "Service account not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_auth_token<U: UnitOfWork>(
+    State(state): State<ServiceAccountsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
+    let command = RegenerateAuthTokenCommand { service_account_id: id };
+
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+
+    match state.regenerate_token_use_case.execute(command, ctx).await {
+        UseCaseResult::Success(result) => {
+            Ok(Json(RegenerateTokenResponse {
+                auth_token: result.auth_token,
+            }))
+        }
+        UseCaseResult::Failure(err) => Err(err.into()),
+    }
+}
+
 /// Regenerate auth token
 #[utoipa::path(
     post,
-    path = "/{id}/regenerate-token",
+    path = "/{id}/regenerate-auth-token",
     tag = "service-accounts",
+    operation_id = "postApiAdminServiceAccountsByIdRegenerateAuthToken",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -456,8 +497,9 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
 /// Regenerate signing secret
 #[utoipa::path(
     post,
-    path = "/{id}/regenerate-secret",
+    path = "/{id}/regenerate-signing-secret",
     tag = "service-accounts",
+    operation_id = "postApiAdminServiceAccountsByIdRegenerateSigningSecret",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -491,6 +533,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     get,
     path = "/{id}/roles",
     tag = "service-accounts",
+    operation_id = "getApiAdminServiceAccountsByIdRoles",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -524,6 +567,7 @@ pub async fn get_roles<U: UnitOfWork>(
     put,
     path = "/{id}/roles",
     tag = "service-accounts",
+    operation_id = "putApiAdminServiceAccountsByIdRoles",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -581,8 +625,9 @@ pub fn service_accounts_router<U: UnitOfWork + Clone>(state: ServiceAccountsStat
         .route("/", get(list_service_accounts::<U>).post(create_service_account::<U>))
         .route("/:id", get(get_service_account::<U>).put(update_service_account::<U>).delete(delete_service_account::<U>))
         .route("/code/:code", get(get_service_account_by_code::<U>))
-        .route("/:id/regenerate-token", post(regenerate_auth_token::<U>))
-        .route("/:id/regenerate-secret", post(regenerate_signing_secret::<U>))
+        .route("/:id/auth-token", put(update_auth_token::<U>))
+        .route("/:id/regenerate-auth-token", post(regenerate_auth_token::<U>))
+        .route("/:id/regenerate-signing-secret", post(regenerate_signing_secret::<U>))
         .route("/:id/roles", get(get_roles::<U>).put(assign_roles::<U>))
         .with_state(state)
 }

@@ -104,7 +104,7 @@ pub struct PagedRawEventResponse {
 pub struct RawDispatchJobResponse {
     pub id: String,
     pub external_id: Option<String>,
-    pub source: String,
+    pub source: Option<String>,
     pub kind: String,
     pub code: String,
     pub subject: Option<String>,
@@ -128,7 +128,7 @@ pub struct RawDispatchJobResponse {
     pub idempotency_key: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    pub queued_at: Option<String>,
+    pub scheduled_for: Option<String>,
     pub completed_at: Option<String>,
     // Include payload info for debug (but not full payload for large payloads)
     pub payload_content_type: String,
@@ -165,10 +165,10 @@ impl From<&DispatchJob> for RawDispatchJobResponse {
             idempotency_key: job.idempotency_key.clone(),
             created_at: job.created_at.to_rfc3339(),
             updated_at: job.updated_at.to_rfc3339(),
-            queued_at: job.queued_at.map(|t| t.to_rfc3339()),
+            scheduled_for: job.scheduled_for.map(|t| t.to_rfc3339()),
             completed_at: job.completed_at.map(|t| t.to_rfc3339()),
             payload_content_type: job.payload_content_type.clone(),
-            payload_length: job.payload.len(),
+            payload_length: job.payload.as_ref().map(|p| p.len()).unwrap_or(0),
             attempt_history_count: job.attempts.len(),
         }
     }
@@ -209,7 +209,7 @@ async fn list_raw_events(
     let page = query.page.unwrap_or(0);
     let size = query.size.unwrap_or(20).clamp(1, 100);
 
-    let events = state.event_repo.find_recent_paged(page, size).await?;
+    let events = state.event_repo.find_recent_paged(page as u64, size as u64).await?;
     let total_count = state.event_repo.count_all().await?;
 
     let responses: Vec<RawEventResponse> = events.iter().map(RawEventResponse::from).collect();

@@ -185,7 +185,7 @@ fn parse_source(s: &str) -> Result<RoleSource, PlatformError> {
     post,
     path = "",
     tag = "roles",
-    operation_id = "postApiAdminPlatformRoles",
+    operation_id = "postApiAdminRoles",
     request_body = CreateRoleRequest,
     responses(
         (status = 201, description = "Role created", body = CreatedResponse),
@@ -232,7 +232,7 @@ pub async fn create_role(
     get,
     path = "/{role_name}",
     tag = "roles",
-    operation_id = "getApiAdminPlatformRolesByRoleName",
+    operation_id = "getApiAdminRolesByName",
     params(
         ("role_name" = String, Path, description = "Role name (code) or ID")
     ),
@@ -264,7 +264,7 @@ pub async fn get_role(
     get,
     path = "/by-code/{code}",
     tag = "roles",
-    operation_id = "getApiAdminPlatformRolesByCodeByCode",
+    operation_id = "getApiAdminRolesByCodeByCode",
     params(
         ("code" = String, Path, description = "Role code")
     ),
@@ -290,7 +290,7 @@ pub async fn get_role_by_code(
     get,
     path = "",
     tag = "roles",
-    operation_id = "getApiAdminPlatformRoles",
+    operation_id = "getApiAdminRoles",
     params(RolesQuery),
     responses(
         (status = 200, description = "List of roles", body = RoleListResponse)
@@ -326,7 +326,7 @@ pub async fn list_roles(
     put,
     path = "/{role_name}",
     tag = "roles",
-    operation_id = "putApiAdminPlatformRolesByRoleName",
+    operation_id = "putApiAdminRolesByName",
     params(
         ("role_name" = String, Path, description = "Role name (code) or ID")
     ),
@@ -381,7 +381,7 @@ pub async fn update_role(
     post,
     path = "/{role_name}/permissions",
     tag = "roles",
-    operation_id = "postApiAdminPlatformRolesByRoleNamePermissions",
+    operation_id = "postApiAdminRolesByNamePermissions",
     params(
         ("role_name" = String, Path, description = "Role name (code) or ID")
     ),
@@ -421,7 +421,7 @@ pub async fn grant_permission(
     delete,
     path = "/{role_name}/permissions/{permission}",
     tag = "roles",
-    operation_id = "deleteApiAdminPlatformRolesByRoleNamePermissionsByPermission",
+    operation_id = "deleteApiAdminRolesByNamePermissionsByPermission",
     params(
         ("role_name" = String, Path, description = "Role name (code) or ID"),
         ("permission" = String, Path, description = "Permission to revoke")
@@ -460,7 +460,7 @@ pub async fn revoke_permission(
     delete,
     path = "/{role_name}",
     tag = "roles",
-    operation_id = "deleteApiAdminPlatformRolesByRoleName",
+    operation_id = "deleteApiAdminRolesByName",
     params(
         ("role_name" = String, Path, description = "Role name (code) or ID")
     ),
@@ -498,7 +498,7 @@ pub async fn delete_role(
     get,
     path = "/filters/applications",
     tag = "roles",
-    operation_id = "getApiAdminPlatformRolesFiltersApplications",
+    operation_id = "getApiAdminRolesFiltersApplications",
     responses(
         (status = 200, description = "Application options", body = ApplicationOptionsResponse)
     ),
@@ -529,7 +529,7 @@ pub async fn get_filter_applications(
     get,
     path = "/permissions",
     tag = "roles",
-    operation_id = "getApiAdminPlatformRolesPermissions",
+    operation_id = "getApiAdminRolesPermissions",
     responses(
         (status = 200, description = "List of permissions", body = PermissionListResponse)
     ),
@@ -549,7 +549,7 @@ pub async fn list_permissions(
     get,
     path = "/permissions/{permission}",
     tag = "roles",
-    operation_id = "getApiAdminPlatformRolesPermissionsByPermission",
+    operation_id = "getApiAdminRolesPermissionsByPermission",
     params(
         ("permission" = String, Path, description = "Permission string")
     ),
@@ -569,6 +569,56 @@ pub async fn get_permission(
         .ok_or_else(|| PlatformError::not_found("Permission", &permission))?;
 
     Ok(Json(found))
+}
+
+/// Get roles by source (CODE, DATABASE, SDK)
+#[utoipa::path(
+    get,
+    path = "/by-source/{source}",
+    tag = "roles",
+    operation_id = "getApiAdminRolesBySourceBySource",
+    params(
+        ("source" = String, Path, description = "Role source (CODE, DATABASE, SDK)")
+    ),
+    responses(
+        (status = 200, description = "Roles filtered by source", body = Vec<RoleResponse>),
+        (status = 400, description = "Invalid source")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_roles_by_source(
+    State(state): State<RolesState>,
+    _auth: Authenticated,
+    Path(source): Path<String>,
+) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
+    let source = parse_source(&source)?;
+    let roles = state.role_repo.find_by_source(source).await?;
+    let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
+    Ok(Json(response))
+}
+
+/// Get roles by application ID
+#[utoipa::path(
+    get,
+    path = "/by-application/{application_id}",
+    tag = "roles",
+    operation_id = "getApiAdminRolesByApplicationByApplicationId",
+    params(
+        ("application_id" = String, Path, description = "Application ID")
+    ),
+    responses(
+        (status = 200, description = "Roles filtered by application ID", body = Vec<RoleResponse>)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_roles_by_application_id(
+    State(state): State<RolesState>,
+    _auth: Authenticated,
+    Path(application_id): Path<String>,
+) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
+    let roles = state.role_repo.find_by_application_id(&application_id).await?;
+    let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
+    Ok(Json(response))
 }
 
 /// Get built-in platform permissions (matches Java PermissionRegistry)
@@ -641,6 +691,8 @@ pub fn roles_router(state: RolesState) -> OpenApiRouter {
         .routes(routes!(list_permissions))
         .routes(routes!(get_permission))
         .routes(routes!(get_role_by_code))
+        .routes(routes!(get_roles_by_source))
+        .routes(routes!(get_roles_by_application_id))
         .routes(routes!(get_role, update_role, delete_role))
         .routes(routes!(grant_permission))
         .routes(routes!(revoke_permission))

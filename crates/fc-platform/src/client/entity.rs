@@ -5,18 +5,16 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
-/// Client status
+/// Client status — matches TypeScript ClientStatus enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ClientStatus {
     /// Client is active and operational
     Active,
-    /// Client is suspended (e.g., billing issue)
+    /// Client is inactive
+    Inactive,
+    /// Client is suspended (temporarily disabled)
     Suspended,
-    /// Client is pending activation
-    Pending,
-    /// Client is deleted (soft delete)
-    Deleted,
 }
 
 impl Default for ClientStatus {
@@ -29,18 +27,16 @@ impl ClientStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Active => "ACTIVE",
+            Self::Inactive => "INACTIVE",
             Self::Suspended => "SUSPENDED",
-            Self::Pending => "PENDING",
-            Self::Deleted => "DELETED",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
             "ACTIVE" => Self::Active,
+            "INACTIVE" => Self::Inactive,
             "SUSPENDED" => Self::Suspended,
-            "PENDING" => Self::Pending,
-            "DELETED" => Self::Deleted,
             _ => Self::Active,
         }
     }
@@ -118,7 +114,7 @@ impl Client {
     pub fn new(name: impl Into<String>, identifier: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::Client),
             name: name.into(),
             identifier: identifier.into(),
             status: ClientStatus::Active,
@@ -150,8 +146,8 @@ impl Client {
         self.set_status(ClientStatus::Active, None);
     }
 
-    pub fn delete(&mut self, reason: Option<String>) {
-        self.set_status(ClientStatus::Deleted, reason);
+    pub fn deactivate(&mut self, reason: Option<String>) {
+        self.set_status(ClientStatus::Inactive, reason);
     }
 
     pub fn is_active(&self) -> bool {
@@ -160,6 +156,10 @@ impl Client {
 
     pub fn is_suspended(&self) -> bool {
         self.status == ClientStatus::Suspended
+    }
+
+    pub fn is_inactive(&self) -> bool {
+        self.status == ClientStatus::Inactive
     }
 }
 

@@ -97,12 +97,12 @@ impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
 
         // Apply rate limit update
         if let Some(rate) = command.rate_limit {
-            pool.rate_limit = Some(rate);
+            pool.rate_limit = rate as i32;
         }
 
         // Apply concurrency update
         if let Some(conc) = command.concurrency {
-            pool.concurrency = Some(conc);
+            pool.concurrency = conc as i32;
         }
 
         pool.updated_at = Utc::now();

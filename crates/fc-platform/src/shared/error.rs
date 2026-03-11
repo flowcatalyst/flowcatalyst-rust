@@ -29,16 +29,6 @@ pub enum PlatformError {
     #[error("Database error: {0}")]
     Database(#[from] sea_orm::DbErr),
 
-    // Transitional: MongoDB errors (will be removed once all repos are migrated)
-    #[error("MongoDB error: {0}")]
-    MongoDatabase(#[from] mongodb::error::Error),
-
-    #[error("BSON serialization error: {0}")]
-    BsonSerialization(#[from] bson::ser::Error),
-
-    #[error("BSON deserialization error: {0}")]
-    BsonDeserialization(#[from] bson::de::Error),
-
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 

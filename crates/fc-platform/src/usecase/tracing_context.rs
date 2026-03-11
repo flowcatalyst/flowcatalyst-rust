@@ -50,7 +50,7 @@ impl TracingContext {
     pub fn correlation_id(&self) -> String {
         self.correlation_id
             .clone()
-            .unwrap_or_else(|| format!("trace-{}", TsidGenerator::generate()))
+            .unwrap_or_else(|| format!("trace-{}", TsidGenerator::generate_untyped()))
     }
 
     /// Get the correlation ID if set, without generating.

@@ -80,38 +80,9 @@ pub trait HealthChecker: Send + Sync {
     fn check(&self) -> impl std::future::Future<Output = HealthCheck> + Send;
 }
 
-/// MongoDB health checker
-pub struct MongoHealthChecker {
-    pub db: mongodb::Database,
-}
-
-impl HealthChecker for MongoHealthChecker {
-    async fn check(&self) -> HealthCheck {
-        let start = std::time::Instant::now();
-
-        match self.db.run_command(mongodb::bson::doc! { "ping": 1 }).await {
-            Ok(_) => HealthCheck {
-                name: "mongodb".to_string(),
-                status: HealthStatus::Up,
-                message: None,
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-            },
-            Err(e) => HealthCheck {
-                name: "mongodb".to_string(),
-                status: HealthStatus::Down,
-                message: Some(format!("Connection failed: {}", e)),
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-            },
-        }
-    }
-}
-
 /// Health service state
 #[derive(Clone)]
 pub struct HealthState {
-    /// Database for connectivity check
-    pub db: Option<mongodb::Database>,
-
     /// Service version
     pub version: Option<String>,
 
@@ -123,9 +94,8 @@ pub struct HealthState {
 }
 
 impl HealthState {
-    pub fn new(db: Option<mongodb::Database>, version: Option<String>) -> Self {
+    pub fn new(version: Option<String>) -> Self {
         Self {
-            db,
             version,
             started_at: Utc::now(),
             ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -157,25 +127,11 @@ impl HealthState {
     )
 )]
 pub async fn get_health(State(state): State<HealthState>) -> Response {
-    let mut checks = Vec::new();
+    let checks = Vec::new();
     let mut overall_status = HealthStatus::Up;
 
-    // MongoDB check
-    if let Some(db) = &state.db {
-        let checker = MongoHealthChecker { db: db.clone() };
-        let check = checker.check().await;
-
-        if check.status == HealthStatus::Down {
-            overall_status = HealthStatus::Down;
-        } else if check.status == HealthStatus::Degraded && overall_status == HealthStatus::Up {
-            overall_status = HealthStatus::Degraded;
-        }
-
-        checks.push(check);
-    }
-
     // Readiness check
-    if !state.is_ready() && overall_status == HealthStatus::Up {
+    if !state.is_ready() {
         overall_status = HealthStatus::Degraded;
     }
 
@@ -230,18 +186,7 @@ pub async fn get_liveness() -> Json<SimpleHealthResponse> {
 )]
 pub async fn get_readiness(State(state): State<HealthState>) -> Response {
     let status = if state.is_ready() {
-        // Also check MongoDB if available
-        if let Some(db) = &state.db {
-            let checker = MongoHealthChecker { db: db.clone() };
-            let check = checker.check().await;
-            if check.status == HealthStatus::Up {
-                HealthStatus::Up
-            } else {
-                HealthStatus::Down
-            }
-        } else {
-            HealthStatus::Up
-        }
+        HealthStatus::Up
     } else {
         HealthStatus::Down
     };
@@ -315,7 +260,7 @@ mod tests {
             timestamp: Utc::now(),
             version: Some("1.0.0".to_string()),
             checks: vec![HealthCheck {
-                name: "mongodb".to_string(),
+                name: "database".to_string(),
                 status: HealthStatus::Up,
                 message: None,
                 duration_ms: Some(5),
@@ -329,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_health_state() {
-        let state = HealthState::new(None, Some("1.0.0".to_string()));
+        let state = HealthState::new(Some("1.0.0".to_string()));
         assert!(!state.is_ready());
 
         state.set_ready();

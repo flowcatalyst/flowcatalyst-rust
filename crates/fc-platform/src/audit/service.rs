@@ -123,7 +123,7 @@ impl AuditService {
         _ip_address: Option<&str>,
     ) -> Result<()> {
         let operation = if success { "LoginCommand" } else { "FailedLoginCommand" };
-        let log = AuditLog::new("Session", None, operation, None, None);
+        let log = AuditLog::new("Session", "", operation, None, None);
         self.insert(log).await
     }
 
@@ -143,7 +143,7 @@ impl AuditService {
     ) -> AuditLog {
         AuditLog::new(
             entity_type,
-            entity_id.map(String::from),
+            entity_id.unwrap_or(""),
             operation,
             None,
             Some(auth.principal_id.clone()),

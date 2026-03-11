@@ -4,13 +4,16 @@
 //! Roles are loaded from iam_principal_roles junction table.
 //! Assigned clients are loaded from iam_client_access_grants.
 
+use async_trait::async_trait;
 use sea_orm::*;
+use sea_orm::sea_query::OnConflict;
 use chrono::Utc;
 
 use super::entity::{Principal, UserScope};
 use crate::service_account::entity::RoleAssignment;
 use crate::entities::{iam_principals, iam_principal_roles, iam_client_access_grants};
 use crate::shared::error::Result;
+use crate::usecase::unit_of_work::{HasId, PgPersist};
 
 pub struct PrincipalRepository {
     db: DatabaseConnection,
@@ -92,6 +95,14 @@ impl PrincipalRepository {
             Some(model) => Ok(Some(self.hydrate_principal(model).await?)),
             None => Ok(None),
         }
+    }
+
+    pub async fn find_all(&self) -> Result<Vec<Principal>> {
+        let results = iam_principals::Entity::find()
+            .all(&self.db)
+            .await?;
+
+        self.hydrate_principals(results).await
     }
 
     pub async fn find_active(&self) -> Result<Vec<Principal>> {
@@ -245,6 +256,21 @@ impl PrincipalRepository {
         Ok(result.rows_affected > 0)
     }
 
+    /// Search principals by name or email (case-insensitive partial match)
+    pub async fn search(&self, term: &str) -> Result<Vec<Principal>> {
+        let pattern = format!("%{}%", term);
+        let results = iam_principals::Entity::find()
+            .filter(
+                Condition::any()
+                    .add(iam_principals::Column::Name.like(&pattern))
+                    .add(iam_principals::Column::Email.like(&pattern))
+            )
+            .all(&self.db)
+            .await?;
+
+        self.hydrate_principals(results).await
+    }
+
     /// Count principals with email ending in the given domain
     pub async fn count_by_email_domain(&self, domain: &str) -> Result<i64> {
         let count = iam_principals::Entity::find()
@@ -256,6 +282,25 @@ impl PrincipalRepository {
     }
 
     // ── Helpers ──────────────────────────────────────────────
+
+    pub(crate) async fn insert_roles_txn(
+        principal_id: &str,
+        roles: &[RoleAssignment],
+        txn: &sea_orm::DatabaseTransaction,
+    ) -> Result<()> {
+        if roles.is_empty() { return Ok(()); }
+        let models: Vec<iam_principal_roles::ActiveModel> = roles
+            .iter()
+            .map(|r| iam_principal_roles::ActiveModel {
+                principal_id: Set(principal_id.to_string()),
+                role_name: Set(r.role.clone()),
+                assignment_source: Set(r.assignment_source.clone()),
+                assigned_at: Set(r.assigned_at.into()),
+            })
+            .collect();
+        iam_principal_roles::Entity::insert_many(models).exec(txn).await?;
+        Ok(())
+    }
 
     /// Insert roles into the junction table
     async fn insert_roles(&self, principal_id: &str, roles: &[RoleAssignment]) -> Result<()> {
@@ -370,5 +415,80 @@ impl PrincipalRepository {
             .collect();
 
         Ok(principals)
+    }
+}
+
+// ── PgPersist implementation ──────────────────────────────────────────────────
+
+impl HasId for Principal {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl PgPersist for Principal {
+    async fn pg_upsert(&self, txn: &sea_orm::DatabaseTransaction) -> Result<()> {
+        let email_domain = self.user_identity.as_ref()
+            .map(|i| i.email.split('@').nth(1).unwrap_or("").to_string());
+
+        let model = iam_principals::ActiveModel {
+            id: Set(self.id.clone()),
+            principal_type: Set(self.principal_type.as_str().to_string()),
+            scope: Set(Some(self.scope.as_str().to_string())),
+            client_id: Set(self.client_id.clone()),
+            application_id: Set(self.application_id.clone()),
+            name: Set(self.name.clone()),
+            active: Set(self.active),
+            email: Set(self.user_identity.as_ref().map(|i| i.email.clone())),
+            email_domain: Set(email_domain),
+            idp_type: Set(self.user_identity.as_ref().and_then(|i| i.provider.clone())
+                .or_else(|| if self.is_user() { Some("INTERNAL".to_string()) } else { None })),
+            external_idp_id: Set(self.external_identity.as_ref().map(|e| e.external_id.clone())),
+            password_hash: Set(self.user_identity.as_ref().and_then(|i| i.password_hash.clone())),
+            last_login_at: Set(self.user_identity.as_ref()
+                .and_then(|i| i.last_login_at.map(|dt| dt.into()))),
+            service_account_id: Set(self.service_account_id.clone()),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+        };
+        iam_principals::Entity::insert(model)
+            .on_conflict(
+                OnConflict::column(iam_principals::Column::Id)
+                    .update_columns([
+                        iam_principals::Column::PrincipalType,
+                        iam_principals::Column::Scope,
+                        iam_principals::Column::ClientId,
+                        iam_principals::Column::ApplicationId,
+                        iam_principals::Column::Name,
+                        iam_principals::Column::Active,
+                        iam_principals::Column::Email,
+                        iam_principals::Column::EmailDomain,
+                        iam_principals::Column::IdpType,
+                        iam_principals::Column::ExternalIdpId,
+                        iam_principals::Column::PasswordHash,
+                        iam_principals::Column::LastLoginAt,
+                        iam_principals::Column::ServiceAccountId,
+                        iam_principals::Column::UpdatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(txn)
+            .await?;
+
+        // Sync roles
+        iam_principal_roles::Entity::delete_many()
+            .filter(iam_principal_roles::Column::PrincipalId.eq(&self.id))
+            .exec(txn)
+            .await?;
+        PrincipalRepository::insert_roles_txn(&self.id, &self.roles, txn).await?;
+        Ok(())
+    }
+
+    async fn pg_delete(&self, txn: &sea_orm::DatabaseTransaction) -> Result<()> {
+        iam_principal_roles::Entity::delete_many()
+            .filter(iam_principal_roles::Column::PrincipalId.eq(&self.id))
+            .exec(txn)
+            .await?;
+        iam_principals::Entity::delete_by_id(&self.id).exec(txn).await?;
+        Ok(())
     }
 }

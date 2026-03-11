@@ -14,6 +14,9 @@ use std::sync::Arc;
 use crate::principal::entity::{Principal, UserScope, UserIdentity};
 use crate::service_account::entity::RoleAssignment;
 use crate::principal::repository::PrincipalRepository;
+use crate::application::entity::Application;
+use crate::application::repository::ApplicationRepository;
+use crate::application::client_config_repository::ApplicationClientConfigRepository;
 use crate::shared::error::PlatformError;
 use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
 use crate::shared::middleware::Authenticated;
@@ -113,6 +116,74 @@ pub struct CheckEmailDomainResponse {
     pub info: Option<String>,
     /// Warning message
     pub warning: Option<String>,
+}
+
+/// Set application access request (batch replace)
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetApplicationAccessRequest {
+    /// Application IDs to grant access to (replaces existing)
+    pub application_ids: Vec<String>,
+}
+
+/// Application access response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationAccessResponse {
+    pub application_id: String,
+    pub application_code: String,
+    pub application_name: String,
+}
+
+/// Application access list response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationAccessListResponse {
+    pub applications: Vec<ApplicationAccessResponse>,
+    pub total: usize,
+}
+
+/// Set application access result response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetApplicationAccessResponse {
+    pub applications: Vec<ApplicationAccessResponse>,
+    pub added: usize,
+    pub removed: usize,
+}
+
+/// Available application response (slim DTO)
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableApplicationResponse {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub application_type: String,
+    pub active: bool,
+}
+
+impl From<Application> for AvailableApplicationResponse {
+    fn from(a: Application) -> Self {
+        Self {
+            id: a.id,
+            code: a.code,
+            name: a.name,
+            description: a.description,
+            application_type: a.application_type.as_str().to_string(),
+            active: a.active,
+        }
+    }
+}
+
+/// Available applications list response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableApplicationsResponse {
+    pub applications: Vec<AvailableApplicationResponse>,
+    pub total: usize,
 }
 
 /// Grant client access request
@@ -298,6 +369,8 @@ pub struct PrincipalsState {
     pub password_service: Option<Arc<PasswordService>>,
     pub anchor_domain_repo: Option<Arc<crate::AnchorDomainRepository>>,
     pub client_auth_config_repo: Option<Arc<crate::ClientAuthConfigRepository>>,
+    pub application_repo: Option<Arc<ApplicationRepository>>,
+    pub app_client_config_repo: Option<Arc<ApplicationClientConfigRepository>>,
 }
 
 fn parse_scope(s: &str) -> Result<UserScope, PlatformError> {
@@ -314,7 +387,7 @@ fn parse_scope(s: &str) -> Result<UserScope, PlatformError> {
     post,
     path = "",
     tag = "principals",
-    operation_id = "postApiAdminPlatformPrincipals",
+    operation_id = "postApiAdminPrincipalsUsers",
     request_body = CreateUserRequest,
     responses(
         (status = 201, description = "User created", body = CreatedResponse),
@@ -366,7 +439,7 @@ pub async fn create_user(
     get,
     path = "/{id}",
     tag = "principals",
-    operation_id = "getApiAdminPlatformPrincipalsById",
+    operation_id = "getApiAdminPrincipalsById",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -401,7 +474,7 @@ pub async fn get_principal(
     get,
     path = "",
     tag = "principals",
-    operation_id = "getApiAdminPlatformPrincipals",
+    operation_id = "getApiAdminPrincipals",
     params(
         ("page" = Option<u32>, Query, description = "Page number"),
         ("limit" = Option<u32>, Query, description = "Items per page"),
@@ -458,7 +531,7 @@ pub async fn list_principals(
     put,
     path = "/{id}",
     tag = "principals",
-    operation_id = "putApiAdminPlatformPrincipalsById",
+    operation_id = "putApiAdminPrincipalsById",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -529,7 +602,7 @@ pub async fn update_principal(
     get,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "getApiAdminPlatformPrincipalsByIdRoles",
+    operation_id = "getApiAdminPrincipalsByIdRoles",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -575,7 +648,7 @@ pub async fn get_roles(
     post,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "postApiAdminPlatformPrincipalsByIdRoles",
+    operation_id = "postApiAdminPrincipalsByIdRoles",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -621,7 +694,7 @@ pub async fn assign_role(
     put,
     path = "/{id}/roles",
     tag = "principals",
-    operation_id = "putApiAdminPlatformPrincipalsByIdRoles",
+    operation_id = "putApiAdminPrincipalsByIdRoles",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -684,7 +757,7 @@ pub async fn batch_assign_roles(
     delete,
     path = "/{id}/roles/{role}",
     tag = "principals",
-    operation_id = "deleteApiAdminPlatformPrincipalsByIdRolesByRole",
+    operation_id = "deleteApiAdminPrincipalsByIdRolesByRoleName",
     params(
         ("id" = String, Path, description = "Principal ID"),
         ("role" = String, Path, description = "Role to remove")
@@ -723,7 +796,7 @@ pub async fn remove_role(
     get,
     path = "/{id}/client-access",
     tag = "principals",
-    operation_id = "getApiAdminPlatformPrincipalsByIdClientAccess",
+    operation_id = "getApiAdminPrincipalsByIdClientAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -769,7 +842,7 @@ pub async fn get_client_access(
     post,
     path = "/{id}/client-access",
     tag = "principals",
-    operation_id = "postApiAdminPlatformPrincipalsByIdClientAccess",
+    operation_id = "postApiAdminPrincipalsByIdClientAccess",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -814,7 +887,7 @@ pub async fn grant_client_access(
     delete,
     path = "/{id}/client-access/{client_id}",
     tag = "principals",
-    operation_id = "deleteApiAdminPlatformPrincipalsByIdClientAccessByClientId",
+    operation_id = "deleteApiAdminPrincipalsByIdClientAccessByClientId",
     params(
         ("id" = String, Path, description = "Principal ID"),
         ("client_id" = String, Path, description = "Client ID to revoke")
@@ -851,7 +924,7 @@ pub async fn revoke_client_access(
     delete,
     path = "/{id}",
     tag = "principals",
-    operation_id = "deleteApiAdminPlatformPrincipalsById",
+    operation_id = "deleteApiAdminPrincipalsById",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -893,7 +966,7 @@ pub async fn delete_principal(
     post,
     path = "/{id}/activate",
     tag = "principals",
-    operation_id = "postApiAdminPlatformPrincipalsByIdActivate",
+    operation_id = "postApiAdminPrincipalsByIdActivate",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -936,7 +1009,7 @@ pub async fn activate_principal(
     post,
     path = "/{id}/deactivate",
     tag = "principals",
-    operation_id = "postApiAdminPlatformPrincipalsByIdDeactivate",
+    operation_id = "postApiAdminPrincipalsByIdDeactivate",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -979,7 +1052,7 @@ pub async fn deactivate_principal(
     post,
     path = "/{id}/reset-password",
     tag = "principals",
-    operation_id = "postApiAdminPlatformPrincipalsByIdResetPassword",
+    operation_id = "postApiAdminPrincipalsByIdResetPassword",
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
@@ -1050,7 +1123,7 @@ pub async fn reset_password(
     get,
     path = "/check-email-domain",
     tag = "principals",
-    operation_id = "getApiAdminPlatformPrincipalsCheckEmailDomain",
+    operation_id = "getApiAdminPrincipalsCheckEmailDomain",
     params(
         ("domain" = String, Query, description = "Email domain to check")
     ),
@@ -1122,6 +1195,234 @@ pub async fn check_email_domain(
     }))
 }
 
+// ============================================================================
+// Application Access Endpoints
+// ============================================================================
+
+/// Get application access for a principal
+///
+/// Returns all applications the principal has been granted access to.
+#[utoipa::path(
+    get,
+    path = "/{id}/application-access",
+    tag = "principals",
+    operation_id = "getApiAdminPrincipalsByIdApplicationAccess",
+    params(
+        ("id" = String, Path, description = "Principal ID")
+    ),
+    responses(
+        (status = 200, description = "Application access list", body = ApplicationAccessListResponse),
+        (status = 404, description = "Principal not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_application_access(
+    State(state): State<PrincipalsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<ApplicationAccessListResponse>, PlatformError> {
+    let principal = state.principal_repo.find_by_id(&id).await?
+        .ok_or_else(|| PlatformError::not_found("Principal", &id))?;
+
+    // Check access
+    if !auth.0.is_anchor() {
+        if let Some(ref cid) = principal.client_id {
+            if !auth.0.can_access_client(cid) {
+                return Err(PlatformError::forbidden("No access to this principal"));
+            }
+        }
+    }
+
+    let app_repo = state.application_repo.as_ref()
+        .ok_or_else(|| PlatformError::internal("Application repository not configured"))?;
+
+    // Resolve application details for each accessible application ID
+    let mut applications = Vec::new();
+    for app_id in &principal.accessible_application_ids {
+        if let Some(app) = app_repo.find_by_id(app_id).await? {
+            applications.push(ApplicationAccessResponse {
+                application_id: app.id,
+                application_code: app.code,
+                application_name: app.name,
+            });
+        }
+    }
+
+    let total = applications.len();
+    Ok(Json(ApplicationAccessListResponse { applications, total }))
+}
+
+/// Set application access for a principal (batch replace)
+///
+/// Replaces all application access with the provided list.
+#[utoipa::path(
+    put,
+    path = "/{id}/application-access",
+    tag = "principals",
+    operation_id = "putApiAdminPrincipalsByIdApplicationAccess",
+    params(
+        ("id" = String, Path, description = "Principal ID")
+    ),
+    request_body = SetApplicationAccessRequest,
+    responses(
+        (status = 200, description = "Application access updated", body = SetApplicationAccessResponse),
+        (status = 404, description = "Principal not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn set_application_access(
+    State(state): State<PrincipalsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<SetApplicationAccessRequest>,
+) -> Result<Json<SetApplicationAccessResponse>, PlatformError> {
+    crate::checks::require_anchor(&auth.0)?;
+
+    let mut principal = state.principal_repo.find_by_id(&id).await?
+        .ok_or_else(|| PlatformError::not_found("Principal", &id))?;
+
+    let app_repo = state.application_repo.as_ref()
+        .ok_or_else(|| PlatformError::internal("Application repository not configured"))?;
+
+    // Validate all requested applications exist and are active
+    for app_id in &req.application_ids {
+        match app_repo.find_by_id(app_id).await? {
+            Some(app) => {
+                if !app.active {
+                    return Err(PlatformError::validation(format!(
+                        "Application is not active: {}", app_id
+                    )));
+                }
+            }
+            None => {
+                return Err(PlatformError::validation(format!(
+                    "Application not found: {}", app_id
+                )));
+            }
+        }
+    }
+
+    // Compute delta
+    let old_set: std::collections::HashSet<&str> = principal.accessible_application_ids
+        .iter().map(|s| s.as_str()).collect();
+    let new_set: std::collections::HashSet<&str> = req.application_ids
+        .iter().map(|s| s.as_str()).collect();
+
+    let added_count = new_set.difference(&old_set).count();
+    let removed_count = old_set.difference(&new_set).count();
+
+    // Update principal
+    principal.accessible_application_ids = req.application_ids;
+    principal.updated_at = chrono::Utc::now();
+    state.principal_repo.update(&principal).await?;
+
+    // Build response with resolved application details
+    let mut applications = Vec::new();
+    for app_id in &principal.accessible_application_ids {
+        if let Some(app) = app_repo.find_by_id(app_id).await? {
+            applications.push(ApplicationAccessResponse {
+                application_id: app.id,
+                application_code: app.code,
+                application_name: app.name,
+            });
+        }
+    }
+
+    // Audit log
+    if let Some(ref audit) = state.audit_service {
+        let _ = audit.log_update(
+            &auth.0, "Principal", &id,
+            format!("Updated application access: +{} -{}", added_count, removed_count),
+        ).await;
+    }
+
+    Ok(Json(SetApplicationAccessResponse {
+        applications,
+        added: added_count,
+        removed: removed_count,
+    }))
+}
+
+/// Get available applications for a principal
+///
+/// ANCHOR users see all active applications.
+/// CLIENT users see only applications enabled for their accessible client configs.
+#[utoipa::path(
+    get,
+    path = "/{id}/available-applications",
+    tag = "principals",
+    operation_id = "getApiAdminPrincipalsByIdAvailableApplications",
+    params(
+        ("id" = String, Path, description = "Principal ID")
+    ),
+    responses(
+        (status = 200, description = "Available applications", body = AvailableApplicationsResponse),
+        (status = 404, description = "Principal not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_available_applications(
+    State(state): State<PrincipalsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<AvailableApplicationsResponse>, PlatformError> {
+    let principal = state.principal_repo.find_by_id(&id).await?
+        .ok_or_else(|| PlatformError::not_found("Principal", &id))?;
+
+    // Check access
+    if !auth.0.is_anchor() {
+        if let Some(ref cid) = principal.client_id {
+            if !auth.0.can_access_client(cid) {
+                return Err(PlatformError::forbidden("No access to this principal"));
+            }
+        }
+    }
+
+    let app_repo = state.application_repo.as_ref()
+        .ok_or_else(|| PlatformError::internal("Application repository not configured"))?;
+
+    let applications: Vec<AvailableApplicationResponse> = if principal.scope == UserScope::Anchor {
+        // Anchor users see all active applications
+        let apps = app_repo.find_active().await?;
+        apps.into_iter().map(AvailableApplicationResponse::from).collect()
+    } else {
+        // Client users see only apps enabled for their accessible clients
+        let config_repo = state.app_client_config_repo.as_ref()
+            .ok_or_else(|| PlatformError::internal("Application client config repository not configured"))?;
+
+        // Gather all client IDs this principal can access
+        let mut client_ids: Vec<String> = principal.assigned_clients.clone();
+        if let Some(ref home_client) = principal.client_id {
+            if !client_ids.contains(home_client) {
+                client_ids.push(home_client.clone());
+            }
+        }
+
+        // Collect unique application IDs from enabled client configs
+        let mut app_ids = std::collections::HashSet::new();
+        for client_id in &client_ids {
+            let configs = config_repo.find_enabled_for_client(client_id).await?;
+            for config in configs {
+                app_ids.insert(config.application_id);
+            }
+        }
+
+        // Resolve application details
+        let mut apps = Vec::new();
+        for app_id in app_ids {
+            if let Some(app) = app_repo.find_by_id(&app_id).await? {
+                if app.active {
+                    apps.push(AvailableApplicationResponse::from(app));
+                }
+            }
+        }
+        apps
+    };
+
+    let total = applications.len();
+    Ok(Json(AvailableApplicationsResponse { applications, total }))
+}
+
 /// Create principals router
 pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
     OpenApiRouter::new()
@@ -1135,5 +1436,7 @@ pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
         .routes(routes!(remove_role))
         .routes(routes!(get_client_access, grant_client_access))
         .routes(routes!(revoke_client_access))
+        .routes(routes!(get_application_access, set_application_access))
+        .routes(routes!(get_available_applications))
         .with_state(state)
 }

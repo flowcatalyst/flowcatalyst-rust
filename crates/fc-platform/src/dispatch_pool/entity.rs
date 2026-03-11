@@ -1,63 +1,50 @@
-//! Dispatch Pool Entity
-//!
-//! Rate limiting and concurrency control for dispatch jobs.
+//! DispatchPool Entity — matches TypeScript DispatchPool domain
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
-/// Dispatch pool status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DispatchPoolStatus {
     Active,
+    Suspended,
     Archived,
 }
 
 impl Default for DispatchPoolStatus {
-    fn default() -> Self {
-        Self::Active
+    fn default() -> Self { Self::Active }
+}
+
+impl DispatchPoolStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "ACTIVE",
+            Self::Suspended => "SUSPENDED",
+            Self::Archived => "ARCHIVED",
+        }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "SUSPENDED" => Self::Suspended,
+            "ARCHIVED" => Self::Archived,
+            _ => Self::Active,
+        }
     }
 }
 
-/// Dispatch pool for rate limiting
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchPool {
-    /// TSID as Crockford Base32 string
-    #[serde(rename = "_id")]
     pub id: String,
-
-    /// Unique code (unique per client_id)
     pub code: String,
-
-    /// Human-readable name
     pub name: String,
-
-    /// Description
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-
-    /// Rate limit: maximum messages per minute
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rate_limit: Option<u32>,
-
-    /// Maximum concurrent dispatches
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub concurrency: Option<u32>,
-
-    /// Multi-tenant: Client ID (null = anchor-level/shared)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: i32,
+    pub concurrency: i32,
     pub client_id: Option<String>,
-
-    /// Status
-    #[serde(default)]
+    pub client_identifier: Option<String>,
     pub status: DispatchPoolStatus,
-
-    /// Audit fields
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub updated_at: DateTime<Utc>,
 }
 
@@ -65,45 +52,55 @@ impl DispatchPool {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::DispatchPool),
             code: code.into(),
             name: name.into(),
             description: None,
-            rate_limit: None,
-            concurrency: None,
+            rate_limit: 100,
+            concurrency: 10,
             client_id: None,
+            client_identifier: None,
             status: DispatchPoolStatus::Active,
             created_at: now,
             updated_at: now,
         }
     }
 
-    pub fn with_rate_limit(mut self, rate_limit: u32) -> Self {
-        self.rate_limit = Some(rate_limit);
-        self
+    pub fn with_description(mut self, desc: impl Into<String>) -> Self { self.description = Some(desc.into()); self }
+    pub fn with_client_id(mut self, id: impl Into<String>) -> Self { self.client_id = Some(id.into()); self }
+    pub fn with_rate_limit(mut self, rate: u32) -> Self { self.rate_limit = rate as i32; self }
+    pub fn with_concurrency(mut self, conc: u32) -> Self { self.concurrency = conc as i32; self }
+
+    pub fn suspend(&mut self) {
+        self.status = DispatchPoolStatus::Suspended;
+        self.updated_at = Utc::now();
     }
 
-    pub fn with_concurrency(mut self, concurrency: u32) -> Self {
-        self.concurrency = Some(concurrency);
-        self
-    }
-
-    pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
-        self.client_id = Some(client_id.into());
-        self
-    }
-
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
+    pub fn activate(&mut self) {
+        self.status = DispatchPoolStatus::Active;
+        self.updated_at = Utc::now();
     }
 
     pub fn archive(&mut self) {
         self.status = DispatchPoolStatus::Archived;
         self.updated_at = Utc::now();
     }
+}
 
-    pub fn is_active(&self) -> bool {
-        self.status == DispatchPoolStatus::Active
+impl From<crate::entities::msg_dispatch_pools::Model> for DispatchPool {
+    fn from(m: crate::entities::msg_dispatch_pools::Model) -> Self {
+        Self {
+            id: m.id,
+            code: m.code,
+            name: m.name,
+            description: m.description,
+            rate_limit: m.rate_limit,
+            concurrency: m.concurrency,
+            client_id: m.client_id,
+            client_identifier: m.client_identifier,
+            status: DispatchPoolStatus::from_str(&m.status),
+            created_at: m.created_at.with_timezone(&Utc),
+            updated_at: m.updated_at.with_timezone(&Utc),
+        }
     }
 }

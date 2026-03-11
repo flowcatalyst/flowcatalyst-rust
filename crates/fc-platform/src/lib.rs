@@ -35,6 +35,15 @@ pub mod dispatch_job;
 pub mod auth;
 pub mod audit;
 
+// New domains (TS alignment)
+pub mod connection;
+pub mod cors;
+pub mod identity_provider;
+pub mod email_domain_mapping;
+pub mod platform_config;
+pub mod login_attempt;
+pub mod password_reset;
+
 // Shared infrastructure
 pub mod shared;
 
@@ -48,12 +57,12 @@ pub mod idp;
 
 // Re-export common types from shared
 pub use shared::error::{PlatformError, Result};
-pub use shared::tsid::TsidGenerator;
+pub use shared::tsid::{TsidGenerator, EntityType};
 
 // Re-export use case infrastructure
 pub use usecase::{
     UseCaseResult, UseCaseError, DomainEvent, ExecutionContext,
-    TracingContext, UnitOfWork, MongoUnitOfWork,
+    TracingContext, UnitOfWork, PgUnitOfWork, PgPersist, PgAggregate,
 };
 // Note: impl_domain_event! macro is automatically exported at crate root via #[macro_export]
 
@@ -69,8 +78,16 @@ pub use event_type::entity::{EventType, EventTypeStatus, SpecVersion};
 pub use subscription::entity::{Subscription, SubscriptionStatus, EventTypeBinding};
 pub use dispatch_pool::entity::{DispatchPool, DispatchPoolStatus};
 pub use dispatch_job::entity::{DispatchJob, DispatchJobRead, DispatchStatus, DispatchMode, DispatchKind, DispatchAttempt, RetryStrategy, DispatchMetadata, ErrorType};
-pub use audit::entity::{AuditLog, AuditAction};
+pub use audit::entity::AuditLog;
 pub use auth::config_entity::ClientAuthConfig;
+pub use connection::entity::{Connection, ConnectionStatus};
+pub use cors::entity::CorsAllowedOrigin;
+pub use identity_provider::entity::{IdentityProvider, IdentityProviderType};
+pub use email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
+pub use platform_config::entity::{PlatformConfig, ConfigScope, ConfigValueType};
+pub use platform_config::access_entity::PlatformConfigAccess;
+pub use login_attempt::entity::{LoginAttempt, AttemptType, LoginOutcome};
+pub use password_reset::entity::PasswordResetToken;
 
 // Re-export repositories
 pub use client::repository::ClientRepository;
@@ -85,6 +102,14 @@ pub use subscription::repository::SubscriptionRepository;
 pub use dispatch_pool::repository::DispatchPoolRepository;
 pub use dispatch_job::repository::DispatchJobRepository;
 pub use audit::repository::AuditLogRepository;
+pub use connection::repository::ConnectionRepository;
+pub use cors::repository::CorsOriginRepository;
+pub use identity_provider::repository::IdentityProviderRepository;
+pub use email_domain_mapping::repository::EmailDomainMappingRepository;
+pub use platform_config::repository::PlatformConfigRepository;
+pub use platform_config::access_repository::PlatformConfigAccessRepository;
+pub use login_attempt::repository::LoginAttemptRepository;
+pub use password_reset::repository::PasswordResetTokenRepository;
 
 // Re-export services
 pub use audit::service::AuditService;
@@ -95,14 +120,15 @@ pub use auth::oidc_sync_service::OidcSyncService;
 pub use shared::authorization_service::{AuthorizationService, AuthContext, checks};
 
 // Re-export auth repositories
-pub use auth::config_repository::{ClientAuthConfigRepository, AnchorDomainRepository, IdpRoleMappingRepository, ClientAccessGrantRepository};
+pub use auth::config_repository::{ClientAuthConfigRepository, AnchorDomainRepository, ClientAccessGrantRepository, IdpRoleMappingRepository};
 pub use auth::refresh_token_repository::RefreshTokenRepository;
 pub use auth::oauth_client_repository::OAuthClientRepository;
 pub use auth::authorization_code_repository::AuthorizationCodeRepository;
 pub use auth::oidc_login_state_repository::OidcLoginStateRepository;
 
 // Re-export auth entities
-pub use auth::config_entity::{AnchorDomain, ClientAccessGrant, IdpRoleMapping, AuthProvider};
+pub use auth::config_entity::{AnchorDomain, AuthProvider, IdpRoleMapping};
+pub use principal::entity::ClientAccessGrant;
 pub use auth::refresh_token::RefreshToken;
 pub use auth::oauth_entity::OAuthClient;
 pub use auth::authorization_code::AuthorizationCode;
@@ -128,11 +154,19 @@ pub mod repository {
     pub use crate::dispatch_pool::repository::DispatchPoolRepository;
     pub use crate::dispatch_job::repository::DispatchJobRepository;
     pub use crate::audit::repository::AuditLogRepository;
-    pub use crate::auth::config_repository::{ClientAuthConfigRepository, AnchorDomainRepository, IdpRoleMappingRepository, ClientAccessGrantRepository};
+    pub use crate::auth::config_repository::{ClientAuthConfigRepository, AnchorDomainRepository, ClientAccessGrantRepository, IdpRoleMappingRepository};
     pub use crate::auth::refresh_token_repository::RefreshTokenRepository;
     pub use crate::auth::oauth_client_repository::OAuthClientRepository;
     pub use crate::auth::authorization_code_repository::AuthorizationCodeRepository;
     pub use crate::auth::oidc_login_state_repository::OidcLoginStateRepository;
+    pub use crate::connection::repository::ConnectionRepository;
+    pub use crate::cors::repository::CorsOriginRepository;
+    pub use crate::identity_provider::repository::IdentityProviderRepository;
+    pub use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
+    pub use crate::platform_config::repository::PlatformConfigRepository;
+    pub use crate::platform_config::access_repository::PlatformConfigAccessRepository;
+    pub use crate::login_attempt::repository::LoginAttemptRepository;
+    pub use crate::password_reset::repository::PasswordResetTokenRepository;
 }
 
 /// Backward-compatible service re-exports
@@ -171,13 +205,35 @@ pub mod api {
     pub use crate::auth::{anchor_domains_router, client_auth_configs_router, idp_role_mappings_router, AuthConfigState};
     pub use crate::auth::auth_api::{auth_router, AuthState};
     pub use crate::auth::oidc_login_api::{oidc_login_router, OidcLoginApiState};
+    pub use crate::auth::password_reset_api::{password_reset_router, PasswordResetApiState};
+
+    // New domain APIs
+    pub use crate::connection::api::{connections_router, ConnectionsState};
+    pub use crate::cors::api::{cors_router, CorsState};
+    pub use crate::identity_provider::api::{identity_providers_router, IdentityProvidersState};
+    pub use crate::email_domain_mapping::api::{email_domain_mappings_router, EmailDomainMappingsState};
+    pub use crate::platform_config::api::{admin_platform_config_router, PlatformConfigState};
+    pub use crate::platform_config::access_api::{config_access_router, ConfigAccessState};
+    pub use crate::login_attempt::api::{login_attempts_router, LoginAttemptsState};
+    pub use crate::shared::me_api::{me_router, MeState};
+    pub use crate::shared::batch_api::{sdk_events_batch_router, SdkEventsState};
+    pub use crate::shared::sdk_clients_api::{sdk_clients_router, SdkClientsState};
+    pub use crate::shared::sdk_principals_api::{sdk_principals_router, SdkPrincipalsState};
+    pub use crate::shared::sdk_roles_api::{sdk_roles_router, SdkRolesState};
+    pub use crate::shared::public_api::public_router;
+    pub use crate::shared::sdk_sync_api::{sdk_sync_router, SdkSyncState};
+    pub use crate::shared::sdk_audit_batch_api::{sdk_audit_batch_router, SdkAuditBatchState};
+    pub use crate::shared::bff_roles_api::{bff_roles_router, BffRolesState};
+    pub use crate::shared::bff_event_types_api::{bff_event_types_router, BffEventTypesState};
 
     // Shared APIs
     pub use crate::shared::filter_options_api::{filter_options_router, event_type_filters_router, FilterOptionsState};
     pub use crate::shared::monitoring_api::{monitoring_router, MonitoringState, LeaderState, CircuitBreakerRegistry, InFlightTracker};
     pub use crate::shared::debug_api::{debug_events_router, debug_dispatch_jobs_router, DebugState};
     pub use crate::shared::health_api::health_router;
-    pub use crate::shared::well_known_api::well_known_router;
+    pub use crate::shared::well_known_api::{well_known_router, WellKnownState};
+    pub use crate::shared::client_selection_api::{client_selection_router, ClientSelectionState};
+    pub use crate::shared::application_roles_sdk_api::{application_roles_sdk_router, ApplicationRolesSdkState};
     pub use crate::shared::platform_config_api::platform_config_router;
 
     // Re-export middleware module for direct access
@@ -199,10 +255,19 @@ pub mod domain {
     pub use crate::subscription::entity::{Subscription, SubscriptionStatus, EventTypeBinding, ConfigEntry};
     pub use crate::dispatch_pool::entity::{DispatchPool, DispatchPoolStatus};
     pub use crate::dispatch_job::entity::{DispatchJob, DispatchJobRead, DispatchStatus, DispatchMode, DispatchKind, DispatchAttempt, RetryStrategy, DispatchMetadata, ErrorType};
-    pub use crate::audit::entity::{AuditLog, AuditAction};
-    pub use crate::auth::config_entity::{ClientAuthConfig, AnchorDomain, ClientAccessGrant, IdpRoleMapping, AuthProvider};
+    pub use crate::audit::entity::AuditLog;
+    pub use crate::auth::config_entity::{ClientAuthConfig, AnchorDomain, AuthProvider, IdpRoleMapping};
+    pub use crate::principal::entity::ClientAccessGrant;
     pub use crate::auth::oauth_entity::OAuthClient;
     pub use crate::auth::oidc_login_state::OidcLoginState;
+    pub use crate::connection::entity::{Connection, ConnectionStatus};
+    pub use crate::cors::entity::CorsAllowedOrigin;
+    pub use crate::identity_provider::entity::{IdentityProvider, IdentityProviderType};
+    pub use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
+    pub use crate::platform_config::entity::{PlatformConfig, ConfigScope, ConfigValueType};
+    pub use crate::platform_config::access_entity::PlatformConfigAccess;
+    pub use crate::login_attempt::entity::{LoginAttempt, AttemptType, LoginOutcome};
+    pub use crate::password_reset::entity::PasswordResetToken;
 
     // Re-export service_account module for nested imports
     pub mod service_account {

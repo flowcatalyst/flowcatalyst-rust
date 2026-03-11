@@ -3,12 +3,15 @@
 //! PostgreSQL persistence for AuthRole entities using SeaORM.
 //! Permissions are stored in the iam_role_permissions junction table.
 
+use async_trait::async_trait;
 use sea_orm::*;
+use sea_orm::sea_query::OnConflict;
 use chrono::Utc;
 
 use super::entity::{AuthRole, RoleSource};
 use crate::entities::{iam_roles, iam_role_permissions};
 use crate::shared::error::Result;
+use crate::usecase::unit_of_work::{HasId, PgPersist};
 
 pub struct RoleRepository {
     db: DatabaseConnection,
@@ -97,6 +100,15 @@ impl RoleRepository {
         self.hydrate_roles(results).await
     }
 
+    pub async fn find_by_application_id(&self, application_id: &str) -> Result<Vec<AuthRole>> {
+        let results = iam_roles::Entity::find()
+            .filter(iam_roles::Column::ApplicationId.eq(application_id))
+            .all(&self.db)
+            .await?;
+
+        self.hydrate_roles(results).await
+    }
+
     pub async fn find_by_source(&self, source: RoleSource) -> Result<Vec<AuthRole>> {
         let results = iam_roles::Entity::find()
             .filter(iam_roles::Column::Source.eq(source.as_str()))
@@ -121,6 +133,21 @@ impl RoleRepository {
         }
         let results = iam_roles::Entity::find()
             .filter(iam_roles::Column::Name.is_in(codes.to_vec()))
+            .all(&self.db)
+            .await?;
+
+        self.hydrate_roles(results).await
+    }
+
+    /// Search roles by name or display_name (case-insensitive partial match)
+    pub async fn search(&self, term: &str) -> Result<Vec<AuthRole>> {
+        let pattern = format!("%{}%", term);
+        let results = iam_roles::Entity::find()
+            .filter(
+                Condition::any()
+                    .add(iam_roles::Column::Name.like(&pattern))
+                    .add(iam_roles::Column::DisplayName.like(&pattern))
+            )
             .all(&self.db)
             .await?;
 
@@ -154,6 +181,11 @@ impl RoleRepository {
             .count(&self.db)
             .await?;
         Ok(count > 0)
+    }
+
+    /// Check if a role with the given name exists
+    pub async fn exists_by_name(&self, name: &str) -> Result<bool> {
+        self.exists_by_code(name).await
     }
 
     pub async fn exists_by_code(&self, code: &str) -> Result<bool> {
@@ -234,6 +266,23 @@ impl RoleRepository {
         Ok(())
     }
 
+    pub(crate) async fn insert_permissions_txn(
+        role_id: &str,
+        permissions: &std::collections::HashSet<String>,
+        txn: &sea_orm::DatabaseTransaction,
+    ) -> Result<()> {
+        if permissions.is_empty() { return Ok(()); }
+        let models: Vec<iam_role_permissions::ActiveModel> = permissions
+            .iter()
+            .map(|perm| iam_role_permissions::ActiveModel {
+                role_id: Set(role_id.to_string()),
+                permission: Set(perm.clone()),
+            })
+            .collect();
+        iam_role_permissions::Entity::insert_many(models).exec(txn).await?;
+        Ok(())
+    }
+
     /// Convert a list of DB models to domain entities with permissions loaded
     async fn hydrate_roles(&self, models: Vec<iam_roles::Model>) -> Result<Vec<AuthRole>> {
         if models.is_empty() {
@@ -271,5 +320,59 @@ impl RoleRepository {
             .collect();
 
         Ok(roles)
+    }
+}
+
+// ── PgPersist implementation ──────────────────────────────────────────────────
+
+impl HasId for AuthRole {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl PgPersist for AuthRole {
+    async fn pg_upsert(&self, txn: &sea_orm::DatabaseTransaction) -> Result<()> {
+        let model = iam_roles::ActiveModel {
+            id: Set(self.id.clone()),
+            application_id: Set(self.application_id.clone()),
+            application_code: Set(Some(self.application_code.clone())),
+            name: Set(self.name.clone()),
+            display_name: Set(self.display_name.clone()),
+            description: Set(self.description.clone()),
+            source: Set(self.source.as_str().to_string()),
+            client_managed: Set(self.client_managed),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+        };
+        iam_roles::Entity::insert(model)
+            .on_conflict(
+                OnConflict::column(iam_roles::Column::Id)
+                    .update_columns([
+                        iam_roles::Column::ApplicationId,
+                        iam_roles::Column::ApplicationCode,
+                        iam_roles::Column::Name,
+                        iam_roles::Column::DisplayName,
+                        iam_roles::Column::Description,
+                        iam_roles::Column::Source,
+                        iam_roles::Column::ClientManaged,
+                        iam_roles::Column::UpdatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(txn)
+            .await?;
+
+        // Sync permissions
+        iam_role_permissions::Entity::delete_many()
+            .filter(iam_role_permissions::Column::RoleId.eq(&self.id))
+            .exec(txn)
+            .await?;
+        RoleRepository::insert_permissions_txn(&self.id, &self.permissions, txn).await?;
+        Ok(())
+    }
+
+    async fn pg_delete(&self, txn: &sea_orm::DatabaseTransaction) -> Result<()> {
+        iam_roles::Entity::delete_by_id(&self.id).exec(txn).await?;
+        Ok(())
     }
 }

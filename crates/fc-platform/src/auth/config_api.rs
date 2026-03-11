@@ -343,7 +343,8 @@ fn parse_auth_provider(s: &str) -> AuthProvider {
 #[utoipa::path(
     post,
     path = "",
-    tag = "auth-config",
+    tag = "anchor-domains",
+    operation_id = "postApiAdminAnchorDomains",
     request_body = CreateAnchorDomainRequest,
     responses(
         (status = 201, description = "Anchor domain created", body = CreatedResponse),
@@ -378,7 +379,8 @@ pub async fn create_anchor_domain(
 #[utoipa::path(
     get,
     path = "",
-    tag = "auth-config",
+    tag = "anchor-domains",
+    operation_id = "getApiAdminAnchorDomains",
     responses(
         (status = 200, description = "List of anchor domains", body = AnchorDomainListResponse)
     ),
@@ -411,7 +413,8 @@ pub async fn list_anchor_domains(
 #[utoipa::path(
     get,
     path = "/{id}",
-    tag = "auth-config",
+    tag = "anchor-domains",
+    operation_id = "getApiAdminAnchorDomainsById",
     params(
         ("id" = String, Path, description = "Anchor domain ID")
     ),
@@ -453,7 +456,8 @@ pub struct CheckAnchorDomainResponse {
 #[utoipa::path(
     get,
     path = "/check/{domain}",
-    tag = "auth-config",
+    tag = "anchor-domains",
+    operation_id = "getApiAdminAnchorDomainsCheckByDomain",
     params(
         ("domain" = String, Path, description = "Domain to check")
     ),
@@ -480,7 +484,8 @@ pub async fn check_anchor_domain(
 #[utoipa::path(
     delete,
     path = "/{id}",
-    tag = "auth-config",
+    tag = "anchor-domains",
+    operation_id = "deleteApiAdminAnchorDomainsById",
     params(
         ("id" = String, Path, description = "Anchor domain ID")
     ),
@@ -507,6 +512,55 @@ pub async fn delete_anchor_domain(
     Ok(Json(SuccessResponse::ok()))
 }
 
+/// Update anchor domain request
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAnchorDomainRequest {
+    /// New domain value
+    pub domain: String,
+}
+
+/// Update anchor domain
+#[utoipa::path(
+    put,
+    path = "/{id}",
+    tag = "anchor-domains",
+    operation_id = "putApiAdminAnchorDomainsById",
+    params(
+        ("id" = String, Path, description = "Anchor domain ID")
+    ),
+    request_body = UpdateAnchorDomainRequest,
+    responses(
+        (status = 200, description = "Anchor domain updated", body = AnchorDomainResponse),
+        (status = 404, description = "Anchor domain not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn update_anchor_domain(
+    State(state): State<AuthConfigState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateAnchorDomainRequest>,
+) -> Result<Json<AnchorDomainResponse>, PlatformError> {
+    crate::checks::require_anchor(&auth.0)?;
+
+    let mut domain = state.anchor_domain_repo.find_by_id(&id).await?
+        .ok_or_else(|| PlatformError::not_found("AnchorDomain", &id))?;
+
+    domain.domain = req.domain.to_lowercase();
+    domain.updated_at = chrono::Utc::now();
+
+    state.anchor_domain_repo.update(&domain).await?;
+
+    let user_count = if let Some(ref principal_repo) = state.principal_repo {
+        principal_repo.count_by_email_domain(&domain.domain).await.unwrap_or(0)
+    } else {
+        0
+    };
+
+    Ok(Json(AnchorDomainResponse::from_domain(domain, user_count)))
+}
+
 // ============================================================================
 // Client Auth Config Handlers
 // ============================================================================
@@ -515,7 +569,8 @@ pub async fn delete_anchor_domain(
 #[utoipa::path(
     post,
     path = "",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "postApiAdminAuthConfigs",
     request_body = CreateClientAuthConfigRequest,
     responses(
         (status = 201, description = "Client auth config created", body = CreatedResponse),
@@ -570,7 +625,8 @@ pub async fn create_client_auth_config(
 #[utoipa::path(
     get,
     path = "/{id}",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "getApiAdminAuthConfigsById",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -597,7 +653,8 @@ pub async fn get_client_auth_config(
 #[utoipa::path(
     get,
     path = "",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "getApiAdminAuthConfigs",
     responses(
         (status = 200, description = "List of client auth configs", body = AuthConfigListResponse)
     ),
@@ -622,7 +679,8 @@ pub async fn list_client_auth_configs(
 #[utoipa::path(
     put,
     path = "/{id}",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "putApiAdminAuthConfigsById",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -670,7 +728,8 @@ pub async fn update_client_auth_config(
 #[utoipa::path(
     delete,
     path = "/{id}",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "deleteApiAdminAuthConfigsById",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -709,7 +768,8 @@ pub struct UpdateConfigTypeRequest {
 #[utoipa::path(
     put,
     path = "/{id}/config-type",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "putApiAdminAuthConfigsByIdConfigType",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -743,7 +803,8 @@ pub async fn update_config_type(
 #[utoipa::path(
     get,
     path = "/by-domain/{domain}",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "getApiAdminAuthConfigsByDomainByDomain",
     params(
         ("domain" = String, Path, description = "Email domain")
     ),
@@ -770,7 +831,8 @@ pub async fn get_by_domain(
 #[utoipa::path(
     post,
     path = "/internal",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "postApiAdminAuthConfigsInternal",
     request_body = CreateInternalAuthConfigRequest,
     responses(
         (status = 201, description = "Internal auth config created", body = CreatedResponse),
@@ -811,7 +873,8 @@ pub async fn create_internal_auth_config(
 #[utoipa::path(
     post,
     path = "/oidc",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "postApiAdminAuthConfigsOidc",
     request_body = CreateOidcAuthConfigRequest,
     responses(
         (status = 201, description = "OIDC auth config created", body = CreatedResponse),
@@ -854,7 +917,8 @@ pub async fn create_oidc_auth_config(
 #[utoipa::path(
     put,
     path = "/{id}/oidc",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "putApiAdminAuthConfigsByIdOidc",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -894,7 +958,8 @@ pub async fn update_oidc_config(
 #[utoipa::path(
     put,
     path = "/{id}/client-binding",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "putApiAdminAuthConfigsByIdClientBinding",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -928,7 +993,8 @@ pub async fn update_client_binding(
 #[utoipa::path(
     put,
     path = "/{id}/additional-clients",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "putApiAdminAuthConfigsByIdAdditionalClients",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -962,7 +1028,8 @@ pub async fn update_additional_clients(
 #[utoipa::path(
     put,
     path = "/{id}/granted-clients",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "putApiAdminAuthConfigsByIdGrantedClients",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -996,7 +1063,8 @@ pub async fn update_granted_clients(
 #[utoipa::path(
     post,
     path = "/validate-secret",
-    tag = "auth-config",
+    tag = "auth-configs",
+    operation_id = "postApiAdminAuthConfigsValidateSecret",
     request_body = ValidateSecretRequest,
     responses(
         (status = 200, description = "Secret validation result", body = ValidateSecretResponse)
@@ -1028,7 +1096,8 @@ pub async fn validate_secret(
 #[utoipa::path(
     post,
     path = "",
-    tag = "auth-config",
+    tag = "idp-role-mappings",
+    operation_id = "postApiAdminIdpRoleMappings",
     request_body = CreateIdpRoleMappingRequest,
     responses(
         (status = 201, description = "IDP role mapping created", body = CreatedResponse),
@@ -1069,7 +1138,8 @@ pub struct IdpRoleMappingQuery {
 #[utoipa::path(
     get,
     path = "",
-    tag = "auth-config",
+    tag = "idp-role-mappings",
+    operation_id = "getApiAdminIdpRoleMappings",
     params(IdpRoleMappingQuery),
     responses(
         (status = 200, description = "List of IDP role mappings", body = IdpRoleMappingListResponse)
@@ -1101,7 +1171,8 @@ pub async fn list_idp_role_mappings(
 #[utoipa::path(
     delete,
     path = "/{id}",
-    tag = "auth-config",
+    tag = "idp-role-mappings",
+    operation_id = "deleteApiAdminIdpRoleMappingsById",
     params(
         ("id" = String, Path, description = "IDP role mapping ID")
     ),
@@ -1137,7 +1208,7 @@ pub fn anchor_domains_router(state: AuthConfigState) -> Router {
     Router::new()
         .route("/", post(create_anchor_domain).get(list_anchor_domains))
         .route("/check/:domain", get(check_anchor_domain))
-        .route("/:id", get(get_anchor_domain).delete(delete_anchor_domain))
+        .route("/:id", get(get_anchor_domain).put(update_anchor_domain).delete(delete_anchor_domain))
         .with_state(state)
 }
 

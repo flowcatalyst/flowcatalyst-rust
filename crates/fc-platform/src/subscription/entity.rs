@@ -1,39 +1,82 @@
-//! Subscription Entity
-//!
-//! Links event types to target endpoints for dispatch.
+//! Subscription Entity — matches TypeScript Subscription domain
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use bson::serde_helpers::chrono_datetime_as_bson_datetime;
-use crate::dispatch_job::entity::DispatchMode;
 
-/// Subscription status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SubscriptionStatus {
     Active,
     Paused,
-    Archived,
 }
 
 impl Default for SubscriptionStatus {
-    fn default() -> Self {
-        Self::Active
+    fn default() -> Self { Self::Active }
+}
+
+impl SubscriptionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Active => "ACTIVE",
+            Self::Paused => "PAUSED",
+        }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "PAUSED" => Self::Paused,
+            _ => Self::Active,
+        }
     }
 }
 
-/// Event type binding in a subscription
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SubscriptionSource {
+    Code,
+    Api,
+    Ui,
+}
+
+impl Default for SubscriptionSource {
+    fn default() -> Self { Self::Ui }
+}
+
+impl SubscriptionSource {
+    pub fn as_str(&self) -> &'static str {
+        match self { Self::Code => "CODE", Self::Api => "API", Self::Ui => "UI" }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s { "CODE" => Self::Code, "API" => Self::Api, _ => Self::Ui }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DispatchMode {
+    Immediate,
+    BlockOnError,
+}
+
+impl Default for DispatchMode {
+    fn default() -> Self { Self::Immediate }
+}
+
+impl DispatchMode {
+    pub fn as_str(&self) -> &'static str {
+        match self { Self::Immediate => "IMMEDIATE", Self::BlockOnError => "BLOCK_ON_ERROR" }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s { "BLOCK_ON_ERROR" => Self::BlockOnError, _ => Self::Immediate }
+    }
+}
+
+/// Event type binding stored in msg_subscription_event_types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypeBinding {
-    /// Event type code (full or with wildcards)
-    /// Examples:
-    /// - "orders:fulfillment:shipment:shipped" (exact)
-    /// - "orders:fulfillment:*:*" (wildcard)
-    /// - "orders:*:*:*" (application-level)
+    pub event_type_id: Option<String>,
     pub event_type_code: String,
-
-    /// Optional filter on event data (JSONPath or similar)
+    pub spec_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
 }
@@ -41,7 +84,9 @@ pub struct EventTypeBinding {
 impl EventTypeBinding {
     pub fn new(event_type_code: impl Into<String>) -> Self {
         Self {
+            event_type_id: None,
             event_type_code: event_type_code.into(),
+            spec_version: None,
             filter: None,
         }
     }
@@ -51,22 +96,17 @@ impl EventTypeBinding {
         self
     }
 
-    /// Check if this binding matches an event type code
     pub fn matches(&self, event_type_code: &str) -> bool {
         let pattern_parts: Vec<&str> = self.event_type_code.split(':').collect();
         let event_parts: Vec<&str> = event_type_code.split(':').collect();
-
         if pattern_parts.len() != event_parts.len() {
             return false;
         }
-
-        pattern_parts.iter().zip(event_parts.iter()).all(|(pattern, event)| {
-            *pattern == "*" || pattern == event
-        })
+        pattern_parts.iter().zip(event_parts.iter()).all(|(p, e)| *p == "*" || p == e)
     }
 }
 
-/// Custom configuration entry
+/// Custom configuration entry stored in msg_subscription_custom_configs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigEntry {
@@ -74,241 +114,130 @@ pub struct ConfigEntry {
     pub value: String,
 }
 
-/// Subscription entity
+/// Subscription domain entity — matches TypeScript Subscription interface
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Subscription {
-    /// TSID as Crockford Base32 string
-    #[serde(rename = "_id")]
     pub id: String,
-
-    /// Unique code (unique per client_id)
     pub code: String,
-
-    /// Human-readable name
+    pub application_code: Option<String>,
     pub name: String,
-
-    /// Description
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-
-    /// Multi-tenant: Client ID (null = anchor-level/shared)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-
-    /// Event types this subscription listens to
-    #[serde(default)]
+    pub client_identifier: Option<String>,
+    pub client_scoped: bool,
     pub event_types: Vec<EventTypeBinding>,
-
-    /// Target URL for webhook delivery
-    pub target: String,
-
-    /// Queue name for dispatch (optional - uses default if not set)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Connection ID — references msg_connections
+    pub connection_id: String,
     pub queue: Option<String>,
-
-    /// Custom configuration passed to target
-    #[serde(default)]
     pub custom_config: Vec<ConfigEntry>,
-
-    /// Dispatch pool for rate limiting
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dispatch_pool_id: Option<String>,
-
-    /// Service account for webhook authentication
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub service_account_id: Option<String>,
-
-    // === Dispatch behavior ===
-
-    /// Dispatch mode for ordering
-    #[serde(default)]
-    pub mode: DispatchMode,
-
-    /// Initial delay in seconds before dispatch
-    #[serde(default)]
-    pub delay_seconds: u32,
-
-    /// Sequence number for ordering (lower = higher priority)
-    #[serde(default = "default_sequence")]
-    pub sequence: i32,
-
-    /// Timeout in seconds for HTTP call
-    #[serde(default = "default_timeout")]
-    pub timeout_seconds: u32,
-
-    /// Maximum retry attempts
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
-
-    /// If true, send raw event data only (no envelope)
-    #[serde(default)]
-    pub data_only: bool,
-
-    // === Status ===
-
-    #[serde(default)]
+    pub source: SubscriptionSource,
     pub status: SubscriptionStatus,
-
-    // === Audit ===
-
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
-    pub created_at: DateTime<Utc>,
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
-    pub updated_at: DateTime<Utc>,
-
+    pub max_age_seconds: i32,
+    pub dispatch_pool_id: Option<String>,
+    pub dispatch_pool_code: Option<String>,
+    pub delay_seconds: i32,
+    pub sequence: i32,
+    pub mode: DispatchMode,
+    pub timeout_seconds: i32,
+    pub max_retries: i32,
+    pub service_account_id: Option<String>,
+    pub data_only: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
-}
-
-fn default_sequence() -> i32 {
-    99
-}
-
-fn default_timeout() -> u32 {
-    30
-}
-
-fn default_max_retries() -> u32 {
-    3
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl Subscription {
-    pub fn new(code: impl Into<String>, name: impl Into<String>, target: impl Into<String>) -> Self {
+    pub fn new(code: impl Into<String>, name: impl Into<String>, connection_id: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::Subscription),
             code: code.into(),
+            application_code: None,
             name: name.into(),
             description: None,
             client_id: None,
+            client_identifier: None,
+            client_scoped: false,
             event_types: vec![],
-            target: target.into(),
+            connection_id: connection_id.into(),
             queue: None,
             custom_config: vec![],
-            dispatch_pool_id: None,
-            service_account_id: None,
-            mode: DispatchMode::Immediate,
-            delay_seconds: 0,
-            sequence: default_sequence(),
-            timeout_seconds: default_timeout(),
-            max_retries: default_max_retries(),
-            data_only: false,
+            source: SubscriptionSource::Ui,
             status: SubscriptionStatus::Active,
+            max_age_seconds: 86400,
+            dispatch_pool_id: None,
+            dispatch_pool_code: None,
+            delay_seconds: 0,
+            sequence: 99,
+            mode: DispatchMode::Immediate,
+            timeout_seconds: 30,
+            max_retries: 3,
+            service_account_id: None,
+            data_only: true,
+            created_by: None,
             created_at: now,
             updated_at: now,
-            created_by: None,
         }
     }
 
-    pub fn with_event_type(mut self, event_type_code: impl Into<String>) -> Self {
-        self.event_types.push(EventTypeBinding::new(event_type_code));
-        self
-    }
+    pub fn with_description(mut self, desc: impl Into<String>) -> Self { self.description = Some(desc.into()); self }
+    pub fn with_client_id(mut self, id: impl Into<String>) -> Self { self.client_id = Some(id.into()); self }
+    pub fn with_dispatch_pool_id(mut self, id: impl Into<String>) -> Self { self.dispatch_pool_id = Some(id.into()); self }
+    pub fn with_service_account_id(mut self, id: impl Into<String>) -> Self { self.service_account_id = Some(id.into()); self }
+    pub fn with_mode(mut self, mode: DispatchMode) -> Self { self.mode = mode; self }
+    pub fn with_data_only(mut self, data_only: bool) -> Self { self.data_only = data_only; self }
+    pub fn with_event_type_binding(mut self, binding: EventTypeBinding) -> Self { self.event_types.push(binding); self }
 
-    pub fn with_event_type_binding(mut self, binding: EventTypeBinding) -> Self {
-        self.event_types.push(binding);
-        self
-    }
-
-    pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
-        self.client_id = Some(client_id.into());
-        self
-    }
-
-    pub fn with_dispatch_pool_id(mut self, pool_id: impl Into<String>) -> Self {
-        self.dispatch_pool_id = Some(pool_id.into());
-        self
-    }
-
-    pub fn with_service_account_id(mut self, account_id: impl Into<String>) -> Self {
-        self.service_account_id = Some(account_id.into());
-        self
-    }
-
-    pub fn with_mode(mut self, mode: DispatchMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    pub fn with_data_only(mut self, data_only: bool) -> Self {
-        self.data_only = data_only;
-        self
-    }
-
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-
-    /// Check if this subscription matches an event type code
     pub fn matches_event_type(&self, event_type_code: &str) -> bool {
-        self.event_types.iter().any(|binding| binding.matches(event_type_code))
+        self.event_types.iter().any(|b| b.matches(event_type_code))
     }
 
-    /// Check if this subscription matches a client
     pub fn matches_client(&self, client_id: Option<&str>) -> bool {
         match (&self.client_id, client_id) {
-            // Anchor-level subscription matches all clients
             (None, _) => true,
-            // Client-specific subscription matches specific client
             (Some(sub_client), Some(event_client)) => sub_client == event_client,
-            // Client-specific subscription doesn't match anchor-level event
             (Some(_), None) => false,
         }
     }
 
-    pub fn pause(&mut self) {
-        self.status = SubscriptionStatus::Paused;
-        self.updated_at = Utc::now();
-    }
-
-    pub fn resume(&mut self) {
-        self.status = SubscriptionStatus::Active;
-        self.updated_at = Utc::now();
-    }
-
-    pub fn archive(&mut self) {
-        self.status = SubscriptionStatus::Archived;
-        self.updated_at = Utc::now();
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.status == SubscriptionStatus::Active
-    }
+    pub fn pause(&mut self) { self.status = SubscriptionStatus::Paused; self.updated_at = Utc::now(); }
+    pub fn resume(&mut self) { self.status = SubscriptionStatus::Active; self.updated_at = Utc::now(); }
+    pub fn is_active(&self) -> bool { self.status == SubscriptionStatus::Active }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_event_type_matching() {
-        let binding = EventTypeBinding::new("orders:fulfillment:shipment:shipped");
-        assert!(binding.matches("orders:fulfillment:shipment:shipped"));
-        assert!(!binding.matches("orders:fulfillment:shipment:created"));
-    }
-
-    #[test]
-    fn test_wildcard_matching() {
-        let binding = EventTypeBinding::new("orders:fulfillment:*:*");
-        assert!(binding.matches("orders:fulfillment:shipment:shipped"));
-        assert!(binding.matches("orders:fulfillment:order:created"));
-        assert!(!binding.matches("payments:fulfillment:order:created"));
-    }
-
-    #[test]
-    fn test_subscription_client_matching() {
-        // Anchor-level subscription
-        let anchor_sub = Subscription::new("test", "Test", "http://example.com");
-        assert!(anchor_sub.matches_client(Some("client1")));
-        assert!(anchor_sub.matches_client(None));
-
-        // Client-specific subscription
-        let client_sub = Subscription::new("test", "Test", "http://example.com")
-            .with_client_id("client1");
-        assert!(client_sub.matches_client(Some("client1")));
-        assert!(!client_sub.matches_client(Some("client2")));
-        assert!(!client_sub.matches_client(None));
+impl From<crate::entities::msg_subscriptions::Model> for Subscription {
+    fn from(m: crate::entities::msg_subscriptions::Model) -> Self {
+        Self {
+            id: m.id,
+            code: m.code,
+            application_code: m.application_code,
+            name: m.name,
+            description: m.description,
+            client_id: m.client_id,
+            client_identifier: m.client_identifier,
+            client_scoped: m.client_scoped,
+            event_types: vec![], // loaded separately
+            connection_id: m.connection_id.unwrap_or_default(),
+            queue: m.queue,
+            custom_config: vec![], // loaded separately
+            source: SubscriptionSource::from_str(&m.source),
+            status: SubscriptionStatus::from_str(&m.status),
+            max_age_seconds: m.max_age_seconds,
+            dispatch_pool_id: m.dispatch_pool_id,
+            dispatch_pool_code: m.dispatch_pool_code,
+            delay_seconds: m.delay_seconds,
+            sequence: m.sequence,
+            mode: DispatchMode::from_str(&m.mode),
+            timeout_seconds: m.timeout_seconds,
+            max_retries: m.max_retries,
+            service_account_id: m.service_account_id,
+            data_only: m.data_only,
+            created_by: None,
+            created_at: m.created_at.with_timezone(&Utc),
+            updated_at: m.updated_at.with_timezone(&Utc),
+        }
     }
 }

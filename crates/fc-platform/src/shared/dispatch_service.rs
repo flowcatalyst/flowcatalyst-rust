@@ -662,11 +662,12 @@ impl EventDispatcher {
             }
 
             // Create dispatch job using for_event constructor
+            // Target URL is resolved from the connection, not stored on the subscription
             let mut job = DispatchJob::for_event(
                 event_id,
                 event_type,
                 source,
-                &subscription.target,
+                "",
                 &payload,
             );
 
@@ -691,9 +692,14 @@ impl EventDispatcher {
             }
 
             // Set subscription details
+            // Map subscription dispatch mode to dispatch job dispatch mode
+            let job_mode = match subscription.mode {
+                crate::subscription::entity::DispatchMode::Immediate => crate::dispatch_job::entity::DispatchMode::Immediate,
+                crate::subscription::entity::DispatchMode::BlockOnError => crate::dispatch_job::entity::DispatchMode::BlockOnError,
+            };
             job = job
                 .with_subscription_id(&subscription.id)
-                .with_mode(subscription.mode.clone())
+                .with_mode(job_mode)
                 .with_data_only(subscription.data_only);
 
             // Set dispatch pool if configured
@@ -706,8 +712,8 @@ impl EventDispatcher {
                 job = job.with_service_account_id(sa_id);
             }
 
-            job.max_retries = subscription.max_retries;
-            job.timeout_seconds = subscription.timeout_seconds;
+            job.max_retries = subscription.max_retries as u32;
+            job.timeout_seconds = subscription.timeout_seconds as u32;
 
             job_ids.push(job.id.clone());
             self.job_repo.insert(&job).await?;

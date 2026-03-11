@@ -11,8 +11,14 @@ use utoipa::{ToSchema, IntoParams};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{Subscription, EventTypeBinding, DispatchMode};
+use crate::{Subscription, EventTypeBinding};
+use crate::subscription::entity::DispatchMode;
 use crate::SubscriptionRepository;
+use crate::subscription::operations::{
+    SyncSubscriptionsCommand, SyncSubscriptionsUseCase, SyncSubscriptionInput,
+    EventTypeBindingInput,
+};
+use crate::usecase::{ExecutionContext, UseCaseResult};
 use crate::shared::error::PlatformError;
 use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
 use crate::shared::middleware::Authenticated;
@@ -43,8 +49,8 @@ pub struct CreateSubscriptionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Target URL for webhook delivery
-    pub target: String,
+    /// Connection ID (references msg_connections)
+    pub connection_id: String,
 
     /// Event types to listen to
     #[serde(default)]
@@ -89,8 +95,8 @@ pub struct UpdateSubscriptionRequest {
     /// Description
     pub description: Option<String>,
 
-    /// Target URL
-    pub target: Option<String>,
+    /// Connection ID
+    pub connection_id: Option<String>,
 
     /// Timeout in seconds
     pub timeout_seconds: Option<u32>,
@@ -144,7 +150,7 @@ pub struct SubscriptionResponse {
     pub client_id: Option<String>,
     pub client_identifier: Option<String>,
     pub event_types: Vec<EventTypeBindingResponse>,
-    pub target: String,
+    pub connection_id: String,
     pub queue: Option<String>,
     pub custom_config: Vec<ConfigEntryResponse>,
     pub source: Option<String>,
@@ -173,19 +179,19 @@ impl From<Subscription> for SubscriptionResponse {
             client_id: s.client_id,
             client_identifier: None, // Denormalized, populated by projection
             event_types: s.event_types.iter().map(|e| e.into()).collect(),
-            target: s.target,
+            connection_id: s.connection_id,
             queue: s.queue,
             custom_config: s.custom_config.iter().map(|c| c.into()).collect(),
             source: None, // Not tracked in Rust domain yet
             status: format!("{:?}", s.status).to_uppercase(),
-            max_age_seconds: 86400, // Default 24 hours
+            max_age_seconds: s.max_age_seconds as u32,
             dispatch_pool_id: s.dispatch_pool_id,
             dispatch_pool_code: None, // Denormalized, populated by projection
-            delay_seconds: s.delay_seconds,
+            delay_seconds: s.delay_seconds as u32,
             sequence: s.sequence,
             mode: format!("{:?}", s.mode).to_uppercase(),
-            timeout_seconds: s.timeout_seconds,
-            max_retries: s.max_retries,
+            timeout_seconds: s.timeout_seconds as u32,
+            max_retries: s.max_retries as u32,
             service_account_id: s.service_account_id,
             data_only: s.data_only,
             created_at: s.created_at.to_rfc3339(),
@@ -217,18 +223,78 @@ pub struct SubscriptionsQuery {
     pub status: Option<String>,
 }
 
+/// Sync subscriptions request (admin)
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSubscriptionsRequest {
+    /// Application code
+    pub application_code: String,
+    /// Subscriptions to sync
+    pub subscriptions: Vec<SyncSubscriptionInputRequest>,
+}
+
+/// A single subscription input for sync
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSubscriptionInputRequest {
+    pub code: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub connection_id: String,
+    pub event_types: Vec<SyncSubscriptionEventTypeRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_pool_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
+    #[serde(default)]
+    pub data_only: bool,
+}
+
+/// Event type binding for sync subscription input
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSubscriptionEventTypeRequest {
+    pub event_type_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+}
+
+/// Sync query parameters
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct SyncSubscriptionsQuery {
+    /// Remove items not in the sync list
+    #[serde(default)]
+    pub remove_unlisted: bool,
+}
+
+/// Sync result response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncResultResponse {
+    pub created: u32,
+    pub updated: u32,
+    pub deleted: u32,
+}
+
 /// Subscriptions service state
 #[derive(Clone)]
 pub struct SubscriptionsState {
     pub subscription_repo: Arc<SubscriptionRepository>,
+    pub sync_use_case: Arc<SyncSubscriptionsUseCase>,
 }
 
 fn parse_mode(s: &str) -> Result<DispatchMode, PlatformError> {
     match s.to_uppercase().as_str() {
         "IMMEDIATE" => Ok(DispatchMode::Immediate),
-        "NEXT_ON_ERROR" => Ok(DispatchMode::NextOnError),
-        "BLOCK_ON_ERROR" => Ok(DispatchMode::BlockOnError),
-        _ => Err(PlatformError::validation(format!("Invalid mode: {}. Valid options: IMMEDIATE, NEXT_ON_ERROR, BLOCK_ON_ERROR", s))),
+        "BLOCK_ON_ERROR" | "BLOCKONERROR" => Ok(DispatchMode::BlockOnError),
+        _ => Err(PlatformError::validation(format!("Invalid mode: {}. Valid options: IMMEDIATE, BLOCK_ON_ERROR", s))),
     }
 }
 
@@ -237,7 +303,7 @@ fn parse_mode(s: &str) -> Result<DispatchMode, PlatformError> {
     post,
     path = "",
     tag = "subscriptions",
-    operation_id = "postApiAdminPlatformSubscriptions",
+    operation_id = "postApiAdminSubscriptions",
     request_body = CreateSubscriptionRequest,
     responses(
         (status = 201, description = "Subscription created", body = CreatedResponse),
@@ -267,7 +333,7 @@ pub async fn create_subscription(
         return Err(PlatformError::duplicate("Subscription", "code", &req.code));
     }
 
-    let mut subscription = Subscription::new(&req.code, &req.name, &req.target);
+    let mut subscription = Subscription::new(&req.code, &req.name, &req.connection_id);
 
     if let Some(desc) = req.description {
         subscription = subscription.with_description(desc);
@@ -288,10 +354,10 @@ pub async fn create_subscription(
     subscription = subscription.with_data_only(req.data_only);
 
     if let Some(timeout) = req.timeout_seconds {
-        subscription.timeout_seconds = timeout;
+        subscription.timeout_seconds = timeout as i32;
     }
     if let Some(retries) = req.max_retries {
-        subscription.max_retries = retries;
+        subscription.max_retries = retries as i32;
     }
 
     // Add event type bindings
@@ -314,7 +380,7 @@ pub async fn create_subscription(
     get,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "getApiAdminPlatformSubscriptionsById",
+    operation_id = "getApiAdminSubscriptionsById",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -349,7 +415,7 @@ pub async fn get_subscription(
     get,
     path = "",
     tag = "subscriptions",
-    operation_id = "getApiAdminPlatformSubscriptions",
+    operation_id = "getApiAdminSubscriptions",
     params(SubscriptionsQuery),
     responses(
         (status = 200, description = "List of subscriptions", body = SubscriptionListResponse)
@@ -392,7 +458,7 @@ pub async fn list_subscriptions(
     put,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "putApiAdminPlatformSubscriptionsById",
+    operation_id = "putApiAdminSubscriptionsById",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -430,14 +496,14 @@ pub async fn update_subscription(
     if let Some(desc) = req.description {
         subscription.description = Some(desc);
     }
-    if let Some(target) = req.target {
-        subscription.target = target;
+    if let Some(conn_id) = req.connection_id {
+        subscription.connection_id = conn_id;
     }
     if let Some(timeout) = req.timeout_seconds {
-        subscription.timeout_seconds = timeout;
+        subscription.timeout_seconds = timeout as i32;
     }
     if let Some(retries) = req.max_retries {
-        subscription.max_retries = retries;
+        subscription.max_retries = retries as i32;
     }
 
     subscription.updated_at = chrono::Utc::now();
@@ -451,7 +517,7 @@ pub async fn update_subscription(
     post,
     path = "/{id}/pause",
     tag = "subscriptions",
-    operation_id = "postApiAdminPlatformSubscriptionsByIdPause",
+    operation_id = "postApiAdminSubscriptionsByIdPause",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -489,7 +555,7 @@ pub async fn pause_subscription(
     post,
     path = "/{id}/resume",
     tag = "subscriptions",
-    operation_id = "postApiAdminPlatformSubscriptionsByIdResume",
+    operation_id = "postApiAdminSubscriptionsByIdResume",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -527,7 +593,7 @@ pub async fn resume_subscription(
     delete,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "deleteApiAdminPlatformSubscriptionsById",
+    operation_id = "deleteApiAdminSubscriptionsById",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -544,7 +610,7 @@ pub async fn delete_subscription(
 ) -> Result<Json<SuccessResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_delete_subscriptions(&auth.0)?;
 
-    let mut subscription = state.subscription_repo.find_by_id(&id).await?
+    let subscription = state.subscription_repo.find_by_id(&id).await?
         .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
 
     // Check client access
@@ -556,62 +622,67 @@ pub async fn delete_subscription(
         return Err(PlatformError::forbidden("Only anchor users can delete anchor-level subscriptions"));
     }
 
-    subscription.archive();
-    state.subscription_repo.update(&subscription).await?;
+    state.subscription_repo.delete(&id).await?;
 
     Ok(Json(SuccessResponse::ok()))
 }
 
-/// Reactivate an archived subscription
-///
-/// Reactivates a previously archived subscription, setting it back to active status.
+
+/// Sync subscriptions
 #[utoipa::path(
     post,
-    path = "/{id}/reactivate",
+    path = "/sync",
     tag = "subscriptions",
-    operation_id = "postApiAdminPlatformSubscriptionsByIdReactivate",
-    params(
-        ("id" = String, Path, description = "Subscription ID")
-    ),
+    operation_id = "postApiAdminSubscriptionsSync",
+    params(SyncSubscriptionsQuery),
+    request_body = SyncSubscriptionsRequest,
     responses(
-        (status = 200, description = "Subscription reactivated", body = SubscriptionResponse),
-        (status = 404, description = "Subscription not found"),
-        (status = 400, description = "Subscription is not archived")
+        (status = 200, description = "Subscriptions synced", body = SyncResultResponse),
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Application or connection not found")
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn reactivate_subscription(
+pub async fn sync_subscriptions(
     State(state): State<SubscriptionsState>,
     auth: Authenticated,
-    Path(id): Path<String>,
-) -> Result<Json<SubscriptionResponse>, PlatformError> {
+    Query(query): Query<SyncSubscriptionsQuery>,
+    Json(req): Json<SyncSubscriptionsRequest>,
+) -> Result<Json<SyncResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
 
-    let mut subscription = state.subscription_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("Subscription", &id))?;
+    let command = SyncSubscriptionsCommand {
+        application_code: req.application_code,
+        subscriptions: req.subscriptions.into_iter().map(|s| SyncSubscriptionInput {
+            code: s.code,
+            name: s.name,
+            description: s.description,
+            connection_id: s.connection_id,
+            event_types: s.event_types.into_iter().map(|et| EventTypeBindingInput {
+                event_type_code: et.event_type_code,
+                filter: et.filter,
+            }).collect(),
+            dispatch_pool_code: s.dispatch_pool_code,
+            mode: s.mode,
+            max_retries: s.max_retries,
+            timeout_seconds: s.timeout_seconds,
+            data_only: s.data_only,
+        }).collect(),
+        remove_unlisted: query.remove_unlisted,
+    };
 
-    // Check client access
-    if let Some(ref cid) = subscription.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden("No access to this subscription"));
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+
+    match state.sync_use_case.execute(command, ctx).await {
+        UseCaseResult::Success(event) => {
+            Ok(Json(SyncResultResponse {
+                created: event.created,
+                updated: event.updated,
+                deleted: event.deleted,
+            }))
         }
-    } else if !auth.0.is_anchor() {
-        return Err(PlatformError::forbidden("Only anchor users can reactivate anchor-level subscriptions"));
+        UseCaseResult::Failure(err) => Err(err.into()),
     }
-
-    // Check that subscription is archived
-    if subscription.status != crate::SubscriptionStatus::Archived {
-        return Err(PlatformError::validation(
-            "Only archived subscriptions can be reactivated. Use /resume for paused subscriptions."
-        ));
-    }
-
-    subscription.resume(); // This sets status back to Active
-    state.subscription_repo.update(&subscription).await?;
-
-    tracing::info!(subscription_id = %id, principal_id = %auth.0.principal_id, "Subscription reactivated");
-
-    Ok(Json(subscription.into()))
 }
 
 /// Create subscriptions router
@@ -621,6 +692,6 @@ pub fn subscriptions_router(state: SubscriptionsState) -> OpenApiRouter {
         .routes(routes!(get_subscription, update_subscription, delete_subscription))
         .routes(routes!(pause_subscription))
         .routes(routes!(resume_subscription))
-        .routes(routes!(reactivate_subscription))
+        .routes(routes!(sync_subscriptions))
         .with_state(state)
 }

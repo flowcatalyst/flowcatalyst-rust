@@ -5,7 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
 /// Dispatch job kind
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +19,15 @@ pub enum DispatchKind {
 impl Default for DispatchKind {
     fn default() -> Self {
         Self::Event
+    }
+}
+
+impl DispatchKind {
+    pub fn as_str(&self) -> &'static str {
+        match self { Self::Event => "EVENT", Self::Task => "TASK" }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s { "TASK" => Self::Task, _ => Self::Event }
     }
 }
 
@@ -55,6 +63,29 @@ impl DispatchStatus {
     pub fn is_successful(&self) -> bool {
         matches!(self, Self::Completed)
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::Queued => "QUEUED",
+            Self::InProgress => "IN_PROGRESS",
+            Self::Completed => "COMPLETED",
+            Self::Failed => "FAILED",
+            Self::Expired => "EXPIRED",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "PENDING" => Self::Pending,
+            "QUEUED" => Self::Queued,
+            "IN_PROGRESS" => Self::InProgress,
+            "COMPLETED" => Self::Completed,
+            "FAILED" => Self::Failed,
+            "EXPIRED" => Self::Expired,
+            _ => Self::Pending,
+        }
+    }
 }
 
 /// Dispatch mode for ordering behavior
@@ -75,6 +106,23 @@ impl Default for DispatchMode {
     }
 }
 
+impl DispatchMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Immediate => "IMMEDIATE",
+            Self::NextOnError => "NEXT_ON_ERROR",
+            Self::BlockOnError => "BLOCK_ON_ERROR",
+        }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "NEXT_ON_ERROR" => Self::NextOnError,
+            "BLOCK_ON_ERROR" => Self::BlockOnError,
+            _ => Self::Immediate,
+        }
+    }
+}
+
 /// Target protocol for dispatch
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -86,6 +134,11 @@ impl Default for DispatchProtocol {
     fn default() -> Self {
         Self::HttpWebhook
     }
+}
+
+impl DispatchProtocol {
+    pub fn as_str(&self) -> &'static str { "HTTP_WEBHOOK" }
+    pub fn from_str(_s: &str) -> Self { Self::HttpWebhook }
 }
 
 /// Retry strategy for failed jobs
@@ -103,6 +156,24 @@ pub enum RetryStrategy {
 impl Default for RetryStrategy {
     fn default() -> Self {
         Self::ExponentialBackoff
+    }
+}
+
+impl RetryStrategy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::FixedDelay => "fixed",
+            Self::ExponentialBackoff => "exponential",
+        }
+    }
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "immediate" | "IMMEDIATE" => Self::Immediate,
+            "fixed" | "FIXED_DELAY" => Self::FixedDelay,
+            "exponential" | "EXPONENTIAL_BACKOFF" => Self::ExponentialBackoff,
+            _ => Self::ExponentialBackoff,
+        }
     }
 }
 
@@ -132,11 +203,10 @@ pub struct DispatchAttempt {
     pub attempt_number: u32,
 
     /// When the attempt started
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub attempted_at: DateTime<Utc>,
 
     /// When the attempt completed
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
 
     /// Duration in milliseconds
@@ -213,7 +283,6 @@ pub struct DispatchMetadata {
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJob {
     /// TSID as Crockford Base32 string
-    #[serde(rename = "_id")]
     pub id: String,
 
     /// External reference ID (optional, for idempotency)
@@ -230,7 +299,8 @@ pub struct DispatchJob {
     pub code: String,
 
     /// Source system/application
-    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 
     /// Subject/context identifier
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,14 +318,15 @@ pub struct DispatchJob {
     // === Payload ===
 
     /// Payload to deliver (JSON string)
-    pub payload: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<String>,
 
     /// Content type of payload
     #[serde(default = "default_content_type")]
     pub payload_content_type: String,
 
     /// If true, send raw data only. If false, wrap in envelope with metadata.
-    #[serde(default)]
+    #[serde(default = "default_data_only")]
     pub data_only: bool,
 
     // === Context ===
@@ -304,6 +375,10 @@ pub struct DispatchJob {
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u32,
 
+    /// Schema ID for payload validation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_id: Option<String>,
+
     /// Maximum retry attempts
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
@@ -326,7 +401,7 @@ pub struct DispatchJob {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
 
-    /// Attempt history
+    /// Attempt history (loaded separately from msg_dispatch_job_attempts table)
     #[serde(default)]
     pub attempts: Vec<DispatchAttempt>,
 
@@ -343,36 +418,38 @@ pub struct DispatchJob {
     // === Timestamps ===
 
     /// When the job was created
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 
     /// When the job was last updated
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub updated_at: DateTime<Utc>,
 
-    /// When the job was queued
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
-    pub queued_at: Option<DateTime<Utc>>,
+    /// When the job is scheduled for dispatch
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduled_for: Option<DateTime<Utc>>,
+
+    /// When the job expires
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
 
     /// When the last attempt was made
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_attempt_at: Option<DateTime<Utc>>,
 
     /// When the job completed
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
 
     /// Total duration in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_millis: Option<i64>,
-
-    /// Next retry scheduled time
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
-    pub next_retry_at: Option<DateTime<Utc>>,
 }
 
 fn default_content_type() -> String {
     "application/json".to_string()
+}
+
+fn default_data_only() -> bool {
+    true
 }
 
 fn default_sequence() -> i32 {
@@ -398,17 +475,17 @@ impl DispatchJob {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::DispatchJob),
             external_id: None,
             kind: DispatchKind::Event,
             code: event_type.into(),
-            source: source.into(),
+            source: Some(source.into()),
             subject: None,
             target_url: target_url.into(),
             protocol: DispatchProtocol::HttpWebhook,
-            payload: payload.into(),
+            payload: Some(payload.into()),
             payload_content_type: default_content_type(),
-            data_only: false,
+            data_only: true,
             event_id: Some(event_id.into()),
             correlation_id: None,
             client_id: None,
@@ -419,6 +496,7 @@ impl DispatchJob {
             mode: DispatchMode::Immediate,
             sequence: default_sequence(),
             timeout_seconds: default_timeout(),
+            schema_id: None,
             max_retries: default_max_retries(),
             retry_strategy: RetryStrategy::ExponentialBackoff,
             status: DispatchStatus::Pending,
@@ -429,11 +507,11 @@ impl DispatchJob {
             idempotency_key: None,
             created_at: now,
             updated_at: now,
-            queued_at: None,
+            scheduled_for: None,
+            expires_at: None,
             last_attempt_at: None,
             completed_at: None,
             duration_millis: None,
-            next_retry_at: None,
         }
     }
 
@@ -448,6 +526,16 @@ impl DispatchJob {
         job.kind = DispatchKind::Task;
         job.event_id = None;
         job
+    }
+
+    /// Parse the code field into (application, subdomain, aggregate) parts.
+    /// Codes follow the pattern "application:subdomain:aggregate:action" or similar colon-separated format.
+    pub fn parse_code_parts(&self) -> (Option<String>, Option<String>, Option<String>) {
+        let parts: Vec<&str> = self.code.split(':').collect();
+        let application = parts.first().map(|s| s.to_string());
+        let subdomain = parts.get(1).map(|s| s.to_string());
+        let aggregate = parts.get(2).map(|s| s.to_string());
+        (application, subdomain, aggregate)
     }
 
     // Builder methods
@@ -491,10 +579,10 @@ impl DispatchJob {
         self
     }
 
-    /// Mark the job as queued
+    /// Mark the job as queued (schedule it for now)
     pub fn mark_queued(&mut self) {
         self.status = DispatchStatus::Queued;
-        self.queued_at = Some(Utc::now());
+        self.scheduled_for = Some(Utc::now());
         self.updated_at = Utc::now();
     }
 
@@ -538,7 +626,7 @@ impl DispatchJob {
         } else {
             // Schedule retry
             self.status = DispatchStatus::Pending;
-            self.next_retry_at = Some(self.calculate_next_retry());
+            self.scheduled_for = Some(self.calculate_next_retry());
         }
     }
 
@@ -569,14 +657,60 @@ impl DispatchJob {
     }
 }
 
+/// Conversion from SeaORM model
+impl From<crate::entities::msg_dispatch_jobs::Model> for DispatchJob {
+    fn from(m: crate::entities::msg_dispatch_jobs::Model) -> Self {
+        let metadata: Vec<DispatchMetadata> = serde_json::from_value(m.metadata).unwrap_or_default();
+
+        Self {
+            id: m.id,
+            external_id: m.external_id,
+            kind: DispatchKind::from_str(&m.kind),
+            code: m.code,
+            source: m.source,
+            subject: m.subject,
+            target_url: m.target_url,
+            protocol: DispatchProtocol::from_str(&m.protocol),
+            payload: m.payload,
+            payload_content_type: m.payload_content_type.unwrap_or_else(default_content_type),
+            data_only: m.data_only,
+            event_id: m.event_id,
+            correlation_id: m.correlation_id,
+            client_id: m.client_id,
+            subscription_id: m.subscription_id,
+            service_account_id: m.service_account_id,
+            dispatch_pool_id: m.dispatch_pool_id,
+            message_group: m.message_group,
+            mode: DispatchMode::from_str(&m.mode),
+            sequence: m.sequence,
+            timeout_seconds: m.timeout_seconds as u32,
+            schema_id: m.schema_id,
+            max_retries: m.max_retries as u32,
+            retry_strategy: RetryStrategy::from_str(&m.retry_strategy),
+            status: DispatchStatus::from_str(&m.status),
+            attempt_count: m.attempt_count as u32,
+            last_error: m.last_error,
+            attempts: vec![], // Loaded separately from msg_dispatch_job_attempts table
+            metadata,
+            idempotency_key: m.idempotency_key,
+            created_at: m.created_at.with_timezone(&Utc),
+            updated_at: m.updated_at.with_timezone(&Utc),
+            scheduled_for: m.scheduled_for.map(|dt| dt.with_timezone(&Utc)),
+            expires_at: m.expires_at.map(|dt| dt.with_timezone(&Utc)),
+            last_attempt_at: m.last_attempt_at.map(|dt| dt.with_timezone(&Utc)),
+            completed_at: m.completed_at.map(|dt| dt.with_timezone(&Utc)),
+            duration_millis: m.duration_millis,
+        }
+    }
+}
+
 /// Dispatch job read projection - optimized for queries (matches Java DispatchJobRead)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobRead {
-    #[serde(rename = "_id")]
     pub id: String,
     pub external_id: Option<String>,
-    pub source: String,
+    pub source: Option<String>,
     pub kind: DispatchKind,
     pub code: String,
     pub subject: Option<String>,
@@ -599,17 +733,18 @@ pub struct DispatchJobRead {
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u32,
     pub retry_strategy: RetryStrategy,
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub application: Option<String>,
+    pub subdomain: Option<String>,
+    pub aggregate: Option<String>,
     pub created_at: DateTime<Utc>,
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub updated_at: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduled_for: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_attempt_at: Option<DateTime<Utc>>,
     pub duration_millis: Option<i64>,
     pub idempotency_key: Option<String>,
@@ -617,12 +752,13 @@ pub struct DispatchJobRead {
     pub is_completed: bool,
     #[serde(default)]
     pub is_terminal: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub projected_at: Option<DateTime<Utc>>,
 }
 
 impl From<&DispatchJob> for DispatchJobRead {
     fn from(job: &DispatchJob) -> Self {
+        let (application, subdomain, aggregate) = job.parse_code_parts();
         Self {
             id: job.id.clone(),
             external_id: job.external_id.clone(),
@@ -647,10 +783,13 @@ impl From<&DispatchJob> for DispatchJobRead {
             last_error: job.last_error.clone(),
             timeout_seconds: job.timeout_seconds,
             retry_strategy: job.retry_strategy,
+            application,
+            subdomain,
+            aggregate,
             created_at: job.created_at,
             updated_at: job.updated_at,
-            scheduled_for: job.next_retry_at,
-            expires_at: None, // Not tracked in DispatchJob yet
+            scheduled_for: job.scheduled_for,
+            expires_at: job.expires_at,
             completed_at: job.completed_at,
             last_attempt_at: job.last_attempt_at,
             duration_millis: job.duration_millis,
@@ -658,6 +797,51 @@ impl From<&DispatchJob> for DispatchJobRead {
             is_completed: job.status == DispatchStatus::Completed,
             is_terminal: job.status.is_terminal(),
             projected_at: Some(Utc::now()),
+        }
+    }
+}
+
+/// Conversion from SeaORM read projection model
+impl From<crate::entities::msg_dispatch_jobs_read::Model> for DispatchJobRead {
+    fn from(m: crate::entities::msg_dispatch_jobs_read::Model) -> Self {
+        Self {
+            id: m.id,
+            external_id: m.external_id,
+            source: m.source,
+            kind: DispatchKind::from_str(&m.kind),
+            code: m.code,
+            subject: m.subject,
+            event_id: m.event_id,
+            correlation_id: m.correlation_id,
+            target_url: m.target_url,
+            protocol: DispatchProtocol::from_str(&m.protocol),
+            client_id: m.client_id,
+            subscription_id: m.subscription_id,
+            service_account_id: m.service_account_id,
+            dispatch_pool_id: m.dispatch_pool_id,
+            message_group: m.message_group,
+            mode: DispatchMode::from_str(&m.mode),
+            sequence: m.sequence,
+            status: DispatchStatus::from_str(&m.status),
+            attempt_count: m.attempt_count as u32,
+            max_retries: m.max_retries as u32,
+            last_error: m.last_error,
+            timeout_seconds: m.timeout_seconds as u32,
+            retry_strategy: RetryStrategy::from_str(&m.retry_strategy),
+            application: m.application,
+            subdomain: m.subdomain,
+            aggregate: m.aggregate,
+            created_at: m.created_at.with_timezone(&Utc),
+            updated_at: m.updated_at.with_timezone(&Utc),
+            scheduled_for: m.scheduled_for.map(|dt| dt.with_timezone(&Utc)),
+            expires_at: m.expires_at.map(|dt| dt.with_timezone(&Utc)),
+            completed_at: m.completed_at.map(|dt| dt.with_timezone(&Utc)),
+            last_attempt_at: m.last_attempt_at.map(|dt| dt.with_timezone(&Utc)),
+            duration_millis: m.duration_millis,
+            idempotency_key: m.idempotency_key,
+            is_completed: m.is_completed.unwrap_or_default(),
+            is_terminal: m.is_terminal.unwrap_or_default(),
+            projected_at: m.projected_at.map(|dt| dt.with_timezone(&Utc)),
         }
     }
 }

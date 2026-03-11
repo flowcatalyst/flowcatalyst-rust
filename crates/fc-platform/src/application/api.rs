@@ -191,6 +191,7 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     post,
     path = "",
     tag = "applications",
+    operation_id = "postApiAdminApplications",
     request_body = CreateApplicationRequest,
     responses(
         (status = 201, description = "Application created", body = CreatedResponse),
@@ -231,6 +232,7 @@ pub async fn create_application<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "applications",
+    operation_id = "getApiAdminApplicationsById",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -264,6 +266,7 @@ pub struct ApplicationListResponse {
     get,
     path = "",
     tag = "applications",
+    operation_id = "getApiAdminApplications",
     params(ApplicationsQuery),
     responses(
         (status = 200, description = "List of applications", body = ApplicationListResponse)
@@ -295,6 +298,7 @@ pub async fn list_applications<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "applications",
+    operation_id = "putApiAdminApplicationsById",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -339,6 +343,7 @@ pub async fn update_application<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "applications",
+    operation_id = "deleteApiAdminApplicationsById",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -369,6 +374,7 @@ pub async fn delete_application<U: UnitOfWork>(
     post,
     path = "/{id}/activate",
     tag = "applications",
+    operation_id = "postApiAdminApplicationsByIdActivate",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -403,6 +409,7 @@ pub async fn activate_application<U: UnitOfWork>(
     post,
     path = "/{id}/deactivate",
     tag = "applications",
+    operation_id = "postApiAdminApplicationsByIdDeactivate",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -437,6 +444,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
     get,
     path = "/by-code/{code}",
     tag = "applications",
+    operation_id = "getApiAdminApplicationsByCodeByCode",
     params(
         ("code" = String, Path, description = "Application code")
     ),
@@ -463,6 +471,7 @@ pub async fn get_application_by_code<U: UnitOfWork>(
     post,
     path = "/{id}/provision-service-account",
     tag = "applications",
+    operation_id = "postApiAdminApplicationsByIdProvisionServiceAccount",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -521,6 +530,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
     get,
     path = "/{id}/service-account",
     tag = "applications",
+    operation_id = "getApiAdminApplicationsByIdServiceAccount",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -554,6 +564,7 @@ pub async fn get_application_service_account<U: UnitOfWork>(
     get,
     path = "/{id}/roles",
     tag = "applications",
+    operation_id = "getApiAdminApplicationsByIdRoles",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -594,7 +605,7 @@ pub struct ClientConfigResponse {
     pub enabled: bool,
     pub base_url_override: Option<String>,
     pub effective_base_url: Option<String>,
-    pub config: std::collections::HashMap<String, serde_json::Value>,
+    pub config: Option<serde_json::Value>,
 }
 
 /// Client configs list response
@@ -611,7 +622,7 @@ pub struct ClientConfigsResponse {
 pub struct ClientConfigRequest {
     pub enabled: Option<bool>,
     pub base_url_override: Option<String>,
-    pub config: Option<std::collections::HashMap<String, serde_json::Value>>,
+    pub config: Option<serde_json::Value>,
 }
 
 /// List client configs for an application
@@ -619,6 +630,7 @@ pub struct ClientConfigRequest {
     get,
     path = "/{id}/clients",
     tag = "applications",
+    operation_id = "getApiAdminApplicationsByIdClients",
     params(
         ("id" = String, Path, description = "Application ID")
     ),
@@ -670,6 +682,7 @@ pub async fn list_client_configs<U: UnitOfWork>(
     put,
     path = "/{id}/clients/{client_id}",
     tag = "applications",
+    operation_id = "putApiAdminApplicationsByIdClientsByClientId",
     params(
         ("id" = String, Path, description = "Application ID"),
         ("client_id" = String, Path, description = "Client ID")
@@ -714,7 +727,7 @@ pub async fn update_client_config<U: UnitOfWork>(
         config.base_url_override = if url.is_empty() { None } else { Some(url) };
     }
     if let Some(cfg) = req.config {
-        config.config_json = cfg;
+        config.config_json = Some(cfg);
     }
     config.updated_at = chrono::Utc::now();
 
@@ -744,6 +757,7 @@ pub async fn update_client_config<U: UnitOfWork>(
     post,
     path = "/{id}/clients/{client_id}/enable",
     tag = "applications",
+    operation_id = "postApiAdminApplicationsByIdClientsByClientIdEnable",
     params(
         ("id" = String, Path, description = "Application ID"),
         ("client_id" = String, Path, description = "Client ID")
@@ -806,6 +820,7 @@ pub async fn enable_for_client<U: UnitOfWork>(
     post,
     path = "/{id}/clients/{client_id}/disable",
     tag = "applications",
+    operation_id = "postApiAdminApplicationsByIdClientsByClientIdDisable",
     params(
         ("id" = String, Path, description = "Application ID"),
         ("client_id" = String, Path, description = "Client ID")

@@ -8,7 +8,6 @@ use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
-    unit_of_work::HasId,
 };
 use crate::details;
 use super::events::UserCreated;
@@ -44,15 +43,6 @@ pub struct CreateUserCommand {
     pub password: Option<String>,
 }
 
-impl HasId for Principal {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn collection_name() -> &'static str {
-        "iam_principals"
-    }
-}
 
 /// Use case for creating a new user.
 pub struct CreateUserUseCase<U: UnitOfWork> {
@@ -150,6 +140,7 @@ impl<U: UnitOfWork> CreateUserUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::unit_of_work::HasId;
 
     #[test]
     fn test_command_serialization() {
@@ -180,6 +171,5 @@ mod tests {
     fn test_principal_has_id() {
         let principal = Principal::new_user("test@example.com", UserScope::Anchor);
         assert!(!principal.id().is_empty());
-        assert_eq!(Principal::collection_name(), "iam_principals");
     }
 }

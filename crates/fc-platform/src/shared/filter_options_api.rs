@@ -84,7 +84,7 @@ pub struct FilterOptionsState {
     get,
     path = "/clients",
     tag = "filter-options",
-    operation_id = "getApiBffFilterOptionsClients",
+    operation_id = "getApiAdminFilterOptionsClients",
     responses(
         (status = 200, description = "Client filter options", body = ClientFilterOptions)
     ),
@@ -113,7 +113,7 @@ pub async fn get_client_options(
     get,
     path = "/event-types",
     tag = "filter-options",
-    operation_id = "getApiBffFilterOptionsEventTypes",
+    operation_id = "getApiAdminFilterOptionsEventTypes",
     responses(
         (status = 200, description = "Event type filter options", body = EventTypeFilterOptions)
     ),
@@ -169,7 +169,7 @@ pub async fn get_event_type_options(
     get,
     path = "/subscriptions",
     tag = "filter-options",
-    operation_id = "getApiBffFilterOptionsSubscriptions",
+    operation_id = "getApiAdminFilterOptionsSubscriptions",
     responses(
         (status = 200, description = "Subscription filter options", body = SubscriptionFilterOptions)
     ),
@@ -203,7 +203,7 @@ pub async fn get_subscription_options(
     get,
     path = "/dispatch-pools",
     tag = "filter-options",
-    operation_id = "getApiBffFilterOptionsDispatchPools",
+    operation_id = "getApiAdminFilterOptionsDispatchPools",
     responses(
         (status = 200, description = "Dispatch pool filter options", body = DispatchPoolFilterOptions)
     ),
@@ -237,7 +237,7 @@ pub async fn get_dispatch_pool_options(
     get,
     path = "",
     tag = "filter-options",
-    operation_id = "getApiBffFilterOptions",
+    operation_id = "getApiAdminFilterOptions",
     responses(
         (status = 200, description = "All filter options", body = AllFilterOptions)
     ),
@@ -351,7 +351,7 @@ pub struct CascadingFilterQuery {
     get,
     path = "/events",
     tag = "filter-options",
-    operation_id = "getApiBffEventsFilterOptions",
+    operation_id = "getApiAdminEventsFilterOptions",
     responses(
         (status = 200, description = "Events filter options", body = EventsFilterOptions)
     ),
@@ -428,7 +428,7 @@ const DISPATCH_JOB_STATUSES: &[(&str, &str)] = &[
     get,
     path = "/dispatch-jobs",
     tag = "filter-options",
-    operation_id = "getApiBffDispatchJobsFilterOptions",
+    operation_id = "getApiAdminDispatchJobsFilterOptions",
     responses(
         (status = 200, description = "Dispatch jobs filter options", body = DispatchJobsFilterOptions)
     ),
@@ -514,7 +514,7 @@ pub struct AggregatesResponse {
     get,
     path = "/event-types/filters/applications",
     tag = "filter-options",
-    operation_id = "getApiBffFilterOptionsEventTypesFiltersApplications",
+    operation_id = "getApiAdminFilterOptionsEventTypesFiltersApplications",
     responses(
         (status = 200, description = "Application filter options", body = ApplicationsResponse)
     ),
@@ -545,7 +545,7 @@ pub async fn get_event_type_applications(
     get,
     path = "/event-types/filters/subdomains",
     tag = "filter-options",
-    operation_id = "getApiBffFilterOptionsEventTypesFiltersSubdomains",
+    operation_id = "getApiAdminFilterOptionsEventTypesFiltersSubdomains",
     params(CascadingFilterQuery),
     responses(
         (status = 200, description = "Subdomain filter options", body = SubdomainsResponse)
@@ -587,7 +587,7 @@ pub async fn get_event_type_subdomains(
     get,
     path = "/event-types/filters/aggregates",
     tag = "filter-options",
-    operation_id = "getApiBffFilterOptionsEventTypesFiltersAggregates",
+    operation_id = "getApiAdminFilterOptionsEventTypesFiltersAggregates",
     params(CascadingFilterQuery),
     responses(
         (status = 200, description = "Aggregate filter options", body = AggregatesResponse)

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::usecase::ExecutionContext;
 use crate::usecase::domain_event::EventMetadata;
 use crate::TsidGenerator;
+use crate::EntityType;
 use crate::impl_domain_event;
 
 /// Event emitted when a new role is created.
@@ -35,7 +36,7 @@ impl RoleCreated {
         application_code: &str,
         permissions: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.role.{}", role_id);
         let message_group = format!("platform:role:{}", role_id);
 
@@ -92,7 +93,7 @@ impl RoleUpdated {
         permissions_added: Vec<String>,
         permissions_removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.role.{}", role_id);
         let message_group = format!("platform:role:{}", role_id);
 
@@ -137,7 +138,7 @@ impl RoleDeleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, role_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.role.{}", role_id);
         let message_group = format!("platform:role:{}", role_id);
 
@@ -156,6 +157,55 @@ impl RoleDeleted {
             ),
             role_id: role_id.to_string(),
             code: code.to_string(),
+        }
+    }
+}
+
+/// Event emitted when roles are synced from an application SDK.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RolesSynced {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub application_code: String,
+    pub created: u32,
+    pub updated: u32,
+    pub deleted: u32,
+    pub synced_names: Vec<String>,
+}
+
+impl_domain_event!(RolesSynced);
+
+impl RolesSynced {
+    const EVENT_TYPE: &'static str = "platform:iam:roles:synced";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(
+        ctx: &ExecutionContext,
+        application_code: &str,
+        created: u32,
+        updated: u32,
+        deleted: u32,
+        synced_names: Vec<String>,
+    ) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.application.{}", application_code);
+        let message_group = format!("platform:application:{}", application_code);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            application_code: application_code.to_string(),
+            created,
+            updated,
+            deleted,
+            synced_names,
         }
     }
 }

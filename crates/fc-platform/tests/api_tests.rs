@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use fc_platform::domain::{Principal, UserScope};
-use fc_platform::TsidGenerator;
+use fc_platform::{TsidGenerator, EntityType};
 
 // Unit tests for domain models
 mod domain_tests {
@@ -61,7 +61,7 @@ mod domain_tests {
     #[test]
     fn test_principal_client_access() {
         let mut principal = Principal::new_user("test@example.com", UserScope::Partner);
-        let client_id = TsidGenerator::generate();
+        let client_id = TsidGenerator::generate(EntityType::Client);
 
         principal.grant_client_access(client_id.clone());
         assert!(principal.assigned_clients.contains(&client_id));
@@ -97,7 +97,7 @@ mod authorization_tests {
 
     fn create_auth_context(permissions: Vec<&str>, scope: &str, clients: Vec<&str>) -> AuthContext {
         AuthContext {
-            principal_id: TsidGenerator::generate(),
+            principal_id: TsidGenerator::generate(EntityType::Principal),
             principal_type: "USER".to_string(),
             scope: scope.to_string(),
             email: Some("test@example.com".to_string()),
@@ -199,7 +199,7 @@ mod tsid_tests {
 
     #[test]
     fn test_tsid_format() {
-        let id = TsidGenerator::generate();
+        let id = TsidGenerator::generate_untyped();
 
         // TSID should be 13 characters in Crockford Base32
         assert_eq!(id.len(), 13);
@@ -213,7 +213,7 @@ mod tsid_tests {
     #[test]
     fn test_tsid_uniqueness() {
         let ids: HashSet<String> = (0..1000)
-            .map(|_| TsidGenerator::generate())
+            .map(|_| TsidGenerator::generate_untyped())
             .collect();
 
         // All 1000 IDs should be unique
@@ -222,9 +222,9 @@ mod tsid_tests {
 
     #[test]
     fn test_tsid_sortability() {
-        let id1 = TsidGenerator::generate();
+        let id1 = TsidGenerator::generate_untyped();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let id2 = TsidGenerator::generate();
+        let id2 = TsidGenerator::generate_untyped();
 
         // Newer IDs should sort after older ones lexicographically
         assert!(id2 > id1, "id2 ({}) should be greater than id1 ({})", id2, id1);
@@ -234,7 +234,7 @@ mod tsid_tests {
     fn test_multiple_tsids_time_ordered() {
         let ids: Vec<String> = (0..100)
             .map(|_| {
-                let id = TsidGenerator::generate();
+                let id = TsidGenerator::generate_untyped();
                 std::thread::sleep(std::time::Duration::from_millis(1));
                 id
             })

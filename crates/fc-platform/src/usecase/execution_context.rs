@@ -47,7 +47,7 @@ impl ExecutionContext {
             return Self::from_tracing_context(&tracing_ctx, principal_id);
         }
 
-        let exec_id = format!("exec-{}", TsidGenerator::generate());
+        let exec_id = format!("exec-{}", TsidGenerator::generate_untyped());
         Self {
             execution_id: exec_id.clone(),
             correlation_id: exec_id, // correlation starts as execution ID
@@ -65,7 +65,7 @@ impl ExecutionContext {
         tracing_context: &TracingContext,
         principal_id: impl Into<String>,
     ) -> Self {
-        let exec_id = format!("exec-{}", TsidGenerator::generate());
+        let exec_id = format!("exec-{}", TsidGenerator::generate_untyped());
         Self {
             execution_id: exec_id,
             correlation_id: tracing_context.correlation_id(),
@@ -84,7 +84,7 @@ impl ExecutionContext {
         correlation_id: impl Into<String>,
     ) -> Self {
         Self {
-            execution_id: format!("exec-{}", TsidGenerator::generate()),
+            execution_id: format!("exec-{}", TsidGenerator::generate_untyped()),
             correlation_id: correlation_id.into(),
             causation_id: None,
             principal_id: principal_id.into(),
@@ -102,7 +102,7 @@ impl ExecutionContext {
         principal_id: impl Into<String>,
     ) -> Self {
         Self {
-            execution_id: format!("exec-{}", TsidGenerator::generate()),
+            execution_id: format!("exec-{}", TsidGenerator::generate_untyped()),
             correlation_id: parent.correlation_id().to_string(),
             causation_id: Some(parent.event_id().to_string()),
             principal_id: principal_id.into(),

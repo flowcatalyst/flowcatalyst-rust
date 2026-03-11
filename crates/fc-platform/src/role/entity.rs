@@ -136,7 +136,7 @@ impl AuthRole {
         let now = Utc::now();
 
         Self {
-            id: crate::TsidGenerator::generate(),
+            id: crate::TsidGenerator::generate(crate::EntityType::Role),
             application_id: None,
             name: format!("{}:{}", app, rname),
             display_name: display_name.into(),

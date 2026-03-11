@@ -26,7 +26,7 @@ use crate::shared::middleware::Authenticated;
 pub struct DispatchJobResponse {
     pub id: String,
     pub external_id: Option<String>,
-    pub source: String,
+    pub source: Option<String>,
     pub kind: String,
     pub code: String,
     pub subject: Option<String>,
@@ -87,8 +87,8 @@ impl From<DispatchJob> for DispatchJobResponse {
             retry_strategy: format!("{:?}", job.retry_strategy).to_uppercase(),
             created_at: job.created_at.to_rfc3339(),
             updated_at: job.updated_at.to_rfc3339(),
-            scheduled_for: job.next_retry_at.map(|t| t.to_rfc3339()),
-            expires_at: None, // Not tracked in Rust domain yet
+            scheduled_for: job.scheduled_for.map(|t| t.to_rfc3339()),
+            expires_at: job.expires_at.map(|t| t.to_rfc3339()),
             completed_at: job.completed_at.map(|t| t.to_rfc3339()),
             last_attempt_at: job.last_attempt_at.map(|t| t.to_rfc3339()),
             duration_millis: job.duration_millis,
@@ -105,7 +105,7 @@ impl From<DispatchJob> for DispatchJobResponse {
 pub struct DispatchJobReadResponse {
     pub id: String,
     pub external_id: Option<String>,
-    pub source: String,
+    pub source: Option<String>,
     pub kind: String,
     pub code: String,
     pub subject: Option<String>,
@@ -219,7 +219,7 @@ pub struct DispatchJobsState {
 #[serde(rename_all = "camelCase")]
 pub struct CreateDispatchJobRequest {
     /// Source system/application
-    pub source: String,
+    pub source: Option<String>,
 
     /// The kind of dispatch job (EVENT or TASK)
     #[serde(default)]
@@ -349,7 +349,7 @@ impl From<DispatchAttempt> for DispatchAttemptResponse {
     get,
     path = "/{id}",
     tag = "dispatch-jobs",
-    operation_id = "getApiBffDispatchJobsById",
+    operation_id = "getApiAdminDispatchJobsById",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -384,7 +384,7 @@ pub async fn get_dispatch_job(
     get,
     path = "",
     tag = "dispatch-jobs",
-    operation_id = "getApiBffDispatchJobs",
+    operation_id = "getApiAdminDispatchJobs",
     params(DispatchJobsQuery),
     responses(
         (status = 200, description = "List of dispatch jobs", body = Vec<DispatchJobResponse>)
@@ -444,7 +444,7 @@ pub async fn list_dispatch_jobs(
     get,
     path = "/by-event/{event_id}",
     tag = "dispatch-jobs",
-    operation_id = "getApiBffDispatchJobsByEventByEventId",
+    operation_id = "getApiAdminDispatchJobsByEventByEventId",
     params(
         ("event_id" = String, Path, description = "Event ID")
     ),
@@ -487,7 +487,7 @@ pub async fn get_jobs_for_event(
     post,
     path = "",
     tag = "dispatch-jobs",
-    operation_id = "postApiBffDispatchJobs",
+    operation_id = "postApiAdminDispatchJobs",
     request_body = CreateDispatchJobRequest,
     responses(
         (status = 201, description = "Dispatch job created", body = DispatchJobResponse),
@@ -532,16 +532,17 @@ pub async fn create_dispatch_job(
 
     // Create the dispatch job
     let _now = chrono::Utc::now();
+    let source = req.source.as_deref().unwrap_or("");
     let mut job = if kind == DispatchKind::Event {
         DispatchJob::for_event(
             req.event_id.as_deref().unwrap_or(""),
             &req.code,
-            &req.source,
+            source,
             &req.target_url,
             &req.payload,
         )
     } else {
-        DispatchJob::for_task(&req.code, &req.source, &req.target_url, &req.payload)
+        DispatchJob::for_task(&req.code, source, &req.target_url, &req.payload)
     };
 
     // Apply optional fields
@@ -608,7 +609,7 @@ pub async fn create_dispatch_job(
     post,
     path = "/batch",
     tag = "dispatch-jobs",
-    operation_id = "postApiBffDispatchJobsBatch",
+    operation_id = "postApiAdminDispatchJobsBatch",
     request_body = BatchCreateDispatchJobsRequest,
     responses(
         (status = 201, description = "Dispatch jobs created", body = BatchCreateDispatchJobsResponse),
@@ -655,16 +656,17 @@ pub async fn batch_create_dispatch_jobs(
         };
 
         // Create the dispatch job
+        let source = job_req.source.as_deref().unwrap_or("");
         let mut job = if kind == DispatchKind::Event {
             DispatchJob::for_event(
                 job_req.event_id.as_deref().unwrap_or(""),
                 &job_req.code,
-                &job_req.source,
+                source,
                 &job_req.target_url,
                 &job_req.payload,
             )
         } else {
-            DispatchJob::for_task(&job_req.code, &job_req.source, &job_req.target_url, &job_req.payload)
+            DispatchJob::for_task(&job_req.code, source, &job_req.target_url, &job_req.payload)
         };
 
         // Apply optional fields
@@ -720,7 +722,7 @@ pub async fn batch_create_dispatch_jobs(
     get,
     path = "/{id}/attempts",
     tag = "dispatch-jobs",
-    operation_id = "getApiBffDispatchJobsByIdAttempts",
+    operation_id = "getApiAdminDispatchJobsByIdAttempts",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),

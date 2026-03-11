@@ -7,19 +7,9 @@ use crate::DispatchPool;
 use crate::DispatchPoolRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
-    unit_of_work::HasId,
 };
 use super::events::DispatchPoolCreated;
 
-impl HasId for DispatchPool {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn collection_name() -> &'static str {
-        "dispatch_pools"
-    }
-}
 
 /// Command for creating a new dispatch pool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +79,7 @@ impl<U: UnitOfWork> CreateDispatchPoolUseCase<U> {
         }
 
         // Business rule: code must be unique
-        let existing = self.dispatch_pool_repo.find_by_code(code).await;
+        let existing = self.dispatch_pool_repo.find_by_code(code, command.client_id.as_deref()).await;
         if let Ok(Some(_)) = existing {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "DISPATCH_POOL_CODE_EXISTS",
@@ -133,6 +123,7 @@ impl<U: UnitOfWork> CreateDispatchPoolUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::unit_of_work::HasId;
 
     #[test]
     fn test_command_serialization() {
@@ -153,6 +144,5 @@ mod tests {
     fn test_dispatch_pool_has_id() {
         let pool = DispatchPool::new("test", "Test");
         assert!(!pool.id().is_empty());
-        assert_eq!(DispatchPool::collection_name(), "dispatch_pools");
     }
 }

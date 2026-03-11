@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::usecase::ExecutionContext;
 use crate::usecase::domain_event::EventMetadata;
 use crate::TsidGenerator;
+use crate::EntityType;
 use crate::impl_domain_event;
 
 /// Event emitted when a new event type is created.
@@ -49,7 +50,7 @@ impl EventTypeCreated {
         event_name: &str,
         client_id: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.eventtype.{}", event_type_id);
         let message_group = format!("platform:eventtype:{}", event_type_id);
 
@@ -124,7 +125,7 @@ impl EventTypeCreatedBuilder {
 
     /// Initialize from execution context (like Java's .from(ctx))
     pub fn from_context(mut self, ctx: &ExecutionContext) -> Self {
-        self.event_id = Some(TsidGenerator::generate());
+        self.event_id = Some(TsidGenerator::generate(EntityType::Event));
         self.execution_id = Some(ctx.execution_id.clone());
         self.correlation_id = Some(ctx.correlation_id.clone());
         self.causation_id = ctx.causation_id.clone();
@@ -178,7 +179,7 @@ impl EventTypeCreatedBuilder {
     }
 
     pub fn build(self) -> EventTypeCreated {
-        let event_id = self.event_id.unwrap_or_else(|| TsidGenerator::generate());
+        let event_id = self.event_id.unwrap_or_else(|| TsidGenerator::generate(EntityType::Event));
         let event_type_id = self.event_type_id.expect("event_type_id is required");
         let subject = format!("platform.eventtype.{}", event_type_id);
         let message_group = format!("platform:eventtype:{}", event_type_id);
@@ -242,7 +243,7 @@ impl EventTypeUpdated {
         name: Option<&str>,
         description: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.eventtype.{}", event_type_id);
         let message_group = format!("platform:eventtype:{}", event_type_id);
 
@@ -285,7 +286,7 @@ impl EventTypeArchived {
     const SOURCE: &'static str = "platform:control-plane";
 
     pub fn new(ctx: &ExecutionContext, event_type_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate();
+        let event_id = TsidGenerator::generate(EntityType::Event);
         let subject = format!("platform.eventtype.{}", event_type_id);
         let message_group = format!("platform:eventtype:{}", event_type_id);
 
@@ -304,6 +305,206 @@ impl EventTypeArchived {
             ),
             event_type_id: event_type_id.to_string(),
             code: code.to_string(),
+        }
+    }
+}
+
+/// Event emitted when a schema version is added to an event type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaAdded {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub event_type_id: String,
+    pub version: String,
+    pub mime_type: String,
+    pub schema_type: String,
+}
+
+impl_domain_event!(SchemaAdded);
+
+impl SchemaAdded {
+    const EVENT_TYPE: &'static str = "platform:control-plane:eventtype:schema-added";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:control-plane";
+
+    pub fn new(ctx: &ExecutionContext, event_type_id: &str, version: &str, mime_type: &str, schema_type: &str) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.eventtype.{}", event_type_id);
+        let message_group = format!("platform:eventtype:{}", event_type_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            event_type_id: event_type_id.to_string(),
+            version: version.to_string(),
+            mime_type: mime_type.to_string(),
+            schema_type: schema_type.to_string(),
+        }
+    }
+}
+
+/// Event emitted when a schema version is finalised.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaFinalised {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub event_type_id: String,
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deprecated_version: Option<String>,
+}
+
+impl_domain_event!(SchemaFinalised);
+
+impl SchemaFinalised {
+    const EVENT_TYPE: &'static str = "platform:control-plane:eventtype:schema-finalised";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:control-plane";
+
+    pub fn new(ctx: &ExecutionContext, event_type_id: &str, version: &str, deprecated_version: Option<&str>) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.eventtype.{}", event_type_id);
+        let message_group = format!("platform:eventtype:{}", event_type_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            event_type_id: event_type_id.to_string(),
+            version: version.to_string(),
+            deprecated_version: deprecated_version.map(String::from),
+        }
+    }
+}
+
+/// Event emitted when a schema version is deprecated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaDeprecated {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub event_type_id: String,
+    pub version: String,
+}
+
+impl_domain_event!(SchemaDeprecated);
+
+impl SchemaDeprecated {
+    const EVENT_TYPE: &'static str = "platform:control-plane:eventtype:schema-deprecated";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:control-plane";
+
+    pub fn new(ctx: &ExecutionContext, event_type_id: &str, version: &str) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.eventtype.{}", event_type_id);
+        let message_group = format!("platform:eventtype:{}", event_type_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            event_type_id: event_type_id.to_string(),
+            version: version.to_string(),
+        }
+    }
+}
+
+/// Event emitted when an event type is deleted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventTypeDeleted {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub event_type_id: String,
+    pub code: String,
+}
+
+impl_domain_event!(EventTypeDeleted);
+
+impl EventTypeDeleted {
+    const EVENT_TYPE: &'static str = "platform:control-plane:eventtype:deleted";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:control-plane";
+
+    pub fn new(ctx: &ExecutionContext, event_type_id: &str, code: &str) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.eventtype.{}", event_type_id);
+        let message_group = format!("platform:eventtype:{}", event_type_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            event_type_id: event_type_id.to_string(),
+            code: code.to_string(),
+        }
+    }
+}
+
+/// Event emitted when event types are synced from an application SDK.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventTypesSynced {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub application_code: String,
+    pub created: u32,
+    pub updated: u32,
+    pub deleted: u32,
+    pub synced_codes: Vec<String>,
+}
+
+impl_domain_event!(EventTypesSynced);
+
+impl EventTypesSynced {
+    const EVENT_TYPE: &'static str = "platform:control-plane:eventtypes:synced";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:control-plane";
+
+    pub fn new(
+        ctx: &ExecutionContext,
+        application_code: &str,
+        created: u32,
+        updated: u32,
+        deleted: u32,
+        synced_codes: Vec<String>,
+    ) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.application.{}", application_code);
+        let message_group = format!("platform:application:{}", application_code);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            application_code: application_code.to_string(),
+            created,
+            updated,
+            deleted,
+            synced_codes,
         }
     }
 }

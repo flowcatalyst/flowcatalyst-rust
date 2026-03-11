@@ -6,7 +6,7 @@
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS msg_event_projection_feed (
     id BIGSERIAL PRIMARY KEY,
-    event_id VARCHAR(13) NOT NULL,
+    event_id VARCHAR(17) NOT NULL,
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed SMALLINT NOT NULL DEFAULT 0,
@@ -22,7 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_msg_event_projection_feed_in_progress ON msg_even
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS msg_dispatch_job_projection_feed (
     id BIGSERIAL PRIMARY KEY,
-    dispatch_job_id VARCHAR(13) NOT NULL,
+    dispatch_job_id VARCHAR(17) NOT NULL,
     operation VARCHAR(10) NOT NULL,
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -62,13 +62,7 @@ impl<U: UnitOfWork> ActivateClientUseCase<U> {
             }
         };
 
-        // Business rule: cannot activate a deleted client
-        if client.status == ClientStatus::Deleted {
-            return UseCaseResult::failure(UseCaseError::business_rule(
-                "CANNOT_ACTIVATE_DELETED",
-                "Cannot activate a deleted client",
-            ));
-        }
+        // Client can be activated from any non-active state
 
         // Business rule: client must not already be active
         if client.status == ClientStatus::Active {

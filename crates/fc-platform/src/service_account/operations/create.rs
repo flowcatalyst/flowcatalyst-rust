@@ -8,19 +8,8 @@ use crate::{ServiceAccount, WebhookCredentials};
 use crate::ServiceAccountRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
-    unit_of_work::HasId,
 };
 use super::events::ServiceAccountCreated;
-
-impl HasId for ServiceAccount {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn collection_name() -> &'static str {
-        "iam_service_accounts"
-    }
-}
 
 /// Generate a bearer token with fc_ prefix
 fn generate_auth_token() -> String {
@@ -174,6 +163,7 @@ impl<U: UnitOfWork> CreateServiceAccountUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::unit_of_work::HasId;
 
     #[test]
     fn test_command_serialization() {
@@ -194,7 +184,6 @@ mod tests {
     fn test_service_account_has_id() {
         let sa = ServiceAccount::new("test", "Test");
         assert!(!sa.id().is_empty());
-        assert_eq!(ServiceAccount::collection_name(), "iam_service_accounts");
     }
 
     #[test]

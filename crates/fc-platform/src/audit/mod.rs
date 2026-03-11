@@ -8,7 +8,7 @@ pub mod api;
 pub mod service;
 
 // Re-export main types
-pub use entity::{AuditLog, AuditAction};
+pub use entity::AuditLog;
 pub use repository::AuditLogRepository;
 pub use api::{audit_logs_router};
 pub use service::AuditService;

@@ -70,13 +70,6 @@ impl<U: UnitOfWork> ResumeSubscriptionUseCase<U> {
             ));
         }
 
-        if subscription.status == SubscriptionStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
-                "CANNOT_RESUME_ARCHIVED",
-                "Cannot resume an archived subscription",
-            ));
-        }
-
         // Resume the subscription
         subscription.resume();
 

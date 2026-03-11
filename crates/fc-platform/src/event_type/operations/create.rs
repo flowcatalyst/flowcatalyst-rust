@@ -9,7 +9,6 @@ use crate::EventType;
 use crate::EventTypeRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
-    unit_of_work::HasId,
 };
 use super::events::EventTypeCreated;
 
@@ -32,16 +31,6 @@ pub struct CreateEventTypeCommand {
     pub client_id: Option<String>,
 }
 
-/// Implement HasId for EventType to work with UnitOfWork
-impl HasId for EventType {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn collection_name() -> &'static str {
-        "event_types"
-    }
-}
 
 /// Use case for creating a new event type.
 ///
@@ -202,12 +191,12 @@ impl<U: UnitOfWork> CreateEventTypeUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
-    
-    
+    use crate::usecase::unit_of_work::HasId;
+
+
+
 
     // Helper to create a mock repository
-    // Note: In a real test, you would use a mock or in-memory MongoDB
     // For now, we'll just test the validation logic
 
     #[test]
@@ -227,6 +216,5 @@ mod tests {
     fn test_event_type_has_id() {
         let et = EventType::new("app:domain:agg:evt", "Test Event").unwrap();
         assert!(!et.id().is_empty());
-        assert_eq!(EventType::collection_name(), "event_types");
     }
 }

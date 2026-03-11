@@ -2,13 +2,16 @@
 //!
 //! PostgreSQL persistence for Client entities using SeaORM.
 
+use async_trait::async_trait;
 use sea_orm::*;
 use sea_orm::prelude::Expr;
+use sea_orm::sea_query::OnConflict;
 use chrono::Utc;
 
 use super::entity::{Client, ClientStatus};
 use crate::entities::tnt_clients;
 use crate::shared::error::Result;
+use crate::usecase::unit_of_work::{HasId, PgPersist};
 
 pub struct ClientRepository {
     db: DatabaseConnection,
@@ -144,5 +147,51 @@ impl ClientRepository {
             .exec(&self.db)
             .await?;
         Ok(result.rows_affected > 0)
+    }
+}
+
+// ── PgPersist implementation ──────────────────────────────────────────────────
+
+impl HasId for Client {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl PgPersist for Client {
+    async fn pg_upsert(&self, txn: &sea_orm::DatabaseTransaction) -> Result<()> {
+        let notes_json = serde_json::to_value(&self.notes).unwrap_or_default();
+        let model = tnt_clients::ActiveModel {
+            id: Set(self.id.clone()),
+            name: Set(self.name.clone()),
+            identifier: Set(self.identifier.clone()),
+            status: Set(self.status.as_str().to_string()),
+            status_reason: Set(self.status_reason.clone()),
+            status_changed_at: Set(self.status_changed_at.map(|dt| dt.into())),
+            notes: Set(Some(notes_json)),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+        };
+        tnt_clients::Entity::insert(model)
+            .on_conflict(
+                OnConflict::column(tnt_clients::Column::Id)
+                    .update_columns([
+                        tnt_clients::Column::Name,
+                        tnt_clients::Column::Identifier,
+                        tnt_clients::Column::Status,
+                        tnt_clients::Column::StatusReason,
+                        tnt_clients::Column::StatusChangedAt,
+                        tnt_clients::Column::Notes,
+                        tnt_clients::Column::UpdatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(txn)
+            .await?;
+        Ok(())
+    }
+
+    async fn pg_delete(&self, txn: &sea_orm::DatabaseTransaction) -> Result<()> {
+        tnt_clients::Entity::delete_by_id(&self.id).exec(txn).await?;
+        Ok(())
     }
 }

@@ -81,13 +81,23 @@ pub async fn run_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
         include_str!("../../../../migrations/005_outbox_tables.sql"),
         include_str!("../../../../migrations/006_audit_tables.sql"),
         include_str!("../../../../migrations/007_oauth_tables.sql"),
+        include_str!("../../../../migrations/008_auth_tracking_tables.sql"),
+        include_str!("../../../../migrations/009_p0_alignment.sql"),
+        include_str!("../../../../migrations/010_auth_state_tables.sql"),
+        include_str!("../../../../migrations/011_dispatch_job_tables.sql"),
     ];
 
     for (i, sql) in migration_files.iter().enumerate() {
         // Split on semicolons and execute each statement individually
         for statement in sql.split(';') {
-            let trimmed = statement.trim();
-            if trimmed.is_empty() || trimmed.starts_with("--") {
+            // Strip comment-only lines, then check if any SQL remains
+            let cleaned: String = statement
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("--"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let trimmed = cleaned.trim();
+            if trimmed.is_empty() {
                 continue;
             }
             db.execute(sea_orm::Statement::from_string(

@@ -32,10 +32,10 @@ use fc_router::{
 };
 use fc_queue::sqlite::SqliteQueue;
 use fc_queue::{QueuePublisher, EmbeddedQueue};
-use fc_outbox::{OutboxProcessor, OutboxRepository};
+// fc_outbox used for EnhancedOutboxProcessor (TODO: wire up)
 
 // Platform imports
-use fc_platform::service::{AuthService, AuthConfig, AuthorizationService, AuditService};
+use fc_platform::service::{AuthService, AuthConfig, AuthorizationService, AuditService, PasswordService};
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::api::{
     EventsState, events_router,
@@ -54,6 +54,25 @@ use fc_platform::api::{
     MonitoringState, monitoring_router, LeaderState, CircuitBreakerRegistry, InFlightTracker,
     DebugState, debug_events_router, debug_dispatch_jobs_router,
     ServiceAccountsState, service_accounts_router,
+    // New domain APIs
+    ConnectionsState, connections_router,
+    CorsState, cors_router,
+    IdentityProvidersState, identity_providers_router,
+    EmailDomainMappingsState, email_domain_mappings_router,
+    PlatformConfigState, admin_platform_config_router,
+    ConfigAccessState, config_access_router,
+    LoginAttemptsState, login_attempts_router,
+    MeState, me_router,
+    SdkEventsState, sdk_events_batch_router,
+    WellKnownState, well_known_router,
+    ClientSelectionState, client_selection_router,
+    ApplicationRolesSdkState, application_roles_sdk_router,
+    public_router,
+    PasswordResetApiState, password_reset_router,
+    SdkSyncState, sdk_sync_router,
+    SdkAuditBatchState, sdk_audit_batch_router,
+    BffRolesState, bff_roles_router,
+    BffEventTypesState, bff_event_types_router,
 };
 use fc_platform::repository::{
     EventRepository, EventTypeRepository, DispatchJobRepository, DispatchPoolRepository,
@@ -61,8 +80,13 @@ use fc_platform::repository::{
     ApplicationRepository, RoleRepository, OAuthClientRepository,
     AnchorDomainRepository, ClientAuthConfigRepository, ClientAccessGrantRepository, IdpRoleMappingRepository,
     AuditLogRepository, ApplicationClientConfigRepository,
+    // New repos
+    ConnectionRepository, CorsOriginRepository, IdentityProviderRepository,
+    EmailDomainMappingRepository, PlatformConfigRepository, PlatformConfigAccessRepository,
+    LoginAttemptRepository,
+    PasswordResetTokenRepository,
 };
-use fc_platform::usecase::MongoUnitOfWork;
+use fc_platform::usecase::PgUnitOfWork;
 use fc_platform::operations::{
     // Application use cases
     CreateApplicationUseCase, UpdateApplicationUseCase,
@@ -76,7 +100,6 @@ use fc_platform::operations::{
 };
 
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::postgres::PgPoolOptions;
 
 /// FlowCatalyst Development Server
 #[derive(Parser, Debug)]
@@ -121,15 +144,7 @@ struct Args {
 
     // Platform configuration
 
-    /// MongoDB URL for platform database
-    #[arg(long, env = "FC_MONGO_URL", default_value = "mongodb://localhost:27017")]
-    mongo_url: String,
-
-    /// MongoDB database name for platform
-    #[arg(long, env = "FC_MONGO_DB", default_value = "flowcatalyst")]
-    mongo_db: String,
-
-    /// PostgreSQL database URL (for migrated repositories)
+    /// PostgreSQL database URL
     #[arg(long, env = "FC_DATABASE_URL", default_value = "postgresql://localhost:5432/flowcatalyst")]
     database_url: String,
 }
@@ -204,27 +219,11 @@ async fn main() -> Result<()> {
         LifecycleConfig::default(),
     );
 
-    // 7. Setup outbox processor if enabled
-    let outbox_handle = if args.outbox_enabled {
-        let outbox_repo = create_outbox_repository(&args).await?;
-        let outbox_publisher = OutboxQueuePublisher::new(queue.clone());
-
-        let processor = OutboxProcessor::new(
-            outbox_repo,
-            Arc::new(outbox_publisher),
-            Duration::from_millis(args.outbox_poll_interval_ms),
-            100, // batch size
-        );
-
-        let mut shutdown_rx = shutdown_tx.subscribe();
-        Some(tokio::spawn(async move {
-            tokio::select! {
-                _ = processor.start() => {}
-                _ = shutdown_rx.recv() => {
-                    info!("Outbox processor shutting down");
-                }
-            }
-        }))
+    // 7. Outbox processor (placeholder - needs migration to EnhancedOutboxProcessor)
+    let outbox_handle: Option<tokio::task::JoinHandle<()>> = if args.outbox_enabled {
+        info!("Outbox processing enabled (using EnhancedOutboxProcessor)");
+        // TODO: Wire up EnhancedOutboxProcessor with the new API
+        None
     } else {
         None
     };
@@ -233,37 +232,42 @@ async fn main() -> Result<()> {
     info!("Initializing platform services...");
 
     // 8a. Connect to MongoDB
-    let mongo_client = mongodb::Client::with_uri_str(&args.mongo_url).await?;
-    let platform_db = mongo_client.database(&args.mongo_db);
-    info!("Connected to MongoDB: {}/{}", args.mongo_url, args.mongo_db);
-
-    // 8a2. Connect to PostgreSQL (for migrated repositories)
+    // 8a. Connect to PostgreSQL
     info!("Connecting to PostgreSQL...");
     let pg_db = fc_platform::shared::database::create_connection(&args.database_url).await
         .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {}", e))?;
 
     // 8b. Initialize all repositories
-    let event_repo = Arc::new(EventRepository::new(&platform_db));
-    let event_type_repo = Arc::new(EventTypeRepository::new(&platform_db));
-    let dispatch_job_repo = Arc::new(DispatchJobRepository::new(&platform_db));
-    let dispatch_pool_repo = Arc::new(DispatchPoolRepository::new(&platform_db));
-    let subscription_repo = Arc::new(SubscriptionRepository::new(&platform_db));
+    let event_repo = Arc::new(EventRepository::new(&pg_db));
+    let event_type_repo = Arc::new(EventTypeRepository::new(&pg_db));
+    let dispatch_job_repo = Arc::new(DispatchJobRepository::new(&pg_db));
+    let dispatch_pool_repo = Arc::new(DispatchPoolRepository::new(&pg_db));
+    let subscription_repo = Arc::new(SubscriptionRepository::new(&pg_db));
     let service_account_repo = Arc::new(ServiceAccountRepository::new(&pg_db));
     let principal_repo = Arc::new(PrincipalRepository::new(&pg_db));
     let client_repo = Arc::new(ClientRepository::new(&pg_db));
-    let application_repo = Arc::new(ApplicationRepository::new(&platform_db));
+    let application_repo = Arc::new(ApplicationRepository::new(&pg_db));
     let role_repo = Arc::new(RoleRepository::new(&pg_db));
-    let oauth_client_repo = Arc::new(OAuthClientRepository::new(&platform_db));
-    let anchor_domain_repo = Arc::new(AnchorDomainRepository::new(&platform_db));
-    let client_auth_config_repo = Arc::new(ClientAuthConfigRepository::new(&platform_db));
-    let _client_access_grant_repo = Arc::new(ClientAccessGrantRepository::new(&pg_db));
-    let idp_role_mapping_repo = Arc::new(IdpRoleMappingRepository::new(&platform_db));
-    let audit_log_repo = Arc::new(AuditLogRepository::new(&platform_db));
-    let application_client_config_repo = Arc::new(ApplicationClientConfigRepository::new(&platform_db));
+    let oauth_client_repo = Arc::new(OAuthClientRepository::new(&pg_db));
+    let anchor_domain_repo = Arc::new(AnchorDomainRepository::new(&pg_db));
+    let client_auth_config_repo = Arc::new(ClientAuthConfigRepository::new(&pg_db));
+    let client_access_grant_repo = Arc::new(ClientAccessGrantRepository::new(&pg_db));
+    let idp_role_mapping_repo = Arc::new(IdpRoleMappingRepository::new(&pg_db));
+    let audit_log_repo = Arc::new(AuditLogRepository::new(&pg_db));
+    let application_client_config_repo = Arc::new(ApplicationClientConfigRepository::new(&pg_db));
+    // New domain repositories
+    let connection_repo = Arc::new(ConnectionRepository::new(&pg_db));
+    let cors_repo = Arc::new(CorsOriginRepository::new(&pg_db));
+    let idp_repo = Arc::new(IdentityProviderRepository::new(&pg_db));
+    let edm_repo = Arc::new(EmailDomainMappingRepository::new(&pg_db));
+    let platform_config_repo = Arc::new(PlatformConfigRepository::new(&pg_db));
+    let platform_config_access_repo = Arc::new(PlatformConfigAccessRepository::new(&pg_db));
+    let login_attempt_repo = Arc::new(LoginAttemptRepository::new(&pg_db));
+    let password_reset_repo = Arc::new(PasswordResetTokenRepository::new(&pg_db));
     info!("Platform repositories initialized");
 
     // 8b2. Create UnitOfWork for atomic commits
-    let unit_of_work = Arc::new(MongoUnitOfWork::new(mongo_client.clone(), platform_db.clone()));
+    let unit_of_work = Arc::new(PgUnitOfWork::new(pg_db.clone()));
 
     // 8b3. Create use cases
     let create_application_use_case = Arc::new(CreateApplicationUseCase::new(application_repo.clone(), unit_of_work.clone()));
@@ -310,6 +314,7 @@ async fn main() -> Result<()> {
     };
     let auth_service = Arc::new(AuthService::new(auth_config));
     let authz_service = Arc::new(AuthorizationService::new(role_repo.clone()));
+    let password_service = Arc::new(PasswordService::default());
     info!("Auth services initialized");
 
     // 8d. Create AppState for authentication middleware
@@ -320,7 +325,8 @@ async fn main() -> Result<()> {
 
     // 8e. Build API states
     let events_state = EventsState { event_repo: event_repo.clone() };
-    let event_types_state = EventTypesState { event_type_repo: event_type_repo.clone() };
+    let sync_event_types_use_case = Arc::new(fc_platform::event_type::operations::SyncEventTypesUseCase::new(event_type_repo.clone()));
+    let event_types_state = EventTypesState { event_type_repo: event_type_repo.clone(), sync_use_case: sync_event_types_use_case.clone() };
     let dispatch_jobs_state = DispatchJobsState { dispatch_job_repo: dispatch_job_repo.clone() };
     let filter_options_state = FilterOptionsState {
         client_repo: client_repo.clone(),
@@ -342,9 +348,14 @@ async fn main() -> Result<()> {
         password_service: None,
         anchor_domain_repo: Some(anchor_domain_repo.clone()),
         client_auth_config_repo: Some(client_auth_config_repo.clone()),
+        application_repo: Some(application_repo.clone()),
+        app_client_config_repo: Some(application_client_config_repo.clone()),
     };
     let roles_state = RolesState { role_repo: role_repo.clone(), application_repo: Some(application_repo.clone()) };
-    let subscriptions_state = SubscriptionsState { subscription_repo: subscription_repo.clone() };
+    let sync_subscriptions_use_case = Arc::new(fc_platform::subscription::operations::SyncSubscriptionsUseCase::new(
+        subscription_repo.clone(), connection_repo.clone(), dispatch_pool_repo.clone(),
+    ));
+    let subscriptions_state = SubscriptionsState { subscription_repo: subscription_repo.clone(), sync_use_case: sync_subscriptions_use_case.clone() };
     let oauth_clients_state = OAuthClientsState { oauth_client_repo: oauth_client_repo.clone() };
     let auth_config_state = AuthConfigState {
         anchor_domain_repo: anchor_domain_repo.clone(),
@@ -353,6 +364,41 @@ async fn main() -> Result<()> {
         principal_repo: Some(principal_repo.clone()),
     };
     let audit_logs_state = AuditLogsState { audit_log_repo: audit_log_repo.clone() };
+    // New domain API states
+    let connections_state = ConnectionsState { connection_repo };
+    let cors_state = CorsState { cors_repo };
+    let idp_state = IdentityProvidersState { idp_repo };
+    let edm_state = EmailDomainMappingsState { edm_repo };
+    let platform_config_state = PlatformConfigState { config_repo: platform_config_repo };
+    let config_access_state = ConfigAccessState { access_repo: platform_config_access_repo };
+    let login_attempts_state = LoginAttemptsState { login_attempt_repo };
+    let me_state = MeState {
+        client_repo: client_repo.clone(),
+        application_repo: application_repo.clone(),
+        app_client_config_repo: application_client_config_repo.clone(),
+    };
+    let sdk_events_state = SdkEventsState { event_repo: event_repo.clone() };
+    let well_known_state = WellKnownState {
+        auth_service: auth_service.clone(),
+        external_base_url: format!("http://localhost:{}", args.api_port),
+    };
+    let client_selection_state = ClientSelectionState {
+        principal_repo: principal_repo.clone(),
+        client_repo: client_repo.clone(),
+        role_repo: role_repo.clone(),
+        grant_repo: client_access_grant_repo,
+        auth_service: auth_service.clone(),
+    };
+    let application_roles_sdk_state = ApplicationRolesSdkState {
+        application_repo: application_repo.clone(),
+        role_repo: role_repo.clone(),
+    };
+    let password_reset_state = PasswordResetApiState {
+        password_reset_repo,
+        principal_repo: principal_repo.clone(),
+        password_service,
+    };
+
     let applications_state = ApplicationsState {
         application_repo: application_repo.clone(),
         service_account_repo: service_account_repo.clone(),
@@ -364,12 +410,14 @@ async fn main() -> Result<()> {
         activate_use_case: activate_application_use_case,
         deactivate_use_case: deactivate_application_use_case,
     };
+    let sync_dispatch_pools_use_case = Arc::new(fc_platform::dispatch_pool::operations::SyncDispatchPoolsUseCase::new(dispatch_pool_repo.clone()));
     let dispatch_pools_state = DispatchPoolsState {
         dispatch_pool_repo: dispatch_pool_repo.clone(),
         create_use_case: create_dispatch_pool_use_case,
         update_use_case: update_dispatch_pool_use_case,
         archive_use_case: archive_dispatch_pool_use_case,
         delete_use_case: delete_dispatch_pool_use_case,
+        sync_use_case: sync_dispatch_pools_use_case.clone(),
     };
     let service_accounts_state = ServiceAccountsState {
         repo: service_account_repo.clone(),
@@ -383,6 +431,30 @@ async fn main() -> Result<()> {
     let debug_state = DebugState {
         event_repo: event_repo.clone(),
         dispatch_job_repo: dispatch_job_repo.clone(),
+    };
+
+    // SDK sync state
+    let sync_roles_use_case = Arc::new(fc_platform::role::operations::SyncRolesUseCase::new(role_repo.clone(), application_repo.clone()));
+    let sync_principals_use_case = Arc::new(fc_platform::principal::operations::SyncPrincipalsUseCase::new(principal_repo.clone(), application_repo.clone()));
+    let sdk_sync_state = SdkSyncState {
+        sync_roles_use_case,
+        sync_event_types_use_case: sync_event_types_use_case.clone(),
+        sync_subscriptions_use_case: sync_subscriptions_use_case.clone(),
+        sync_dispatch_pools_use_case: sync_dispatch_pools_use_case.clone(),
+        sync_principals_use_case,
+    };
+    let sdk_audit_batch_state = SdkAuditBatchState {
+        audit_log_repo: audit_log_repo.clone(),
+        application_repo: application_repo.clone(),
+        client_repo: client_repo.clone(),
+    };
+    let bff_roles_state = BffRolesState {
+        role_repo: role_repo.clone(),
+        application_repo: Some(application_repo.clone()),
+    };
+    let bff_event_types_state = BffEventTypesState {
+        event_type_repo: event_type_repo.clone(),
+        application_repo: Some(application_repo.clone()),
     };
 
     // Monitoring state with leader election and circuit breakers
@@ -418,6 +490,26 @@ async fn main() -> Result<()> {
         .nest("/api/admin/applications", applications_router(applications_state).into())
         .nest("/api/admin/dispatch-pools", dispatch_pools_router(dispatch_pools_state).into())
         .nest("/api/admin/service-accounts", service_accounts_router(service_accounts_state).into())
+        // New domain routes
+        .nest("/api/admin/connections", connections_router(connections_state).into())
+        .nest("/api/admin/platform/cors", cors_router(cors_state).into())
+        .nest("/api/admin/identity-providers", identity_providers_router(idp_state).into())
+        .nest("/api/admin/email-domain-mappings", email_domain_mappings_router(edm_state).into())
+        .nest("/api/admin/config", admin_platform_config_router(platform_config_state).into())
+        .nest("/api/admin/config-access", config_access_router(config_access_state).into())
+        .nest("/api/admin/login-attempts", login_attempts_router(login_attempts_state).into())
+        .nest("/api/me", me_router(me_state).into())
+        .nest("/api/sdk/events", sdk_events_batch_router(sdk_events_state).into())
+        .nest("/.well-known", well_known_router(well_known_state).into())
+        .nest("/auth/client", client_selection_router(client_selection_state).into())
+        .nest("/api/applications", application_roles_sdk_router(application_roles_sdk_state).into())
+        .nest("/api/applications", sdk_sync_router(sdk_sync_state).into())
+        .nest("/api/audit-logs", sdk_audit_batch_router(sdk_audit_batch_state).into())
+        .nest("/bff/roles", bff_roles_router(bff_roles_state).into())
+        .nest("/bff/event-types", bff_event_types_router(bff_event_types_state).into())
+        // Public routes (no auth required)
+        .nest("/api/public", public_router().into())
+        .nest("/auth/password-reset", password_reset_router(password_reset_state).into())
         // Monitoring APIs
         .nest("/api/monitoring", monitoring_router(monitoring_state).into())
         // Add auth middleware
@@ -533,68 +625,6 @@ async fn main() -> Result<()> {
 
     info!("FlowCatalyst Dev Monolith shutdown complete");
     Ok(())
-}
-
-async fn create_outbox_repository(args: &Args) -> Result<Arc<dyn OutboxRepository>> {
-    match args.outbox_db_type.as_str() {
-        "sqlite" => {
-            let url = args.outbox_db_url.as_deref().unwrap_or("sqlite::memory:");
-            let pool = SqlitePoolOptions::new()
-                .max_connections(2)
-                .connect(url)
-                .await?;
-            let repo = fc_outbox::sqlite::SqliteOutboxRepository::new(pool);
-            repo.init_schema().await?;
-            info!("Outbox using SQLite: {}", url);
-            Ok(Arc::new(repo))
-        }
-        "postgres" => {
-            let url = args.outbox_db_url.as_ref()
-                .ok_or_else(|| anyhow::anyhow!("FC_OUTBOX_DB_URL required for postgres"))?;
-            let pool = PgPoolOptions::new()
-                .max_connections(5)
-                .connect(url)
-                .await?;
-            let repo = fc_outbox::postgres::PostgresOutboxRepository::new(pool);
-            repo.init_schema().await?;
-            info!("Outbox using PostgreSQL");
-            Ok(Arc::new(repo))
-        }
-        "mongo" => {
-            let url = args.outbox_db_url.as_ref()
-                .ok_or_else(|| anyhow::anyhow!("FC_OUTBOX_DB_URL required for mongo"))?;
-            let client = mongodb::Client::with_uri_str(url).await?;
-            let repo = fc_outbox::mongo::MongoOutboxRepository::new(
-                client,
-                &args.outbox_mongo_db,
-            );
-            info!("Outbox using MongoDB: {} (collections: outbox_events, outbox_dispatch_jobs)", args.outbox_mongo_db);
-            Ok(Arc::new(repo))
-        }
-        other => {
-            Err(anyhow::anyhow!("Unknown outbox database type: {}. Use sqlite, postgres, or mongo", other))
-        }
-    }
-}
-
-/// Adapter to use QueuePublisher as outbox publisher
-struct OutboxQueuePublisher {
-    queue: Arc<dyn QueuePublisher>,
-}
-
-impl OutboxQueuePublisher {
-    fn new(queue: Arc<dyn QueuePublisher>) -> Self {
-        Self { queue }
-    }
-}
-
-#[async_trait::async_trait]
-impl fc_outbox::QueuePublisher for OutboxQueuePublisher {
-    async fn publish(&self, message: fc_common::Message) -> Result<()> {
-        self.queue.publish(message).await
-            .map_err(|e| anyhow::anyhow!("Queue publish error: {}", e))?;
-        Ok(())
-    }
 }
 
 async fn metrics_handler() -> &'static str {

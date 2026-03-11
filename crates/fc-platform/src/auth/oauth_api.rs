@@ -9,7 +9,7 @@ use axum::{
     routing::{get, post},
     extract::{State, Query, Form},
     response::{Json, Redirect, IntoResponse, Response},
-    http::{StatusCode, header},
+    http::{StatusCode, header, HeaderMap},
     Router,
 };
 use utoipa::{ToSchema, IntoParams};
@@ -25,6 +25,7 @@ use tracing::{info, warn, error};
 use crate::{Principal, AuthorizationCode, RefreshToken};
 use crate::{OAuthClientRepository, PrincipalRepository, AuthorizationCodeRepository, RefreshTokenRepository};
 use crate::AuthService;
+use crate::auth::auth_service::{AccessTokenClaims, extract_bearer_token};
 use crate::OidcService;
 use crate::shared::error::PlatformError;
 
@@ -84,6 +85,68 @@ pub struct ErrorResponse {
     pub error_description: Option<String>,
 }
 
+/// Token introspection request (RFC 7662)
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct IntrospectRequest {
+    pub token: String,
+    #[serde(default)]
+    pub token_type_hint: Option<String>,
+}
+
+/// Token introspection response (RFC 7662)
+#[derive(Debug, Serialize, ToSchema)]
+pub struct IntrospectResponse {
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "type")]
+    pub principal_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exp: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iat: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_type: Option<String>,
+}
+
+/// Token revocation request (RFC 7009)
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RevokeRequest {
+    pub token: String,
+    #[serde(default)]
+    pub token_type_hint: Option<String>,
+}
+
+/// OIDC UserInfo response
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UserInfoResponse {
+    pub sub: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "type")]
+    pub principal_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clients: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<String>>,
+}
+
 /// OAuth2 state
 #[derive(Clone)]
 pub struct OAuthState {
@@ -91,7 +154,7 @@ pub struct OAuthState {
     pub principal_repo: Arc<PrincipalRepository>,
     pub auth_service: Arc<AuthService>,
     pub oidc_service: Arc<OidcService>,
-    /// Authorization code storage (MongoDB for distributed deployment)
+    /// Authorization code storage (PostgreSQL)
     pub auth_code_repo: Arc<AuthorizationCodeRepository>,
     /// Refresh token storage for token rotation
     pub refresh_token_repo: Arc<RefreshTokenRepository>,
@@ -762,7 +825,7 @@ pub async fn oidc_callback(
         auth_code = auth_code.with_pkce(challenge, method);
     }
 
-    // Store in MongoDB
+    // Store authorization code
     if let Err(e) = state.auth_code_repo.insert(&auth_code).await {
         error!(error = %e, "Failed to store authorization code");
         return error_redirect(&pending.redirect_uri, "server_error", "Failed to create authorization code", params.state.as_deref());
@@ -809,7 +872,7 @@ pub async fn issue_code(
         auth_code = auth_code.with_pkce(challenge, method);
     }
 
-    // Store in MongoDB
+    // Store authorization code
     state.auth_code_repo.insert(&auth_code).await.map_err(|e| {
         error!(error = %e, "Failed to store authorization code");
         PlatformError::Internal {
@@ -842,11 +905,180 @@ fn generate_random_string(len: usize) -> String {
         .collect()
 }
 
+/// Helper to extract and validate bearer token from request headers
+fn extract_and_validate_token(headers: &HeaderMap, auth_service: &AuthService) -> Result<AccessTokenClaims, Response> {
+    let auth_header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_request".to_string(),
+                    error_description: Some("Missing Authorization header".to_string()),
+                }),
+            ).into_response()
+        })?;
+
+    let token = extract_bearer_token(auth_header).ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: Some("Invalid Authorization header format".to_string()),
+            }),
+        ).into_response()
+    })?;
+
+    auth_service.validate_token(token).map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "invalid_token".to_string(),
+                error_description: Some("Token is invalid or expired".to_string()),
+            }),
+        ).into_response()
+    })
+}
+
+/// UserInfo endpoint (OIDC Core 1.0 Section 5.3)
+///
+/// Returns claims about the authenticated user based on the access token.
+#[utoipa::path(
+    get,
+    path = "/userinfo",
+    tag = "oauth",
+    responses(
+        (status = 200, description = "User info", body = UserInfoResponse),
+        (status = 401, description = "Invalid or missing token", body = ErrorResponse)
+    )
+)]
+pub async fn userinfo(
+    State(state): State<OAuthState>,
+    headers: HeaderMap,
+) -> Response {
+    let claims = match extract_and_validate_token(&headers, &state.auth_service) {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+
+    (
+        StatusCode::OK,
+        Json(UserInfoResponse {
+            sub: claims.sub,
+            email: claims.email,
+            name: Some(claims.name),
+            scope: Some(claims.scope),
+            principal_type: Some(claims.principal_type),
+            clients: Some(claims.clients),
+            roles: Some(claims.roles),
+        }),
+    ).into_response()
+}
+
+/// Token introspection endpoint (RFC 7662)
+///
+/// Returns metadata about a token, including whether it is active.
+#[utoipa::path(
+    post,
+    path = "/introspect",
+    tag = "oauth",
+    request_body = IntrospectRequest,
+    responses(
+        (status = 200, description = "Token introspection result", body = IntrospectResponse),
+    )
+)]
+pub async fn introspect(
+    State(state): State<OAuthState>,
+    Form(req): Form<IntrospectRequest>,
+) -> Response {
+    // Try to validate as access token
+    match state.auth_service.validate_token(&req.token) {
+        Ok(claims) => {
+            (
+                StatusCode::OK,
+                Json(IntrospectResponse {
+                    active: true,
+                    sub: Some(claims.sub),
+                    scope: Some(claims.scope),
+                    client_id: claims.clients.first().cloned(),
+                    email: claims.email,
+                    name: Some(claims.name),
+                    principal_type: Some(claims.principal_type),
+                    exp: Some(claims.exp),
+                    iat: Some(claims.iat),
+                    iss: Some(claims.iss),
+                    token_type: Some("Bearer".to_string()),
+                }),
+            ).into_response()
+        }
+        Err(_) => {
+            // Per RFC 7662: inactive tokens just return active=false
+            (
+                StatusCode::OK,
+                Json(IntrospectResponse {
+                    active: false,
+                    sub: None,
+                    scope: None,
+                    client_id: None,
+                    email: None,
+                    name: None,
+                    principal_type: None,
+                    exp: None,
+                    iat: None,
+                    iss: None,
+                    token_type: None,
+                }),
+            ).into_response()
+        }
+    }
+}
+
+/// Token revocation endpoint (RFC 7009)
+///
+/// Revokes an access token or refresh token. Always returns 200 per spec.
+#[utoipa::path(
+    post,
+    path = "/revoke",
+    tag = "oauth",
+    request_body = RevokeRequest,
+    responses(
+        (status = 200, description = "Token revoked (or was already invalid)"),
+    )
+)]
+pub async fn revoke(
+    State(state): State<OAuthState>,
+    Form(req): Form<RevokeRequest>,
+) -> Response {
+    // Determine token type
+    let is_refresh = req.token_type_hint.as_deref() == Some("refresh_token");
+
+    if is_refresh {
+        // Revoke refresh token by hash
+        let token_hash = RefreshToken::hash_token(&req.token);
+        if let Err(e) = state.refresh_token_repo.revoke_by_hash(&token_hash).await {
+            warn!(error = %e, "Failed to revoke refresh token");
+        }
+    } else {
+        // For access tokens (JWTs), we can try revoking as refresh token too
+        // since the caller might not know the token type. JWT access tokens
+        // are stateless and can't be revoked server-side without a blocklist.
+        let token_hash = RefreshToken::hash_token(&req.token);
+        let _ = state.refresh_token_repo.revoke_by_hash(&token_hash).await;
+    }
+
+    // RFC 7009: Always return 200, even if token was invalid
+    StatusCode::OK.into_response()
+}
+
 /// Create OAuth router
 pub fn oauth_router(state: OAuthState) -> Router {
     Router::new()
         .route("/authorize", get(authorize))
         .route("/token", post(token))
         .route("/callback", get(oidc_callback))
+        .route("/userinfo", get(userinfo).post(userinfo))
+        .route("/introspect", post(introspect))
+        .route("/revoke", post(revoke))
         .with_state(state)
 }

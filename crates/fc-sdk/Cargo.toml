@@ -1,0 +1,34 @@
+[package]
+name = "fc-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "FlowCatalyst SDK for Rust — domain event patterns, outbox integration, and platform API client"
+
+[features]
+default = ["outbox-postgres"]
+outbox-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
+outbox-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/chrono"]
+outbox-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/chrono"]
+client = ["dep:reqwest"]
+
+[dependencies]
+# Core (always included)
+serde = { workspace = true }
+serde_json = "1.0"
+chrono = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Outbox (optional — enabled by default with postgres)
+sqlx = { workspace = true, optional = true }
+
+# HTTP client for platform API (optional)
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tokio-test = { workspace = true }

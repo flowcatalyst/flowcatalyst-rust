@@ -8,7 +8,6 @@ use crate::client::entity::Client;
 use crate::client::repository::ClientRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
-    unit_of_work::HasId,
 };
 use super::events::ClientCreated;
 
@@ -29,15 +28,6 @@ pub struct CreateClientCommand {
     pub identifier: String,
 }
 
-impl HasId for Client {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn collection_name() -> &'static str {
-        "tnt_clients"
-    }
-}
 
 /// Use case for creating a new client.
 pub struct CreateClientUseCase<U: UnitOfWork> {
@@ -122,6 +112,7 @@ impl<U: UnitOfWork> CreateClientUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::unit_of_work::HasId;
 
     #[test]
     fn test_command_serialization() {
@@ -150,6 +141,5 @@ mod tests {
     fn test_client_has_id() {
         let client = Client::new("Test", "test");
         assert!(!client.id().is_empty());
-        assert_eq!(Client::collection_name(), "tnt_clients");
     }
 }

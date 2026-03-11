@@ -231,6 +231,92 @@ impl OidcSyncService {
         Ok(authorized_role_names)
     }
 
+    /// Sync IDP roles with optional allowed_role_ids filter from EmailDomainMapping.
+    /// When allowed_role_ids is non-empty, only mapped roles whose platform_role_name
+    /// is in the allow-list will be assigned.
+    pub async fn sync_idp_roles_filtered(
+        &self,
+        principal: &mut Principal,
+        idp_role_names: &[String],
+        allowed_role_ids: Option<&[String]>,
+    ) -> Result<HashSet<String>> {
+        let mut authorized_role_names: HashSet<String> = HashSet::new();
+        let email = principal.email().unwrap_or("unknown").to_string();
+
+        if idp_role_names.is_empty() {
+            info!(
+                principal_id = %principal.id,
+                "No IDP roles provided"
+            );
+        } else {
+            for idp_role_name in idp_role_names {
+                let mapping = self.find_idp_role_mapping(idp_role_name).await?;
+
+                if let Some(mapping) = mapping {
+                    // Check against allowed_role_ids if provided
+                    if let Some(allowed) = allowed_role_ids {
+                        if !allowed.is_empty() && !allowed.contains(&mapping.platform_role_name) {
+                            debug!(
+                                principal_id = %principal.id,
+                                idp_role = %idp_role_name,
+                                internal_role = %mapping.platform_role_name,
+                                "Skipped IDP role: not in email domain mapping allowed_role_ids"
+                            );
+                            continue;
+                        }
+                    }
+
+                    authorized_role_names.insert(mapping.platform_role_name.clone());
+                    debug!(
+                        principal_id = %principal.id,
+                        idp_role = %idp_role_name,
+                        internal_role = %mapping.platform_role_name,
+                        "Accepted IDP role"
+                    );
+                } else {
+                    warn!(
+                        principal_id = %principal.id,
+                        email = %email,
+                        idp_role = %idp_role_name,
+                        "SECURITY: REJECTED unauthorized IDP role. Role not found in idp_role_mappings table."
+                    );
+                }
+            }
+        }
+
+        // Remove all existing IDP-sourced roles
+        let removed_count = principal.remove_roles_by_source(IDP_SYNC_SOURCE);
+        if removed_count > 0 {
+            debug!(
+                principal_id = %principal.id,
+                removed_count = removed_count,
+                "Removed old IDP-sourced roles"
+            );
+        }
+
+        // Assign all authorized internal role names
+        let mut assigned_count = 0;
+        for role_name in &authorized_role_names {
+            if !principal.has_role(role_name) {
+                principal.assign_role_with_source(role_name, IDP_SYNC_SOURCE);
+                assigned_count += 1;
+            }
+        }
+
+        self.principal_repo.update(principal).await?;
+
+        info!(
+            principal_id = %principal.id,
+            email = %email,
+            provided_count = idp_role_names.len(),
+            authorized_count = authorized_role_names.len(),
+            assigned_count = assigned_count,
+            "IDP role sync complete (filtered)"
+        );
+
+        Ok(authorized_role_names)
+    }
+
     /// Full OIDC sync: sync both user info and roles.
     /// This is the main method called during OIDC login callback.
     ///
@@ -255,13 +341,32 @@ impl OidcSyncService {
         scope: UserScope,
         idp_role_names: &[String],
     ) -> Result<Principal> {
+        self.sync_oidc_login_with_allowed_roles(
+            email, name, external_idp_id, provider_id, client_id, scope, idp_role_names, None,
+        ).await
+    }
+
+    /// Full OIDC sync with optional allowed_role_ids filter from EmailDomainMapping.
+    /// When allowed_role_ids is provided and non-empty, only mapped roles whose
+    /// internal role ID is in the allow-list will be assigned.
+    pub async fn sync_oidc_login_with_allowed_roles(
+        &self,
+        email: &str,
+        name: &str,
+        external_idp_id: &str,
+        provider_id: &str,
+        client_id: Option<&str>,
+        scope: UserScope,
+        idp_role_names: &[String],
+        allowed_role_ids: Option<&[String]>,
+    ) -> Result<Principal> {
         // Sync user information
         let mut principal = self
             .sync_oidc_user(email, name, external_idp_id, provider_id, client_id, scope)
             .await?;
 
         // CRITICAL SECURITY: Sync IDP roles with authorization check
-        self.sync_idp_roles(&mut principal, idp_role_names).await?;
+        self.sync_idp_roles_filtered(&mut principal, idp_role_names, allowed_role_ids).await?;
 
         Ok(principal)
     }

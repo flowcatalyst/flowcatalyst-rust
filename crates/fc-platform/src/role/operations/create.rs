@@ -7,7 +7,6 @@ use crate::role::entity::AuthRole;
 use crate::role::repository::RoleRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
-    unit_of_work::HasId,
 };
 use super::events::RoleCreated;
 
@@ -37,15 +36,6 @@ pub struct CreateRoleCommand {
     pub client_managed: bool,
 }
 
-impl HasId for AuthRole {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn collection_name() -> &'static str {
-        "iam_roles"
-    }
-}
 
 /// Use case for creating a new role.
 pub struct CreateRoleUseCase<U: UnitOfWork> {
@@ -135,6 +125,7 @@ impl<U: UnitOfWork> CreateRoleUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::unit_of_work::HasId;
 
     #[test]
     fn test_command_serialization() {
@@ -156,6 +147,5 @@ mod tests {
     fn test_role_has_id() {
         let role = AuthRole::new("orders", "admin", "Orders Admin");
         assert!(!role.id().is_empty());
-        assert_eq!(AuthRole::collection_name(), "iam_roles");
     }
 }

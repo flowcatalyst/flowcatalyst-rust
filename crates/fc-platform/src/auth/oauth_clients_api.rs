@@ -10,6 +10,9 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use utoipa::{ToSchema, IntoParams};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use rand::Rng;
+use sha2::{Sha256, Digest};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 use crate::auth::oauth_entity::{OAuthClient, OAuthClientType, GrantType};
 use crate::OAuthClientRepository;
@@ -148,7 +151,7 @@ fn parse_grant_type(s: &str) -> Option<GrantType> {
     post,
     path = "",
     tag = "oauth-clients",
-    operation_id = "postApiAdminPlatformOauthClients",
+    operation_id = "postApiAdminOauthClients",
     request_body = CreateOAuthClientRequest,
     responses(
         (status = 201, description = "OAuth client created", body = CreatedResponse),
@@ -205,7 +208,7 @@ pub async fn create_oauth_client(
     get,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "getApiAdminPlatformOauthClientsById",
+    operation_id = "getApiAdminOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -233,7 +236,7 @@ pub async fn get_oauth_client(
     get,
     path = "",
     tag = "oauth-clients",
-    operation_id = "getApiAdminPlatformOauthClients",
+    operation_id = "getApiAdminOauthClients",
     params(OAuthClientsQuery),
     responses(
         (status = 200, description = "List of OAuth clients", body = Vec<OAuthClientResponse>)
@@ -265,7 +268,7 @@ pub async fn list_oauth_clients(
     put,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "putApiAdminPlatformOauthClientsById",
+    operation_id = "putApiAdminOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -319,7 +322,7 @@ pub async fn update_oauth_client(
     delete,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "deleteApiAdminPlatformOauthClientsById",
+    operation_id = "deleteApiAdminOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -346,10 +349,158 @@ pub async fn delete_oauth_client(
     Ok(Json(SuccessResponse::ok()))
 }
 
+/// Regenerate secret response
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RegenerateSecretResponse {
+    /// The new plaintext client secret (shown once)
+    pub client_secret: String,
+}
+
+/// Get OAuth client by client_id (public identifier)
+#[utoipa::path(
+    get,
+    path = "/by-client-id/{clientId}",
+    tag = "oauth-clients",
+    operation_id = "getApiAdminOauthClientsByClientId",
+    params(
+        ("clientId" = String, Path, description = "OAuth client_id (public identifier)")
+    ),
+    responses(
+        (status = 200, description = "OAuth client found", body = OAuthClientResponse),
+        (status = 404, description = "OAuth client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn get_oauth_client_by_client_id(
+    State(state): State<OAuthClientsState>,
+    auth: Authenticated,
+    Path(client_id): Path<String>,
+) -> Result<Json<OAuthClientResponse>, PlatformError> {
+    crate::checks::require_anchor(&auth.0)?;
+
+    let client = state.oauth_client_repo.find_by_client_id(&client_id).await?
+        .ok_or_else(|| PlatformError::not_found("OAuthClient", &client_id))?;
+
+    Ok(Json(client.into()))
+}
+
+/// Activate OAuth client
+#[utoipa::path(
+    post,
+    path = "/{id}/activate",
+    tag = "oauth-clients",
+    operation_id = "postApiAdminOauthClientsActivate",
+    params(
+        ("id" = String, Path, description = "OAuth client ID")
+    ),
+    responses(
+        (status = 200, description = "OAuth client activated", body = SuccessResponse),
+        (status = 404, description = "OAuth client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn activate_oauth_client(
+    State(state): State<OAuthClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<SuccessResponse>, PlatformError> {
+    crate::checks::require_anchor(&auth.0)?;
+
+    let mut client = state.oauth_client_repo.find_by_id(&id).await?
+        .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
+
+    client.active = true;
+    client.updated_at = chrono::Utc::now();
+    state.oauth_client_repo.update(&client).await?;
+
+    Ok(Json(SuccessResponse::with_message("OAuth client activated")))
+}
+
+/// Deactivate OAuth client
+#[utoipa::path(
+    post,
+    path = "/{id}/deactivate",
+    tag = "oauth-clients",
+    operation_id = "postApiAdminOauthClientsDeactivate",
+    params(
+        ("id" = String, Path, description = "OAuth client ID")
+    ),
+    responses(
+        (status = 200, description = "OAuth client deactivated", body = SuccessResponse),
+        (status = 404, description = "OAuth client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn deactivate_oauth_client(
+    State(state): State<OAuthClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<SuccessResponse>, PlatformError> {
+    crate::checks::require_anchor(&auth.0)?;
+
+    let mut client = state.oauth_client_repo.find_by_id(&id).await?
+        .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
+
+    client.active = false;
+    client.updated_at = chrono::Utc::now();
+    state.oauth_client_repo.update(&client).await?;
+
+    Ok(Json(SuccessResponse::with_message("OAuth client deactivated")))
+}
+
+/// Regenerate OAuth client secret
+#[utoipa::path(
+    post,
+    path = "/{id}/regenerate-secret",
+    tag = "oauth-clients",
+    operation_id = "postApiAdminOauthClientsRegenerateSecret",
+    params(
+        ("id" = String, Path, description = "OAuth client ID")
+    ),
+    responses(
+        (status = 200, description = "New client secret generated", body = RegenerateSecretResponse),
+        (status = 404, description = "OAuth client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn regenerate_oauth_client_secret(
+    State(state): State<OAuthClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
+    crate::checks::require_anchor(&auth.0)?;
+
+    let mut client = state.oauth_client_repo.find_by_id(&id).await?
+        .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
+
+    // Generate a random 32-byte secret and encode as URL-safe base64
+    let mut secret_bytes = [0u8; 32];
+    rand::thread_rng().fill(&mut secret_bytes);
+    let plaintext_secret = URL_SAFE_NO_PAD.encode(secret_bytes);
+
+    // Store SHA-256 hash as the secret reference
+    let mut hasher = Sha256::new();
+    hasher.update(plaintext_secret.as_bytes());
+    let hash_hex = format!("{:x}", hasher.finalize());
+
+    client.client_secret_ref = Some(hash_hex);
+    client.updated_at = chrono::Utc::now();
+    state.oauth_client_repo.update(&client).await?;
+
+    Ok(Json(RegenerateSecretResponse {
+        client_secret: plaintext_secret,
+    }))
+}
+
 /// Create OAuth clients router
 pub fn oauth_clients_router(state: OAuthClientsState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(create_oauth_client, list_oauth_clients))
         .routes(routes!(get_oauth_client, update_oauth_client, delete_oauth_client))
+        .routes(routes!(get_oauth_client_by_client_id))
+        .routes(routes!(activate_oauth_client))
+        .routes(routes!(deactivate_oauth_client))
+        .routes(routes!(regenerate_oauth_client_secret))
         .with_state(state)
 }

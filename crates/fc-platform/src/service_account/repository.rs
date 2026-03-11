@@ -3,12 +3,15 @@
 //! PostgreSQL persistence for ServiceAccount entities using SeaORM.
 //! Webhook credentials are stored as flat columns (wh_*) on iam_service_accounts.
 
+use async_trait::async_trait;
 use sea_orm::*;
+use sea_orm::sea_query::OnConflict;
 use chrono::Utc;
 
 use crate::ServiceAccount;
 use crate::entities::iam_service_accounts;
 use crate::shared::error::Result;
+use crate::usecase::unit_of_work::{HasId, PgPersist};
 
 pub struct ServiceAccountRepository {
     db: DatabaseConnection,
@@ -20,7 +23,7 @@ impl ServiceAccountRepository {
     }
 
     pub async fn insert(&self, account: &ServiceAccount) -> Result<()> {
-        let model = self.to_active_model(account, true);
+        let model = Self::build_active_model(account, true);
 
         iam_service_accounts::Entity::insert(model)
             .exec(&self.db)
@@ -73,7 +76,7 @@ impl ServiceAccountRepository {
     }
 
     pub async fn update(&self, account: &ServiceAccount) -> Result<()> {
-        let model = self.to_active_model(account, false);
+        let model = Self::build_active_model(account, false);
 
         iam_service_accounts::Entity::update(model)
             .exec(&self.db)
@@ -87,10 +90,51 @@ impl ServiceAccountRepository {
             .await?;
         Ok(result.rows_affected > 0)
     }
+}
 
+// ── PgPersist implementation ──────────────────────────────────────────────────
+
+impl HasId for ServiceAccount {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl PgPersist for ServiceAccount {
+    async fn pg_upsert(&self, txn: &sea_orm::DatabaseTransaction) -> Result<()> {
+        let model = ServiceAccountRepository::build_active_model(self, true);
+        iam_service_accounts::Entity::insert(model)
+            .on_conflict(
+                OnConflict::column(iam_service_accounts::Column::Id)
+                    .update_columns([
+                        iam_service_accounts::Column::Code,
+                        iam_service_accounts::Column::Name,
+                        iam_service_accounts::Column::Description,
+                        iam_service_accounts::Column::ApplicationId,
+                        iam_service_accounts::Column::Active,
+                        iam_service_accounts::Column::WhAuthType,
+                        iam_service_accounts::Column::WhAuthTokenRef,
+                        iam_service_accounts::Column::WhSigningSecretRef,
+                        iam_service_accounts::Column::WhSigningAlgorithm,
+                        iam_service_accounts::Column::LastUsedAt,
+                        iam_service_accounts::Column::UpdatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(txn)
+            .await?;
+        Ok(())
+    }
+
+    async fn pg_delete(&self, txn: &sea_orm::DatabaseTransaction) -> Result<()> {
+        iam_service_accounts::Entity::delete_by_id(&self.id).exec(txn).await?;
+        Ok(())
+    }
+}
+
+impl ServiceAccountRepository {
     // ── Helpers ──────────────────────────────────────────────
 
-    fn to_active_model(&self, account: &ServiceAccount, is_insert: bool) -> iam_service_accounts::ActiveModel {
+    fn build_active_model(account: &ServiceAccount, is_insert: bool) -> iam_service_accounts::ActiveModel {
         let wh = &account.webhook_credentials;
 
         iam_service_accounts::ActiveModel {

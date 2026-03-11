@@ -63,7 +63,7 @@ impl<U: UnitOfWork> ArchiveEventTypeUseCase<U> {
         };
 
         // Business rule: can only archive active or draft event types
-        if event_type.status == EventTypeStatus::Archive {
+        if event_type.status == EventTypeStatus::Archived {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "ALREADY_ARCHIVED",
                 "Event type is already archived",

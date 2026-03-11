@@ -178,7 +178,7 @@ pub struct ClientsState {
     post,
     path = "",
     tag = "clients",
-    operation_id = "postApiAdminPlatformClients",
+    operation_id = "postApiAdminClients",
     request_body = CreateClientRequest,
     responses(
         (status = 201, description = "Client created", body = CreatedResponse),
@@ -213,7 +213,7 @@ pub async fn create_client(
     get,
     path = "/{id}",
     tag = "clients",
-    operation_id = "getApiAdminPlatformClientsById",
+    operation_id = "getApiAdminClientsById",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -244,7 +244,7 @@ pub async fn get_client(
     get,
     path = "",
     tag = "clients",
-    operation_id = "getApiAdminPlatformClients",
+    operation_id = "getApiAdminClients",
     params(
         ("page" = Option<u32>, Query, description = "Page number"),
         ("limit" = Option<u32>, Query, description = "Items per page"),
@@ -277,7 +277,7 @@ pub async fn list_clients(
     put,
     path = "/{id}",
     tag = "clients",
-    operation_id = "putApiAdminPlatformClientsById",
+    operation_id = "putApiAdminClientsById",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -314,7 +314,7 @@ pub async fn update_client(
     delete,
     path = "/{id}",
     tag = "clients",
-    operation_id = "deleteApiAdminPlatformClientsById",
+    operation_id = "deleteApiAdminClientsById",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -334,7 +334,7 @@ pub async fn delete_client(
     let mut client = state.client_repo.find_by_id(&id).await?
         .ok_or_else(|| PlatformError::not_found("Client", &id))?;
 
-    client.delete(None);
+    client.deactivate(None);
     state.client_repo.update(&client).await?;
 
     Ok(Json(SuccessResponse::ok()))
@@ -351,7 +351,7 @@ pub async fn delete_client(
     post,
     path = "/{id}/activate",
     tag = "clients",
-    operation_id = "postApiAdminPlatformClientsByIdActivate",
+    operation_id = "postApiAdminClientsByIdActivate",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -389,7 +389,7 @@ pub async fn activate_client(
     post,
     path = "/{id}/suspend",
     tag = "clients",
-    operation_id = "postApiAdminPlatformClientsByIdSuspend",
+    operation_id = "postApiAdminClientsByIdSuspend",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -434,7 +434,7 @@ pub async fn suspend_client(
     post,
     path = "/{id}/deactivate",
     tag = "clients",
-    operation_id = "postApiAdminPlatformClientsByIdDeactivate",
+    operation_id = "postApiAdminClientsByIdDeactivate",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -457,7 +457,7 @@ pub async fn deactivate_client(
     let mut client = state.client_repo.find_by_id(&id).await?
         .ok_or_else(|| PlatformError::not_found("Client", &id))?;
 
-    client.delete(Some(req.reason.clone()));
+    client.deactivate(Some(req.reason.clone()));
     state.client_repo.update(&client).await?;
 
     tracing::info!(
@@ -477,7 +477,7 @@ pub async fn deactivate_client(
     get,
     path = "/search",
     tag = "clients",
-    operation_id = "getApiAdminPlatformClientsSearch",
+    operation_id = "getApiAdminClientsSearch",
     params(
         ("q" = Option<String>, Query, description = "Search term")
     ),
@@ -521,7 +521,7 @@ pub async fn search_clients(
     get,
     path = "/by-identifier/{identifier}",
     tag = "clients",
-    operation_id = "getApiAdminPlatformClientsByIdentifierByIdentifier",
+    operation_id = "getApiAdminClientsByIdentifierByIdentifier",
     params(
         ("identifier" = String, Path, description = "Client identifier/slug")
     ),
@@ -552,7 +552,7 @@ pub async fn get_client_by_identifier(
     post,
     path = "/{id}/notes",
     tag = "clients",
-    operation_id = "postApiAdminPlatformClientsByIdNotes",
+    operation_id = "postApiAdminClientsByIdNotes",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -596,7 +596,7 @@ pub async fn add_note(
     get,
     path = "/{id}/applications",
     tag = "clients",
-    operation_id = "getApiAdminPlatformClientsByIdApplications",
+    operation_id = "getApiAdminClientsByIdApplications",
     params(
         ("id" = String, Path, description = "Client ID")
     ),
@@ -670,7 +670,7 @@ pub async fn get_client_applications(
     post,
     path = "/{id}/applications/{application_id}/enable",
     tag = "clients",
-    operation_id = "postApiAdminPlatformClientsByIdApplicationsByApplicationIdEnable",
+    operation_id = "postApiAdminClientsByIdApplicationsByAppIdEnable",
     params(
         ("id" = String, Path, description = "Client ID"),
         ("application_id" = String, Path, description = "Application ID")
@@ -711,7 +711,7 @@ pub async fn enable_application(
     post,
     path = "/{id}/applications/{application_id}/disable",
     tag = "clients",
-    operation_id = "postApiAdminPlatformClientsByIdApplicationsByApplicationIdDisable",
+    operation_id = "postApiAdminClientsByIdApplicationsByAppIdDisable",
     params(
         ("id" = String, Path, description = "Client ID"),
         ("application_id" = String, Path, description = "Application ID")
@@ -746,7 +746,7 @@ pub async fn disable_application(
     put,
     path = "/{id}/applications",
     tag = "clients",
-    operation_id = "putApiAdminPlatformClientsByIdApplications",
+    operation_id = "putApiAdminClientsByIdApplications",
     params(
         ("id" = String, Path, description = "Client ID")
     ),

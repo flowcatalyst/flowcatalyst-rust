@@ -5,7 +5,6 @@
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 
 /// Authorization code for OAuth2 authorization code flow.
 ///
@@ -13,8 +12,6 @@ use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizationCode {
     /// The authorization code value (64 char random string).
-    /// This is the MongoDB _id field.
-    #[serde(rename = "_id")]
     pub code: String,
 
     /// OAuth client that initiated this authorization.
@@ -46,11 +43,9 @@ pub struct AuthorizationCode {
     pub context_client_id: Option<String>,
 
     /// When this code was created.
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
 
     /// When this code expires.
-    #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub expires_at: DateTime<Utc>,
 
     /// Whether this code has been used (single-use enforcement).
@@ -132,6 +127,8 @@ impl AuthorizationCode {
         self.used = true;
     }
 }
+
+// Note: Conversion from oauth_oidc_payloads is handled in AuthorizationCodeRepository::from_model
 
 #[cfg(test)]
 mod tests {

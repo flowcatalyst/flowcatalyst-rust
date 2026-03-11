@@ -4,11 +4,11 @@ use std::sync::Arc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::{Subscription, EventTypeBinding, DispatchMode};
+use crate::{Subscription, EventTypeBinding};
+use crate::subscription::entity::DispatchMode;
 use crate::SubscriptionRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,
-    unit_of_work::HasId,
 };
 use super::events::SubscriptionCreated;
 
@@ -48,8 +48,8 @@ pub struct CreateSubscriptionCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
 
-    /// Target URL for webhook delivery
-    pub target: String,
+    /// Connection ID (references msg_connections)
+    pub connection_id: String,
 
     /// Event types to subscribe to
     pub event_types: Vec<EventTypeBindingInput>,
@@ -79,15 +79,6 @@ pub struct CreateSubscriptionCommand {
     pub data_only: bool,
 }
 
-impl HasId for Subscription {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn collection_name() -> &'static str {
-        "subscriptions"
-    }
-}
 
 /// Use case for creating a new subscription.
 pub struct CreateSubscriptionUseCase<U: UnitOfWork> {
@@ -134,12 +125,12 @@ impl<U: UnitOfWork> CreateSubscriptionUseCase<U> {
             ));
         }
 
-        // Validation: target is required
-        let target = command.target.trim();
-        if target.is_empty() {
+        // Validation: connection_id is required
+        let connection_id = command.connection_id.trim();
+        if connection_id.is_empty() {
             return UseCaseResult::failure(UseCaseError::validation(
-                "TARGET_REQUIRED",
-                "Target URL is required",
+                "CONNECTION_ID_REQUIRED",
+                "Connection ID is required",
             ));
         }
 
@@ -176,7 +167,7 @@ impl<U: UnitOfWork> CreateSubscriptionUseCase<U> {
             .collect();
 
         // Create the subscription entity
-        let mut subscription = Subscription::new(&code, name, target);
+        let mut subscription = Subscription::new(&code, name, connection_id);
 
         subscription.description = command.description.clone();
         subscription.client_id = command.client_id.clone();
@@ -190,10 +181,10 @@ impl<U: UnitOfWork> CreateSubscriptionUseCase<U> {
             subscription.mode = mode;
         }
         if let Some(retries) = command.max_retries {
-            subscription.max_retries = retries;
+            subscription.max_retries = retries as i32;
         }
         if let Some(timeout) = command.timeout_seconds {
-            subscription.timeout_seconds = timeout;
+            subscription.timeout_seconds = timeout as i32;
         }
 
         // Create domain event
@@ -207,7 +198,7 @@ impl<U: UnitOfWork> CreateSubscriptionUseCase<U> {
             &subscription.id,
             &subscription.code,
             &subscription.name,
-            &subscription.target,
+            &subscription.connection_id,
             event_type_codes,
             subscription.client_id.as_deref(),
         );
@@ -220,6 +211,7 @@ impl<U: UnitOfWork> CreateSubscriptionUseCase<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usecase::unit_of_work::HasId;
 
     #[test]
     fn test_command_serialization() {
@@ -228,7 +220,7 @@ mod tests {
             name: "Order Webhook".to_string(),
             description: Some("Receives order events".to_string()),
             client_id: Some("client-123".to_string()),
-            target: "https://example.com/webhook".to_string(),
+            connection_id: "conn-123".to_string(),
             event_types: vec![
                 EventTypeBindingInput {
                     event_type_code: "orders:*:*:*".to_string(),
@@ -250,9 +242,8 @@ mod tests {
 
     #[test]
     fn test_subscription_has_id() {
-        let subscription = Subscription::new("test", "Test", "http://example.com");
+        let subscription = Subscription::new("test", "Test", "conn-test");
         assert!(!subscription.id().is_empty());
-        assert_eq!(Subscription::collection_name(), "subscriptions");
     }
 
     #[test]
