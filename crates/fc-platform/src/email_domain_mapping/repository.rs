@@ -3,7 +3,7 @@
 use sea_orm::*;
 use chrono::Utc;
 
-use super::entity::{EmailDomainMapping, ScopeType};
+use super::entity::EmailDomainMapping;
 use crate::entities::{
     tnt_email_domain_mappings,
     tnt_email_domain_mapping_clients,

@@ -212,10 +212,10 @@ struct CallbackQuery {
 
 /// Generate a cryptographically random alphanumeric string.
 fn generate_random_string(len: usize) -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..len)
         .map(|_| {
-            let idx = rng.gen_range(0..62);
+            let idx = rng.random_range(0..62);
             match idx {
                 0..=9 => (b'0' + idx) as char,
                 10..=35 => (b'a' + idx - 10) as char,

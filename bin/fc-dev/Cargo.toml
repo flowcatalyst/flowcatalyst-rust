@@ -24,7 +24,7 @@ sea-orm = { workspace = true }
 anyhow = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-clap = { version = "4.4", features = ["derive", "env"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 uuid = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }

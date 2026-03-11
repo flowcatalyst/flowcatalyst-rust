@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
-use crate::event_type::entity::{SpecVersion, SchemaType, SpecVersionStatus};
+use crate::event_type::entity::{SpecVersion, SchemaType};
 use crate::EventTypeRepository;
 use crate::usecase::{
     ExecutionContext, UnitOfWork, UseCaseError, UseCaseResult,

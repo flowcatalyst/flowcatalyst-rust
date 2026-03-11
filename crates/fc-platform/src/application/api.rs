@@ -6,6 +6,7 @@
 use axum::{
     routing::{get, post, put},
     extract::{State, Path, Query},
+    http::StatusCode,
     Json, Router,
 };
 use utoipa::{ToSchema, IntoParams};
@@ -16,7 +17,7 @@ use crate::{Application, ServiceAccount, AuthRole, ApplicationClientConfig};
 use crate::service_account::RoleAssignment;
 use crate::{ApplicationRepository, ServiceAccountRepository, RoleRepository, ApplicationClientConfigRepository, ClientRepository};
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
+use crate::shared::api_common::PaginationParams;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCaseResult};
 use crate::application::operations::{
@@ -194,7 +195,7 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     operation_id = "postApiAdminApplications",
     request_body = CreateApplicationRequest,
     responses(
-        (status = 201, description = "Application created", body = CreatedResponse),
+        (status = 201, description = "Application created", body = ApplicationResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -204,7 +205,7 @@ pub async fn create_application<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
     auth: Authenticated,
     Json(req): Json<CreateApplicationRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<ApplicationResponse>), PlatformError> {
     // Only anchor users can manage applications
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
@@ -221,7 +222,9 @@ pub async fn create_application<U: UnitOfWork>(
 
     match state.create_use_case.execute(command, ctx).await {
         UseCaseResult::Success(event) => {
-            Ok(Json(CreatedResponse::new(event.application_id)))
+            let app = state.application_repo.find_by_id(&event.application_id).await?
+                .ok_or_else(|| PlatformError::internal("Application not found after create"))?;
+            Ok((StatusCode::CREATED, Json(ApplicationResponse::from(app))))
         }
         UseCaseResult::Failure(err) => Err(err.into()),
     }
@@ -348,7 +351,7 @@ pub async fn update_application<U: UnitOfWork>(
         ("id" = String, Path, description = "Application ID")
     ),
     responses(
-        (status = 200, description = "Application deleted", body = SuccessResponse),
+        (status = 204, description = "Application deleted"),
         (status = 404, description = "Application not found")
     ),
     security(("bearer_auth" = []))
@@ -357,14 +360,14 @@ pub async fn delete_application<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     let command = DeactivateApplicationCommand { id };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
     match state.deactivate_use_case.execute(command, ctx).await {
-        UseCaseResult::Success(_event) => Ok(Json(SuccessResponse::ok())),
+        UseCaseResult::Success(_event) => Ok(StatusCode::NO_CONTENT),
         UseCaseResult::Failure(err) => Err(err.into()),
     }
 }
@@ -881,16 +884,16 @@ pub async fn disable_for_client<U: UnitOfWork>(
 pub fn applications_router<U: UnitOfWork + Clone>(state: ApplicationsState<U>) -> Router {
     Router::new()
         .route("/", post(create_application::<U>).get(list_applications::<U>))
-        .route("/:id", get(get_application::<U>).put(update_application::<U>).delete(delete_application::<U>))
-        .route("/:id/activate", post(activate_application::<U>))
-        .route("/:id/deactivate", post(deactivate_application::<U>))
-        .route("/:id/provision-service-account", post(provision_service_account::<U>))
-        .route("/:id/service-account", get(get_application_service_account::<U>))
-        .route("/:id/roles", get(list_application_roles::<U>))
-        .route("/:id/clients", get(list_client_configs::<U>))
-        .route("/:id/clients/:client_id", put(update_client_config::<U>))
-        .route("/:id/clients/:client_id/enable", post(enable_for_client::<U>))
-        .route("/:id/clients/:client_id/disable", post(disable_for_client::<U>))
-        .route("/by-code/:code", get(get_application_by_code::<U>))
+        .route("/{id}", get(get_application::<U>).put(update_application::<U>).delete(delete_application::<U>))
+        .route("/{id}/activate", post(activate_application::<U>))
+        .route("/{id}/deactivate", post(deactivate_application::<U>))
+        .route("/{id}/provision-service-account", post(provision_service_account::<U>))
+        .route("/{id}/service-account", get(get_application_service_account::<U>))
+        .route("/{id}/roles", get(list_application_roles::<U>))
+        .route("/{id}/clients", get(list_client_configs::<U>))
+        .route("/{id}/clients/{client_id}", put(update_client_config::<U>))
+        .route("/{id}/clients/{client_id}/enable", post(enable_for_client::<U>))
+        .route("/{id}/clients/{client_id}/disable", post(disable_for_client::<U>))
+        .route("/by-code/{code}", get(get_application_by_code::<U>))
         .with_state(state)
 }

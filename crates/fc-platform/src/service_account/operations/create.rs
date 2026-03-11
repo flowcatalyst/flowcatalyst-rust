@@ -15,7 +15,7 @@ use super::events::ServiceAccountCreated;
 fn generate_auth_token() -> String {
     let random_part: String = (0..32)
         .map(|_| {
-            let idx = rand::thread_rng().gen_range(0..36);
+            let idx = rand::rng().random_range(0..36);
             if idx < 10 {
                 (b'0' + idx) as char
             } else {
@@ -28,7 +28,7 @@ fn generate_auth_token() -> String {
 
 /// Generate a signing secret (URL-safe base64)
 fn generate_signing_secret() -> String {
-    let bytes: [u8; 32] = rand::thread_rng().gen();
+    let bytes: [u8; 32] = rand::rng().random();
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes)
 }
 

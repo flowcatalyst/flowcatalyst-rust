@@ -27,60 +27,61 @@ authors = ["FlowCatalyst Team"]
 license = "MIT"
 
 [workspace.dependencies]
-tokio = { version = "1.36", features = ["full"] }
+tokio = { version = "1.44", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-axum = { version = "0.7", features = ["macros"] }
-axum-extra = { version = "0.9", features = ["cookie"] }
-reqwest = { version = "0.12.9", features = ["json", "rustls-tls"] }
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["cookie"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "postgres", "mysql", "chrono", "uuid"] }
 sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono", "with-json"] }
 sea-orm-migration = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
-mongodb = "3.1"
+mongodb = "3.2"
 bson = { version = "2.15", features = ["chrono-0_4"] }
 aws-sdk-sqs = "1.91"
 aws-config = "1.8"
 async-trait = "0.1"
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-uuid = { version = "1.7", features = ["v4", "serde"] }
+uuid = { version = "1.16", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-metrics = "0.22"
-metrics-exporter-prometheus = "0.13"
-tower = { version = "0.4", features = ["full"] }
-tower-http = { version = "0.5", features = ["full"] }
-dashmap = "5.5"
-indexmap = "2.2"
-governor = "0.6"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["full"] }
+dashmap = "6.1"
+indexmap = "2.8"
+governor = "0.8"
 nonzero_ext = "0.3"
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "0.29", features = ["tokio-comp", "connection-manager"] }
 parking_lot = "0.12"
 futures = "0.3"
-bytes = "1.5"
+bytes = "1.10"
 hmac = "0.12"
 sha2 = "0.10"
-subtle = "2.5"
+subtle = "2.6"
 hex = "0.4"
 pin-project-lite = "0.2"
-lapin = "2.3"
+lapin = "2.5"
 async-nats = "0.38"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport"] }
 openidconnect = "4.0"
 aws-sdk-elasticloadbalancingv2 = "1.91"
-regex = "1.10"
-rand = "0.8"
+regex = "1.11"
+rand = "0.9"
 failsafe = "1.3"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 
-# OpenAPI documentation with Axum (using utoipa 5 with axum 0.7 compatible swagger-ui)
+# OpenAPI documentation
 utoipa = { version = "5.3", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "8", features = ["axum"] }
-utoipa-axum = "0.1"
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa-axum = "0.2"
 
 # Test dependencies
 testcontainers = "0.26"
 testcontainers-modules = { version = "0.14", features = ["localstack", "redis", "postgres"] }
-wiremock = "0.5"
+wiremock = "0.6"
 tokio-test = "0.4"
-tempfile = "3.10"
+tempfile = "3.19"

@@ -15,14 +15,17 @@ use tracing::{info, warn};
 use crate::password_reset::entity::PasswordResetToken;
 use crate::password_reset::repository::PasswordResetTokenRepository;
 use crate::principal::repository::PrincipalRepository;
+use crate::principal::operations::events::PasswordResetCompleted;
 use crate::auth::password_service::PasswordService;
 use crate::shared::error::PlatformError;
+use crate::{PgUnitOfWork, UnitOfWork};
 
 #[derive(Clone)]
 pub struct PasswordResetApiState {
     pub password_reset_repo: Arc<PasswordResetTokenRepository>,
     pub principal_repo: Arc<PrincipalRepository>,
     pub password_service: Arc<PasswordService>,
+    pub unit_of_work: Arc<PgUnitOfWork>,
 }
 
 // -- Request / Response DTOs --
@@ -67,7 +70,7 @@ fn hash_token(raw_token: &str) -> String {
 fn generate_raw_token() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
 }
 
@@ -98,7 +101,7 @@ async fn request_reset(
             // Create a new token
             let raw_token = generate_raw_token();
             let token_hash = hash_token(&raw_token);
-            let expires_at = Utc::now() + Duration::hours(24);
+            let expires_at = Utc::now() + Duration::minutes(15);
 
             let reset_token = PasswordResetToken::new(
                 &principal.id,
@@ -217,6 +220,18 @@ async fn confirm_reset(
 
     // Delete all reset tokens for this principal (consumed)
     state.password_reset_repo.delete_by_principal_id(&reset_token.principal_id).await?;
+
+    // Emit domain event (best-effort, non-blocking)
+    let email = principal.user_identity
+        .as_ref()
+        .map(|id| id.email.as_str())
+        .unwrap_or("")
+        .to_string();
+    let event = PasswordResetCompleted::new(&reset_token.principal_id, &email);
+    let command = serde_json::json!({ "principalId": reset_token.principal_id });
+    if let Err(e) = state.unit_of_work.emit_event(event, &command).await.into_result() {
+        warn!("Failed to emit PasswordResetCompleted event (reset still succeeded): {}", e);
+    }
 
     info!(principal_id = %reset_token.principal_id, "Password reset completed successfully");
 

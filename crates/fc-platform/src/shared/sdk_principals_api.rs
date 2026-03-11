@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{State, Path, Query},
+    http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
@@ -17,7 +18,7 @@ use crate::principal::api::{
 };
 use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
-use crate::shared::api_common::{CreatedResponse, SuccessResponse};
+use crate::shared::api_common::CreatedResponse;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -487,7 +488,7 @@ pub async fn grant_sdk_client_access(
         ("client_id" = String, Path, description = "Client ID to revoke")
     ),
     responses(
-        (status = 200, description = "Client access revoked", body = SuccessResponse),
+        (status = 204, description = "Client access revoked"),
         (status = 404, description = "Principal not found")
     ),
     security(("bearer_auth" = []))
@@ -496,7 +497,7 @@ pub async fn revoke_sdk_client_access(
     State(state): State<SdkPrincipalsState>,
     _auth: Authenticated,
     Path((id, client_id)): Path<(String, String)>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     let mut principal = state
         .principal_repo
         .find_by_id(&id)
@@ -506,7 +507,7 @@ pub async fn revoke_sdk_client_access(
     principal.revoke_client_access(&client_id);
     state.principal_repo.update(&principal).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Create the SDK principals router
@@ -514,19 +515,19 @@ pub fn sdk_principals_router(state: SdkPrincipalsState) -> Router {
     Router::new()
         .route("/", get(list_sdk_principals))
         .route("/user", post(create_sdk_user))
-        .route("/:id", get(get_sdk_principal).put(update_sdk_principal))
-        .route("/:id/activate", post(activate_sdk_principal))
-        .route("/:id/deactivate", post(deactivate_sdk_principal))
+        .route("/{id}", get(get_sdk_principal).put(update_sdk_principal))
+        .route("/{id}/activate", post(activate_sdk_principal))
+        .route("/{id}/deactivate", post(deactivate_sdk_principal))
         .route(
-            "/:id/roles",
+            "/{id}/roles",
             get(get_sdk_principal_roles).put(assign_sdk_principal_roles),
         )
         .route(
-            "/:id/clients",
+            "/{id}/clients",
             get(get_sdk_principal_clients),
         )
         .route(
-            "/:id/clients/:client_id",
+            "/{id}/clients/{client_id}",
             post(grant_sdk_client_access).delete(revoke_sdk_client_access),
         )
         .with_state(state)

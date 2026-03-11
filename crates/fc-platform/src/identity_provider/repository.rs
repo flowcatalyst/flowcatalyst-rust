@@ -3,7 +3,7 @@
 use sea_orm::*;
 use chrono::Utc;
 
-use super::entity::{IdentityProvider, IdentityProviderType};
+use super::entity::IdentityProvider;
 use crate::entities::{oauth_identity_providers, oauth_identity_provider_allowed_domains};
 use crate::shared::error::Result;
 

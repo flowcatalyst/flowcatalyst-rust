@@ -22,3 +22,4 @@ uuid = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 utoipa-axum = { workspace = true }
+regex = { workspace = true }

@@ -325,18 +325,18 @@ pub fn create_router_with_options(
         .route("/monitoring", get(monitoring_handler))
         .route("/monitoring/health", get(dashboard_health_handler))
         .route("/monitoring/pools", get(pool_stats_handler))
-        .route("/monitoring/pools/:pool_code", put(update_pool_config))
+        .route("/monitoring/pools/{pool_code}", put(update_pool_config))
         .route("/monitoring/queues", get(queue_metrics_handler))
         // Dashboard-compatible endpoints
         .route("/monitoring/queue-stats", get(dashboard_queue_stats_handler))
         .route("/monitoring/pool-stats", get(dashboard_pool_stats_handler))
         .route("/monitoring/warnings", get(dashboard_warnings_handler))
-        .route("/monitoring/warnings/:id/acknowledge", post(monitoring_acknowledge_warning))
+        .route("/monitoring/warnings/{id}/acknowledge", post(monitoring_acknowledge_warning))
         .route("/monitoring/warnings/unacknowledged", get(get_unacknowledged_warnings))
-        .route("/monitoring/warnings/severity/:severity", get(get_warnings_by_severity))
+        .route("/monitoring/warnings/severity/{severity}", get(get_warnings_by_severity))
         .route("/monitoring/circuit-breakers", get(dashboard_circuit_breakers_handler))
-        .route("/monitoring/circuit-breakers/:name/state", get(get_circuit_breaker_state))
-        .route("/monitoring/circuit-breakers/:name/reset", post(reset_circuit_breaker))
+        .route("/monitoring/circuit-breakers/{name}/state", get(get_circuit_breaker_state))
+        .route("/monitoring/circuit-breakers/{name}/reset", post(reset_circuit_breaker))
         .route("/monitoring/circuit-breakers/reset-all", post(reset_all_circuit_breakers))
         .route("/monitoring/in-flight-messages", get(dashboard_in_flight_messages_handler))
         .route("/monitoring/dashboard", get(dashboard_html_handler))
@@ -351,7 +351,7 @@ pub fn create_router_with_options(
         .route("/api/config", get(get_local_config))
         // Warnings management
         .route("/warnings", get(list_warnings).delete(clear_all_warnings))
-        .route("/warnings/:id/acknowledge", post(acknowledge_warning))
+        .route("/warnings/{id}/acknowledge", post(acknowledge_warning))
         .route("/warnings/acknowledge-all", post(acknowledge_all_warnings))
         .route("/warnings/critical", get(get_critical_warnings))
         .route("/warnings/unacknowledged", get(get_unacknowledged_warnings))
@@ -1983,8 +1983,8 @@ async fn test_faulty() -> Response {
     use rand::Rng;
 
     TEST_REQUEST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let mut rng = rand::thread_rng();
-    let roll: f64 = rng.gen();
+    let mut rng = rand::rng();
+    let roll: f64 = rng.random();
 
     if roll < 0.6 {
         // 60% success

@@ -15,7 +15,7 @@ fc-standby = { path = "../../crates/fc-standby" }
 fc-common = { path = "../../crates/fc-common" }
 
 tokio = { workspace = true }
-mongodb = { workspace = true }
+sea-orm = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
 serde = { workspace = true }

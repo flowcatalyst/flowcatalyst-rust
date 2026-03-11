@@ -209,7 +209,7 @@ pub fn sdk_roles_router(state: SdkRolesState) -> Router {
     Router::new()
         .route("/", get(list_sdk_roles).post(create_sdk_role))
         .route(
-            "/:role_name",
+            "/{role_name}",
             get(get_sdk_role)
                 .put(update_sdk_role)
                 .delete(delete_sdk_role),

@@ -623,11 +623,11 @@ pub async fn assign_roles<U: UnitOfWork>(
 pub fn service_accounts_router<U: UnitOfWork + Clone>(state: ServiceAccountsState<U>) -> Router {
     Router::new()
         .route("/", get(list_service_accounts::<U>).post(create_service_account::<U>))
-        .route("/:id", get(get_service_account::<U>).put(update_service_account::<U>).delete(delete_service_account::<U>))
-        .route("/code/:code", get(get_service_account_by_code::<U>))
-        .route("/:id/auth-token", put(update_auth_token::<U>))
-        .route("/:id/regenerate-auth-token", post(regenerate_auth_token::<U>))
-        .route("/:id/regenerate-signing-secret", post(regenerate_signing_secret::<U>))
-        .route("/:id/roles", get(get_roles::<U>).put(assign_roles::<U>))
+        .route("/{id}", get(get_service_account::<U>).put(update_service_account::<U>).delete(delete_service_account::<U>))
+        .route("/code/{code}", get(get_service_account_by_code::<U>))
+        .route("/{id}/auth-token", put(update_auth_token::<U>))
+        .route("/{id}/regenerate-auth-token", post(regenerate_auth_token::<U>))
+        .route("/{id}/regenerate-signing-secret", post(regenerate_signing_secret::<U>))
+        .route("/{id}/roles", get(get_roles::<U>).put(assign_roles::<U>))
         .with_state(state)
 }

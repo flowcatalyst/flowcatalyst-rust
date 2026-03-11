@@ -23,6 +23,7 @@ pub mod sdk_principals_api;
 pub mod sdk_roles_api;
 pub mod sdk_sync_api;
 pub mod sdk_audit_batch_api;
+pub mod sdk_dispatch_jobs_api;
 pub mod public_api;
 pub mod bff_roles_api;
 pub mod bff_event_types_api;

@@ -1,7 +1,7 @@
 //! CORS Admin API
 
 use axum::{
-    routing::{get, post, delete as axum_delete},
+    routing::{get, post},
     extract::{State, Path},
     Json, Router,
 };
@@ -191,6 +191,6 @@ pub fn cors_router(state: CorsState) -> Router {
     Router::new()
         .route("/", post(create_cors_origin).get(list_cors_origins))
         .route("/allowed", get(get_allowed_origins))
-        .route("/:id", get(get_cors_origin).delete(delete_cors_origin))
+        .route("/{id}", get(get_cors_origin).delete(delete_cors_origin))
         .with_state(state)
 }

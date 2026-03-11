@@ -447,22 +447,21 @@ fn test_auth_context_permission_matching() {
         email: Some("admin@example.com".to_string()),
         name: "Admin".to_string(),
         accessible_clients: vec!["*".to_string()],
-        permissions: ["events:read", "events:write", "clients:*"]
+        permissions: ["platform:admin:event:read", "platform:admin:event:create", "platform:admin:client:*"]
             .iter().map(|s| s.to_string()).collect(),
         roles: vec!["admin".to_string()],
     };
 
-    // Direct permissions
-    assert!(ctx.has_permission("events:read"));
-    assert!(ctx.has_permission("events:write"));
+    // Direct permissions (4-level)
+    assert!(ctx.has_permission("platform:admin:event:read"));
+    assert!(ctx.has_permission("platform:admin:event:create"));
 
-    // Wildcard permissions
-    assert!(ctx.has_permission("clients:read"));
-    assert!(ctx.has_permission("clients:write"));
-    assert!(ctx.has_permission("clients:anything"));
+    // Wildcard — "platform:admin:client:*" only has 4 parts, matches any action
+    assert!(ctx.has_permission("platform:admin:client:read"));
+    assert!(ctx.has_permission("platform:admin:client:delete"));
 
     // Not granted
-    assert!(!ctx.has_permission("users:read"));
+    assert!(!ctx.has_permission("platform:iam:user:read"));
 
     // Client access with wildcard
     assert!(ctx.can_access_client("any-client"));
@@ -480,16 +479,16 @@ fn test_auth_context_multiple_permissions_check() {
         email: Some("user@client.com".to_string()),
         name: "User".to_string(),
         accessible_clients: vec!["client-1".to_string()],
-        permissions: ["events:read", "subscriptions:read"]
+        permissions: ["platform:admin:event:read", "platform:admin:subscription:read"]
             .iter().map(|s| s.to_string()).collect(),
         roles: vec!["viewer".to_string()],
     };
 
-    assert!(ctx.has_all_permissions(&["events:read", "subscriptions:read"]));
-    assert!(!ctx.has_all_permissions(&["events:read", "events:write"]));
+    assert!(ctx.has_all_permissions(&["platform:admin:event:read", "platform:admin:subscription:read"]));
+    assert!(!ctx.has_all_permissions(&["platform:admin:event:read", "platform:admin:event:create"]));
 
-    assert!(ctx.has_any_permission(&["events:read", "events:write"]));
-    assert!(!ctx.has_any_permission(&["users:read", "users:write"]));
+    assert!(ctx.has_any_permission(&["platform:admin:event:read", "platform:admin:event:create"]));
+    assert!(!ctx.has_any_permission(&["platform:iam:user:read", "platform:iam:user:create"]));
 }
 
 // ─── Password Service Tests ───────────────────────────────────────────────

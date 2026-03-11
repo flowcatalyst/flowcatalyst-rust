@@ -147,7 +147,7 @@ impl AuthConfig {
 
         info!("Generating RSA key pair (2048 bit)");
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048)
             .map_err(|e| PlatformError::Internal {
                 message: format!("Failed to generate RSA key: {}", e)
@@ -351,10 +351,20 @@ impl AuthService {
         self.algorithm
     }
 
-    /// Generate an access token for a principal
+    /// Generate an access token for a principal (short-lived, for API calls)
     pub fn generate_access_token(&self, principal: &Principal) -> Result<String> {
+        self.generate_token_with_expiry(principal, self.config.access_token_expiry_secs)
+    }
+
+    /// Generate a session token for a principal (longer-lived, for cookie-based sessions)
+    pub fn generate_session_token(&self, principal: &Principal) -> Result<String> {
+        self.generate_token_with_expiry(principal, self.config.session_token_expiry_secs)
+    }
+
+    /// Generate a token with a specific expiry duration
+    fn generate_token_with_expiry(&self, principal: &Principal, expiry_secs: i64) -> Result<String> {
         let now = Utc::now();
-        let exp = now + Duration::seconds(self.config.access_token_expiry_secs);
+        let exp = now + Duration::seconds(expiry_secs);
 
         // Determine client access
         let clients = match principal.scope {

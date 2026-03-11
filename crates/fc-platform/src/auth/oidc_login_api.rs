@@ -11,18 +11,18 @@
 
 use axum::{
     routing::{get, post},
-    extract::{State, Query, Host},
+    extract::{State, Query},
     response::{Json, IntoResponse, Response},
     http::{StatusCode, header, Uri},
     Router,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::Host;
 use utoipa::{ToSchema, IntoParams};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::sync::Arc;
-use chrono::Utc;
 use tracing::{info, warn, error, debug};
 use rand::Rng;
 
@@ -30,7 +30,7 @@ use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 
 use crate::UserScope;
 use crate::identity_provider::entity::{IdentityProvider, IdentityProviderType};
-use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
+use crate::email_domain_mapping::entity::ScopeType;
 use crate::auth::jwks_cache::JwksCache;
 use crate::principal::operations::events::UserLoggedIn;
 use crate::usecase::ExecutionContext;
@@ -674,7 +674,7 @@ pub async fn oidc_callback(
 // ==================== Helper Functions ====================
 
 fn generate_random_string(length: usize) -> String {
-    let bytes: Vec<u8> = (0..length).map(|_| rand::thread_rng().gen()).collect();
+    let bytes: Vec<u8> = (0..length).map(|_| rand::rng().random()).collect();
     URL_SAFE_NO_PAD.encode(&bytes)
 }
 

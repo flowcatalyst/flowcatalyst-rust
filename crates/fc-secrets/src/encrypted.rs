@@ -1,12 +1,11 @@
 //! Encrypted file secrets provider using AES-256-GCM
 
 use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit, OsRng, rand_core::RngCore},
     Aes256Gcm, Nonce,
 };
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use rand::RngCore;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -89,6 +89,9 @@ pub mod outbox;
 #[cfg(feature = "client")]
 pub mod client;
 
+#[cfg(feature = "auth")]
+pub mod auth;
+
 // Re-export key types at crate root
 pub use tsid::{TsidGenerator, EntityType};
 pub use usecase::{

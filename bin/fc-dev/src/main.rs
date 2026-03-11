@@ -31,7 +31,7 @@ use fc_router::{
     api::create_router as create_api_router,
 };
 use fc_queue::sqlite::SqliteQueue;
-use fc_queue::{QueuePublisher, EmbeddedQueue};
+use fc_queue::EmbeddedQueue;
 // fc_outbox used for EnhancedOutboxProcessor (TODO: wire up)
 
 // Platform imports
@@ -71,6 +71,7 @@ use fc_platform::api::{
     PasswordResetApiState, password_reset_router,
     SdkSyncState, sdk_sync_router,
     SdkAuditBatchState, sdk_audit_batch_router,
+    SdkDispatchJobsState, sdk_dispatch_jobs_batch_router,
     BffRolesState, bff_roles_router,
     BffEventTypesState, bff_event_types_router,
 };
@@ -397,6 +398,7 @@ async fn main() -> Result<()> {
         password_reset_repo,
         principal_repo: principal_repo.clone(),
         password_service,
+        unit_of_work: unit_of_work.clone(),
     };
 
     let applications_state = ApplicationsState {
@@ -447,6 +449,9 @@ async fn main() -> Result<()> {
         audit_log_repo: audit_log_repo.clone(),
         application_repo: application_repo.clone(),
         client_repo: client_repo.clone(),
+    };
+    let sdk_dispatch_jobs_state = SdkDispatchJobsState {
+        dispatch_job_repo: dispatch_job_repo.clone(),
     };
     let bff_roles_state = BffRolesState {
         role_repo: role_repo.clone(),
@@ -505,6 +510,7 @@ async fn main() -> Result<()> {
         .nest("/api/applications", application_roles_sdk_router(application_roles_sdk_state).into())
         .nest("/api/applications", sdk_sync_router(sdk_sync_state).into())
         .nest("/api/audit-logs", sdk_audit_batch_router(sdk_audit_batch_state).into())
+        .nest("/api/sdk/dispatch-jobs", sdk_dispatch_jobs_batch_router(sdk_dispatch_jobs_state).into())
         .nest("/bff/roles", bff_roles_router(bff_roles_state).into())
         .nest("/bff/event-types", bff_event_types_router(bff_event_types_state).into())
         // Public routes (no auth required)

@@ -11,8 +11,7 @@ fc-queue = { path = "../fc-queue" }
 fc-standby = { path = "../fc-standby" }
 
 tokio = { workspace = true }
-mongodb = { workspace = true }
-bson = { workspace = true }
+sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

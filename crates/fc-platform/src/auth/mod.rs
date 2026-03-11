@@ -34,6 +34,9 @@ pub mod authorization_code_repository;
 // Password reset API
 pub mod password_reset_api;
 
+// Pending auth state (OAuth authorize flow)
+pub mod pending_auth_repository;
+
 // Refresh tokens
 pub mod refresh_token;
 pub mod refresh_token_repository;

@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{State, Path, Query},
+    http::StatusCode,
     Json,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -18,7 +19,7 @@ use crate::event_type::operations::{
 };
 use crate::usecase::{ExecutionContext, UseCaseResult};
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
+use crate::shared::api_common::PaginationParams;
 use crate::shared::middleware::Authenticated;
 
 /// Create event type request
@@ -204,7 +205,7 @@ pub struct EventTypesState {
     operation_id = "postApiAdminEventTypes",
     request_body = CreateEventTypeRequest,
     responses(
-        (status = 201, description = "Event type created", body = CreatedResponse),
+        (status = 201, description = "Event type created", body = EventTypeResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -214,7 +215,7 @@ pub async fn create_event_type(
     State(state): State<EventTypesState>,
     auth: Authenticated,
     Json(req): Json<CreateEventTypeRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<EventTypeResponse>), PlatformError> {
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
     // Validate client access if specified
@@ -246,10 +247,9 @@ pub async fn create_event_type(
         event_type.add_schema_version(spec);
     }
 
-    let id = event_type.id.clone();
     state.event_type_repo.insert(&event_type).await?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    Ok((StatusCode::CREATED, Json(EventTypeResponse::from(event_type))))
 }
 
 /// Get event type by ID
@@ -463,7 +463,7 @@ pub async fn add_schema_version(
         ("id" = String, Path, description = "Event type ID")
     ),
     responses(
-        (status = 200, description = "Event type archived", body = SuccessResponse),
+        (status = 204, description = "Event type archived"),
         (status = 404, description = "Event type not found")
     ),
     security(("bearer_auth" = []))
@@ -472,7 +472,7 @@ pub async fn delete_event_type(
     State(state): State<EventTypesState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
     let mut event_type = state.event_type_repo.find_by_id(&id).await?
@@ -490,7 +490,7 @@ pub async fn delete_event_type(
     event_type.archive();
     state.event_type_repo.update(&event_type).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Sync event types

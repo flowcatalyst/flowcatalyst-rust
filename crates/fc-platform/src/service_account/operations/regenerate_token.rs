@@ -16,7 +16,7 @@ use super::events::ServiceAccountTokenRegenerated;
 fn generate_auth_token() -> String {
     let random_part: String = (0..32)
         .map(|_| {
-            let idx = rand::thread_rng().gen_range(0..36);
+            let idx = rand::rng().random_range(0..36);
             if idx < 10 {
                 (b'0' + idx) as char
             } else {

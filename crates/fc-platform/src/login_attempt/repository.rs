@@ -1,7 +1,6 @@
 //! LoginAttempt Repository — PostgreSQL via SeaORM
 
 use sea_orm::*;
-use chrono::Utc;
 
 use super::entity::LoginAttempt;
 use crate::entities::iam_login_attempts;

@@ -12,6 +12,7 @@ outbox-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
 outbox-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/chrono"]
 outbox-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/chrono"]
 client = ["dep:reqwest"]
+auth = ["dep:reqwest", "dep:jsonwebtoken", "dep:sha2", "dep:base64", "dep:rand"]
 
 [dependencies]
 # Core (always included)
@@ -28,6 +29,16 @@ sqlx = { workspace = true, optional = true }
 
 # HTTP client for platform API (optional)
 reqwest = { workspace = true, optional = true }
+
+# Auth (optional — OIDC/JWT validation)
+jsonwebtoken = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+base64 = { version = "0.22", optional = true }
+rand = { workspace = true, optional = true }
+getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
+
+# Tokio needed for JwksCache RwLock
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 tokio = { workspace = true }

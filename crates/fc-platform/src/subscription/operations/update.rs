@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
-use crate::{EventTypeBinding, SubscriptionStatus};
+use crate::EventTypeBinding;
 use crate::subscription::entity::DispatchMode;
 use crate::SubscriptionRepository;
 use crate::usecase::{

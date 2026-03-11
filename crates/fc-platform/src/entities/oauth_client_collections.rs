@@ -1,7 +1,5 @@
 //! SeaORM Entities: oauth_client junction tables (redirect URIs, origins, grant types, app IDs)
 
-use sea_orm::entity::prelude::*;
-
 // -- Redirect URIs
 
 pub mod redirect_uris {

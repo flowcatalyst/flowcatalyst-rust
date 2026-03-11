@@ -5,7 +5,7 @@ use sea_orm::*;
 use sea_orm::sea_query::OnConflict;
 use chrono::Utc;
 
-use super::entity::{EventType, EventTypeStatus, EventTypeSource, SpecVersion, SpecVersionStatus, SchemaType};
+use super::entity::{EventType, EventTypeStatus, SpecVersion};
 use crate::entities::{msg_event_types, msg_event_type_spec_versions};
 use crate::shared::error::Result;
 use crate::usecase::unit_of_work::{HasId, PgPersist};

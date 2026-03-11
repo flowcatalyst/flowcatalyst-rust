@@ -199,7 +199,7 @@ pub async fn list_accessible_clients(
 
     Ok(Json(AccessibleClientsResponse {
         clients,
-        current_client_id: None,
+        current_client_id: principal.client_id.clone(),
         global_access,
     }))
 }

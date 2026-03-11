@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{State, Path, Query},
+    http::StatusCode,
     Json,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -20,7 +21,7 @@ use crate::subscription::operations::{
 };
 use crate::usecase::{ExecutionContext, UseCaseResult};
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
+use crate::shared::api_common::PaginationParams;
 use crate::shared::middleware::Authenticated;
 
 /// Event type binding request
@@ -306,7 +307,7 @@ fn parse_mode(s: &str) -> Result<DispatchMode, PlatformError> {
     operation_id = "postApiAdminSubscriptions",
     request_body = CreateSubscriptionRequest,
     responses(
-        (status = 201, description = "Subscription created", body = CreatedResponse),
+        (status = 201, description = "Subscription created", body = SubscriptionResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -316,7 +317,7 @@ pub async fn create_subscription(
     State(state): State<SubscriptionsState>,
     auth: Authenticated,
     Json(req): Json<CreateSubscriptionRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<SubscriptionResponse>), PlatformError> {
     crate::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
 
     // Validate client access if specified
@@ -369,10 +370,9 @@ pub async fn create_subscription(
         subscription = subscription.with_event_type_binding(eb);
     }
 
-    let id = subscription.id.clone();
     state.subscription_repo.insert(&subscription).await?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    Ok((StatusCode::CREATED, Json(SubscriptionResponse::from(subscription))))
 }
 
 /// Get subscription by ID
@@ -598,7 +598,7 @@ pub async fn resume_subscription(
         ("id" = String, Path, description = "Subscription ID")
     ),
     responses(
-        (status = 200, description = "Subscription archived", body = SuccessResponse),
+        (status = 204, description = "Subscription deleted"),
         (status = 404, description = "Subscription not found")
     ),
     security(("bearer_auth" = []))
@@ -607,7 +607,7 @@ pub async fn delete_subscription(
     State(state): State<SubscriptionsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::can_delete_subscriptions(&auth.0)?;
 
     let subscription = state.subscription_repo.find_by_id(&id).await?
@@ -624,7 +624,7 @@ pub async fn delete_subscription(
 
     state.subscription_repo.delete(&id).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 

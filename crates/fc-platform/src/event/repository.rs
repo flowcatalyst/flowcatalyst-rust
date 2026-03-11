@@ -3,7 +3,7 @@
 use sea_orm::*;
 use chrono::Utc;
 
-use super::entity::{Event, EventRead, ContextData};
+use super::entity::{Event, EventRead};
 use crate::entities::{msg_events, msg_events_read};
 use crate::shared::error::Result;
 

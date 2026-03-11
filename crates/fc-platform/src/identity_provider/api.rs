@@ -235,6 +235,6 @@ async fn delete_identity_provider(
 pub fn identity_providers_router(state: IdentityProvidersState) -> Router {
     Router::new()
         .route("/", post(create_identity_provider).get(list_identity_providers))
-        .route("/:id", get(get_identity_provider).put(update_identity_provider).delete(delete_identity_provider))
+        .route("/{id}", get(get_identity_provider).put(update_identity_provider).delete(delete_identity_provider))
         .with_state(state)
 }

@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{State, Path, Query},
+    http::StatusCode,
     Json,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use super::entity::Client;
 use super::repository::ClientRepository;
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
+use crate::shared::api_common::PaginationParams;
 use crate::shared::middleware::Authenticated;
 
 /// Create client request
@@ -181,7 +182,7 @@ pub struct ClientsState {
     operation_id = "postApiAdminClients",
     request_body = CreateClientRequest,
     responses(
-        (status = 201, description = "Client created", body = CreatedResponse),
+        (status = 201, description = "Client created", body = ClientResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate identifier")
     ),
@@ -191,7 +192,7 @@ pub async fn create_client(
     State(state): State<ClientsState>,
     auth: Authenticated,
     Json(req): Json<CreateClientRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<ClientResponse>), PlatformError> {
     // Only anchor users can create clients
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
@@ -202,10 +203,9 @@ pub async fn create_client(
 
     let client = Client::new(&req.name, &req.identifier);
 
-    let id = client.id.clone();
     state.client_repo.insert(&client).await?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    Ok((StatusCode::CREATED, Json(ClientResponse::from(client))))
 }
 
 /// Get client by ID
@@ -319,7 +319,7 @@ pub async fn update_client(
         ("id" = String, Path, description = "Client ID")
     ),
     responses(
-        (status = 200, description = "Client deleted", body = SuccessResponse),
+        (status = 204, description = "Client deleted"),
         (status = 404, description = "Client not found")
     ),
     security(("bearer_auth" = []))
@@ -328,7 +328,7 @@ pub async fn delete_client(
     State(state): State<ClientsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     let mut client = state.client_repo.find_by_id(&id).await?
@@ -337,7 +337,7 @@ pub async fn delete_client(
     client.deactivate(None);
     state.client_repo.update(&client).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================
@@ -676,7 +676,7 @@ pub async fn get_client_applications(
         ("application_id" = String, Path, description = "Application ID")
     ),
     responses(
-        (status = 200, description = "Application enabled", body = SuccessResponse),
+        (status = 204, description = "Application enabled"),
         (status = 404, description = "Client or application not found")
     ),
     security(("bearer_auth" = []))
@@ -685,7 +685,7 @@ pub async fn enable_application(
     State(state): State<ClientsState>,
     auth: Authenticated,
     Path((id, application_id)): Path<(String, String)>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     // Verify client exists
@@ -703,7 +703,7 @@ pub async fn enable_application(
         config_repo.enable_for_client(&application_id, &id).await?;
     }
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Disable application for client
@@ -717,7 +717,7 @@ pub async fn enable_application(
         ("application_id" = String, Path, description = "Application ID")
     ),
     responses(
-        (status = 200, description = "Application disabled", body = SuccessResponse),
+        (status = 204, description = "Application disabled"),
         (status = 404, description = "Client or application not found")
     ),
     security(("bearer_auth" = []))
@@ -726,7 +726,7 @@ pub async fn disable_application(
     State(state): State<ClientsState>,
     auth: Authenticated,
     Path((id, application_id)): Path<(String, String)>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     // Verify client exists
@@ -738,7 +738,7 @@ pub async fn disable_application(
         config_repo.disable_for_client(&application_id, &id).await?;
     }
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Update client applications (bulk)
@@ -752,7 +752,7 @@ pub async fn disable_application(
     ),
     request_body = UpdateClientApplicationsRequest,
     responses(
-        (status = 200, description = "Applications updated", body = SuccessResponse),
+        (status = 204, description = "Applications updated"),
         (status = 404, description = "Client not found")
     ),
     security(("bearer_auth" = []))
@@ -762,7 +762,7 @@ pub async fn update_client_applications(
     auth: Authenticated,
     Path(id): Path<String>,
     Json(req): Json<UpdateClientApplicationsRequest>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     // Verify client exists
@@ -785,7 +785,7 @@ pub async fn update_client_applications(
         }
     }
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Create clients router

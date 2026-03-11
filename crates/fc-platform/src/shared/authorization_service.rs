@@ -66,24 +66,16 @@ impl AuthContext {
             self.accessible_clients.contains(&client_id.to_string())
     }
 
-    /// Check if this context has a specific permission
+    /// Check if this context has a specific permission (4-level pattern matching)
     pub fn has_permission(&self, permission: &str) -> bool {
         // Direct match
         if self.permissions.contains(permission) {
             return true;
         }
 
-        // Wildcard matching
-        let parts: Vec<&str> = permission.split(':').collect();
-        if parts.len() >= 2 {
-            // Check resource:* wildcard
-            let wildcard = format!("{}:*", parts[0]);
-            if self.permissions.contains(&wildcard) {
-                return true;
-            }
-
-            // Check superuser *:*
-            if self.permissions.contains(permissions::ADMIN_ALL) {
+        // 4-level wildcard pattern matching
+        for pattern in &self.permissions {
+            if crate::role::entity::matches_pattern(permission, pattern) {
                 return true;
             }
         }
@@ -214,7 +206,7 @@ pub mod checks {
 
     /// Check read access to events
     pub fn can_read_events(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::EVENT_VIEW) {
+        if context.has_permission(permissions::admin::EVENT_READ) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot read events"))
@@ -223,7 +215,7 @@ pub mod checks {
 
     /// Check raw read access to events (includes payload)
     pub fn can_read_events_raw(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::EVENT_VIEW_RAW) {
+        if context.has_permission(permissions::admin::EVENT_VIEW_RAW) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot read raw event data"))
@@ -232,7 +224,7 @@ pub mod checks {
 
     /// Check read access to event types
     pub fn can_read_event_types(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::EVENT_TYPE_VIEW) {
+        if context.has_permission(permissions::admin::EVENT_TYPE_READ) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot read event types"))
@@ -241,7 +233,7 @@ pub mod checks {
 
     /// Check create access to event types
     pub fn can_create_event_types(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::EVENT_TYPE_CREATE) {
+        if context.has_permission(permissions::admin::EVENT_TYPE_CREATE) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot create event types"))
@@ -250,7 +242,7 @@ pub mod checks {
 
     /// Check update access to event types
     pub fn can_update_event_types(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::EVENT_TYPE_UPDATE) {
+        if context.has_permission(permissions::admin::EVENT_TYPE_UPDATE) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot update event types"))
@@ -259,7 +251,7 @@ pub mod checks {
 
     /// Check delete access to event types
     pub fn can_delete_event_types(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::EVENT_TYPE_DELETE) {
+        if context.has_permission(permissions::admin::EVENT_TYPE_DELETE) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot delete event types"))
@@ -268,7 +260,7 @@ pub mod checks {
 
     /// Check read access to subscriptions
     pub fn can_read_subscriptions(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::SUBSCRIPTION_VIEW) {
+        if context.has_permission(permissions::admin::SUBSCRIPTION_READ) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot read subscriptions"))
@@ -277,7 +269,7 @@ pub mod checks {
 
     /// Check create access to subscriptions
     pub fn can_create_subscriptions(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::SUBSCRIPTION_CREATE) {
+        if context.has_permission(permissions::admin::SUBSCRIPTION_CREATE) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot create subscriptions"))
@@ -286,7 +278,7 @@ pub mod checks {
 
     /// Check update access to subscriptions
     pub fn can_update_subscriptions(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::SUBSCRIPTION_UPDATE) {
+        if context.has_permission(permissions::admin::SUBSCRIPTION_UPDATE) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot update subscriptions"))
@@ -295,7 +287,7 @@ pub mod checks {
 
     /// Check delete access to subscriptions
     pub fn can_delete_subscriptions(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::SUBSCRIPTION_DELETE) {
+        if context.has_permission(permissions::admin::SUBSCRIPTION_DELETE) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot delete subscriptions"))
@@ -304,7 +296,7 @@ pub mod checks {
 
     /// Check read access to dispatch jobs
     pub fn can_read_dispatch_jobs(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::DISPATCH_JOB_VIEW) {
+        if context.has_permission(permissions::admin::DISPATCH_JOB_READ) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot read dispatch jobs"))
@@ -313,28 +305,10 @@ pub mod checks {
 
     /// Check raw read access to dispatch jobs (includes payload)
     pub fn can_read_dispatch_jobs_raw(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::DISPATCH_JOB_VIEW_RAW) {
+        if context.has_permission(permissions::admin::DISPATCH_JOB_VIEW_RAW) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot read raw dispatch job data"))
-        }
-    }
-
-    /// Check create access to dispatch jobs
-    pub fn can_create_dispatch_jobs(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::DISPATCH_JOB_CREATE) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot create dispatch jobs"))
-        }
-    }
-
-    /// Check retry access to dispatch jobs
-    pub fn can_retry_dispatch_jobs(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::messaging::DISPATCH_JOB_RETRY) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot retry dispatch jobs"))
         }
     }
 
@@ -349,9 +323,8 @@ pub mod checks {
 
     /// Check write access to events (create)
     pub fn can_write_events(context: &AuthContext) -> Result<()> {
-        // Allow if user has messaging permission or application service permission
         if context.has_any_permission(&[
-            permissions::messaging::EVENT_CREATE,
+            permissions::admin::BATCH_EVENTS_WRITE,
             permissions::application_service::EVENT_CREATE,
         ]) {
             Ok(())
@@ -363,9 +336,9 @@ pub mod checks {
     /// Check write access to event types (create, update, or delete)
     pub fn can_write_event_types(context: &AuthContext) -> Result<()> {
         if context.has_any_permission(&[
-            permissions::messaging::EVENT_TYPE_CREATE,
-            permissions::messaging::EVENT_TYPE_UPDATE,
-            permissions::messaging::EVENT_TYPE_DELETE,
+            permissions::admin::EVENT_TYPE_CREATE,
+            permissions::admin::EVENT_TYPE_UPDATE,
+            permissions::admin::EVENT_TYPE_DELETE,
         ]) {
             Ok(())
         } else {
@@ -376,9 +349,9 @@ pub mod checks {
     /// Check write access to subscriptions (create, update, or delete)
     pub fn can_write_subscriptions(context: &AuthContext) -> Result<()> {
         if context.has_any_permission(&[
-            permissions::messaging::SUBSCRIPTION_CREATE,
-            permissions::messaging::SUBSCRIPTION_UPDATE,
-            permissions::messaging::SUBSCRIPTION_DELETE,
+            permissions::admin::SUBSCRIPTION_CREATE,
+            permissions::admin::SUBSCRIPTION_UPDATE,
+            permissions::admin::SUBSCRIPTION_DELETE,
         ]) {
             Ok(())
         } else {
@@ -386,12 +359,27 @@ pub mod checks {
         }
     }
 
-    /// Check write access to dispatch jobs (create or retry)
+    /// Check create access to dispatch jobs
+    pub fn can_create_dispatch_jobs(context: &AuthContext) -> Result<()> {
+        if context.has_permission(permissions::admin::BATCH_DISPATCH_JOBS_WRITE) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot create dispatch jobs"))
+        }
+    }
+
+    /// Check retry access to dispatch jobs
+    pub fn can_retry_dispatch_jobs(context: &AuthContext) -> Result<()> {
+        if context.has_permission(permissions::admin::BATCH_DISPATCH_JOBS_WRITE) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot retry dispatch jobs"))
+        }
+    }
+
+    /// Check write access to dispatch jobs (batch)
     pub fn can_write_dispatch_jobs(context: &AuthContext) -> Result<()> {
-        if context.has_any_permission(&[
-            permissions::messaging::DISPATCH_JOB_CREATE,
-            permissions::messaging::DISPATCH_JOB_RETRY,
-        ]) {
+        if context.has_permission(permissions::admin::BATCH_DISPATCH_JOBS_WRITE) {
             Ok(())
         } else {
             Err(PlatformError::forbidden("Cannot write dispatch jobs"))
@@ -418,25 +406,25 @@ mod tests {
 
     #[test]
     fn test_direct_permission() {
-        let ctx = create_test_context(vec!["events:read"], "CLIENT", vec!["client1"]);
-        assert!(ctx.has_permission("events:read"));
-        assert!(!ctx.has_permission("events:write"));
+        let ctx = create_test_context(vec!["platform:admin:event:read"], "CLIENT", vec!["client1"]);
+        assert!(ctx.has_permission("platform:admin:event:read"));
+        assert!(!ctx.has_permission("platform:admin:event:create"));
     }
 
     #[test]
-    fn test_wildcard_permission() {
-        let ctx = create_test_context(vec!["events:*"], "CLIENT", vec!["client1"]);
-        assert!(ctx.has_permission("events:read"));
-        assert!(ctx.has_permission("events:write"));
-        assert!(!ctx.has_permission("users:read"));
+    fn test_wildcard_permission_4_level() {
+        let ctx = create_test_context(vec!["platform:admin:*:*"], "CLIENT", vec!["client1"]);
+        assert!(ctx.has_permission("platform:admin:event:read"));
+        assert!(ctx.has_permission("platform:admin:client:create"));
+        assert!(!ctx.has_permission("platform:iam:user:read"));
     }
 
     #[test]
     fn test_superuser_permission() {
-        let ctx = create_test_context(vec!["*:*"], "ANCHOR", vec!["*"]);
-        assert!(ctx.has_permission("events:read"));
-        assert!(ctx.has_permission("users:delete"));
-        assert!(ctx.has_permission("anything:everything"));
+        let ctx = create_test_context(vec!["platform:*:*:*"], "ANCHOR", vec!["*"]);
+        assert!(ctx.has_permission("platform:admin:event:read"));
+        assert!(ctx.has_permission("platform:iam:user:delete"));
+        assert!(ctx.has_permission("platform:auth:oauth-client:read"));
     }
 
     #[test]

@@ -4,7 +4,6 @@
 //! Supports both Bearer token (Authorization header) and session cookie authentication.
 
 use axum::{
-    async_trait,
     extract::FromRequestParts,
     http::{header::AUTHORIZATION, header::COOKIE, request::Parts, StatusCode, HeaderValue},
     response::{IntoResponse, Response},
@@ -67,7 +66,6 @@ fn extract_session_cookie(parts: &Parts) -> Option<String> {
         })
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for Authenticated
 where
     S: Send + Sync,
@@ -124,7 +122,6 @@ impl std::ops::Deref for OptionalAuth {
     }
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for OptionalAuth
 where
     S: Send + Sync,

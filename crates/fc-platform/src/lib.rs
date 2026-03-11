@@ -124,6 +124,7 @@ pub use auth::config_repository::{ClientAuthConfigRepository, AnchorDomainReposi
 pub use auth::refresh_token_repository::RefreshTokenRepository;
 pub use auth::oauth_client_repository::OAuthClientRepository;
 pub use auth::authorization_code_repository::AuthorizationCodeRepository;
+pub use auth::pending_auth_repository::PendingAuthRepository;
 pub use auth::oidc_login_state_repository::OidcLoginStateRepository;
 
 // Re-export auth entities
@@ -158,6 +159,7 @@ pub mod repository {
     pub use crate::auth::refresh_token_repository::RefreshTokenRepository;
     pub use crate::auth::oauth_client_repository::OAuthClientRepository;
     pub use crate::auth::authorization_code_repository::AuthorizationCodeRepository;
+    pub use crate::auth::pending_auth_repository::PendingAuthRepository;
     pub use crate::auth::oidc_login_state_repository::OidcLoginStateRepository;
     pub use crate::connection::repository::ConnectionRepository;
     pub use crate::cors::repository::CorsOriginRepository;
@@ -223,6 +225,7 @@ pub mod api {
     pub use crate::shared::public_api::public_router;
     pub use crate::shared::sdk_sync_api::{sdk_sync_router, SdkSyncState};
     pub use crate::shared::sdk_audit_batch_api::{sdk_audit_batch_router, SdkAuditBatchState};
+    pub use crate::shared::sdk_dispatch_jobs_api::{sdk_dispatch_jobs_batch_router, SdkDispatchJobsState};
     pub use crate::shared::bff_roles_api::{bff_roles_router, BffRolesState};
     pub use crate::shared::bff_event_types_api::{bff_event_types_router, BffEventTypesState};
 

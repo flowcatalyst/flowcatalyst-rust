@@ -6,7 +6,7 @@ use chrono::Utc;
 use async_trait::async_trait;
 use sea_orm::sea_query::OnConflict;
 
-use crate::auth::config_entity::{AnchorDomain, ClientAuthConfig, IdpRoleMapping, AuthConfigType, AuthProvider};
+use crate::auth::config_entity::{AnchorDomain, ClientAuthConfig, IdpRoleMapping};
 use crate::principal::entity::ClientAccessGrant;
 use crate::entities::{tnt_anchor_domains, tnt_client_auth_configs, iam_client_access_grants, oauth_idp_role_mappings};
 use crate::shared::error::Result;

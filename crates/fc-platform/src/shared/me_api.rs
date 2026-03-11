@@ -195,7 +195,7 @@ async fn list_my_client_applications(
 pub fn me_router(state: MeState) -> Router {
     Router::new()
         .route("/clients", get(list_my_clients))
-        .route("/clients/:client_id", get(get_my_client))
-        .route("/clients/:client_id/applications", get(list_my_client_applications))
+        .route("/clients/{client_id}", get(get_my_client))
+        .route("/clients/{client_id}/applications", get(list_my_client_applications))
         .with_state(state)
 }

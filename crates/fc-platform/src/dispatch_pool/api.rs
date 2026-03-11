@@ -5,6 +5,7 @@
 use axum::{
     routing::{get, post},
     extract::{State, Path, Query},
+    http::StatusCode,
     Json, Router,
 };
 use utoipa::{ToSchema, IntoParams};
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use crate::{DispatchPool, DispatchPoolStatus};
 use crate::DispatchPoolRepository;
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
+use crate::shared::api_common::PaginationParams;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCaseResult};
 use crate::dispatch_pool::operations::{
@@ -185,7 +186,7 @@ fn parse_status(s: &str) -> Option<DispatchPoolStatus> {
     operation_id = "postApiAdminDispatchPools",
     request_body = CreateDispatchPoolRequest,
     responses(
-        (status = 201, description = "Dispatch pool created", body = CreatedResponse),
+        (status = 201, description = "Dispatch pool created", body = DispatchPoolResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate code")
     ),
@@ -195,7 +196,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     State(state): State<DispatchPoolsState<U>>,
     auth: Authenticated,
     Json(req): Json<CreateDispatchPoolRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<DispatchPoolResponse>), PlatformError> {
     // Check access - anchor or client admin
     if !auth.0.is_anchor() {
         if let Some(ref client_id) = req.client_id {
@@ -220,7 +221,9 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
 
     match state.create_use_case.execute(command, ctx).await {
         UseCaseResult::Success(event) => {
-            Ok(Json(CreatedResponse::new(event.dispatch_pool_id)))
+            let pool = state.dispatch_pool_repo.find_by_id(&event.dispatch_pool_id).await?
+                .ok_or_else(|| PlatformError::internal("Dispatch pool not found after create"))?;
+            Ok((StatusCode::CREATED, Json(DispatchPoolResponse::from(pool))))
         }
         UseCaseResult::Failure(err) => Err(err.into()),
     }
@@ -534,7 +537,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
     responses(
-        (status = 200, description = "Dispatch pool deleted", body = SuccessResponse),
+        (status = 204, description = "Dispatch pool deleted"),
         (status = 404, description = "Dispatch pool not found")
     ),
     security(("bearer_auth" = []))
@@ -543,14 +546,14 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
     State(state): State<DispatchPoolsState<U>>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     let command = DeleteDispatchPoolCommand { id };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
     match state.delete_use_case.execute(command, ctx).await {
-        UseCaseResult::Success(_event) => Ok(Json(SuccessResponse::ok())),
+        UseCaseResult::Success(_event) => Ok(StatusCode::NO_CONTENT),
         UseCaseResult::Failure(err) => Err(err.into()),
     }
 }
@@ -606,10 +609,10 @@ pub async fn sync_dispatch_pools<U: UnitOfWork>(
 pub fn dispatch_pools_router<U: UnitOfWork + Clone>(state: DispatchPoolsState<U>) -> Router {
     Router::new()
         .route("/", post(create_dispatch_pool::<U>).get(list_dispatch_pools::<U>))
-        .route("/:id", get(get_dispatch_pool::<U>).put(update_dispatch_pool::<U>).delete(delete_dispatch_pool::<U>))
-        .route("/:id/archive", post(archive_dispatch_pool::<U>))
-        .route("/:id/suspend", post(suspend_dispatch_pool::<U>))
-        .route("/:id/activate", post(activate_dispatch_pool::<U>))
+        .route("/{id}", get(get_dispatch_pool::<U>).put(update_dispatch_pool::<U>).delete(delete_dispatch_pool::<U>))
+        .route("/{id}/archive", post(archive_dispatch_pool::<U>))
+        .route("/{id}/suspend", post(suspend_dispatch_pool::<U>))
+        .route("/{id}/activate", post(activate_dispatch_pool::<U>))
         .route("/sync", post(sync_dispatch_pools::<U>))
         .with_state(state)
 }

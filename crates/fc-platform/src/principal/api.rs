@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{State, Path, Query},
+    http::StatusCode,
     Json,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -18,7 +19,7 @@ use crate::application::entity::Application;
 use crate::application::repository::ApplicationRepository;
 use crate::application::client_config_repository::ApplicationClientConfigRepository;
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
+use crate::shared::api_common::{PaginationParams, CreatedResponse};
 use crate::shared::middleware::Authenticated;
 use crate::{AuditService, PasswordService};
 
@@ -929,7 +930,7 @@ pub async fn revoke_client_access(
         ("id" = String, Path, description = "Principal ID")
     ),
     responses(
-        (status = 200, description = "Principal deleted", body = SuccessResponse),
+        (status = 204, description = "Principal deleted"),
         (status = 404, description = "Principal not found")
     ),
     security(("bearer_auth" = []))
@@ -938,7 +939,7 @@ pub async fn delete_principal(
     State(state): State<PrincipalsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
     let mut principal = state.principal_repo.find_by_id(&id).await?
@@ -952,7 +953,7 @@ pub async fn delete_principal(
         let _ = audit.log_archive(&auth.0, "Principal", &id, format!("Deactivated principal {}", principal.name)).await;
     }
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================

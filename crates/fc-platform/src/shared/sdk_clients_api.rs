@@ -278,9 +278,9 @@ async fn deactivate_sdk_client(
 pub fn sdk_clients_router(state: SdkClientsState) -> Router {
     Router::new()
         .route("/", get(list_sdk_clients).post(create_sdk_client))
-        .route("/:id", get(get_sdk_client).put(update_sdk_client))
-        .route("/:id/activate", post(activate_sdk_client))
-        .route("/:id/suspend", post(suspend_sdk_client))
-        .route("/:id/deactivate", post(deactivate_sdk_client))
+        .route("/{id}", get(get_sdk_client).put(update_sdk_client))
+        .route("/{id}/activate", post(activate_sdk_client))
+        .route("/{id}/suspend", post(suspend_sdk_client))
+        .route("/{id}/deactivate", post(deactivate_sdk_client))
         .with_state(state)
 }

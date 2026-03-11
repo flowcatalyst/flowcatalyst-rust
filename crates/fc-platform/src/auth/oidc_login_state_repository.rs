@@ -89,7 +89,7 @@ impl OidcLoginStateRepository {
             .one(&self.db)
             .await?;
 
-        if let Some(ref model) = result {
+        if let Some(ref _model) = result {
             debug!(state = %state_param, "OIDC login state atomically consumed");
         }
 

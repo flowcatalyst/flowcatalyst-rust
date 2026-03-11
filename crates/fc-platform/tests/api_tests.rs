@@ -130,25 +130,25 @@ mod authorization_tests {
 
     #[test]
     fn test_direct_permission() {
-        let ctx = create_auth_context(vec!["events:read"], "CLIENT", vec!["client123"]);
-        assert!(ctx.has_permission("events:read"));
-        assert!(!ctx.has_permission("events:write"));
+        let ctx = create_auth_context(vec!["platform:admin:event:read"], "CLIENT", vec!["client123"]);
+        assert!(ctx.has_permission("platform:admin:event:read"));
+        assert!(!ctx.has_permission("platform:admin:event:create"));
     }
 
     #[test]
     fn test_wildcard_permission() {
-        let ctx = create_auth_context(vec!["events:*"], "CLIENT", vec!["client123"]);
-        assert!(ctx.has_permission("events:read"));
-        assert!(ctx.has_permission("events:write"));
-        assert!(!ctx.has_permission("users:read"));
+        let ctx = create_auth_context(vec!["platform:admin:*:*"], "CLIENT", vec!["client123"]);
+        assert!(ctx.has_permission("platform:admin:event:read"));
+        assert!(ctx.has_permission("platform:admin:client:create"));
+        assert!(!ctx.has_permission("platform:iam:user:read"));
     }
 
     #[test]
     fn test_superuser_permission() {
-        let ctx = create_auth_context(vec!["*:*"], "ANCHOR", vec!["*"]);
-        assert!(ctx.has_permission("events:read"));
-        assert!(ctx.has_permission("users:write"));
-        assert!(ctx.has_permission("anything:everything"));
+        let ctx = create_auth_context(vec!["platform:*:*:*"], "ANCHOR", vec!["*"]);
+        assert!(ctx.has_permission("platform:admin:event:read"));
+        assert!(ctx.has_permission("platform:iam:user:create"));
+        assert!(ctx.has_permission("platform:auth:oauth-client:read"));
     }
 
     #[test]
@@ -169,20 +169,19 @@ mod authorization_tests {
     #[test]
     fn test_has_all_permissions() {
         let ctx = create_auth_context(
-            vec!["events:read", "events:write", "subscriptions:read"],
+            vec!["platform:admin:event:read", "platform:admin:event:create", "platform:admin:subscription:read"],
             "CLIENT",
             vec!["client1"],
         );
-        assert!(ctx.has_all_permissions(&["events:read", "events:write"]));
-        assert!(!ctx.has_all_permissions(&["events:read", "users:write"]));
+        assert!(ctx.has_all_permissions(&["platform:admin:event:read", "platform:admin:event:create"]));
+        assert!(!ctx.has_all_permissions(&["platform:admin:event:read", "platform:iam:user:create"]));
     }
 
     #[test]
     fn test_has_any_permission() {
-        let ctx = create_auth_context(vec!["events:read"], "CLIENT", vec!["client1"]);
-        assert!(ctx.has_any_permission(&["events:read", "events:write"]));
-        assert!(ctx.has_any_permission(&["users:read", "events:read"]));
-        assert!(!ctx.has_any_permission(&["users:read", "users:write"]));
+        let ctx = create_auth_context(vec!["platform:admin:event:read"], "CLIENT", vec!["client1"]);
+        assert!(ctx.has_any_permission(&["platform:admin:event:read", "platform:admin:event:create"]));
+        assert!(!ctx.has_any_permission(&["platform:iam:user:read", "platform:iam:user:create"]));
     }
 
     #[test]

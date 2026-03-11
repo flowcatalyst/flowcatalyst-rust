@@ -4,6 +4,7 @@
 //! Includes anchor domains, client auth configs, and IDP role mappings.
 
 use axum::{
+    http::StatusCode,
     routing::{get, post, delete},
     extract::{State, Path, Query},
     Json, Router,
@@ -20,7 +21,7 @@ use crate::{
     AnchorDomainRepository, ClientAuthConfigRepository, IdpRoleMappingRepository,
 };
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{CreatedResponse, SuccessResponse};
+use crate::shared::api_common::CreatedResponse;
 use crate::shared::middleware::Authenticated;
 
 // ============================================================================
@@ -490,7 +491,7 @@ pub async fn check_anchor_domain(
         ("id" = String, Path, description = "Anchor domain ID")
     ),
     responses(
-        (status = 200, description = "Anchor domain deleted", body = SuccessResponse),
+        (status = 204, description = "Anchor domain deleted"),
         (status = 404, description = "Anchor domain not found")
     ),
     security(("bearer_auth" = []))
@@ -499,7 +500,7 @@ pub async fn delete_anchor_domain(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
     let exists = state.anchor_domain_repo.find_by_id(&id).await?.is_some();
@@ -509,7 +510,7 @@ pub async fn delete_anchor_domain(
 
     state.anchor_domain_repo.delete(&id).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Update anchor domain request
@@ -734,7 +735,7 @@ pub async fn update_client_auth_config(
         ("id" = String, Path, description = "Client auth config ID")
     ),
     responses(
-        (status = 200, description = "Client auth config deleted", body = SuccessResponse),
+        (status = 204, description = "Client auth config deleted"),
         (status = 404, description = "Client auth config not found")
     ),
     security(("bearer_auth" = []))
@@ -743,7 +744,7 @@ pub async fn delete_client_auth_config(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
     let exists = state.client_auth_config_repo.find_by_id(&id).await?.is_some();
@@ -753,7 +754,7 @@ pub async fn delete_client_auth_config(
 
     state.client_auth_config_repo.delete(&id).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Update config type request
@@ -1177,7 +1178,7 @@ pub async fn list_idp_role_mappings(
         ("id" = String, Path, description = "IDP role mapping ID")
     ),
     responses(
-        (status = 200, description = "IDP role mapping deleted", body = SuccessResponse),
+        (status = 204, description = "IDP role mapping deleted"),
         (status = 404, description = "IDP role mapping not found")
     ),
     security(("bearer_auth" = []))
@@ -1186,7 +1187,7 @@ pub async fn delete_idp_role_mapping(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
     let exists = state.idp_role_mapping_repo.find_by_id(&id).await?.is_some();
@@ -1196,7 +1197,7 @@ pub async fn delete_idp_role_mapping(
 
     state.idp_role_mapping_repo.delete(&id).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ============================================================================
@@ -1207,8 +1208,8 @@ pub async fn delete_idp_role_mapping(
 pub fn anchor_domains_router(state: AuthConfigState) -> Router {
     Router::new()
         .route("/", post(create_anchor_domain).get(list_anchor_domains))
-        .route("/check/:domain", get(check_anchor_domain))
-        .route("/:id", get(get_anchor_domain).put(update_anchor_domain).delete(delete_anchor_domain))
+        .route("/check/{domain}", get(check_anchor_domain))
+        .route("/{id}", get(get_anchor_domain).put(update_anchor_domain).delete(delete_anchor_domain))
         .with_state(state)
 }
 
@@ -1219,13 +1220,13 @@ pub fn client_auth_configs_router(state: AuthConfigState) -> Router {
         .route("/internal", post(create_internal_auth_config))
         .route("/oidc", post(create_oidc_auth_config))
         .route("/validate-secret", post(validate_secret))
-        .route("/by-domain/:domain", get(get_by_domain))
-        .route("/:id", get(get_client_auth_config).put(update_client_auth_config).delete(delete_client_auth_config))
-        .route("/:id/config-type", axum::routing::put(update_config_type))
-        .route("/:id/oidc", axum::routing::put(update_oidc_config))
-        .route("/:id/client-binding", axum::routing::put(update_client_binding))
-        .route("/:id/additional-clients", axum::routing::put(update_additional_clients))
-        .route("/:id/granted-clients", axum::routing::put(update_granted_clients))
+        .route("/by-domain/{domain}", get(get_by_domain))
+        .route("/{id}", get(get_client_auth_config).put(update_client_auth_config).delete(delete_client_auth_config))
+        .route("/{id}/config-type", axum::routing::put(update_config_type))
+        .route("/{id}/oidc", axum::routing::put(update_oidc_config))
+        .route("/{id}/client-binding", axum::routing::put(update_client_binding))
+        .route("/{id}/additional-clients", axum::routing::put(update_additional_clients))
+        .route("/{id}/granted-clients", axum::routing::put(update_granted_clients))
         .with_state(state)
 }
 
@@ -1233,6 +1234,6 @@ pub fn client_auth_configs_router(state: AuthConfigState) -> Router {
 pub fn idp_role_mappings_router(state: AuthConfigState) -> Router {
     Router::new()
         .route("/", post(create_idp_role_mapping).get(list_idp_role_mappings))
-        .route("/:id", delete(delete_idp_role_mapping))
+        .route("/{id}", delete(delete_idp_role_mapping))
         .with_state(state)
 }

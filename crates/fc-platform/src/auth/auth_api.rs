@@ -17,8 +17,12 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use utoipa::{ToSchema, IntoParams};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing::warn;
 
 use crate::{PrincipalRepository, RefreshTokenRepository};
+use crate::{EmailDomainMappingRepository, IdentityProviderRepository, LoginAttemptRepository};
+use crate::{LoginAttempt, AttemptType, LoginOutcome};
+use crate::identity_provider::entity::IdentityProviderType;
 use crate::RefreshToken;
 use crate::AuthService;
 use crate::PasswordService;
@@ -135,6 +139,9 @@ pub struct AuthState {
     pub principal_repo: Arc<PrincipalRepository>,
     pub password_service: Arc<PasswordService>,
     pub refresh_token_repo: Arc<RefreshTokenRepository>,
+    pub email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
+    pub identity_provider_repo: Arc<IdentityProviderRepository>,
+    pub login_attempt_repo: Arc<LoginAttemptRepository>,
     /// Session cookie name (default: "fc_session")
     pub session_cookie_name: String,
     /// Whether to set Secure flag on cookie
@@ -152,12 +159,18 @@ impl AuthState {
         principal_repo: Arc<PrincipalRepository>,
         password_service: Arc<PasswordService>,
         refresh_token_repo: Arc<RefreshTokenRepository>,
+        email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
+        identity_provider_repo: Arc<IdentityProviderRepository>,
+        login_attempt_repo: Arc<LoginAttemptRepository>,
     ) -> Self {
         Self {
             auth_service,
             principal_repo,
             password_service,
             refresh_token_repo,
+            email_domain_mapping_repo,
+            identity_provider_repo,
+            login_attempt_repo,
             session_cookie_name: "fc_session".to_string(),
             session_cookie_secure: false,
             session_cookie_same_site: "Lax".to_string(),
@@ -202,13 +215,16 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, PlatformError> {
     // Find principal by email
-    let principal = state
-        .principal_repo
-        .find_by_email(&req.email)
-        .await?
-        .ok_or_else(|| PlatformError::Unauthorized {
-            message: "Invalid credentials".to_string(),
-        })?;
+    let principal = match state.principal_repo.find_by_email(&req.email).await? {
+        Some(p) => p,
+        None => {
+            // Record failed attempt (fire-and-forget)
+            record_login_attempt(&state, &req.email, None, LoginOutcome::Failure, Some("INVALID_CREDENTIALS")).await;
+            return Err(PlatformError::Unauthorized {
+                message: "Invalid credentials".to_string(),
+            });
+        }
+    };
 
     // Verify password using Argon2id
     let password_valid = principal.user_identity
@@ -222,6 +238,7 @@ pub async fn login(
         .unwrap_or(false);
 
     if !password_valid {
+        record_login_attempt(&state, &req.email, Some(&principal.id), LoginOutcome::Failure, Some("INVALID_CREDENTIALS")).await;
         return Err(PlatformError::Unauthorized {
             message: "Invalid credentials".to_string(),
         });
@@ -229,13 +246,14 @@ pub async fn login(
 
     // Check if user is active
     if !principal.active {
+        record_login_attempt(&state, &req.email, Some(&principal.id), LoginOutcome::Failure, Some("ACCOUNT_INACTIVE")).await;
         return Err(PlatformError::Unauthorized {
             message: "Account is not active".to_string(),
         });
     }
 
-    // Generate session token
-    let session_token = state.auth_service.generate_access_token(&principal)?;
+    // Generate session token (uses session_token_expiry_secs, not access_token_expiry_secs)
+    let session_token = state.auth_service.generate_session_token(&principal)?;
 
     // Build session cookie
     let same_site = match state.session_cookie_same_site.to_lowercase().as_str() {
@@ -254,6 +272,9 @@ pub async fn login(
 
     let jar = jar.add(cookie);
 
+    // Record successful login attempt (fire-and-forget)
+    record_login_attempt(&state, &req.email, Some(&principal.id), LoginOutcome::Success, None).await;
+
     // Build response with user info (matches Java LoginResponse)
     let response = LoginResponse {
         principal_id: principal.id.clone(),
@@ -265,6 +286,24 @@ pub async fn login(
 
     // Return both the cookie jar and JSON response
     Ok((jar, Json(response)))
+}
+
+/// Record a login attempt (fire-and-forget — errors are logged but don't affect the login flow)
+async fn record_login_attempt(
+    state: &AuthState,
+    email: &str,
+    principal_id: Option<&str>,
+    outcome: LoginOutcome,
+    failure_reason: Option<&str>,
+) {
+    let mut attempt = LoginAttempt::new(AttemptType::UserLogin, outcome);
+    attempt.identifier = Some(email.to_string());
+    attempt.principal_id = principal_id.map(|s| s.to_string());
+    attempt.failure_reason = failure_reason.map(|s| s.to_string());
+
+    if let Err(e) = state.login_attempt_repo.create(&attempt).await {
+        warn!(error = %e, "Failed to record login attempt (non-blocking)");
+    }
 }
 
 /// Logout / revoke token
@@ -318,8 +357,9 @@ pub async fn logout(
     )
 )]
 pub async fn check_domain(
+    State(state): State<AuthState>,
     Query(req): Query<DomainCheckRequest>,
-) -> Json<DomainCheckResponse> {
+) -> Result<Json<DomainCheckResponse>, PlatformError> {
     // Extract domain from email
     let domain = req
         .email
@@ -328,12 +368,33 @@ pub async fn check_domain(
         .unwrap_or("")
         .to_lowercase();
 
-    Json(DomainCheckResponse {
+    // Look up email domain mapping in the database
+    if let Some(mapping) = state.email_domain_mapping_repo.find_by_email_domain(&domain).await? {
+        // Load the associated identity provider
+        if let Some(idp) = state.identity_provider_repo.find_by_id(&mapping.identity_provider_id).await? {
+            let auth_method = match idp.r#type {
+                IdentityProviderType::Oidc => AuthMethod::Oidc,
+                IdentityProviderType::Internal => AuthMethod::Internal,
+            };
+
+            return Ok(Json(DomainCheckResponse {
+                domain,
+                auth_method,
+                provider_id: Some(idp.id),
+                authorization_url: idp.oidc_issuer_url.map(|url| {
+                    format!("{}/authorize", url.trim_end_matches('/'))
+                }),
+            }));
+        }
+    }
+
+    // Default: internal authentication
+    Ok(Json(DomainCheckResponse {
         domain,
         auth_method: AuthMethod::Internal,
         provider_id: None,
         authorization_url: None,
-    })
+    }))
 }
 
 /// Get current user info

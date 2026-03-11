@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::{routing::get, Json, Router};
 use fc_config::AppConfig;
 use fc_scheduler::{DispatchScheduler, QueueMessage, QueuePublisher, SchedulerConfig, SchedulerError};
-use mongodb::Client as MongoClient;
+use sea_orm::{ConnectOptions, Database};
 use serde::Serialize;
 use tracing::info;
 
@@ -37,9 +37,12 @@ async fn main() -> anyhow::Result<()> {
     let config = AppConfig::load()?;
     info!(enabled = config.scheduler.enabled, poll_interval_ms = config.scheduler.poll_interval_ms, "Scheduler configuration loaded");
 
-    let mongo_client = MongoClient::with_uri_str(&config.mongodb.uri).await?;
-    let db = mongo_client.database(&config.mongodb.database);
-    info!(database = %config.mongodb.database, "Connected to MongoDB");
+    // Connect to PostgreSQL
+    let database_url = std::env::var("FC_DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://localhost:5432/flowcatalyst".to_string());
+    let opts = ConnectOptions::new(&database_url);
+    let db = Database::connect(opts).await?;
+    info!(url = %database_url, "Connected to PostgreSQL");
 
     let scheduler_config = SchedulerConfig {
         enabled: config.scheduler.enabled,
@@ -50,6 +53,8 @@ async fn main() -> anyhow::Result<()> {
         default_pool_code: "default".to_string(),
         processing_endpoint: format!("http://localhost:{}/api/router/process", config.http.port),
         app_key: if config.scheduler.app_key.is_empty() { None } else { Some(config.scheduler.app_key.clone()) },
+        max_concurrent_groups: 50,
+        connection_filter_enabled: true,
     };
 
     let queue_publisher: Arc<dyn QueuePublisher> = Arc::new(DevQueuePublisher);

@@ -15,8 +15,8 @@ async-trait = { workspace = true }
 
 # Encryption
 aes-gcm = "0.10"
-base64 = "0.21"
-rand = "0.8"
+base64 = "0.22"
+rand = { workspace = true }
 
 # AWS Secrets Manager (optional)
 aws-config = { workspace = true, optional = true }

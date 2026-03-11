@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{State, Path, Query},
+    http::StatusCode,
     Json,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository; use crate::application::repository::ApplicationRepository;
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
+use crate::shared::api_common::PaginationParams;
 use crate::shared::middleware::Authenticated;
 
 /// Create role request
@@ -188,7 +189,7 @@ fn parse_source(s: &str) -> Result<RoleSource, PlatformError> {
     operation_id = "postApiAdminRoles",
     request_body = CreateRoleRequest,
     responses(
-        (status = 201, description = "Role created", body = CreatedResponse),
+        (status = 201, description = "Role created", body = RoleResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate role code")
     ),
@@ -198,7 +199,7 @@ pub async fn create_role(
     State(state): State<RolesState>,
     auth: Authenticated,
     Json(req): Json<CreateRoleRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<RoleResponse>), PlatformError> {
     // Only anchor users can create roles
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
@@ -218,10 +219,9 @@ pub async fn create_role(
     role = role.with_permissions(req.permissions);
     role = role.with_client_managed(req.client_managed);
 
-    let id = role.id.clone();
     state.role_repo.insert(&role).await?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    Ok((StatusCode::CREATED, Json(RoleResponse::from(role))))
 }
 
 /// Get role by ID or name (code)
@@ -465,7 +465,7 @@ pub async fn revoke_permission(
         ("role_name" = String, Path, description = "Role name (code) or ID")
     ),
     responses(
-        (status = 200, description = "Role deleted", body = SuccessResponse),
+        (status = 204, description = "Role deleted"),
         (status = 404, description = "Role not found")
     ),
     security(("bearer_auth" = []))
@@ -474,7 +474,7 @@ pub async fn delete_role(
     State(state): State<RolesState>,
     auth: Authenticated,
     Path(role_name): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
     // Try by code first if it looks like a role code (contains ":")
@@ -490,7 +490,7 @@ pub async fn delete_role(
 
     state.role_repo.delete(&role.id).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Get applications for role filter dropdown

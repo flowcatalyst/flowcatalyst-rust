@@ -4,6 +4,7 @@
 
 use axum::{
     extract::{State, Path, Query},
+    http::StatusCode,
     Json,
 };
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -17,7 +18,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use crate::auth::oauth_entity::{OAuthClient, OAuthClientType, GrantType};
 use crate::OAuthClientRepository;
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{PaginationParams, CreatedResponse, SuccessResponse};
+use crate::shared::api_common::{PaginationParams, SuccessResponse};
 use crate::shared::middleware::Authenticated;
 
 /// Create OAuth client request
@@ -84,11 +85,16 @@ pub struct OAuthClientResponse {
     pub client_type: String,
     pub redirect_uris: Vec<String>,
     pub grant_types: Vec<String>,
+    pub default_scopes: Vec<String>,
     pub pkce_required: bool,
     pub application_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_account_principal_id: Option<String>,
     pub active: bool,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
 }
 
 impl From<OAuthClient> for OAuthClientResponse {
@@ -102,11 +108,14 @@ impl From<OAuthClient> for OAuthClientResponse {
             grant_types: c.grant_types.iter()
                 .map(|g| format!("{:?}", g).to_lowercase())
                 .collect(),
+            default_scopes: c.default_scopes,
             pkce_required: c.pkce_required,
             application_ids: c.application_ids,
+            service_account_principal_id: c.service_account_principal_id,
             active: c.active,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
+            created_by: c.created_by,
         }
     }
 }
@@ -154,7 +163,7 @@ fn parse_grant_type(s: &str) -> Option<GrantType> {
     operation_id = "postApiAdminOauthClients",
     request_body = CreateOAuthClientRequest,
     responses(
-        (status = 201, description = "OAuth client created", body = CreatedResponse),
+        (status = 201, description = "OAuth client created", body = OAuthClientResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate client_id")
     ),
@@ -164,7 +173,7 @@ pub async fn create_oauth_client(
     State(state): State<OAuthClientsState>,
     auth: Authenticated,
     Json(req): Json<CreateOAuthClientRequest>,
-) -> Result<Json<CreatedResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<OAuthClientResponse>), PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
     // Check for duplicate client_id
@@ -197,10 +206,9 @@ pub async fn create_oauth_client(
 
     client.application_ids = req.application_ids;
 
-    let id = client.id.clone();
     state.oauth_client_repo.insert(&client).await?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    Ok((StatusCode::CREATED, Json(OAuthClientResponse::from(client))))
 }
 
 /// Get OAuth client by ID
@@ -327,7 +335,7 @@ pub async fn update_oauth_client(
         ("id" = String, Path, description = "OAuth client ID")
     ),
     responses(
-        (status = 200, description = "OAuth client deleted", body = SuccessResponse),
+        (status = 204, description = "OAuth client deleted"),
         (status = 404, description = "OAuth client not found")
     ),
     security(("bearer_auth" = []))
@@ -336,7 +344,7 @@ pub async fn delete_oauth_client(
     State(state): State<OAuthClientsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse>, PlatformError> {
+) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
     let exists = state.oauth_client_repo.find_by_id(&id).await?.is_some();
@@ -346,7 +354,7 @@ pub async fn delete_oauth_client(
 
     state.oauth_client_repo.delete(&id).await?;
 
-    Ok(Json(SuccessResponse::ok()))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Regenerate secret response
@@ -476,7 +484,7 @@ pub async fn regenerate_oauth_client_secret(
 
     // Generate a random 32-byte secret and encode as URL-safe base64
     let mut secret_bytes = [0u8; 32];
-    rand::thread_rng().fill(&mut secret_bytes);
+    rand::rng().fill(&mut secret_bytes);
     let plaintext_secret = URL_SAFE_NO_PAD.encode(secret_bytes);
 
     // Store SHA-256 hash as the secret reference

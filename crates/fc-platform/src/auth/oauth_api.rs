@@ -16,16 +16,16 @@ use utoipa::{ToSchema, IntoParams};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use chrono::Utc;
 use tracing::{info, warn, error};
 
-use crate::{Principal, AuthorizationCode, RefreshToken};
+use crate::{AuthorizationCode, RefreshToken};
 use crate::{OAuthClientRepository, PrincipalRepository, AuthorizationCodeRepository, RefreshTokenRepository};
+use crate::auth::pending_auth_repository::{PendingAuthRepository, PendingAuth};
 use crate::AuthService;
 use crate::auth::auth_service::{AccessTokenClaims, extract_bearer_token};
+use crate::auth::password_service::PasswordService;
 use crate::OidcService;
 use crate::shared::error::PlatformError;
 
@@ -158,20 +158,10 @@ pub struct OAuthState {
     pub auth_code_repo: Arc<AuthorizationCodeRepository>,
     /// Refresh token storage for token rotation
     pub refresh_token_repo: Arc<RefreshTokenRepository>,
-    /// Pending authorization states (for CSRF protection)
-    pub pending_states: Arc<RwLock<HashMap<String, PendingAuth>>>,
-}
-
-/// Pending authorization (between authorize and callback)
-#[derive(Debug, Clone)]
-pub struct PendingAuth {
-    pub client_id: String,
-    pub redirect_uri: String,
-    pub scope: Option<String>,
-    pub code_challenge: Option<String>,
-    pub code_challenge_method: Option<String>,
-    pub nonce: Option<String>,
-    pub created_at: chrono::DateTime<Utc>,
+    /// Pending authorization states (PostgreSQL, survives restarts)
+    pub pending_auth_repo: Arc<PendingAuthRepository>,
+    /// Password service for verifying client secrets
+    pub password_service: Arc<PasswordService>,
 }
 
 impl OAuthState {
@@ -182,6 +172,8 @@ impl OAuthState {
         oidc_service: Arc<OidcService>,
         auth_code_repo: Arc<AuthorizationCodeRepository>,
         refresh_token_repo: Arc<RefreshTokenRepository>,
+        pending_auth_repo: Arc<PendingAuthRepository>,
+        password_service: Arc<PasswordService>,
     ) -> Self {
         Self {
             oauth_client_repo,
@@ -190,7 +182,8 @@ impl OAuthState {
             oidc_service,
             auth_code_repo,
             refresh_token_repo,
-            pending_states: Arc::new(RwLock::new(HashMap::new())),
+            pending_auth_repo,
+            password_service,
         }
     }
 }
@@ -266,7 +259,7 @@ pub async fn authorize(
     // Generate state for CSRF protection if not provided
     let state_param = req.state.clone().unwrap_or_else(|| generate_random_string(32));
 
-    // Store pending authorization
+    // Store pending authorization in PostgreSQL (survives restarts)
     let pending = PendingAuth {
         client_id: req.client_id.clone(),
         redirect_uri: req.redirect_uri.clone(),
@@ -277,9 +270,9 @@ pub async fn authorize(
         created_at: Utc::now(),
     };
 
-    {
-        let mut pending_states = state.pending_states.write().await;
-        pending_states.insert(state_param.clone(), pending);
+    if let Err(e) = state.pending_auth_repo.insert(&state_param, &pending).await {
+        error!(error = %e, "Failed to store pending auth state");
+        return error_redirect(&req.redirect_uri, "server_error", "Internal error", req.state.as_deref());
     }
 
     // If external provider specified, redirect to OIDC provider
@@ -700,18 +693,93 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
         ).into_response();
     }
 
-    if client_secret.is_empty() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "invalid_client".to_string(),
-                error_description: Some("Invalid client credentials".to_string()),
-            }),
-        ).into_response();
+    // Verify client_secret against stored hash
+    let secret_hash = match &client.client_secret_ref {
+        Some(hash) => hash,
+        None => {
+            warn!(client_id = %client_id, "Client has no secret configured");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Invalid client credentials".to_string()),
+                }),
+            ).into_response();
+        }
+    };
+
+    match state.password_service.verify_password(&client_secret, secret_hash) {
+        Ok(true) => { /* secret verified */ }
+        Ok(false) => {
+            warn!(client_id = %client_id, "Client secret verification failed");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Invalid client credentials".to_string()),
+                }),
+            ).into_response();
+        }
+        Err(e) => {
+            error!(client_id = %client_id, error = %e, "Client secret verification error");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: None,
+                }),
+            ).into_response();
+        }
     }
 
-    // Find or create service account principal for this client
-    let principal = Principal::new_service(&client_id, &client.client_name);
+    // Look up the real service account principal (with roles/permissions)
+    let principal_id = match &client.service_account_principal_id {
+        Some(id) => id,
+        None => {
+            error!(client_id = %client_id, "Client has no service account principal configured");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: Some("Client not properly configured".to_string()),
+                }),
+            ).into_response();
+        }
+    };
+
+    let principal = match state.principal_repo.find_by_id(principal_id).await {
+        Ok(Some(p)) if p.active => p,
+        Ok(Some(_)) => {
+            warn!(client_id = %client_id, "Service account principal is inactive");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Service account is not active".to_string()),
+                }),
+            ).into_response();
+        }
+        Ok(None) => {
+            error!(client_id = %client_id, principal_id = %principal_id, "Service account principal not found");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: Some("Client not properly configured".to_string()),
+                }),
+            ).into_response();
+        }
+        Err(e) => {
+            error!(error = %e, "Failed to lookup service account principal");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: None,
+                }),
+            ).into_response();
+        }
+    };
 
     let access_token = match state.auth_service.generate_access_token(&principal) {
         Ok(t) => t,
@@ -789,20 +857,25 @@ pub async fn oidc_callback(
         }
     };
 
-    // Retrieve and validate pending authorization
-    let pending = {
-        let mut pending_states = state.pending_states.write().await;
-        pending_states.remove(state_param)
-    };
-
-    let pending = match pending {
-        Some(p) => p,
-        None => {
+    // Retrieve and validate pending authorization (atomically consumed from PostgreSQL)
+    let pending = match state.pending_auth_repo.find_and_consume(state_param).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
                     error: "invalid_request".to_string(),
                     error_description: Some("Invalid or expired state".to_string()),
+                }),
+            ).into_response();
+        }
+        Err(e) => {
+            error!(error = %e, "Failed to lookup pending auth state");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: None,
                 }),
             ).into_response();
         }
@@ -847,14 +920,16 @@ pub async fn issue_code(
     principal_id: &str,
     pending_state: &str,
 ) -> Result<String, PlatformError> {
-    let pending = {
-        let mut pending_states = state.pending_states.write().await;
-        pending_states.remove(pending_state)
-    };
-
-    let pending = pending.ok_or_else(|| PlatformError::InvalidToken {
-        message: "Invalid or expired state".to_string(),
-    })?;
+    let pending = state.pending_auth_repo.find_and_consume(pending_state).await
+        .map_err(|e| {
+            error!(error = %e, "Failed to lookup pending auth state");
+            PlatformError::Internal {
+                message: "Failed to lookup pending auth state".to_string(),
+            }
+        })?
+        .ok_or_else(|| PlatformError::InvalidToken {
+            message: "Invalid or expired state".to_string(),
+        })?;
 
     let auth_code_str = generate_random_string(64);
 
@@ -899,9 +974,9 @@ fn error_redirect(redirect_uri: &str, error: &str, description: &str, state: Opt
 fn generate_random_string(len: usize) -> String {
     use rand::Rng;
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..len)
-        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+        .map(|_| CHARSET[rng.random_range(0..CHARSET.len())] as char)
         .collect()
 }
 

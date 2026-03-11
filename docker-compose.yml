@@ -1,0 +1,65 @@
+# FlowCatalyst Local Development Environment
+#
+# Usage:
+#   make up        — start all services
+#   make down      — stop all services
+#   make db-reset  — drop + recreate database with migrations
+#
+# Default credentials:
+#   PostgreSQL: flowcatalyst / flowcatalyst @ localhost:5432/flowcatalyst
+#   Redis:      localhost:6379
+#   SQS:        localhost:4566 (LocalStack)
+
+services:
+  # ─── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    container_name: fc-postgres
+    image: postgres:18-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: flowcatalyst
+      POSTGRES_PASSWORD: flowcatalyst
+      POSTGRES_DB: flowcatalyst
+    volumes:
+      - fc-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowcatalyst"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ─── LocalStack (SQS emulation) ──────────────────────────────────────────
+  localstack:
+    container_name: fc-localstack
+    image: localstack/localstack:3.0
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs
+      - DEBUG=0
+      - AWS_DEFAULT_REGION=eu-west-1
+    volumes:
+      - "./localstack-init:/etc/localstack/init/ready.d"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ─── Redis (leader election, standby mode) ───────────────────────────────
+  redis:
+    container_name: fc-redis
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  fc-pgdata:

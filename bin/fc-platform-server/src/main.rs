@@ -26,8 +26,9 @@ use axum::{
     Router,
 };
 use utoipa_axum::router::OpenApiRouter;
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::{CorsLayer, AllowOrigin};
 use tower_http::trace::TraceLayer;
+use axum::http::{Method, HeaderValue, header as http_header};
 use anyhow::Result;
 use tracing::info;
 use tokio::{signal, net::TcpListener};
@@ -75,6 +76,7 @@ use fc_platform::api::{
     PasswordResetApiState, password_reset_router,
     SdkSyncState, sdk_sync_router,
     SdkAuditBatchState, sdk_audit_batch_router,
+    SdkDispatchJobsState, sdk_dispatch_jobs_batch_router,
     BffRolesState, bff_roles_router,
     BffEventTypesState, bff_event_types_router,
 };
@@ -183,7 +185,50 @@ async fn main() -> Result<()> {
     let platform_config_access_repo = Arc::new(PlatformConfigAccessRepository::new(&pg_db));
     let login_attempt_repo = Arc::new(LoginAttemptRepository::new(&pg_db));
     let password_reset_repo = Arc::new(PasswordResetTokenRepository::new(&pg_db));
+    let pending_auth_repo = Arc::new(fc_platform::PendingAuthRepository::new(&pg_db));
     info!("Repositories initialized");
+
+    // Load CORS allowed origins from database into a shared cache
+    let cors_origins_cache: Arc<std::sync::RwLock<std::collections::HashSet<String>>> =
+        Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+    {
+        match cors_repo.get_allowed_origins().await {
+            Ok(origins) => {
+                let mut cache = cors_origins_cache.write().unwrap();
+                for origin in origins {
+                    cache.insert(origin);
+                }
+                info!(count = cache.len(), "CORS origins loaded from database");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load CORS origins: {}", e);
+            }
+        }
+    }
+    // Spawn background task to refresh CORS origins every 60 seconds
+    {
+        let cache = cors_origins_cache.clone();
+        let cors_repo_bg = CorsOriginRepository::new(&pg_db);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.tick().await; // skip first immediate tick
+            loop {
+                interval.tick().await;
+                match cors_repo_bg.get_allowed_origins().await {
+                    Ok(origins) => {
+                        let mut c = cache.write().unwrap();
+                        c.clear();
+                        for origin in origins {
+                            c.insert(origin);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to refresh CORS origins: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     // Sync code-defined roles to database (always, not just in dev mode)
     {
@@ -304,6 +349,9 @@ async fn main() -> Result<()> {
         principal_repo.clone(),
         password_service.clone(),
         refresh_token_repo.clone(),
+        edm_repo.clone(),
+        idp_repo.clone(),
+        login_attempt_repo.clone(),
     );
     let oauth_state = OAuthState::new(
         oauth_client_repo.clone(),
@@ -312,6 +360,8 @@ async fn main() -> Result<()> {
         oidc_service,
         auth_code_repo,
         refresh_token_repo,
+        pending_auth_repo,
+        password_service.clone(),
     );
     let audit_logs_state = AuditLogsState { audit_log_repo: audit_log_repo.clone() };
 
@@ -410,6 +460,7 @@ async fn main() -> Result<()> {
         password_reset_repo,
         principal_repo: principal_repo.clone(),
         password_service: password_service.clone(),
+        unit_of_work: unit_of_work.clone(),
     };
 
     // Build API states with use cases
@@ -459,6 +510,11 @@ async fn main() -> Result<()> {
         audit_log_repo: audit_log_repo.clone(),
         application_repo: application_repo.clone(),
         client_repo: client_repo.clone(),
+    };
+
+    // SDK dispatch jobs batch state
+    let sdk_dispatch_jobs_state = SdkDispatchJobsState {
+        dispatch_job_repo: dispatch_job_repo.clone(),
     };
 
     // BFF states
@@ -545,6 +601,7 @@ async fn main() -> Result<()> {
         .nest("/api/sdk/clients", sdk_clients_router(sdk_clients_state))
         .nest("/api/sdk/principals", sdk_principals_router(sdk_principals_state))
         .nest("/api/sdk/roles", sdk_roles_router(sdk_roles_state))
+        .nest("/api/sdk/dispatch-jobs", sdk_dispatch_jobs_batch_router(sdk_dispatch_jobs_state))
         .nest("/auth", oidc_login_router(oidc_login_state))
         .nest("/oauth", oauth_router(oauth_state))
         .nest("/.well-known", well_known_router(well_known_state))
@@ -561,7 +618,50 @@ async fn main() -> Result<()> {
         // Auth middleware
         .layer(AuthLayer::new(app_state))
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any));
+        .layer({
+            let cache = cors_origins_cache.clone();
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::predicate(move |origin: &HeaderValue, _parts| {
+                    let origin_str = match origin.to_str() {
+                        Ok(s) => s,
+                        Err(_) => return false,
+                    };
+                    let origins = cache.read().unwrap();
+                    // Check exact match first
+                    if origins.contains(origin_str) {
+                        return true;
+                    }
+                    // Check wildcard patterns (e.g., https://*.example.com)
+                    for pattern in origins.iter() {
+                        if pattern.contains('*') {
+                            let regex_str = format!(
+                                "^{}$",
+                                regex::escape(pattern).replace(r"\*", "[a-zA-Z0-9-]+")
+                            );
+                            if let Ok(re) = regex::Regex::new(&regex_str) {
+                                if re.is_match(origin_str) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    false
+                }))
+                .allow_methods([
+                    Method::GET, Method::POST, Method::PUT, Method::PATCH,
+                    Method::DELETE, Method::OPTIONS, Method::HEAD,
+                ])
+                .allow_headers([
+                    http_header::AUTHORIZATION,
+                    http_header::CONTENT_TYPE,
+                    http_header::ACCEPT,
+                    http_header::ORIGIN,
+                    http_header::HeaderName::from_static("x-requested-with"),
+                    http_header::HeaderName::from_static("x-client-id"),
+                ])
+                .allow_credentials(true)
+                .max_age(std::time::Duration::from_secs(86400))
+        });
 
     // Start API server
     let api_addr = format!("0.0.0.0:{}", api_port);

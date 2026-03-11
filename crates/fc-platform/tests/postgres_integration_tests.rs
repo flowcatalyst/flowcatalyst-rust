@@ -24,6 +24,9 @@ use fc_platform::{
     AuditLogRepository, EventRepository,
 };
 use fc_platform::{Client, ClientStatus, AuthRole, Application, EventType, AuditLog, Event};
+use fc_platform::{Subscription, SubscriptionStatus, DispatchPool, DispatchPoolStatus, Connection, ConnectionStatus, DispatchJob, DispatchStatus, ServiceAccount};
+use fc_platform::{SubscriptionRepository, DispatchPoolRepository, ConnectionRepository, DispatchJobRepository, ServiceAccountRepository};
+use fc_platform::subscription::entity::EventTypeBinding;
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────
 
@@ -421,4 +424,222 @@ async fn test_unit_of_work_commit() {
     let logs = audit_repo.find_by_entity("Client", &client.id, 10).await
         .expect("Failed to query audit logs");
     assert!(!logs.is_empty(), "At least one audit log should exist");
+}
+
+// ─── Dispatch Pool Repository Tests ───────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_dispatch_pool_crud() {
+    let (db, _container) = setup_test_db().await;
+    let repo = DispatchPoolRepository::new(&db);
+
+    // Create with builder methods
+    let pool = DispatchPool::new("test-pool", "Test Pool")
+        .with_rate_limit(50)
+        .with_concurrency(5);
+    repo.insert(&pool).await.expect("Failed to insert dispatch pool");
+
+    // Find by ID
+    let found = repo.find_by_id(&pool.id).await.expect("Failed to find dispatch pool");
+    assert!(found.is_some());
+    let found = found.unwrap();
+    assert_eq!(found.code, "test-pool");
+    assert_eq!(found.name, "Test Pool");
+    assert_eq!(found.status, DispatchPoolStatus::Active);
+    assert_eq!(found.rate_limit, 50);
+    assert_eq!(found.concurrency, 5);
+
+    // Suspend
+    let mut updated_pool = found;
+    updated_pool.suspend();
+    repo.update(&updated_pool).await.expect("Failed to update dispatch pool");
+
+    let suspended = repo.find_by_id(&pool.id).await.unwrap().unwrap();
+    assert_eq!(suspended.status, DispatchPoolStatus::Suspended);
+}
+
+// ─── Service Account Repository Tests ─────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_service_account_crud() {
+    let (db, _container) = setup_test_db().await;
+    let repo = ServiceAccountRepository::new(&db);
+
+    // Create
+    let svc = ServiceAccount::new("test-svc", "Test Service");
+    repo.insert(&svc).await.expect("Failed to insert service account");
+
+    // Find by ID
+    let found = repo.find_by_id(&svc.id).await.expect("Failed to find service account");
+    assert!(found.is_some());
+    let found = found.unwrap();
+    assert_eq!(found.code, "test-svc");
+    assert_eq!(found.name, "Test Service");
+    assert!(found.active);
+}
+
+// ─── Connection Repository Tests ──────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_connection_crud() {
+    let (db, _container) = setup_test_db().await;
+    let svc_repo = ServiceAccountRepository::new(&db);
+    let conn_repo = ConnectionRepository::new(&db);
+
+    // Create a service account first (needed for FK)
+    let svc = ServiceAccount::new("conn-test-svc", "Connection Test Service");
+    svc_repo.insert(&svc).await.expect("Failed to insert service account");
+
+    // Create a connection
+    let conn = Connection::new("test-conn", "Test Connection", "https://example.com/webhook", &svc.id);
+    conn_repo.insert(&conn).await.expect("Failed to insert connection");
+
+    // Find by ID
+    let found = conn_repo.find_by_id(&conn.id).await.expect("Failed to find connection");
+    assert!(found.is_some());
+    let found = found.unwrap();
+    assert_eq!(found.code, "test-conn");
+    assert_eq!(found.name, "Test Connection");
+    assert_eq!(found.endpoint, "https://example.com/webhook");
+    assert_eq!(found.service_account_id, svc.id);
+    assert_eq!(found.status, ConnectionStatus::Active);
+
+    // Pause
+    let mut paused_conn = found;
+    paused_conn.pause();
+    conn_repo.update(&paused_conn).await.expect("Failed to update connection");
+
+    let paused = conn_repo.find_by_id(&conn.id).await.unwrap().unwrap();
+    assert_eq!(paused.status, ConnectionStatus::Paused);
+
+    // Activate
+    let mut activated_conn = paused;
+    activated_conn.activate();
+    conn_repo.update(&activated_conn).await.expect("Failed to update connection");
+
+    let activated = conn_repo.find_by_id(&conn.id).await.unwrap().unwrap();
+    assert_eq!(activated.status, ConnectionStatus::Active);
+}
+
+// ─── Subscription Repository Tests ────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_subscription_crud() {
+    let (db, _container) = setup_test_db().await;
+    let repo = SubscriptionRepository::new(&db);
+
+    // Create
+    let sub = Subscription::new("test-sub", "Test Subscription", "con_dummy0000000");
+    repo.insert(&sub).await.expect("Failed to insert subscription");
+
+    // Find by ID
+    let found = repo.find_by_id(&sub.id).await.expect("Failed to find subscription");
+    assert!(found.is_some());
+    let found = found.unwrap();
+    assert_eq!(found.code, "test-sub");
+    assert_eq!(found.name, "Test Subscription");
+    assert_eq!(found.status, SubscriptionStatus::Active);
+
+    // Find active
+    let active = repo.find_active().await.expect("Failed to find active subscriptions");
+    assert!(active.iter().any(|s| s.id == sub.id));
+
+    // Find by code
+    let by_code = repo.find_by_code("test-sub").await.expect("Failed to find by code");
+    assert!(by_code.is_some());
+    assert_eq!(by_code.unwrap().id, sub.id);
+}
+
+// ─── Dispatch Job Lifecycle Tests ─────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_dispatch_job_lifecycle() {
+    let (db, _container) = setup_test_db().await;
+    let repo = DispatchJobRepository::new(&db);
+
+    // Create
+    let job = DispatchJob::for_event("evt-123", "order:created", "platform", "https://example.com/webhook", "{}");
+    repo.insert(&job).await.expect("Failed to insert dispatch job");
+
+    // Find by ID
+    let found = repo.find_by_id(&job.id).await.expect("Failed to find dispatch job");
+    assert!(found.is_some());
+    let found = found.unwrap();
+    assert_eq!(found.status, DispatchStatus::Pending);
+    assert_eq!(found.code, "order:created");
+    assert_eq!(found.target_url, "https://example.com/webhook");
+
+    // Update status to Queued
+    let updated = repo.update_status(&job.id, DispatchStatus::Queued).await.expect("Failed to update status");
+    assert!(updated);
+
+    let queued = repo.find_by_id(&job.id).await.unwrap().unwrap();
+    assert_eq!(queued.status, DispatchStatus::Queued);
+
+    // Find by status (Pending should no longer include it)
+    let pending = repo.find_by_status(DispatchStatus::Pending, 10).await.expect("Failed to find by status");
+    assert!(!pending.iter().any(|j| j.id == job.id));
+}
+
+// ─── Dispatch Job Batch Insert Tests ──────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_dispatch_job_batch_insert() {
+    let (db, _container) = setup_test_db().await;
+    let repo = DispatchJobRepository::new(&db);
+
+    // Create 5 dispatch jobs
+    let jobs: Vec<DispatchJob> = (0..5)
+        .map(|i| {
+            DispatchJob::for_event(
+                &format!("evt-{}", i),
+                "order:created",
+                "platform",
+                "https://example.com/webhook",
+                "{}",
+            )
+        })
+        .collect();
+
+    repo.insert_many(&jobs).await.expect("Failed to batch insert dispatch jobs");
+
+    // Verify count
+    let count = repo.count_all().await.expect("Failed to count all");
+    assert_eq!(count, 5);
+
+    // Verify find_pending_for_dispatch returns them
+    let pending = repo.find_pending_for_dispatch(10).await.expect("Failed to find pending");
+    assert_eq!(pending.len(), 5);
+}
+
+// ─── Subscription with Event Types Tests ──────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_subscription_with_event_types() {
+    let (db, _container) = setup_test_db().await;
+    let repo = SubscriptionRepository::new(&db);
+
+    // Create subscription with event type binding
+    let sub = Subscription::new("sub-with-events", "Sub With Events", "con_dummy0000000")
+        .with_event_type_binding(EventTypeBinding {
+            event_type_id: None,
+            event_type_code: "order:created".to_string(),
+            spec_version: None,
+            filter: None,
+        });
+    repo.insert(&sub).await.expect("Failed to insert subscription with event types");
+
+    // Find by ID and verify event_types are hydrated
+    let found = repo.find_by_id(&sub.id).await.expect("Failed to find subscription");
+    assert!(found.is_some());
+    let found = found.unwrap();
+    assert_eq!(found.event_types.len(), 1);
+    assert_eq!(found.event_types[0].event_type_code, "order:created");
 }

@@ -49,9 +49,11 @@ pub struct SyncQuery {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncResultResponse {
+    pub application_code: String,
     pub created: u32,
     pub updated: u32,
     pub deleted: u32,
+    pub synced_codes: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -261,9 +263,11 @@ async fn sync_roles(
     match state.sync_roles_use_case.execute(command, ctx).await {
         UseCaseResult::Success(event) => {
             Ok(Json(SyncResultResponse {
+                application_code: event.application_code,
                 created: event.created,
                 updated: event.updated,
                 deleted: event.deleted,
+                synced_codes: event.synced_names,
             }))
         }
         UseCaseResult::Failure(err) => Err(err.into()),
@@ -309,9 +313,11 @@ async fn sync_event_types(
     match state.sync_event_types_use_case.execute(command, ctx).await {
         UseCaseResult::Success(event) => {
             Ok(Json(SyncResultResponse {
+                application_code: event.application_code,
                 created: event.created,
                 updated: event.updated,
                 deleted: event.deleted,
+                synced_codes: event.synced_codes,
             }))
         }
         UseCaseResult::Failure(err) => Err(err.into()),
@@ -368,9 +374,11 @@ async fn sync_subscriptions(
     match state.sync_subscriptions_use_case.execute(command, ctx).await {
         UseCaseResult::Success(event) => {
             Ok(Json(SyncResultResponse {
+                application_code: event.application_code,
                 created: event.created,
                 updated: event.updated,
                 deleted: event.deleted,
+                synced_codes: event.synced_codes,
             }))
         }
         UseCaseResult::Failure(err) => Err(err.into()),
@@ -418,9 +426,11 @@ async fn sync_dispatch_pools(
     match state.sync_dispatch_pools_use_case.execute(command, ctx).await {
         UseCaseResult::Success(event) => {
             Ok(Json(SyncResultResponse {
+                application_code: event.application_code,
                 created: event.created,
                 updated: event.updated,
                 deleted: event.deleted,
+                synced_codes: event.synced_codes,
             }))
         }
         UseCaseResult::Failure(err) => Err(err.into()),
@@ -468,9 +478,11 @@ async fn sync_principals(
     match state.sync_principals_use_case.execute(command, ctx).await {
         UseCaseResult::Success(event) => {
             Ok(Json(SyncResultResponse {
+                application_code: event.application_code,
                 created: event.created,
                 updated: event.updated,
                 deleted: event.deactivated,
+                synced_codes: event.synced_emails,
             }))
         }
         UseCaseResult::Failure(err) => Err(err.into()),
@@ -484,17 +496,17 @@ async fn sync_principals(
 /// Create SDK sync router
 ///
 /// Mounts application-scoped sync routes:
-/// - POST /:app_code/roles/sync
-/// - POST /:app_code/event-types/sync
-/// - POST /:app_code/subscriptions/sync
-/// - POST /:app_code/dispatch-pools/sync
-/// - POST /:app_code/principals/sync
+/// - POST /{app_code}/roles/sync
+/// - POST /{app_code}/event-types/sync
+/// - POST /{app_code}/subscriptions/sync
+/// - POST /{app_code}/dispatch-pools/sync
+/// - POST /{app_code}/principals/sync
 pub fn sdk_sync_router(state: SdkSyncState) -> Router {
     Router::new()
-        .route("/:app_code/roles/sync", post(sync_roles))
-        .route("/:app_code/event-types/sync", post(sync_event_types))
-        .route("/:app_code/subscriptions/sync", post(sync_subscriptions))
-        .route("/:app_code/dispatch-pools/sync", post(sync_dispatch_pools))
-        .route("/:app_code/principals/sync", post(sync_principals))
+        .route("/{app_code}/roles/sync", post(sync_roles))
+        .route("/{app_code}/event-types/sync", post(sync_event_types))
+        .route("/{app_code}/subscriptions/sync", post(sync_subscriptions))
+        .route("/{app_code}/dispatch-pools/sync", post(sync_dispatch_pools))
+        .route("/{app_code}/principals/sync", post(sync_principals))
         .with_state(state)
 }

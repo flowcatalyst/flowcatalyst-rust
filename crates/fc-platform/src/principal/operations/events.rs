@@ -643,6 +643,47 @@ impl ApplicationAccessAssigned {
     }
 }
 
+/// Event emitted when a user's password is reset.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordResetCompleted {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub principal_id: String,
+    pub email: String,
+}
+
+impl_domain_event!(PasswordResetCompleted);
+
+impl PasswordResetCompleted {
+    const EVENT_TYPE: &'static str = "platform:iam:user:password-reset-completed";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(
+        principal_id: &str,
+        email: &str,
+    ) -> Self {
+        let event_id = TsidGenerator::generate(EntityType::Event);
+        let subject = format!("platform.user.{}", principal_id);
+        let message_group = format!("platform:user:{}", principal_id);
+        // Password reset is unauthenticated — use "system" as execution context
+        let ctx = ExecutionContext::create("system");
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id, ctx.correlation_id,
+                ctx.causation_id, "system".to_string(),
+            ),
+            principal_id: principal_id.to_string(),
+            email: email.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

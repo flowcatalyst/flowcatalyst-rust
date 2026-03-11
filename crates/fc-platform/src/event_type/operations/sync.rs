@@ -39,6 +39,7 @@ pub struct SyncEventTypesCommand {
 /// Result of a sync operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct SyncEventTypesResult {
     pub event: EventTypesSynced,
     pub created: u32,

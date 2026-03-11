@@ -16,7 +16,7 @@ use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository;
 use crate::application::repository::ApplicationRepository;
 use crate::shared::error::PlatformError;
-use crate::shared::api_common::{CreatedResponse, SuccessResponse};
+use crate::shared::api_common::CreatedResponse;
 use crate::shared::middleware::Authenticated;
 
 // ── Response DTOs ──────────────────────────────────────────────────────────

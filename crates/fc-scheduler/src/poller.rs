@@ -1,54 +1,45 @@
 //! Pending job poller
+//!
+//! Polls for PENDING dispatch jobs, groups by message_group, filters by
+//! dispatch mode and connection status, then submits to the MessageGroupDispatcher
+//! for ordered, semaphore-limited dispatch.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use bson::{doc, Document};
-use mongodb::{Collection, Database, options::FindOptions};
-use tracing::{debug, trace, warn};
+use sea_orm::{
+    DatabaseBackend, DatabaseConnection, FromQueryResult, Statement,
+};
+use tracing::{debug, trace};
 
 use crate::{
-    BlockOnErrorChecker, DispatchJob, DispatchMode, DispatchStatus,
-    MessagePointer, QueueMessage, QueuePublisher, SchedulerConfig, SchedulerError,
+    BlockOnErrorChecker, DispatchJob, DispatchMode,
+    MessageGroupDispatcher, SchedulerConfig, SchedulerError,
 };
-use crate::auth::DispatchAuthService;
 
 const DEFAULT_MESSAGE_GROUP: &str = "default";
 
 #[derive(Clone)]
 pub struct PendingJobPoller {
     config: SchedulerConfig,
-    db: Database,
+    db: DatabaseConnection,
     block_checker: Arc<BlockOnErrorChecker>,
-    queue_publisher: Arc<dyn QueuePublisher>,
-    auth_service: DispatchAuthService,
+    group_dispatcher: Arc<MessageGroupDispatcher>,
 }
 
 impl PendingJobPoller {
     pub fn new(
         config: SchedulerConfig,
-        db: Database,
-        queue_publisher: Arc<dyn QueuePublisher>,
-        auth_service: DispatchAuthService,
+        db: DatabaseConnection,
+        group_dispatcher: Arc<MessageGroupDispatcher>,
     ) -> Self {
         let block_checker = Arc::new(BlockOnErrorChecker::new(db.clone()));
         Self {
             config,
             db,
             block_checker,
-            queue_publisher,
-            auth_service,
+            group_dispatcher,
         }
-    }
-
-    /// Create poller with app key for backward compatibility
-    pub fn new_with_app_key(
-        config: SchedulerConfig,
-        db: Database,
-        queue_publisher: Arc<dyn QueuePublisher>,
-        app_key: Option<String>,
-    ) -> Self {
-        Self::new(config, db, queue_publisher, DispatchAuthService::new(app_key))
     }
 
     pub async fn poll(&self) -> Result<(), SchedulerError> {
@@ -61,12 +52,15 @@ impl PendingJobPoller {
         debug!(count = pending_jobs.len(), "Found pending jobs to process");
         metrics::gauge!("scheduler.pending_jobs").set(pending_jobs.len() as f64);
 
-        let jobs_by_group = self.group_by_message_group(pending_jobs);
+        // Group by message_group
+        let jobs_by_group = Self::group_by_message_group(pending_jobs);
         let groups: HashSet<String> = jobs_by_group.keys().cloned().collect();
-        let blocked_groups = self.block_checker.get_blocked_groups(&groups).await?;
 
+        // Batch check for blocked groups (single query)
+        let blocked_groups = self.block_checker.get_blocked_groups(&groups).await?;
         metrics::gauge!("scheduler.blocked_groups").set(blocked_groups.len() as f64);
 
+        // Process each group
         for (group, jobs) in jobs_by_group {
             if blocked_groups.contains(&group) {
                 debug!(group = %group, count = jobs.len(), "Message group blocked, skipping");
@@ -74,62 +68,54 @@ impl PendingJobPoller {
                 continue;
             }
 
-            let dispatchable = self.filter_by_dispatch_mode(&group, jobs, &blocked_groups);
+            // Filter by dispatch mode
+            let dispatchable = Self::filter_by_dispatch_mode(jobs, &blocked_groups);
             if !dispatchable.is_empty() {
-                debug!(group = %group, count = dispatchable.len(), "Dispatching jobs");
-                self.dispatch_jobs(dispatchable).await?;
+                debug!(group = %group, count = dispatchable.len(), "Submitting jobs for message group");
+                // Submit to the group dispatcher (1-in-flight per group, semaphore-limited)
+                self.group_dispatcher.submit_jobs(&group, dispatchable);
             }
         }
         Ok(())
     }
 
+    /// Query PENDING jobs with proper ordering: message_group, sequence, created_at.
+    /// Optionally filters out jobs for paused connections.
     async fn find_pending_jobs(&self) -> Result<Vec<DispatchJob>, SchedulerError> {
-        let collection: Collection<Document> = self.db.collection("dispatch_jobs");
-        let filter = doc! { "status": "PENDING" };
-        let options = FindOptions::builder().limit(self.config.batch_size as i64).build();
+        let sql = if self.config.connection_filter_enabled {
+            // LEFT JOIN through subscription → connection, exclude jobs where connection is PAUSED
+            "SELECT j.id, j.message_group, j.dispatch_pool_id, j.status, j.mode, j.target_url, \
+                    j.payload, j.sequence, j.created_at, j.updated_at, j.queued_at, j.last_error \
+             FROM msg_dispatch_jobs j \
+             LEFT JOIN msg_subscriptions s ON j.subscription_id = s.id \
+             LEFT JOIN msg_connections c ON s.connection_id = c.id \
+             WHERE j.status = 'PENDING' \
+               AND (c.id IS NULL OR c.status != 'PAUSED') \
+             ORDER BY j.message_group ASC NULLS LAST, j.sequence ASC, j.created_at ASC \
+             LIMIT $1"
+        } else {
+            "SELECT id, message_group, dispatch_pool_id, status, mode, target_url, \
+                    payload, sequence, created_at, updated_at, queued_at, last_error \
+             FROM msg_dispatch_jobs \
+             WHERE status = 'PENDING' \
+             ORDER BY message_group ASC NULLS LAST, sequence ASC, created_at ASC \
+             LIMIT $1"
+        };
 
-        let mut cursor = collection.find(filter).with_options(options).await?;
-        let mut jobs = Vec::new();
-        while cursor.advance().await? {
-            let doc = cursor.deserialize_current()?;
-            if let Ok(job) = self.document_to_job(doc) {
-                jobs.push(job);
-            }
-        }
+        let jobs = DispatchJob::find_by_statement(
+            Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                sql,
+                vec![sea_orm::Value::from(self.config.batch_size as i64)],
+            ),
+        )
+        .all(&self.db)
+        .await?;
+
         Ok(jobs)
     }
 
-    fn document_to_job(&self, doc: Document) -> Result<DispatchJob, SchedulerError> {
-        let id = doc.get_str("_id").unwrap_or_default().to_string();
-        let message_group = doc.get_str("messageGroup").ok().map(|s| s.to_string());
-        let dispatch_pool_id = doc.get_str("dispatchPoolId").ok().map(|s| s.to_string());
-
-        let status = match doc.get_str("status").unwrap_or("PENDING") {
-            "QUEUED" => DispatchStatus::Queued,
-            "PROCESSING" => DispatchStatus::Processing,
-            "COMPLETED" => DispatchStatus::Completed,
-            "ERROR" => DispatchStatus::Error,
-            _ => DispatchStatus::Pending,
-        };
-
-        let mode = DispatchMode::from(doc.get_str("mode").unwrap_or("IMMEDIATE"));
-        let target_url = doc.get_str("targetUrl").ok().map(|s| s.to_string());
-        let payload = doc.get_document("payload").ok().cloned();
-        let error_message = doc.get_str("errorMessage").ok().map(|s| s.to_string());
-
-        let created_at = doc.get_datetime("createdAt")
-            .map(|d| d.to_chrono())
-            .unwrap_or_else(|_| chrono::Utc::now());
-        let updated_at = doc.get_datetime("updatedAt").ok().map(|d| d.to_chrono());
-        let queued_at = doc.get_datetime("queuedAt").ok().map(|d| d.to_chrono());
-
-        Ok(DispatchJob {
-            id, message_group, dispatch_pool_id, status, mode,
-            target_url, payload, created_at, updated_at, queued_at, error_message,
-        })
-    }
-
-    fn group_by_message_group(&self, jobs: Vec<DispatchJob>) -> HashMap<String, Vec<DispatchJob>> {
+    fn group_by_message_group(jobs: Vec<DispatchJob>) -> HashMap<String, Vec<DispatchJob>> {
         let mut grouped: HashMap<String, Vec<DispatchJob>> = HashMap::new();
         for job in jobs {
             let group = job.message_group.clone().unwrap_or_else(|| DEFAULT_MESSAGE_GROUP.to_string());
@@ -138,67 +124,17 @@ impl PendingJobPoller {
         grouped
     }
 
-    fn filter_by_dispatch_mode(&self, group: &str, jobs: Vec<DispatchJob>, blocked_groups: &HashSet<String>) -> Vec<DispatchJob> {
+    fn filter_by_dispatch_mode(jobs: Vec<DispatchJob>, blocked_groups: &HashSet<String>) -> Vec<DispatchJob> {
         jobs.into_iter()
-            .filter(|job| match job.mode {
-                DispatchMode::Immediate => true,
-                DispatchMode::NextOnError | DispatchMode::BlockOnError => !blocked_groups.contains(group),
+            .filter(|job| {
+                let group = job.message_group.as_deref().unwrap_or(DEFAULT_MESSAGE_GROUP);
+                match job.dispatch_mode() {
+                    DispatchMode::Immediate => true,
+                    DispatchMode::NextOnError | DispatchMode::BlockOnError => {
+                        !blocked_groups.contains(group)
+                    }
+                }
             })
             .collect()
-    }
-
-    async fn dispatch_jobs(&self, jobs: Vec<DispatchJob>) -> Result<(), SchedulerError> {
-        let collection: Collection<Document> = self.db.collection("dispatch_jobs");
-
-        for job in jobs {
-            // Generate HMAC auth token
-            let auth_token = match self.auth_service.generate_auth_token(&job.id) {
-                Ok(token) => token,
-                Err(e) => {
-                    warn!(job_id = %job.id, error = %e, "Failed to generate auth token, using fallback");
-                    format!("dev_{}", job.id)
-                }
-            };
-
-            let pointer = MessagePointer {
-                job_id: job.id.clone(),
-                dispatch_pool_id: job.dispatch_pool_id.clone().unwrap_or_else(|| self.config.default_pool_code.clone()),
-                auth_token,
-                mediation_type: "HTTP".to_string(),
-                processing_endpoint: self.config.processing_endpoint.clone(),
-                message_group: job.message_group.clone(),
-                batch_id: None,
-            };
-
-            let message = QueueMessage {
-                id: job.id.clone(),
-                message_group: job.message_group.clone(),
-                deduplication_id: job.id.clone(),
-                body: serde_json::to_string(&pointer)?,
-            };
-
-            metrics::counter!("scheduler.jobs.dispatched_total").increment(1);
-
-            match self.queue_publisher.publish(message).await {
-                Ok(_) => {
-                    let filter = doc! { "_id": &job.id };
-                    let update = doc! {
-                        "$set": {
-                            "status": "QUEUED",
-                            "queuedAt": bson::DateTime::now(),
-                            "updatedAt": bson::DateTime::now()
-                        }
-                    };
-                    collection.update_one(filter, update).await?;
-                    debug!(job_id = %job.id, "Job dispatched");
-                    metrics::counter!("scheduler.jobs.queued_total").increment(1);
-                }
-                Err(e) => {
-                    warn!(job_id = %job.id, error = %e, "Failed to dispatch job");
-                    metrics::counter!("scheduler.jobs.dispatch_errors_total").increment(1);
-                }
-            }
-        }
-        Ok(())
     }
 }
