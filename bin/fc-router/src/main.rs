@@ -236,6 +236,16 @@ async fn main() -> Result<()> {
     // Create circuit breaker registry for endpoint tracking
     let circuit_breaker_registry = Arc::new(CircuitBreakerRegistry::default());
 
+    // Initialize authentication from environment variables
+    let auth_config = fc_router::api::AuthConfig::from_env();
+    let auth_state = if auth_config.mode != fc_router::api::AuthMode::None {
+        info!(mode = ?auth_config.mode, "Authentication configured");
+        Some(fc_router::api::create_auth_state(auth_config))
+    } else {
+        info!("Authentication disabled (AUTH_MODE=NONE or not set)");
+        None
+    };
+
     let app = create_router_with_options(
         publisher,
         queue_manager.clone(),
@@ -247,6 +257,7 @@ async fn main() -> Result<()> {
         None, // stream_health_service
         None, // traffic_strategy
         Some(metrics_handle),
+        auth_state,
     )
     .layer(TraceLayer::new_for_http())
     .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any));

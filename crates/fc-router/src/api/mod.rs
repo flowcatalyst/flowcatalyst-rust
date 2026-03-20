@@ -263,7 +263,7 @@ impl From<QueueMetrics> for QueueMetricsResponse {
 )]
 pub struct ApiDoc;
 
-/// Create the full router with all endpoints
+/// Create the full router with all endpoints (no auth)
 pub fn create_router(
     publisher: Arc<dyn QueuePublisher>,
     queue_manager: Arc<QueueManager>,
@@ -282,10 +282,19 @@ pub fn create_router(
         None,
         None,
         None,
+        None,
     )
 }
 
 /// Create the full router with all endpoints and options
+///
+/// When `auth_state` is provided and the auth mode is not `None`, authentication
+/// middleware is applied to all non-public paths. Public paths (health, metrics,
+/// swagger, auth login/callback/logout) are always accessible without credentials.
+///
+/// If the `oidc-flow` feature is enabled and auth mode is `OidcFlow`, the
+/// `/auth/login`, `/auth/callback`, and `/auth/logout` routes are automatically
+/// merged into the router.
 pub fn create_router_with_options(
     publisher: Arc<dyn QueuePublisher>,
     queue_manager: Arc<QueueManager>,
@@ -297,6 +306,7 @@ pub fn create_router_with_options(
     stream_health_service: Option<Arc<StreamHealthService>>,
     traffic_strategy: Option<Arc<dyn crate::traffic::TrafficStrategy>>,
     metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
+    auth_state: Option<AuthState>,
 ) -> Router {
     let state = AppState {
         publisher,
@@ -311,7 +321,8 @@ pub fn create_router_with_options(
         metrics_handle,
     };
 
-    Router::new()
+    // Public routes — no authentication required
+    let public_routes = Router::new()
         // Swagger UI
         .merge(SwaggerUi::new("/swagger-ui").url("/api-doc/openapi.json", ApiDoc::openapi()))
         // Basic health
@@ -320,12 +331,16 @@ pub fn create_router_with_options(
         // Kubernetes probes
         .route("/health/live", get(liveness_probe))
         .route("/health/ready", get(readiness_probe))
-        .route("/health/startup", get(readiness_probe)) // Same as ready for now
+        .route("/health/startup", get(readiness_probe))
         .route("/q/health/live", get(liveness_probe))
         .route("/q/health/ready", get(readiness_probe))
         // Prometheus metrics
         .route("/metrics", get(metrics_handler))
         .route("/q/metrics", get(metrics_handler))
+        .with_state(state.clone());
+
+    // Protected routes — auth middleware applied when configured
+    let protected_routes = Router::new()
         // Detailed monitoring
         .route("/monitoring", get(monitoring_handler))
         .route("/monitoring/health", get(dashboard_health_handler))
@@ -384,7 +399,38 @@ pub fn create_router_with_options(
         .route("/api/benchmark/reset", post(reset_test_stats))
         // Message publishing
         .route("/messages", post(publish_message))
-        .with_state(state)
+        .with_state(state);
+
+    // Apply auth middleware to protected routes when configured
+    #[allow(unused_mut)]
+    let mut router = if let Some(ref auth) = auth_state {
+        if auth.config.mode != AuthMode::None {
+            info!(mode = ?auth.config.mode, "Authentication enabled for router API");
+            public_routes.merge(
+                protected_routes.layer(axum::middleware::from_fn_with_state(
+                    auth.clone(),
+                    auth_middleware,
+                ))
+            )
+        } else {
+            public_routes.merge(protected_routes)
+        }
+    } else {
+        public_routes.merge(protected_routes)
+    };
+
+    // Merge OIDC flow routes when feature enabled and mode is OidcFlow
+    #[cfg(feature = "oidc-flow")]
+    if let Some(ref auth) = auth_state {
+        if auth.config.mode == AuthMode::OidcFlow {
+            if let Some(ref flow_state) = auth.oidc_flow_state {
+                info!("OIDC authorization code flow routes enabled (/auth/login, /auth/callback, /auth/logout)");
+                router = router.merge(oidc_flow::oidc_flow_routes(flow_state.clone()));
+            }
+        }
+    }
+
+    router
 }
 
 /// Simple state for simple router
