@@ -151,7 +151,8 @@ async fn main() -> Result<()> {
         );
         (config, None)
     } else {
-        // Production mode - fetch config from URL
+        // Production mode - fetch config from URL(s)
+        // Supports comma-separated URLs for multi-platform environments
         let config_url = std::env::var("FLOWCATALYST_CONFIG_URL")
             .map_err(|_| anyhow::anyhow!("FLOWCATALYST_CONFIG_URL is required (or set FLOWCATALYST_DEV_MODE=true)"))?;
 
@@ -162,7 +163,7 @@ async fn main() -> Result<()> {
         let config_sync_config = load_config_sync_config(&config_url);
 
         info!(
-            url = %config_sync_config.config_url,
+            urls = ?config_sync_config.config_urls,
             interval = ?config_sync_config.sync_interval,
             "Initializing configuration sync"
         );
@@ -415,22 +416,17 @@ fn load_notification_config() -> NotificationConfig {
     }
 }
 
-/// Load config sync configuration from environment variables
+/// Load config sync configuration from environment variables.
+/// `config_url` supports comma-separated URLs for multi-platform environments.
 fn load_config_sync_config(config_url: &str) -> ConfigSyncConfig {
     let interval_secs = std::env::var("FLOWCATALYST_CONFIG_INTERVAL")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(300); // 5 minutes default
 
-    ConfigSyncConfig {
-        enabled: true,
-        config_url: config_url.to_string(),
-        sync_interval: Duration::from_secs(interval_secs),
-        max_retry_attempts: 12,
-        retry_delay: Duration::from_secs(5),
-        request_timeout: Duration::from_secs(30),
-        fail_on_initial_sync_error: true,
-    }
+    let mut config = ConfigSyncConfig::new(config_url.to_string());
+    config.sync_interval = Duration::from_secs(interval_secs);
+    config
 }
 
 /// Create development configuration with LocalStack SQS queues

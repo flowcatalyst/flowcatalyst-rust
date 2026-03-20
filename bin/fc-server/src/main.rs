@@ -1003,15 +1003,7 @@ async fn spawn_router(
         }
     } else {
         let config_url = config_url.unwrap();
-        let config_sync_config = fc_router::ConfigSyncConfig {
-            enabled: true,
-            config_url,
-            sync_interval: Duration::from_secs(300),
-            max_retry_attempts: 12,
-            retry_delay: Duration::from_secs(5),
-            request_timeout: Duration::from_secs(30),
-            fail_on_initial_sync_error: true,
-        };
+        let config_sync_config = fc_router::ConfigSyncConfig::new(config_url);
         let sync_service = Arc::new(fc_router::ConfigSyncService::new(
             config_sync_config,
             queue_manager.clone(),

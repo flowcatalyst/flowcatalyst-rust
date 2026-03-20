@@ -19,8 +19,10 @@ pub struct ConfigSyncConfig {
     /// Enable configuration sync
     pub enabled: bool,
 
-    /// URL to fetch configuration from
-    pub config_url: String,
+    /// URLs to fetch configuration from (merged when multiple).
+    /// Pools with the same code are deduplicated (last wins).
+    /// Queues are merged (all included).
+    pub config_urls: Vec<String>,
 
     /// Sync interval (how often to check for config changes)
     pub sync_interval: Duration,
@@ -42,7 +44,7 @@ impl Default for ConfigSyncConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            config_url: String::new(),
+            config_urls: Vec::new(),
             sync_interval: Duration::from_secs(300), // 5 minutes (matches Java)
             max_retry_attempts: 12,                   // 12 attempts (matches Java)
             retry_delay: Duration::from_secs(5),     // 5 seconds between retries
@@ -54,11 +56,21 @@ impl Default for ConfigSyncConfig {
 
 impl ConfigSyncConfig {
     pub fn new(config_url: String) -> Self {
+        let config_urls = config_url
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         Self {
             enabled: true,
-            config_url,
+            config_urls,
             ..Default::default()
         }
+    }
+
+    /// Kept for backwards compatibility — returns the first URL or empty string.
+    pub fn config_url(&self) -> &str {
+        self.config_urls.first().map(|s| s.as_str()).unwrap_or("")
     }
 
     pub fn with_interval(mut self, interval: Duration) -> Self {
@@ -167,23 +179,59 @@ impl ConfigSyncService {
         }
     }
 
-    /// Fetch configuration from the remote service with retry logic
+    /// Fetch configuration from all configured URLs and merge results.
+    /// Each URL is fetched with retry logic. Pools with the same code are
+    /// deduplicated (last wins). Queues from all sources are included.
     pub async fn fetch_config(&self) -> Result<RouterConfig, String> {
+        let mut merged = RouterConfig {
+            processing_pools: Vec::new(),
+            queues: Vec::new(),
+        };
+
+        for url in &self.config.config_urls {
+            let config = self.fetch_config_from_url(url).await?;
+
+            // Merge pools — deduplicate by code (last wins)
+            for pool in config.processing_pools {
+                if let Some(existing) = merged.processing_pools.iter_mut().find(|p| p.code == pool.code) {
+                    *existing = pool;
+                } else {
+                    merged.processing_pools.push(pool);
+                }
+            }
+
+            // Merge queues — include all (different platforms have different queues)
+            merged.queues.extend(config.queues);
+        }
+
+        info!(
+            urls = self.config.config_urls.len(),
+            pools = merged.processing_pools.len(),
+            queues = merged.queues.len(),
+            "Merged configuration from all sources"
+        );
+
+        Ok(merged)
+    }
+
+    /// Fetch configuration from a single URL with retry logic
+    async fn fetch_config_from_url(&self, url: &str) -> Result<RouterConfig, String> {
         let mut last_error = String::new();
 
         for attempt in 1..=self.config.max_retry_attempts {
             debug!(
                 attempt = attempt,
                 max_attempts = self.config.max_retry_attempts,
-                url = %self.config.config_url,
+                url = %url,
                 "Fetching configuration"
             );
 
-            match self.fetch_config_once().await {
+            match self.fetch_config_once(url).await {
                 Ok(config) => {
                     if attempt > 1 {
                         info!(
                             attempt = attempt,
+                            url = %url,
                             "Successfully fetched configuration after retries"
                         );
                     }
@@ -195,6 +243,7 @@ impl ConfigSyncService {
                         warn!(
                             attempt = attempt,
                             max_attempts = self.config.max_retry_attempts,
+                            url = %url,
                             error = %e,
                             retry_delay_secs = self.config.retry_delay.as_secs(),
                             "Failed to fetch config, retrying..."
@@ -207,6 +256,7 @@ impl ConfigSyncService {
 
         error!(
             attempts = self.config.max_retry_attempts,
+            url = %url,
             error = %last_error,
             "Failed to fetch configuration after all retries"
         );
@@ -214,25 +264,39 @@ impl ConfigSyncService {
         Err(last_error)
     }
 
-    /// Single fetch attempt
-    async fn fetch_config_once(&self) -> Result<RouterConfig, String> {
+    /// Single fetch attempt from a specific URL
+    async fn fetch_config_once(&self, url: &str) -> Result<RouterConfig, String> {
         let response = self.http_client
-            .get(&self.config.config_url)
+            .get(url)
             .send()
             .await
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
+            .map_err(|e| format!("HTTP request failed ({}): {}", url, e))?;
 
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
             return Err(format!(
-                "Config service returned status {}",
-                response.status()
+                "Config service returned status {} ({})",
+                status, url
             ));
         }
 
-        let config_response: MessageRouterConfigResponse = response
-            .json()
+        let body = response
+            .text()
             .await
-            .map_err(|e| format!("Failed to parse config response: {}", e))?;
+            .map_err(|e| format!("Failed to read response body ({}): {}", url, e))?;
+
+        debug!(url = %url, body_length = body.len(), "Config response received");
+
+        let config_response: MessageRouterConfigResponse = serde_json::from_str(&body)
+            .map_err(|e| {
+                warn!(
+                    error = %e,
+                    url = %url,
+                    body = %body.chars().take(500).collect::<String>(),
+                    "Failed to parse config response"
+                );
+                format!("Failed to parse config response ({}): {} — body: {}", url, e, &body[..body.len().min(200)])
+            })?;
 
         Ok(config_response.into())
     }
@@ -404,7 +468,7 @@ impl ConfigSyncService {
 
     /// Check if sync is enabled
     pub fn is_enabled(&self) -> bool {
-        self.config.enabled && !self.config.config_url.is_empty()
+        self.config.enabled && !self.config.config_urls.is_empty()
     }
 }
 
