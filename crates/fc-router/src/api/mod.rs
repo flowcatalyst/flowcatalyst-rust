@@ -374,6 +374,21 @@ pub fn create_router_with_options(
 ) -> Router {
     let cached_broker_stats = Arc::new(CachedBrokerStats::new(queue_manager.clone()));
 
+    // Start background refresh — no external wiring needed
+    {
+        let cached = cached_broker_stats.clone();
+        tokio::spawn(async move {
+            // Initial fetch
+            cached.refresh().await;
+
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                ticker.tick().await;
+                cached.refresh().await;
+            }
+        });
+    }
+
     let state = AppState {
         publisher,
         queue_manager,
