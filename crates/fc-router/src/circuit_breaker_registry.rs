@@ -341,6 +341,11 @@ impl CircuitBreakerRegistry {
     /// Evict circuit breakers that have been idle (no calls) for longer than `max_idle`.
     /// Returns the number of breakers evicted.
     pub fn evict_idle(&self, max_idle: Duration) -> usize {
+        // Skip when registry is empty (zero cost)
+        if self.breakers.read().is_empty() {
+            return 0;
+        }
+
         let idle_keys: Vec<String> = {
             let breakers = self.breakers.read();
             breakers

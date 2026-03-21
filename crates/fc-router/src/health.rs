@@ -332,23 +332,34 @@ impl HealthService {
     pub fn remove_stale_entries(&self, active_pool_codes: &[String], active_consumer_ids: &[String]) {
         // Remove pool counters for pools that no longer exist
         {
-            let mut counters = self.pool_counters.write();
-            let before = counters.len();
-            counters.retain(|code, _| active_pool_codes.contains(code));
-            let removed = before - counters.len();
-            if removed > 0 {
-                debug!(removed = removed, "Removed stale pool counter entries");
+            let counters = self.pool_counters.read();
+            // Only take write lock if there's something to remove
+            if counters.keys().any(|code| !active_pool_codes.contains(code)) {
+                drop(counters);
+                let mut counters = self.pool_counters.write();
+                let before = counters.len();
+                counters.retain(|code, _| active_pool_codes.contains(code));
+                let removed = before - counters.len();
+                if removed > 0 {
+                    debug!(removed = removed, "Removed stale pool counter entries");
+                }
             }
         }
 
         // Remove consumer tracking for consumers that no longer exist
         {
-            let mut last_poll = self.consumer_last_poll.write();
-            last_poll.retain(|id, _| active_consumer_ids.contains(id));
+            let last_poll = self.consumer_last_poll.read();
+            if last_poll.keys().any(|id| !active_consumer_ids.contains(id)) {
+                drop(last_poll);
+                self.consumer_last_poll.write().retain(|id, _| active_consumer_ids.contains(id));
+            }
         }
         {
-            let mut running = self.consumer_running.write();
-            running.retain(|id, _| active_consumer_ids.contains(id));
+            let running = self.consumer_running.read();
+            if running.keys().any(|id| !active_consumer_ids.contains(id)) {
+                drop(running);
+                self.consumer_running.write().retain(|id, _| active_consumer_ids.contains(id));
+            }
         }
     }
 }

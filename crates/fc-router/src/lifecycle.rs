@@ -58,9 +58,9 @@ impl Default for LifecycleConfig {
             warning_cleanup_interval: Duration::from_secs(300),  // 5 minutes
             health_report_interval: Duration::from_secs(60),
             consumer_restart_delay: Duration::from_secs(5),
-            reaper_interval: Duration::from_secs(60),
+            reaper_interval: Duration::from_secs(300),              // 5 minutes
             in_pipeline_max_age: Duration::from_secs(900),          // 15 minutes
-            pending_delete_max_age: Duration::from_secs(600),       // 10 minutes
+            pending_delete_max_age: Duration::from_secs(60),        // 1 minute — short so deliberate resends are reprocessed
             circuit_breaker_max_idle: Duration::from_secs(3600),    // 1 hour
         }
     }

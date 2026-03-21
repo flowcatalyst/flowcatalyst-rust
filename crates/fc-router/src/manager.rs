@@ -520,15 +520,19 @@ impl QueueManager {
         // Phase 1: Filter duplicates (takes ownership to avoid cloning payloads)
         let filtered = self.filter_duplicates(messages_to_process);
 
-        // Handle duplicates - defer them (let SQS retry later, original still processing)
-        // This is not an error, just a redelivery due to visibility timeout
-        for dup in filtered.duplicates {
+        // Handle duplicates - no SQS API call needed.
+        // filter_duplicates() already updated the receipt handle in in_pipeline,
+        // so the eventual ACK will use the latest valid handle from this redelivery.
+        // We intentionally do NOT defer/nack here — the message stays in SQS with its
+        // natural visibility timeout. When it expires SQS redelivers, we update the
+        // handle again, and this repeats until processing completes and we ACK with
+        // the latest handle. This matches the Java behavior and avoids a hot
+        // poll-defer loop that inflates SQS metrics and wastes API calls.
+        if !filtered.duplicates.is_empty() {
             debug!(
-                message_id = %dup.message.message.id,
-                pipeline_key = %dup.existing_pipeline_key,
-                "Duplicate message (redelivery), deferring"
+                count = filtered.duplicates.len(),
+                "Duplicate messages (redelivery) — receipt handles updated, no SQS action needed"
             );
-            let _ = consumer.defer(&dup.message.receipt_handle, None).await;
         }
 
         // Handle requeued - these were already completed, ACK them
@@ -1077,36 +1081,46 @@ impl QueueManager {
     /// Also evicts `pending_delete_broker_ids` entries older than `pending_delete_max_age`
     /// (messages that were processed but never re-polled for deletion).
     pub fn reap_stale_entries(&self, max_age: Duration, pending_delete_max_age: Duration) -> (usize, usize) {
-        // Reap stale in_pipeline entries
-        let mut reaped_pipeline = 0;
-        let stale_keys: Vec<String> = self.in_pipeline
-            .iter()
-            .filter(|entry| entry.value().started_at.elapsed() > max_age)
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        for key in &stale_keys {
-            if let Some((_, entry)) = self.in_pipeline.remove(key) {
-                // Also remove the app_message_id mapping
-                self.app_message_to_pipeline_key.remove(&entry.message_id);
-                reaped_pipeline += 1;
-            }
+        // Skip iteration when maps are empty (common case — zero cost)
+        if self.in_pipeline.is_empty() && self.pending_delete_broker_ids.lock().is_empty() {
+            return (0, 0);
         }
 
-        if reaped_pipeline > 0 {
-            warn!(
-                reaped = reaped_pipeline,
-                max_age_seconds = max_age.as_secs(),
-                "Reaped stale in_pipeline entries (likely orphaned by dropped ACK tasks)"
-            );
+        // Reap stale in_pipeline entries
+        let mut reaped_pipeline = 0;
+        if !self.in_pipeline.is_empty() {
+            let stale_keys: Vec<String> = self.in_pipeline
+                .iter()
+                .filter(|entry| entry.value().started_at.elapsed() > max_age)
+                .map(|entry| entry.key().clone())
+                .collect();
+
+            for key in &stale_keys {
+                if let Some((_, entry)) = self.in_pipeline.remove(key) {
+                    self.app_message_to_pipeline_key.remove(&entry.message_id);
+                    reaped_pipeline += 1;
+                }
+            }
+
+            if reaped_pipeline > 0 {
+                warn!(
+                    reaped = reaped_pipeline,
+                    max_age_seconds = max_age.as_secs(),
+                    "Reaped stale in_pipeline entries (likely orphaned by dropped ACK tasks)"
+                );
+            }
         }
 
         // Reap stale pending_delete_broker_ids entries
         let reaped_pending = {
             let mut pending = self.pending_delete_broker_ids.lock();
-            let before = pending.len();
-            pending.retain(|_, inserted_at| inserted_at.elapsed() < pending_delete_max_age);
-            before - pending.len()
+            if pending.is_empty() {
+                0
+            } else {
+                let before = pending.len();
+                pending.retain(|_, inserted_at| inserted_at.elapsed() < pending_delete_max_age);
+                before - pending.len()
+            }
         };
 
         if reaped_pending > 0 {
