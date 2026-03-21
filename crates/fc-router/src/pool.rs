@@ -1,17 +1,17 @@
 //! ProcessPool - Worker pool with FIFO ordering, rate limiting, and concurrency control
 //!
-//! Mirrors the Java ProcessPoolImpl with:
-//! - Per-message-group FIFO ordering
-//! - Semaphore-based concurrency control
-//! - Rate limiting using governor
-//! - Dynamic worker tasks per message group
+//! Uses lightweight per-message-group handlers (VecDeque + processing flag) instead of
+//! dedicated tokio tasks with channels. A task is spawned only when there's work to do
+//! and exits when the group's queue is empty. This matches the TS MessageGroupHandler
+//! pattern and uses ~200 bytes per idle group vs ~100KB with the old design.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 use std::num::NonZeroU32;
 use dashmap::{DashMap, DashSet};
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::Semaphore;
 use governor::{Quota, RateLimiter, state::{NotKeyed, InMemoryState}, clock::DefaultClock};
 use tracing::{info, warn, error, debug};
 
@@ -56,16 +56,49 @@ pub struct PoolTask {
     pub receipt_handle: String,
     pub callback: Box<dyn MessageCallback>,
     pub batch_id: Option<Arc<str>>,
-    /// Pre-computed batch+group key for FIFO tracking (uses tuple to avoid string formatting)
+    /// Pre-computed batch+group key for FIFO tracking
     pub batch_group_key: Option<BatchGroupKey>,
 }
 
-/// Dual-channel pair for high/regular priority routing within a message group.
-/// The worker drains the high channel first (biased select) before checking regular.
-#[derive(Clone)]
-struct PriorityChannels {
-    high: mpsc::Sender<PoolTask>,
-    regular: mpsc::Sender<PoolTask>,
+/// Lightweight per-message-group handler.
+/// Just a queue of pending tasks and a flag — no tokio task, no channels.
+/// A drain task is spawned only when work arrives for an idle group.
+struct MessageGroupHandler {
+    high_priority: VecDeque<PoolTask>,
+    regular: VecDeque<PoolTask>,
+    processing: bool,
+}
+
+impl MessageGroupHandler {
+    fn new() -> Self {
+        Self {
+            high_priority: VecDeque::new(),
+            regular: VecDeque::new(),
+            processing: false,
+        }
+    }
+
+    fn enqueue(&mut self, task: PoolTask, high_priority: bool) {
+        if high_priority {
+            self.high_priority.push_back(task);
+        } else {
+            self.regular.push_back(task);
+        }
+    }
+
+    /// Dequeue next task, high priority first.
+    fn dequeue(&mut self) -> Option<PoolTask> {
+        self.high_priority.pop_front().or_else(|| self.regular.pop_front())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.high_priority.is_empty() && self.regular.is_empty()
+    }
+
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.high_priority.len() + self.regular.len()
+    }
 }
 
 /// Process pool with FIFO ordering and rate limiting
@@ -79,20 +112,16 @@ pub struct ProcessPool {
     /// Pool-level concurrency semaphore
     semaphore: Arc<Semaphore>,
 
-    /// Per-message-group queues for FIFO ordering with priority support (uses Arc<str> to avoid cloning)
-    message_group_queues: DashMap<Arc<str>, PriorityChannels>,
-
-    /// Track active group threads for liveness detection (Java: activeGroupThreads)
-    /// When a worker exits (normally or abnormally), it removes itself from this map
-    active_group_threads: DashSet<Arc<str>>,
+    /// Per-message-group handlers (lightweight: VecDeque + processing flag)
+    group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
 
     /// Track in-flight message groups
     in_flight_groups: DashSet<Arc<str>>,
 
-    /// Batch+group failure tracking for cascading NACKs (uses tuple key to avoid format!())
-    failed_batch_groups: DashSet<BatchGroupKey>,
+    /// Batch+group failure tracking for cascading NACKs
+    failed_batch_groups: Arc<DashSet<BatchGroupKey>>,
 
-    /// Track remaining messages per batch+group for cleanup (Java: batchGroupMessageCount)
+    /// Track remaining messages per batch+group for cleanup
     batch_group_message_count: Arc<DashMap<BatchGroupKey, AtomicU32>>,
 
     /// Rate limiter (optional, behind Arc<RwLock> for sharing with workers and in-place updates)
@@ -139,10 +168,9 @@ impl ProcessPool {
             mediator,
             concurrency: AtomicU32::new(concurrency_val),
             semaphore: Arc::new(Semaphore::new(concurrency_val as usize)),
-            message_group_queues: DashMap::new(),
-            active_group_threads: DashSet::new(),
+            group_handlers: Arc::new(DashMap::new()),
             in_flight_groups: DashSet::new(),
-            failed_batch_groups: DashSet::new(),
+            failed_batch_groups: Arc::new(DashSet::new()),
             batch_group_message_count: Arc::new(DashMap::new()),
             rate_limiter: Arc::new(parking_lot::RwLock::new(rate_limiter)),
             rate_limit_per_minute: Arc::new(parking_lot::RwLock::new(config.rate_limit_per_minute)),
@@ -207,15 +235,14 @@ impl ProcessPool {
         // Increment queue size
         self.queue_size.fetch_add(1, Ordering::SeqCst);
 
-        // Get message group - use Cow to avoid allocation when group_id exists
+        // Get message group
         let group_id: Arc<str> = batch_msg.message.message_group_id
             .as_ref()
             .filter(|s| !s.is_empty())
             .map(|s| Arc::from(s.as_str()))
             .unwrap_or_else(|| Arc::from(DEFAULT_GROUP));
 
-        // Track batch+group message count for cleanup (Java: batchGroupMessageCount)
-        // Uses BatchGroupKey tuple instead of format!() to avoid string allocation
+        // Track batch+group message count for cleanup
         let batch_group_key = batch_msg.batch_id.as_ref()
             .map(|batch_id| BatchGroupKey::new(batch_id, &group_id));
 
@@ -224,7 +251,6 @@ impl ProcessPool {
                 .entry(key.clone())
                 .or_insert_with(|| AtomicU32::new(0))
                 .fetch_add(1, Ordering::SeqCst);
-            debug!(batch_id = %key.batch_id, group_id = %key.group_id, "Tracking message in batch+group");
         }
 
         // Check if batch+group has failed (early check before queueing)
@@ -238,22 +264,13 @@ impl ProcessPool {
                 );
                 self.queue_size.fetch_sub(1, Ordering::SeqCst);
                 self.decrement_and_cleanup_batch_group(key);
-                // Java: setFastFailVisibility = 10 seconds for batch+group failure NACKs
                 batch_msg.callback.nack(Some(10)).await;
                 return Ok(());
             }
         }
 
-        // Get or create group queue and worker
-        let channels = self.get_or_create_group_queue(&group_id);
-
-        // Clone batch_group_key before moving into task (for error handling)
-        let batch_group_key_for_error = batch_group_key.clone();
-
-        // Route to high or regular channel based on priority
         let is_high_priority = batch_msg.message.high_priority;
 
-        // Send to group queue
         let task = PoolTask {
             message: batch_msg.message,
             receipt_handle: batch_msg.receipt_handle,
@@ -262,113 +279,32 @@ impl ProcessPool {
             batch_group_key,
         };
 
-        let send_result = if is_high_priority {
-            channels.high.send(task).await
-        } else {
-            channels.regular.send(task).await
+        // Enqueue to group handler and spawn drain task if idle
+        let should_spawn = {
+            let entry = self.group_handlers
+                .entry(Arc::clone(&group_id))
+                .or_insert_with(|| parking_lot::Mutex::new(MessageGroupHandler::new()));
+            let mut handler = entry.lock();
+
+            handler.enqueue(task, is_high_priority);
+
+            if !handler.processing {
+                handler.processing = true;
+                true
+            } else {
+                false
+            }
         };
 
-        if let Err(e) = send_result {
-            // Channel closed - worker exited during idle timeout, race condition
-            // Remove stale entry and retry with a fresh queue/worker
-            debug!(
-                error = %e,
-                group_id = %group_id,
-                "Group channel closed (idle worker exited), retrying with new worker"
-            );
-            self.message_group_queues.remove(&group_id);
-
-            let new_channels = self.get_or_create_group_queue(&group_id);
-            let retry_task = PoolTask {
-                message: e.0.message,
-                receipt_handle: e.0.receipt_handle,
-                callback: e.0.callback,
-                batch_id: e.0.batch_id,
-                batch_group_key: e.0.batch_group_key,
-            };
-
-            let retry_result = if is_high_priority {
-                new_channels.high.send(retry_task).await
-            } else {
-                new_channels.regular.send(retry_task).await
-            };
-
-            if let Err(e2) = retry_result {
-                error!(error = %e2, group_id = %group_id, "Failed to send to group queue on retry");
-                self.queue_size.fetch_sub(1, Ordering::SeqCst);
-                if let Some(ref key) = batch_group_key_for_error {
-                    self.decrement_and_cleanup_batch_group(key);
-                }
-            }
+        if should_spawn {
+            self.spawn_drain_task(group_id);
         }
 
         Ok(())
     }
 
-    /// Get or create a message group queue and worker
-    /// Mirrors Java's pattern: get queue, check thread liveness, restart if dead
-    fn get_or_create_group_queue(&self, group_id: &Arc<str>) -> PriorityChannels {
-        // Check if queue exists AND thread is alive
-        let mut is_restart = false;
-        if let Some(channels) = self.message_group_queues.get(group_id) {
-            if self.active_group_threads.contains(group_id) {
-                // Queue exists and worker is alive - return existing channels
-                return channels.clone();
-            }
-            // Queue exists but worker is dead - fall through to recreate
-            is_restart = true;
-            drop(channels); // Release the DashMap guard before removing
-        }
-
-        // Either queue doesn't exist, or worker is dead - create fresh channels and start worker
-        // Remove any stale entry first
-        self.message_group_queues.remove(group_id);
-
-        // Generate warning on worker restart (Java: GROUP_THREAD_RESTART)
-        if is_restart {
-            warn!(
-                group_id = %group_id,
-                pool_code = %self.config.code,
-                "Virtual thread for message group appears to have died - restarting"
-            );
-            if let Some(ref ws) = self.warning_service {
-                use fc_common::{WarningCategory, WarningSeverity};
-                ws.add_warning(
-                    WarningCategory::PoolHealth,
-                    WarningSeverity::Warn,
-                    format!("Virtual thread for group [{}] in pool [{}] died and was restarted",
-                        group_id, self.config.code),
-                    format!("ProcessPool:{}", self.config.code),
-                );
-            }
-        }
-
-        let (high_tx, high_rx) = mpsc::channel(100);
-        let (regular_tx, regular_rx) = mpsc::channel(100);
-        let channels = PriorityChannels {
-            high: high_tx,
-            regular: regular_tx,
-        };
-        self.message_group_queues.insert(Arc::clone(group_id), channels.clone());
-
-        // Start the worker with both receivers
-        self.start_group_worker(group_id, high_rx, regular_rx);
-
-        channels
-    }
-
-    /// Start a dedicated worker task for a message group
-    /// Called when creating a new group or restarting a dead worker
-    fn start_group_worker(
-        &self,
-        group_id: &Arc<str>,
-        high_rx: mpsc::Receiver<PoolTask>,
-        regular_rx: mpsc::Receiver<PoolTask>,
-    ) {
-        // Mark thread as active BEFORE spawning (Java pattern)
-        self.active_group_threads.insert(Arc::clone(group_id));
-
-        let group_id_clone = Arc::clone(group_id);
+    /// Spawn a task that drains all queued messages for a group, then exits.
+    fn spawn_drain_task(&self, group_id: Arc<str>) {
         let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
         let semaphore = self.semaphore.clone();
         let mediator = self.mediator.clone();
@@ -377,140 +313,76 @@ impl ProcessPool {
         let in_flight_groups = self.in_flight_groups.clone();
         let failed_batch_groups = self.failed_batch_groups.clone();
         let batch_group_message_count = self.batch_group_message_count.clone();
-        let rate_limiter = self.rate_limiter.clone(); // Share Arc with worker for config updates
-        let message_group_queues = self.message_group_queues.clone();
-        let active_group_threads = self.active_group_threads.clone();
+        let rate_limiter = self.rate_limiter.clone();
+        let group_handlers = self.group_handlers.clone();
         let metrics_collector = self.metrics_collector.clone();
-        let warning_service = self.warning_service.clone();
-
-        debug!(group_id = %group_id, pool_code = %self.config.code, "Spawning group worker task");
 
         tokio::spawn(async move {
-            Self::run_group_worker(
-                group_id_clone,
-                pool_code,
-                high_rx,
-                regular_rx,
-                semaphore,
-                mediator,
-                queue_size,
-                active_workers,
-                in_flight_groups,
-                failed_batch_groups,
-                batch_group_message_count,
-                rate_limiter,
-                message_group_queues,
-                active_group_threads,
-                metrics_collector,
-                warning_service,
-            ).await;
-        });
-    }
+            debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task started");
 
-    /// Worker loop for a message group with priority support.
-    /// Uses biased select to always drain high-priority messages first.
-    async fn run_group_worker(
-        group_id: Arc<str>,
-        pool_code: Arc<str>,
-        mut high_rx: mpsc::Receiver<PoolTask>,
-        mut regular_rx: mpsc::Receiver<PoolTask>,
-        semaphore: Arc<Semaphore>,
-        mediator: Arc<dyn Mediator>,
-        queue_size: Arc<AtomicU32>,
-        active_workers: Arc<AtomicU32>,
-        in_flight_groups: DashSet<Arc<str>>,
-        failed_batch_groups: DashSet<BatchGroupKey>,
-        batch_group_message_count: Arc<DashMap<BatchGroupKey, AtomicU32>>,
-        rate_limiter: Arc<parking_lot::RwLock<Option<Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>>,
-        message_group_queues: DashMap<Arc<str>, PriorityChannels>,
-        active_group_threads: DashSet<Arc<str>>,
-        metrics_collector: Arc<PoolMetricsCollector>,
-        warning_service: Option<Arc<crate::warning::WarningService>>,
-    ) {
-        debug!(group_id = %group_id, pool_code = %pool_code, "Group worker started");
-
-        // Idle timeout for cleanup
-        let idle_timeout = Duration::from_secs(10); // 10 seconds — clean up quickly after last message
-
-        loop {
-            // Biased select: always drain high-priority messages before regular ones.
-            // The idle timeout only applies to the regular branch — if both channels
-            // are empty after the timeout, the worker cleans up and exits.
-            let task = tokio::select! {
-                biased;
-                result = high_rx.recv() => {
-                    match result {
-                        Some(t) => t,
-                        None => {
-                            debug!(group_id = %group_id, "High priority channel closed, exiting");
-                            break;
-                        }
-                    }
-                }
-                result = tokio::time::timeout(idle_timeout, regular_rx.recv()) => {
-                    match result {
-                        Ok(Some(t)) => t,
-                        Ok(None) => {
-                            debug!(group_id = %group_id, "Regular channel closed, exiting");
-                            break;
-                        }
-                        Err(_) => {
-                            // Idle timeout - cleanup only if BOTH channels are empty
-                            if high_rx.is_empty() && regular_rx.is_empty() {
-                                debug!(group_id = %group_id, "Group idle timeout, cleaning up");
-                                message_group_queues.remove(&group_id);
-                                break;
+            loop {
+                // Dequeue next task (lock is held only for the dequeue, dropped before any await)
+                let dequeue_result = {
+                    let handler_entry = group_handlers.get(&group_id);
+                    match handler_entry {
+                        Some(entry) => {
+                            let mut handler = entry.lock();
+                            match handler.dequeue() {
+                                Some(task) => Some(task),
+                                None => {
+                                    handler.processing = false;
+                                    None
+                                }
                             }
-                            continue;
                         }
+                        None => None,
                     }
-                }
-            };
+                }; // Lock dropped here
 
-            // Decrement queue size
-            queue_size.fetch_sub(1, Ordering::SeqCst);
+                // Check for failed batch+group OUTSIDE the lock
+                let task = match dequeue_result {
+                    Some(task) => {
+                        if let Some(ref key) = task.batch_group_key {
+                            if failed_batch_groups.contains(key) {
+                                queue_size.fetch_sub(1, Ordering::SeqCst);
+                                Self::decrement_and_cleanup_batch_group_static(
+                                    key,
+                                    &batch_group_message_count,
+                                    &failed_batch_groups,
+                                );
+                                task.callback.nack(Some(10)).await;
+                                continue;
+                            }
+                        }
+                        Some(task)
+                    }
+                    None => None,
+                };
 
-            // Check if batch+group has already failed AFTER polling (Java: line 548)
-            // This catches messages that were queued before a failure occurred
-            if let Some(ref batch_group_key) = task.batch_group_key {
-                if failed_batch_groups.contains(batch_group_key) {
-                    warn!(
-                        message_id = %task.message.id,
-                        batch_group = %batch_group_key,
-                        "Message from failed batch+group, NACKing to preserve FIFO ordering"
-                    );
-                    Self::decrement_and_cleanup_batch_group_static(
-                        batch_group_key,
-                        &batch_group_message_count,
-                        &failed_batch_groups,
-                    );
-                    // Java: setFastFailVisibility = 10 seconds for batch+group failure NACKs
-                    task.callback.nack(Some(10)).await;
-                    continue;
-                }
-            }
+                let task = match task {
+                    Some(t) => t,
+                    None => {
+                        // Clean up empty handler from map
+                        // Only remove if still empty (another submit might have raced)
+                        if let Some(entry) = group_handlers.get(&group_id) {
+                            let handler = entry.lock();
+                            if handler.is_empty() && !handler.processing {
+                                drop(handler);
+                                drop(entry);
+                                group_handlers.remove(&group_id);
+                            }
+                        }
+                        debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task exited");
+                        break;
+                    }
+                };
 
-            // Wait for rate limit permit (with timeout to prevent stall)
-            let got_permit = Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
-            if !got_permit {
-                // Timed out waiting for rate limit permit — NACK back to SQS for later retry
-                if let Some(ref key) = task.batch_group_key {
-                    Self::decrement_and_cleanup_batch_group_static(
-                        key,
-                        &batch_group_message_count,
-                        &failed_batch_groups,
-                    );
-                }
-                task.callback.nack(Some(10)).await;
-                continue;
-            }
+                // Decrement queue size
+                queue_size.fetch_sub(1, Ordering::SeqCst);
 
-            // Acquire semaphore permit
-            let permit = match semaphore.acquire().await {
-                Ok(p) => p,
-                Err(_) => {
-                    error!("Semaphore closed");
-                    // Decrement batch+group count on semaphore error
+                // Wait for rate limit permit (with timeout to prevent stall)
+                let got_permit = Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
+                if !got_permit {
                     if let Some(ref key) = task.batch_group_key {
                         Self::decrement_and_cleanup_batch_group_static(
                             key,
@@ -519,126 +391,111 @@ impl ProcessPool {
                         );
                     }
                     task.callback.nack(Some(10)).await;
-                    break;
+                    continue;
                 }
-            };
 
-            active_workers.fetch_add(1, Ordering::SeqCst);
-            in_flight_groups.insert(group_id.clone());
-
-            // Process the message
-            let start = std::time::Instant::now();
-            let outcome = mediator.mediate(&task.message).await;
-            let duration_ms = start.elapsed().as_millis() as u64;
-
-            // Handle outcome: record metrics, call callback directly (no channel)
-            match outcome.result {
-                MediationResult::Success => {
-                    debug!(
-                        message_id = %task.message.id,
-                        duration_ms = duration_ms,
-                        "Message processed successfully"
-                    );
-                    metrics_collector.record_success(duration_ms);
-                    task.callback.ack().await;
-                }
-                MediationResult::ErrorConfig => {
-                    warn!(
-                        message_id = %task.message.id,
-                        error = ?outcome.error_message,
-                        "Configuration error, ACKing to prevent retry"
-                    );
-                    metrics_collector.record_failure(duration_ms);
-                    task.callback.ack().await;
-                }
-                MediationResult::ErrorProcess => {
-                    warn!(
-                        message_id = %task.message.id,
-                        error = ?outcome.error_message,
-                        "Transient error, NACKing for retry"
-                    );
-                    metrics_collector.record_transient(duration_ms);
-
-                    // Mark batch+group as failed to trigger cascading NACKs
-                    if let Some(ref key) = task.batch_group_key {
-                        let was_new = failed_batch_groups.insert(key.clone());
-                        if was_new {
-                            warn!(
-                                batch_group = %key,
-                                "Batch+group marked as failed - remaining messages will be NACKed"
+                // Acquire semaphore permit
+                let permit = match semaphore.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        error!("Semaphore closed");
+                        if let Some(ref key) = task.batch_group_key {
+                            Self::decrement_and_cleanup_batch_group_static(
+                                key,
+                                &batch_group_message_count,
+                                &failed_batch_groups,
                             );
                         }
+                        task.callback.nack(Some(10)).await;
+                        break;
                     }
+                };
 
-                    task.callback.nack(outcome.delay_seconds).await;
-                }
-                MediationResult::ErrorConnection => {
-                    warn!(
-                        message_id = %task.message.id,
-                        error = ?outcome.error_message,
-                        "Connection error, NACKing for retry"
-                    );
-                    metrics_collector.record_failure(duration_ms);
+                active_workers.fetch_add(1, Ordering::SeqCst);
+                in_flight_groups.insert(group_id.clone());
 
-                    // Mark batch+group as failed to trigger cascading NACKs
-                    if let Some(ref key) = task.batch_group_key {
-                        let was_new = failed_batch_groups.insert(key.clone());
-                        if was_new {
-                            warn!(
-                                batch_group = %key,
-                                "Batch+group marked as failed - remaining messages will be NACKed"
-                            );
+                // Process the message
+                let start = std::time::Instant::now();
+                let outcome = mediator.mediate(&task.message).await;
+                let duration_ms = start.elapsed().as_millis() as u64;
+
+                // Handle outcome: record metrics, call callback directly
+                match outcome.result {
+                    MediationResult::Success => {
+                        debug!(
+                            message_id = %task.message.id,
+                            duration_ms = duration_ms,
+                            "Message processed successfully"
+                        );
+                        metrics_collector.record_success(duration_ms);
+                        task.callback.ack().await;
+                    }
+                    MediationResult::ErrorConfig => {
+                        warn!(
+                            message_id = %task.message.id,
+                            error = ?outcome.error_message,
+                            "Configuration error, ACKing to prevent retry"
+                        );
+                        metrics_collector.record_failure(duration_ms);
+                        task.callback.ack().await;
+                    }
+                    MediationResult::ErrorProcess => {
+                        warn!(
+                            message_id = %task.message.id,
+                            error = ?outcome.error_message,
+                            "Transient error, NACKing for retry"
+                        );
+                        metrics_collector.record_transient(duration_ms);
+
+                        if let Some(ref key) = task.batch_group_key {
+                            let was_new = failed_batch_groups.insert(key.clone());
+                            if was_new {
+                                warn!(
+                                    batch_group = %key,
+                                    "Batch+group marked as failed - remaining messages will be NACKed"
+                                );
+                            }
                         }
+
+                        task.callback.nack(outcome.delay_seconds).await;
                     }
+                    MediationResult::ErrorConnection => {
+                        warn!(
+                            message_id = %task.message.id,
+                            error = ?outcome.error_message,
+                            "Connection error, NACKing for retry"
+                        );
+                        metrics_collector.record_failure(duration_ms);
 
-                    // Java: visibilityControl.resetVisibilityToDefault = 30 seconds
-                    task.callback.nack(Some(30)).await;
+                        if let Some(ref key) = task.batch_group_key {
+                            let was_new = failed_batch_groups.insert(key.clone());
+                            if was_new {
+                                warn!(
+                                    batch_group = %key,
+                                    "Batch+group marked as failed - remaining messages will be NACKed"
+                                );
+                            }
+                        }
+
+                        task.callback.nack(Some(30)).await;
+                    }
+                };
+
+                // Decrement batch+group count and cleanup if done
+                if let Some(ref key) = task.batch_group_key {
+                    Self::decrement_and_cleanup_batch_group_static(
+                        key,
+                        &batch_group_message_count,
+                        &failed_batch_groups,
+                    );
                 }
-            };
 
-            // Decrement batch+group count and cleanup if done (Java: decrementAndCleanupBatchGroup)
-            if let Some(ref key) = task.batch_group_key {
-                Self::decrement_and_cleanup_batch_group_static(
-                    key,
-                    &batch_group_message_count,
-                    &failed_batch_groups,
-                );
+                // Cleanup
+                in_flight_groups.remove(&group_id);
+                active_workers.fetch_sub(1, Ordering::SeqCst);
+                drop(permit);
             }
-
-            // Cleanup
-            in_flight_groups.remove(&group_id);
-            active_workers.fetch_sub(1, Ordering::SeqCst);
-            drop(permit);
-        }
-
-        // Worker exiting - remove from active threads so it can be restarted if needed
-        active_group_threads.remove(&group_id);
-
-        // Java: GROUP_THREAD_EXIT_WITH_MESSAGES warning — if the pool is still running
-        // and messages remain in the queues, the worker exited abnormally (not via idle timeout).
-        // The next submit() for this group will detect orphaned messages and restart the worker.
-        let has_orphaned = !high_rx.is_empty() || !regular_rx.is_empty();
-        if has_orphaned {
-            let orphan_count = high_rx.len() + regular_rx.len();
-            warn!(
-                group_id = %group_id,
-                pool_code = %pool_code,
-                orphaned_messages = orphan_count,
-                "Group worker exited with messages still in its queue"
-            );
-            if let Some(ref ws) = warning_service {
-                use fc_common::{WarningCategory, WarningSeverity};
-                ws.add_warning(
-                    WarningCategory::PoolHealth,
-                    WarningSeverity::Warn,
-                    format!("Group worker [{}] in pool [{}] exited with {} orphaned message(s)",
-                        group_id, pool_code, orphan_count),
-                    format!("ProcessPool:{}", pool_code),
-                );
-            }
-        }
-
-        debug!(group_id = %group_id, pool_code = %pool_code, "Group worker exited");
+        });
     }
 
     /// Decrement batch+group message count and cleanup tracking maps when count reaches zero.
@@ -652,14 +509,12 @@ impl ProcessPool {
     }
 
     /// Decrement batch+group message count and cleanup tracking maps when count reaches zero.
-    /// Static version for use in worker tasks.
+    /// Static version for use in drain tasks.
     fn decrement_and_cleanup_batch_group_static(
         batch_group_key: &BatchGroupKey,
         batch_group_message_count: &DashMap<BatchGroupKey, AtomicU32>,
         failed_batch_groups: &DashSet<BatchGroupKey>,
     ) {
-        // Use get() to decrement, then check if we should cleanup
-        // IMPORTANT: We must drop the Ref guard before calling remove() to avoid deadlock
         let should_cleanup = if let Some(counter) = batch_group_message_count.get(batch_group_key) {
             let remaining = counter.fetch_sub(1, Ordering::SeqCst).saturating_sub(1);
             debug!(batch_group = %batch_group_key, remaining = remaining, "Batch+group count decremented");
@@ -667,10 +522,8 @@ impl ProcessPool {
         } else {
             false
         };
-        // Ref guard is now dropped, safe to mutate
 
         if should_cleanup {
-            // All messages in this batch+group have been processed - cleanup
             batch_group_message_count.remove(batch_group_key);
             failed_batch_groups.remove(batch_group_key);
             debug!(batch_group = %batch_group_key, "Batch+group fully processed, cleaned up");
@@ -697,8 +550,6 @@ impl ProcessPool {
     }
 
     /// Maximum time to wait for a rate limit permit before giving up.
-    /// Matches TS RateLimiterQueue overflow behavior — if we can't get a permit
-    /// within this window, return false so the caller can NACK the message.
     const RATE_LIMIT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
     /// Waits for a rate limit permit, with a timeout to prevent indefinite blocking.
@@ -711,17 +562,15 @@ impl ProcessPool {
         let started = std::time::Instant::now();
 
         loop {
-            // Read current rate limiter (may have changed via config update)
             let limiter = rate_limiter.read().clone();
 
             match limiter {
-                None => return true, // No rate limiting configured, proceed immediately
+                None => return true,
                 Some(rl) => {
                     if rl.check().is_ok() {
-                        return true; // Got permit, proceed with processing
+                        return true;
                     }
 
-                    // Check timeout — don't block forever
                     if started.elapsed() > Self::RATE_LIMIT_WAIT_TIMEOUT {
                         metrics_collector.record_rate_limited();
                         warn!("Rate limit wait timeout after {}s — NACKing message",
@@ -729,14 +578,12 @@ impl ProcessPool {
                         return false;
                     }
 
-                    // Record rate limit event once per wait (not every poll)
                     if !recorded_rate_limit {
                         metrics_collector.record_rate_limited();
                         recorded_rate_limit = true;
                         debug!("Rate limited - waiting for permit");
                     }
 
-                    // No permit available - wait briefly then re-check
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
@@ -773,7 +620,7 @@ impl ProcessPool {
                 current_concurrency * QUEUE_CAPACITY_MULTIPLIER,
                 MIN_QUEUE_CAPACITY,
             ),
-            message_group_count: self.message_group_queues.len() as u32,
+            message_group_count: self.group_handlers.len() as u32,
             rate_limit_per_minute: *self.rate_limit_per_minute.read(),
             is_rate_limited: self.is_rate_limited(),
             metrics: Some(self.metrics_collector.get_metrics()),
@@ -816,9 +663,6 @@ impl ProcessPool {
     }
 
     /// Update concurrency at runtime
-    /// Mirrors Java's updateConcurrency behavior:
-    /// - Increase: Immediately releases permits to semaphore
-    /// - Decrease: Tries to acquire excess permits with timeout
     pub async fn update_concurrency(&self, new_concurrency: u32) -> bool {
         let old_concurrency = self.concurrency.load(Ordering::SeqCst);
         if new_concurrency == old_concurrency {
@@ -833,7 +677,6 @@ impl ProcessPool {
         let diff = (new_concurrency as i32) - (old_concurrency as i32);
 
         if diff > 0 {
-            // Increasing concurrency - add permits immediately
             self.semaphore.add_permits(diff as usize);
             self.concurrency.store(new_concurrency, Ordering::SeqCst);
             info!(
@@ -845,15 +688,11 @@ impl ProcessPool {
             );
             true
         } else {
-            // Decreasing concurrency - try to acquire excess permits with timeout
-            // This mirrors Java's semaphore.tryAcquire(permitDifference, timeoutSeconds, TimeUnit.SECONDS)
             let permits_to_acquire = (-diff) as usize;
-            let timeout = Duration::from_secs(60); // 60 second timeout like Java
+            let timeout = Duration::from_secs(60);
 
             match tokio::time::timeout(timeout, self.acquire_permits(permits_to_acquire)).await {
                 Ok(permits) => {
-                    // Successfully acquired permits - now "forget" them to reduce capacity
-                    // (Tokio semaphore doesn't have a remove_permits, so we just hold them forever)
                     std::mem::forget(permits);
                     self.concurrency.store(new_concurrency, Ordering::SeqCst);
                     info!(
@@ -866,7 +705,6 @@ impl ProcessPool {
                     true
                 }
                 Err(_) => {
-                    // Timeout - keep current limit
                     warn!(
                         pool_code = %self.config.code,
                         old = old_concurrency,
@@ -891,19 +729,16 @@ impl ProcessPool {
     }
 
     /// Update rate limit at runtime
-    /// Atomically replaces the rate limiter (mirrors Java's updateRateLimit)
     pub fn update_rate_limit(&self, new_rate_limit: Option<u32>) {
         let old_rate_limit = *self.rate_limit_per_minute.read();
 
-        // Check if actually changed
         if old_rate_limit == new_rate_limit {
             return;
         }
 
-        // Create new rate limiter
         let new_limiter = new_rate_limit.and_then(|rpm| {
             if rpm == 0 {
-                None // Disable rate limiting
+                None
             } else {
                 NonZeroU32::new(rpm).map(|nz| {
                     Arc::new(RateLimiter::direct(Quota::per_minute(nz)))
@@ -911,7 +746,6 @@ impl ProcessPool {
             }
         });
 
-        // Atomically replace
         *self.rate_limiter.write() = new_limiter;
         *self.rate_limit_per_minute.write() = new_rate_limit;
 
@@ -933,7 +767,6 @@ pub struct PoolConfigUpdate {
     pub rate_limit_per_minute: Option<Option<u32>>,
 }
 
-/// Builder for creating pool configuration updates
 impl PoolConfigUpdate {
     pub fn new() -> Self {
         Self {
