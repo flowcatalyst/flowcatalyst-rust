@@ -651,37 +651,38 @@ impl QueueManager {
                     let app_message_to_pipeline_key = self.app_message_to_pipeline_key.clone();
                     let pending_delete = self.pending_delete_broker_ids.clone();
 
-                    // Spawn task to handle callback from pool
-                    // Uses latest receipt handle from in_pipeline in case of SQS redelivery
+                    // Spawn task to handle callback from pool.
+                    // Mirrors TS pattern: read latest receipt handle AFTER processing completes,
+                    // perform SQS operation, THEN remove from in_pipeline. This closes the race
+                    // where a redelivery arrives between removal and SQS ACK and gets reprocessed.
                     tokio::spawn(async move {
-                        // Get the latest receipt handle and broker message ID (may have been updated on redelivery)
+                        // Wait for ACK/NACK from pool
+                        let ack_result = ack_rx.await;
+
+                        // Read the latest receipt handle AFTER processing completes.
+                        // Redeliveries during processing update this via filter_duplicates.
                         let (current_handle, current_broker_id) = in_pipeline
                             .get(&pipeline_key_clone)
                             .map(|entry| (entry.receipt_handle.clone(), entry.broker_message_id.clone()))
                             .unwrap_or((receipt_handle_for_callback, broker_message_id));
 
-                        // Wait for ACK/NACK from pool
-                        let ack_result = ack_rx.await;
-
-                        // Cleanup from in-flight tracking IMMEDIATELY after receiving signal
-                        // This ensures messages don't appear stuck even if subsequent SQS calls fail/timeout
-                        in_pipeline.remove(&pipeline_key_clone);
-                        app_message_to_pipeline_key.remove(&app_message_id_clone);
-
-                        // Now perform SQS operations (fire-and-forget style for cleanup)
+                        // Perform SQS operation FIRST, then remove from in_pipeline.
+                        // This ensures the message stays in in_pipeline (caught by dedup) until
+                        // SQS has accepted the ACK/NACK or we've recorded it in pending_delete.
                         match ack_result {
                             Ok(AckNack::Ack) => {
                                 if let Err(e) = consumer_clone.ack(&current_handle).await {
-                                    // ACK failed - likely receipt handle expired
-                                    // Add broker message ID to pending delete so it gets deleted on next poll
-                                    if let Some(broker_id) = current_broker_id {
+                                    // ACK failed - likely receipt handle expired.
+                                    // Add to pending_delete BEFORE removing from in_pipeline
+                                    // so there is no window where the message is in neither map.
+                                    if let Some(ref broker_id) = current_broker_id {
                                         warn!(
                                             broker_message_id = %broker_id,
                                             app_message_id = %app_message_id_clone,
                                             error = %e,
                                             "ACK failed (receipt handle likely expired) - adding to pending delete"
                                         );
-                                        pending_delete.lock().insert(broker_id, Instant::now());
+                                        pending_delete.lock().insert(broker_id.clone(), Instant::now());
                                     } else {
                                         error!(
                                             app_message_id = %app_message_id_clone,
@@ -702,6 +703,10 @@ impl QueueManager {
                                 let _ = consumer_clone.nack(&current_handle, None).await;
                             }
                         }
+
+                        // NOW remove from tracking — SQS operation is done (or pending_delete is set)
+                        in_pipeline.remove(&pipeline_key_clone);
+                        app_message_to_pipeline_key.remove(&app_message_id_clone);
                     });
 
                     // Actually submit to pool
@@ -925,8 +930,8 @@ impl QueueManager {
                                     }
                                 }
                                 Ok(_) => {
-                                    // No messages, brief pause
-                                    tokio::time::sleep(Duration::from_millis(100)).await;
+                                    // No messages — SQS long poll already waited (up to 10s),
+                                    // so no additional delay needed. Matches TS EMPTY_BATCH_DELAY_MS = 0.
                                 }
                                 Err(e) => {
                                     error!(error = %e, consumer = %consumer.identifier(), "Error polling");
