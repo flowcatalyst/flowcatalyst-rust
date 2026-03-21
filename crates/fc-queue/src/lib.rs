@@ -70,10 +70,16 @@ pub trait QueueConsumer: Send + Sync {
     /// Stop the consumer
     async fn stop(&self);
 
-    /// Get queue metrics (pending/in-flight message counts)
-    /// Returns None if metrics are not available for this queue type
+    /// Get queue metrics (pending/in-flight message counts) — calls SQS API.
+    /// Returns None if metrics are not available for this queue type.
     async fn get_metrics(&self) -> Result<Option<QueueMetrics>> {
         Ok(None) // Default implementation returns None
+    }
+
+    /// Get just the counter metrics (polled/acked/nacked/deferred) without calling SQS API.
+    /// These are instant atomic reads. Returns None if not supported.
+    fn get_counters(&self) -> Option<QueueMetrics> {
+        None
     }
 }
 

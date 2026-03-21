@@ -1430,6 +1430,20 @@ impl QueueManager {
         metrics
     }
 
+    /// Get counter metrics only (no SQS API call — instant atomic reads)
+    pub async fn get_queue_metrics_counters_only(&self) -> Vec<QueueMetrics> {
+        let consumers = self.consumers.read().await;
+        let mut metrics = Vec::with_capacity(consumers.len());
+
+        for (_id, consumer) in consumers.iter() {
+            if let Some(m) = consumer.get_counters() {
+                metrics.push(m);
+            }
+        }
+
+        metrics
+    }
+
     /// Get in-flight messages (currently being processed)
     /// Returns messages sorted by elapsed time (oldest first)
     pub fn get_in_flight_messages(&self, limit: usize, message_id_filter: Option<&str>, pool_code_filter: Option<&str>) -> Vec<InFlightMessageInfo> {

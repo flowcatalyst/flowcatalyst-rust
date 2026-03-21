@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use aws_sdk_sqs::{Client, types::Message as SqsMessage, types::QueueAttributeName};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use parking_lot::Mutex;
 use tracing::{debug, info, warn, error};
@@ -19,9 +19,11 @@ pub struct SqsQueueConsumer {
     /// SQS message IDs whose ACK (delete) failed due to expired receipt handle.
     /// If these messages reappear on the next poll, they are immediately deleted
     /// to prevent double-processing. Matches Java's `pendingDeleteSqsMessageIds`.
-    pending_delete_ids: Mutex<HashSet<String>>,
-    /// Maps receipt handle -> SQS message ID for pending-delete tracking on ACK failure
-    receipt_to_message_id: Mutex<HashMap<String, String>>,
+    /// Entries expire after 1 minute to avoid blocking deliberate resends.
+    pending_delete_ids: Mutex<HashMap<String, std::time::Instant>>,
+    /// Maps receipt handle -> SQS message ID for pending-delete tracking on ACK failure.
+    /// Entries are removed on ack() and periodically pruned to prevent unbounded growth.
+    receipt_to_message_id: Mutex<HashMap<String, (String, std::time::Instant)>>,
     /// Total messages polled from queue
     total_polled: AtomicU64,
     /// Total messages successfully ACKed
@@ -51,7 +53,7 @@ impl SqsQueueConsumer {
             visibility_timeout_seconds,
             wait_time_seconds: Self::DEFAULT_WAIT_TIME_SECONDS,
             running: AtomicBool::new(true),
-            pending_delete_ids: Mutex::new(HashSet::new()),
+            pending_delete_ids: Mutex::new(HashMap::new()),
             receipt_to_message_id: Mutex::new(HashMap::new()),
             total_polled: AtomicU64::new(0),
             total_acked: AtomicU64::new(0),
@@ -138,8 +140,14 @@ impl QueueConsumer for SqsQueueConsumer {
             // processed but its ACK failed (expired receipt handle), delete it immediately
             // to prevent double-processing.
             if let Some(msg_id) = sqs_msg.message_id() {
-                if self.pending_delete_ids.lock().remove(msg_id) {
-                    warn!(
+                let should_delete = {
+                    let mut pending = self.pending_delete_ids.lock();
+                    // Prune expired entries (> 1 min) while we have the lock
+                    pending.retain(|_, ts| ts.elapsed() < std::time::Duration::from_secs(60));
+                    pending.remove(msg_id).is_some()
+                };
+                if should_delete {
+                    info!(
                         queue = %self.queue_name,
                         message_id = %msg_id,
                         "Redelivered message found in pending-delete set, deleting immediately"
@@ -155,7 +163,12 @@ impl QueueConsumer for SqsQueueConsumer {
                 Ok((message, receipt_handle, broker_message_id)) => {
                     // Track receipt handle → message ID for pending-delete on ACK failure
                     if let Some(ref msg_id) = broker_message_id {
-                        self.receipt_to_message_id.lock().insert(receipt_handle.clone(), msg_id.clone());
+                        let mut map = self.receipt_to_message_id.lock();
+                        // Prune entries older than 15 min to prevent unbounded growth
+                        if map.len() > 1000 {
+                            map.retain(|_, (_, ts)| ts.elapsed() < std::time::Duration::from_secs(900));
+                        }
+                        map.insert(receipt_handle.clone(), (msg_id.clone(), std::time::Instant::now()));
                     }
                     messages.push(QueuedMessage {
                         message,
@@ -187,11 +200,6 @@ impl QueueConsumer for SqsQueueConsumer {
             );
         }
 
-        // Java: 100ms delay after partial batch for SQS cost control
-        if sqs_messages_count > 0 && (sqs_messages_count as i32) < max_per_poll {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-
         Ok(messages)
     }
 
@@ -204,7 +212,8 @@ impl QueueConsumer for SqsQueueConsumer {
             .await;
 
         // Clean up tracking regardless of result
-        let msg_id = self.receipt_to_message_id.lock().remove(receipt_handle);
+        let msg_id = self.receipt_to_message_id.lock().remove(receipt_handle)
+            .map(|(id, _)| id);
 
         match result {
             Ok(_) => {
@@ -226,7 +235,7 @@ impl QueueConsumer for SqsQueueConsumer {
                         error = %e,
                         "ACK failed, adding to pending-delete set for cleanup on next poll"
                     );
-                    self.pending_delete_ids.lock().insert(id);
+                    self.pending_delete_ids.lock().insert(id, std::time::Instant::now());
                 }
                 Err(QueueError::Sqs(e.to_string()))
             }
@@ -306,6 +315,18 @@ impl QueueConsumer for SqsQueueConsumer {
     async fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         info!(queue = %self.queue_name, "SQS queue consumer stopped");
+    }
+
+    fn get_counters(&self) -> Option<QueueMetrics> {
+        Some(QueueMetrics {
+            pending_messages: 0,       // Not available without SQS API call
+            in_flight_messages: 0,     // Not available without SQS API call
+            queue_identifier: self.queue_name.clone(),
+            total_polled: self.total_polled.load(Ordering::Relaxed),
+            total_acked: self.total_acked.load(Ordering::Relaxed),
+            total_nacked: self.total_nacked.load(Ordering::Relaxed),
+            total_deferred: self.total_deferred.load(Ordering::Relaxed),
+        })
     }
 
     async fn get_metrics(&self) -> Result<Option<QueueMetrics>> {

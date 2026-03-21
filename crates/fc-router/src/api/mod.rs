@@ -67,9 +67,12 @@ pub struct AppState {
     pub cached_broker_stats: Arc<CachedBrokerStats>,
 }
 
-/// Cached SQS broker stats with timestamp
+/// Cached SQS broker stats with timestamp.
+/// Only the expensive SQS API attributes (pending/in-flight) are cached.
+/// Counter metrics (polled/acked/nacked) are read live from consumer atomics on every request.
 pub struct CachedBrokerStats {
-    metrics: RwLock<Vec<FcQueueMetrics>>,
+    /// Cached SQS attributes: pending_messages and in_flight_messages per queue
+    sqs_attributes: RwLock<HashMap<String, (u64, u64)>>,
     last_updated: RwLock<Option<std::time::Instant>>,
     queue_manager: Arc<QueueManager>,
 }
@@ -77,22 +80,37 @@ pub struct CachedBrokerStats {
 impl CachedBrokerStats {
     pub fn new(queue_manager: Arc<QueueManager>) -> Self {
         Self {
-            metrics: RwLock::new(Vec::new()),
+            sqs_attributes: RwLock::new(HashMap::new()),
             last_updated: RwLock::new(None),
             queue_manager,
         }
     }
 
-    /// Fetch fresh metrics from SQS and update cache
+    /// Fetch fresh SQS attributes (pending/in-flight) and update cache
     pub async fn refresh(&self) {
         let fresh = self.queue_manager.get_queue_metrics().await;
-        *self.metrics.write().await = fresh;
+        let mut attrs = self.sqs_attributes.write().await;
+        attrs.clear();
+        for m in &fresh {
+            attrs.insert(m.queue_identifier.clone(), (m.pending_messages, m.in_flight_messages));
+        }
         *self.last_updated.write().await = Some(std::time::Instant::now());
     }
 
-    /// Get cached metrics
+    /// Get metrics with live counters overlaid on cached SQS attributes.
+    /// Counter reads are instant (atomics), only SQS API calls are cached.
     pub async fn get(&self) -> Vec<FcQueueMetrics> {
-        self.metrics.read().await.clone()
+        let cached_attrs = self.sqs_attributes.read().await;
+        let live = self.queue_manager.get_queue_metrics_counters_only().await;
+
+        live.into_iter().map(|mut m| {
+            // Overlay cached SQS attributes if available
+            if let Some(&(pending, in_flight)) = cached_attrs.get(&m.queue_identifier) {
+                m.pending_messages = pending;
+                m.in_flight_messages = in_flight;
+            }
+            m
+        }).collect()
     }
 
     /// Get time since last refresh
