@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use dashmap::DashMap;
+use futures::future;
 use parking_lot::Mutex;
 use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn, error, debug};
@@ -547,10 +548,13 @@ impl QueueManager {
     /// Route a batch of messages from a consumer poll
     pub async fn route_batch(&self, messages: Vec<QueuedMessage>, consumer: Arc<dyn QueueConsumer>) -> Result<()> {
         if !self.running.load(Ordering::SeqCst) {
-            // NACK all messages on shutdown
-            for msg in messages {
-                let _ = consumer.nack(&msg.receipt_handle, None).await;
-            }
+            // NACK all messages concurrently on shutdown
+            let nack_futs: Vec<_> = messages.iter().map(|msg| {
+                let consumer = consumer.clone();
+                let handle = msg.receipt_handle.clone();
+                async move { let _ = consumer.nack(&handle, None).await; }
+            }).collect();
+            future::join_all(nack_futs).await;
             return Err(RouterError::ShutdownInProgress);
         }
 
@@ -579,14 +583,23 @@ impl QueueManager {
                 }
             }
         }
-        // Now perform the deletions outside the lock scope
-        for msg in messages_to_delete {
-            info!(
-                broker_message_id = ?msg.broker_message_id,
-                app_message_id = %msg.message.id,
-                "Message was previously processed - deleting from queue now"
-            );
-            let _ = consumer.ack(&msg.receipt_handle).await;
+        // Perform the deletions concurrently (independent SQS API calls)
+        if !messages_to_delete.is_empty() {
+            let delete_futs: Vec<_> = messages_to_delete.iter().map(|msg| {
+                let consumer = consumer.clone();
+                let handle = msg.receipt_handle.clone();
+                let broker_id = msg.broker_message_id.clone();
+                let app_id = msg.message.id.clone();
+                async move {
+                    info!(
+                        broker_message_id = ?broker_id,
+                        app_message_id = %app_id,
+                        "Message was previously processed - deleting from queue now"
+                    );
+                    let _ = consumer.ack(&handle).await;
+                }
+            }).collect();
+            future::join_all(delete_futs).await;
         }
 
         if messages_to_process.is_empty() {
@@ -612,13 +625,19 @@ impl QueueManager {
         }
 
         // Handle requeued - these were already completed, ACK them
-        for req in filtered.requeued {
-            debug!(
-                message_id = %req.message.message.id,
-                pipeline_key = %req.existing_pipeline_key,
-                "Requeued duplicate, ACKing"
-            );
-            let _ = consumer.ack(&req.message.receipt_handle).await;
+        // ACK requeued duplicates concurrently
+        if !filtered.requeued.is_empty() {
+            let requeue_futs: Vec<_> = filtered.requeued.iter().map(|req| {
+                let consumer = consumer.clone();
+                let handle = req.message.receipt_handle.clone();
+                let msg_id = req.message.message.id.clone();
+                let key = req.existing_pipeline_key.clone();
+                async move {
+                    debug!(message_id = %msg_id, pipeline_key = %key, "Requeued duplicate, ACKing");
+                    let _ = consumer.ack(&handle).await;
+                }
+            }).collect();
+            future::join_all(requeue_futs).await;
         }
 
         // Phase 2: Group by pool and route
@@ -654,10 +673,13 @@ impl QueueManager {
                         "QueueManager".to_string(),
                     );
                 }
-                // Use defer instead of nack - capacity limits are not errors
-                for msg in pool_messages {
-                    let _ = consumer.defer(&msg.receipt_handle, Some(5)).await;
-                }
+                // Defer concurrently - capacity limits are not errors
+                let defer_futs: Vec<_> = pool_messages.iter().map(|msg| {
+                    let consumer = consumer.clone();
+                    let handle = msg.receipt_handle.clone();
+                    async move { let _ = consumer.defer(&handle, Some(5)).await; }
+                }).collect();
+                future::join_all(defer_futs).await;
                 continue;
             }
 
