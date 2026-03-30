@@ -740,7 +740,7 @@ fn build_platform_app(
         oidc_sync_service.clone(),
         auth_service.clone(),
         unit_of_work.clone(),
-    ).with_session_cookie_settings("fc_session", false, "Lax", 86400);
+    ).with_session_cookie_settings("fc_session", true, "Lax", 86400);
     let encryption_service = EncryptionService::from_env().map(Arc::new);
     let oidc_login_state = if let Some(enc_svc) = encryption_service {
         oidc_login_state.with_encryption_service(enc_svc)

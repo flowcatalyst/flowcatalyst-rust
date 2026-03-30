@@ -519,6 +519,23 @@ pub async fn refresh_token(
 }
 
 /// Create the auth router
+/// GET /login — browser navigation to login page.
+/// Redirects to SPA root which handles client-side routing.
+async fn login_page_redirect(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Redirect {
+    // Preserve query params (e.g., ?redirect=/dashboard) so the SPA can use them
+    if params.is_empty() {
+        axum::response::Redirect::temporary("/")
+    } else {
+        let qs: String = params.iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        axum::response::Redirect::temporary(&format!("/?{}", qs))
+    }
+}
+
 pub fn auth_router(state: AuthState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(login))
@@ -527,6 +544,7 @@ pub fn auth_router(state: AuthState) -> OpenApiRouter {
         .routes(routes!(get_current_user))
         .routes(routes!(refresh_token))
         .with_state(state)
+        .route("/login", axum::routing::get(login_page_redirect))
 }
 
 #[cfg(test)]
