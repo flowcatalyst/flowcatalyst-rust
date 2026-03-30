@@ -463,8 +463,11 @@ async fn authenticate_client(
         }
     };
 
-    // If confidential client (has a secret), verify it
-    if let Some(ref secret_hash) = client.client_secret_ref {
+    // If confidential client (has a secret), verify it.
+    // Secrets are stored in one of two formats:
+    // - "encrypted:..." — TS format, encrypted with FLOWCATALYST_APP_KEY (decrypt and compare)
+    // - hex string — Rust format, SHA-256 hash of the plaintext secret
+    if let Some(ref secret_ref) = client.client_secret_ref {
         let provided_secret = client_secret.ok_or_else(|| {
             (
                 StatusCode::UNAUTHORIZED,
@@ -476,13 +479,30 @@ async fn authenticate_client(
                 .into_response()
         })?;
 
-        // Client secrets are stored as SHA-256 hex hashes (not argon2 password hashes).
-        // Hash the provided secret and compare.
-        let mut hasher = Sha256::new();
-        hasher.update(provided_secret.as_bytes());
-        let provided_hash = format!("{:x}", hasher.finalize());
+        let verified = if secret_ref.starts_with("encrypted:") {
+            // TS format: decrypt the stored secret and compare directly
+            match crate::shared::encryption_service::EncryptionService::from_env() {
+                Some(enc) => match enc.decrypt(secret_ref) {
+                    Ok(decrypted) => decrypted == provided_secret,
+                    Err(e) => {
+                        error!(client_id = %client_id, error = %e, "Failed to decrypt client secret");
+                        false
+                    }
+                },
+                None => {
+                    error!(client_id = %client_id, "Cannot verify encrypted client secret — FLOWCATALYST_APP_KEY not configured");
+                    false
+                }
+            }
+        } else {
+            // Rust format: SHA-256 hex hash comparison
+            let mut hasher = Sha256::new();
+            hasher.update(provided_secret.as_bytes());
+            let provided_hash = format!("{:x}", hasher.finalize());
+            provided_hash == *secret_ref
+        };
 
-        if provided_hash != *secret_hash {
+        if !verified {
             warn!(client_id = %client_id, "Client secret verification failed");
             return Err((
                 StatusCode::UNAUTHORIZED,
