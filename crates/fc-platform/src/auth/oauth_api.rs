@@ -223,6 +223,8 @@ pub struct OidcCallbackParams {
 )]
 pub async fn authorize(
     State(state): State<OAuthState>,
+    headers: HeaderMap,
+    jar: axum_extra::extract::cookie::CookieJar,
     Query(req): Query<AuthorizeRequest>,
 ) -> Response {
     // Validate response_type
@@ -268,6 +270,50 @@ pub async fn authorize(
         }
     }
 
+    // Check if user is already authenticated (has valid session cookie).
+    // If so, skip the login redirect and issue the authorization code directly.
+    let session_token = jar.get("fc_session").map(|c| c.value().to_string())
+        .or_else(|| {
+            headers.get(header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(extract_bearer_token)
+                .map(|t| t.to_string())
+        });
+
+    if let Some(ref token) = session_token {
+        if let Ok(claims) = state.auth_service.validate_token(token) {
+            // User is authenticated — issue authorization code immediately
+            let auth_code_str = generate_random_string(64);
+            let mut auth_code = AuthorizationCode::new(
+                auth_code_str.clone(),
+                req.client_id.clone(),
+                claims.sub.clone(),
+                req.redirect_uri.clone(),
+            )
+            .with_scope(req.scope.clone())
+            .with_nonce(req.nonce.clone())
+            .with_state(req.state.clone());
+
+            if let (Some(challenge), Some(method)) = (&req.code_challenge, &req.code_challenge_method) {
+                auth_code = auth_code.with_pkce(challenge.clone(), method.clone());
+            }
+
+            if let Err(e) = state.auth_code_repo.insert(&auth_code).await {
+                error!(error = %e, "Failed to store authorization code");
+                return error_redirect(&req.redirect_uri, "server_error", "Failed to create authorization code", req.state.as_deref());
+            }
+
+            let mut redirect_url = format!("{}?code={}", req.redirect_uri, urlencoding::encode(&auth_code_str));
+            if let Some(ref s) = req.state {
+                redirect_url.push_str(&format!("&state={}", urlencoding::encode(s)));
+            }
+
+            info!(client_id = %req.client_id, principal_id = %claims.sub, "Issued authorization code (authenticated session)");
+            return Redirect::temporary(&redirect_url).into_response();
+        }
+    }
+
+    // User is not authenticated — proceed with login flow
     // Generate state for CSRF protection if not provided
     let state_param = req.state.clone().unwrap_or_else(|| generate_random_string(32));
 
@@ -301,13 +347,26 @@ pub async fn authorize(
         }
     }
 
-    // For now, return a simple login form or redirect to login page
-    let login_url = format!(
-        "/oauth/login?state={}&client_id={}&redirect_uri={}",
-        urlencoding::encode(&state_param),
+    // Redirect to SPA login page with all OAuth params so the SPA can route back
+    // after authentication. The SPA checks for oauth=true and rebuilds the authorize URL.
+    let mut login_url = format!(
+        "/auth/login?oauth=true&response_type=code&client_id={}&redirect_uri={}&state={}",
         urlencoding::encode(&req.client_id),
         urlencoding::encode(&req.redirect_uri),
+        urlencoding::encode(&state_param),
     );
+    if let Some(ref scope) = req.scope {
+        login_url.push_str(&format!("&scope={}", urlencoding::encode(scope)));
+    }
+    if let Some(ref challenge) = req.code_challenge {
+        login_url.push_str(&format!("&code_challenge={}", urlencoding::encode(challenge)));
+    }
+    if let Some(ref method) = req.code_challenge_method {
+        login_url.push_str(&format!("&code_challenge_method={}", urlencoding::encode(method)));
+    }
+    if let Some(ref nonce) = req.nonce {
+        login_url.push_str(&format!("&nonce={}", urlencoding::encode(nonce)));
+    }
 
     Redirect::temporary(&login_url).into_response()
 }

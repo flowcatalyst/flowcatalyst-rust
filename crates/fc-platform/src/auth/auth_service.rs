@@ -219,26 +219,6 @@ impl AuthConfig {
         (private_key, public_key)
     }
 
-    /// Load key from file path, or from env var if path is empty/missing
-    fn load_key_from_path_or_env(path: &str, env_var: &str) -> Option<String> {
-        // Try file path first
-        if !path.is_empty() {
-            if let Ok(content) = fs::read_to_string(path) {
-                info!("Loaded JWT key from file: {}", path);
-                return Some(content);
-            }
-        }
-
-        // Fall back to env var
-        if let Ok(content) = std::env::var(env_var) {
-            if !content.is_empty() {
-                info!("Loaded JWT key from env: {}", env_var);
-                return Some(content);
-            }
-        }
-
-        None
-    }
 
     /// Generate RSA key pair and optionally persist to directory
     /// Returns (private_key_pem, public_key_pem)
