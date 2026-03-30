@@ -1365,6 +1365,32 @@ pub async fn session_end(
 
     // Redirect to post-logout URI if provided
     if let Some(ref redirect_uri) = params.post_logout_redirect_uri {
+        // P2-7: Validate post_logout_redirect_uri to prevent open redirect attacks.
+        // Must be HTTPS (or localhost for dev) and not contain suspicious patterns.
+        let is_localhost = redirect_uri.starts_with("http://localhost")
+            || redirect_uri.starts_with("http://127.0.0.1");
+        let is_https = redirect_uri.starts_with("https://");
+        if !is_https && !is_localhost {
+            warn!(redirect_uri = %redirect_uri, "Rejected post_logout_redirect_uri: not HTTPS");
+            return (
+                jar,
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "invalid_request", "error_description": "post_logout_redirect_uri must use HTTPS"})),
+                ),
+            ).into_response();
+        }
+        // Reject URIs with suspicious patterns (embedded credentials, javascript:, data:, etc.)
+        if redirect_uri.contains('@') || redirect_uri.contains("javascript:") || redirect_uri.contains("data:") {
+            warn!(redirect_uri = %redirect_uri, "Rejected post_logout_redirect_uri: suspicious pattern");
+            return (
+                jar,
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "invalid_request", "error_description": "Invalid post_logout_redirect_uri"})),
+                ),
+            ).into_response();
+        }
         let mut url = redirect_uri.clone();
         if let Some(ref s) = params.state {
             let separator = if url.contains('?') { "&" } else { "?" };

@@ -26,6 +26,7 @@ use crate::auth::pending_auth_repository::{PendingAuthRepository, PendingAuth};
 use crate::AuthService;
 use crate::auth::auth_service::{AccessTokenClaims, extract_bearer_token};
 use crate::auth::password_service::PasswordService;
+use crate::auth::oauth_entity::OAuthClient;
 use crate::OidcService;
 use crate::login_attempt::entity::{LoginAttempt, AttemptType, LoginOutcome};
 use crate::login_attempt::repository::LoginAttemptRepository;
@@ -200,16 +201,6 @@ impl OAuthState {
     }
 }
 
-/// OIDC callback query parameters
-#[derive(Debug, Deserialize, IntoParams)]
-#[into_params(parameter_in = Query)]
-pub struct OidcCallbackParams {
-    pub code: Option<String>,
-    pub state: Option<String>,
-    pub error: Option<String>,
-    pub error_description: Option<String>,
-}
-
 /// Authorization endpoint - initiates the OAuth2 flow
 #[utoipa::path(
     get,
@@ -371,6 +362,182 @@ pub async fn authorize(
     Redirect::temporary(&login_url).into_response()
 }
 
+/// Authenticate an OAuth client from the request.
+/// Supports both HTTP Basic auth and POST body credentials.
+/// Returns the authenticated client, or an error response.
+///
+/// For confidential clients (those with a `client_secret_ref`), the secret MUST be provided.
+/// For public clients (no secret stored), the secret is not required.
+async fn authenticate_client(
+    state: &OAuthState,
+    headers: &HeaderMap,
+    client_id_body: Option<&str>,
+    client_secret_body: Option<&str>,
+) -> Result<OAuthClient, Response> {
+    // Extract client credentials from Basic auth header or POST body
+    let (client_id, client_secret) = if let Some(basic) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Basic "))
+    {
+        // Decode Basic auth: base64(client_id:client_secret)
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(basic)
+            .map_err(|_| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "invalid_client".to_string(),
+                        error_description: Some("Invalid Basic auth encoding".to_string()),
+                    }),
+                )
+                    .into_response()
+            })?;
+        let decoded_str = String::from_utf8(decoded).map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Invalid Basic auth encoding".to_string()),
+                }),
+            )
+                .into_response()
+        })?;
+        let (id, secret) = decoded_str.split_once(':').ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Invalid Basic auth format".to_string()),
+                }),
+            )
+                .into_response()
+        })?;
+        (id.to_string(), if secret.is_empty() { None } else { Some(secret.to_string()) })
+    } else if let Some(id) = client_id_body {
+        (id.to_string(), client_secret_body.map(|s| s.to_string()))
+    } else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "invalid_client".to_string(),
+                error_description: Some("Missing client credentials".to_string()),
+            }),
+        )
+            .into_response());
+    };
+
+    // Look up the client
+    let client = match state.oauth_client_repo.find_by_client_id(&client_id).await {
+        Ok(Some(c)) if c.active => c,
+        Ok(Some(_)) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Client is not active".to_string()),
+                }),
+            )
+                .into_response());
+        }
+        Ok(None) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Unknown client".to_string()),
+                }),
+            )
+                .into_response());
+        }
+        Err(e) => {
+            error!(error = %e, "Failed to lookup client");
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: None,
+                }),
+            )
+                .into_response());
+        }
+    };
+
+    // If confidential client (has a secret), verify it
+    if let Some(ref secret_hash) = client.client_secret_ref {
+        let provided_secret = client_secret.ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: Some("Client secret required for confidential clients".to_string()),
+                }),
+            )
+                .into_response()
+        })?;
+
+        match state.password_service.verify_password(&provided_secret, secret_hash) {
+            Ok(true) => { /* verified */ }
+            Ok(false) => {
+                warn!(client_id = %client_id, "Client secret verification failed");
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "invalid_client".to_string(),
+                        error_description: Some("Invalid client credentials".to_string()),
+                    }),
+                )
+                    .into_response());
+            }
+            Err(e) => {
+                error!(client_id = %client_id, error = %e, "Client secret verification error");
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "server_error".to_string(),
+                        error_description: None,
+                    }),
+                )
+                    .into_response());
+            }
+        }
+    }
+    // Public clients (no secret_ref) pass without secret verification
+
+    Ok(client)
+}
+
+/// Authenticate a client or bearer token for protected endpoints (introspect/revoke).
+/// Returns the authenticated client_id, or an error response.
+async fn authenticate_client_or_bearer(
+    state: &OAuthState,
+    headers: &HeaderMap,
+    client_id_body: Option<&str>,
+    client_secret_body: Option<&str>,
+) -> Result<String, Response> {
+    // Try Bearer token first
+    if let Some(auth_header) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(token) = extract_bearer_token(auth_header) {
+            return match state.auth_service.validate_token(token) {
+                Ok(claims) => Ok(claims.sub),
+                Err(_) => Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "invalid_token".to_string(),
+                        error_description: Some("Token is invalid or expired".to_string()),
+                    }),
+                )
+                    .into_response()),
+            };
+        }
+        // If it starts with "Basic ", fall through to client auth
+    }
+
+    // Try client credentials (Basic auth or body)
+    let client = authenticate_client(state, headers, client_id_body, client_secret_body).await?;
+    Ok(client.client_id)
+}
+
 /// Token endpoint - exchanges authorization code for tokens
 #[utoipa::path(
     post,
@@ -385,11 +552,35 @@ pub async fn authorize(
 )]
 pub async fn token(
     State(state): State<OAuthState>,
+    headers: HeaderMap,
     Form(req): Form<TokenRequest>,
 ) -> Response {
+    // P0-1: Authenticate the client before processing any grant type.
+    // For client_credentials grant, the handler does its own auth (backward compat),
+    // but for authorization_code and refresh_token, we authenticate here.
+    let authenticated_client = match req.grant_type.as_str() {
+        "client_credentials" => {
+            // client_credentials handler does its own full auth including type checks
+            None
+        }
+        _ => {
+            match authenticate_client(
+                &state,
+                &headers,
+                req.client_id.as_deref(),
+                req.client_secret.as_deref(),
+            )
+            .await
+            {
+                Ok(client) => Some(client),
+                Err(resp) => return resp,
+            }
+        }
+    };
+
     match req.grant_type.as_str() {
-        "authorization_code" => handle_authorization_code_grant(state, req).await,
-        "refresh_token" => handle_refresh_token_grant(state, req).await,
+        "authorization_code" => handle_authorization_code_grant(state, req, authenticated_client).await,
+        "refresh_token" => handle_refresh_token_grant(state, req, authenticated_client).await,
         "client_credentials" => handle_client_credentials_grant(state, req).await,
         _ => (
             StatusCode::BAD_REQUEST,
@@ -401,7 +592,7 @@ pub async fn token(
     }
 }
 
-async fn handle_authorization_code_grant(state: OAuthState, req: TokenRequest) -> Response {
+async fn handle_authorization_code_grant(state: OAuthState, req: TokenRequest, _authenticated_client: Option<OAuthClient>) -> Response {
     let code = match req.code {
         Some(c) => c,
         None => {
@@ -570,6 +761,37 @@ async fn handle_authorization_code_grant(state: OAuthState, req: TokenRequest) -
         None
     };
 
+    // P1-6: Generate refresh token when scope includes "offline_access"
+    let has_offline_access = auth_code.scope.as_deref()
+        .map(|s| s.split_whitespace().any(|sc| sc == "offline_access"))
+        .unwrap_or(false);
+
+    let refresh_token = if has_offline_access {
+        let (raw_token, token_entity) = RefreshToken::generate_token_pair(&principal.id);
+        let scopes: Vec<String> = auth_code.scope.as_deref()
+            .map(|s| s.split_whitespace().map(String::from).collect())
+            .unwrap_or_default();
+        let token_entity = token_entity
+            .with_oauth_client(auth_code.client_id.clone())
+            .with_scopes(scopes);
+
+        match state.refresh_token_repo.insert(&token_entity).await {
+            Ok(_) => Some(raw_token),
+            Err(e) => {
+                error!(error = %e, "Failed to store refresh token");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "server_error".to_string(),
+                        error_description: None,
+                    }),
+                ).into_response();
+            }
+        }
+    } else {
+        None
+    };
+
     info!(principal_id = %principal.id, client_id = %auth_code.client_id, "Token issued via authorization code grant");
 
     (
@@ -582,14 +804,14 @@ async fn handle_authorization_code_grant(state: OAuthState, req: TokenRequest) -
             access_token,
             token_type: "Bearer".to_string(),
             expires_in: 3600,
-            refresh_token: None,
+            refresh_token,
             id_token,
             scope: auth_code.scope,
         }),
     ).into_response()
 }
 
-async fn handle_refresh_token_grant(state: OAuthState, req: TokenRequest) -> Response {
+async fn handle_refresh_token_grant(state: OAuthState, req: TokenRequest, authenticated_client: Option<OAuthClient>) -> Response {
     // Validate refresh_token parameter
     let refresh_token_str = match req.refresh_token {
         Some(t) => t,
@@ -629,6 +851,25 @@ async fn handle_refresh_token_grant(state: OAuthState, req: TokenRequest) -> Res
             ).into_response();
         }
     };
+
+    // P1-3: Validate that the requesting client_id matches the stored token's oauth_client_id
+    if let Some(ref stored_client_id) = stored_token.oauth_client_id {
+        let requesting_client_id = authenticated_client.as_ref().map(|c| c.client_id.as_str());
+        if requesting_client_id != Some(stored_client_id.as_str()) {
+            warn!(
+                stored_client_id = %stored_client_id,
+                requesting_client_id = ?requesting_client_id,
+                "Refresh token client binding mismatch"
+            );
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_grant".to_string(),
+                    error_description: Some("Token was not issued to this client".to_string()),
+                }),
+            ).into_response();
+        }
+    }
 
     // Revoke the old token (token rotation for security)
     if let Err(e) = state.refresh_token_repo.revoke_by_hash(&token_hash).await {
@@ -693,16 +934,21 @@ async fn handle_refresh_token_grant(state: OAuthState, req: TokenRequest) -> Res
     };
 
     // Generate ID token when the original scope included "openid"
+    // P2-8: Only generate ID token if we have a real oauth_client_id for the audience.
+    // Never fall back to principal_id as audience — that's semantically wrong.
     let has_openid = stored_token.scopes.iter().any(|s| s == "openid");
     let id_token = if has_openid {
-        let fallback_aud = &stored_token.principal_id;
-        let client_id = stored_token.oauth_client_id.as_deref().unwrap_or(fallback_aud);
-        match state.auth_service.generate_id_token(&principal, client_id, None) {
-            Ok(t) => Some(t),
-            Err(e) => {
-                error!(error = %e, "Failed to generate ID token on refresh");
-                None // Non-fatal: still return access + refresh tokens
+        if let Some(ref client_id) = stored_token.oauth_client_id {
+            match state.auth_service.generate_id_token(&principal, client_id, None) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    error!(error = %e, "Failed to generate ID token on refresh");
+                    None // Non-fatal: still return access + refresh tokens
+                }
             }
+        } else {
+            // No oauth_client_id — skip ID token entirely
+            None
         }
     } else {
         None
@@ -949,106 +1195,10 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     ).into_response()
 }
 
-/// OIDC callback endpoint
-#[utoipa::path(
-    get,
-    path = "/callback",
-    tag = "oauth",
-    params(OidcCallbackParams),
-    responses(
-        (status = 302, description = "Redirect to client"),
-        (status = 400, description = "Invalid callback", body = ErrorResponse)
-    )
-)]
-pub async fn oidc_callback(
-    State(state): State<OAuthState>,
-    Query(params): Query<OidcCallbackParams>,
-) -> Response {
-    let _oidc_code = match &params.code {
-        Some(c) => c,
-        None => {
-            let error = params.error.clone().unwrap_or_else(|| "unknown".to_string());
-            let error_desc = params.error_description.clone();
-            warn!(error = %error, "OIDC callback received error");
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error,
-                    error_description: error_desc,
-                }),
-            ).into_response();
-        }
-    };
-
-    let state_param = match &params.state {
-        Some(s) => s,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "invalid_request".to_string(),
-                    error_description: Some("Missing state parameter".to_string()),
-                }),
-            ).into_response();
-        }
-    };
-
-    // Retrieve and validate pending authorization (atomically consumed from PostgreSQL)
-    let pending = match state.pending_auth_repo.find_and_consume(state_param).await {
-        Ok(Some(p)) => p,
-        Ok(None) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "invalid_request".to_string(),
-                    error_description: Some("Invalid or expired state".to_string()),
-                }),
-            ).into_response();
-        }
-        Err(e) => {
-            error!(error = %e, "Failed to lookup pending auth state");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: None,
-                }),
-            ).into_response();
-        }
-    };
-
-    let auth_code_str = generate_random_string(64);
-
-    // Build authorization code using domain model
-    let mut auth_code = AuthorizationCode::new(
-        auth_code_str.clone(),
-        pending.client_id.clone(),
-        "placeholder".to_string(),
-        pending.redirect_uri.clone(),
-    )
-    .with_scope(pending.scope.clone())
-    .with_nonce(pending.nonce.clone())
-    .with_state(params.state.clone());
-
-    if let (Some(challenge), Some(method)) = (pending.code_challenge, pending.code_challenge_method) {
-        auth_code = auth_code.with_pkce(challenge, method);
-    }
-
-    // Store authorization code
-    if let Err(e) = state.auth_code_repo.insert(&auth_code).await {
-        error!(error = %e, "Failed to store authorization code");
-        return error_redirect(&pending.redirect_uri, "server_error", "Failed to create authorization code", params.state.as_deref());
-    }
-
-    // Redirect back to client
-    let mut redirect_url = pending.redirect_uri.clone();
-    redirect_url.push_str(&format!("?code={}", urlencoding::encode(&auth_code_str)));
-    if let Some(s) = &params.state {
-        redirect_url.push_str(&format!("&state={}", urlencoding::encode(s)));
-    }
-
-    Redirect::temporary(&redirect_url).into_response()
-}
+// P0-2: oidc_callback removed. The OIDC login flow in oidc_login_api.rs handles
+// external IDP callbacks and carries OAuth params through via OidcLoginState.
+// The authorize endpoint redirects to the SPA login or directly to the IDP login flow,
+// both of which use `issue_code()` below after the principal is authenticated.
 
 /// Issue authorization code after successful login
 pub async fn issue_code(
@@ -1261,9 +1411,22 @@ pub async fn userinfo(
     ).into_response()
 }
 
+/// Token introspection request with optional client credentials in body
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct IntrospectRequestFull {
+    pub token: String,
+    #[serde(default)]
+    pub token_type_hint: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
+
 /// Token introspection endpoint (RFC 7662)
 ///
 /// Returns metadata about a token, including whether it is active.
+/// Requires authentication via Bearer token or client credentials.
 #[utoipa::path(
     post,
     path = "/introspect",
@@ -1271,12 +1434,24 @@ pub async fn userinfo(
     request_body = IntrospectRequest,
     responses(
         (status = 200, description = "Token introspection result", body = IntrospectResponse),
+        (status = 401, description = "Authentication required", body = ErrorResponse),
     )
 )]
 pub async fn introspect(
     State(state): State<OAuthState>,
-    Form(req): Form<IntrospectRequest>,
+    headers: HeaderMap,
+    Form(req): Form<IntrospectRequestFull>,
 ) -> Response {
+    // P1-4: Require authentication (Bearer token or client credentials)
+    if let Err(resp) = authenticate_client_or_bearer(
+        &state,
+        &headers,
+        req.client_id.as_deref(),
+        req.client_secret.as_deref(),
+    ).await {
+        return resp;
+    }
+
     // Try to validate as access token
     match state.auth_service.validate_token(&req.token) {
         Ok(claims) => {
@@ -1319,9 +1494,22 @@ pub async fn introspect(
     }
 }
 
+/// Token revocation request with optional client credentials in body
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RevokeRequestFull {
+    pub token: String,
+    #[serde(default)]
+    pub token_type_hint: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
+
 /// Token revocation endpoint (RFC 7009)
 ///
 /// Revokes an access token or refresh token. Always returns 200 per spec.
+/// Requires authentication via Bearer token or client credentials.
 #[utoipa::path(
     post,
     path = "/revoke",
@@ -1329,12 +1517,24 @@ pub async fn introspect(
     request_body = RevokeRequest,
     responses(
         (status = 200, description = "Token revoked (or was already invalid)"),
+        (status = 401, description = "Authentication required", body = ErrorResponse),
     )
 )]
 pub async fn revoke(
     State(state): State<OAuthState>,
-    Form(req): Form<RevokeRequest>,
+    headers: HeaderMap,
+    Form(req): Form<RevokeRequestFull>,
 ) -> Response {
+    // P1-5: Require authentication (Bearer token or client credentials)
+    if let Err(resp) = authenticate_client_or_bearer(
+        &state,
+        &headers,
+        req.client_id.as_deref(),
+        req.client_secret.as_deref(),
+    ).await {
+        return resp;
+    }
+
     // Determine token type
     let is_refresh = req.token_type_hint.as_deref() == Some("refresh_token");
 
@@ -1361,7 +1561,6 @@ pub fn oauth_router(state: OAuthState) -> Router {
     Router::new()
         .route("/authorize", get(authorize))
         .route("/token", post(token))
-        .route("/callback", get(oidc_callback))
         .route("/userinfo", get(userinfo).post(userinfo))
         .route("/introspect", post(introspect))
         .route("/revoke", post(revoke))
