@@ -31,6 +31,11 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Configure Git
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -63,8 +68,8 @@ jobs:
           git clone "$TARGET_REPO" "$WORK_DIR"
           cd "$WORK_DIR"
 
-          npm ci
-          npx tsc
+          pnpm install --no-frozen-lockfile
+          pnpm exec tsc
 
           # Commit built output (dist/ is gitignored in the monorepo but needed here)
           git add dist/
