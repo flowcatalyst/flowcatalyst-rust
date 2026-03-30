@@ -194,17 +194,27 @@ impl Default for AuthConfig {
 }
 
 impl AuthConfig {
-    /// Load RSA keys from file paths
-    /// Falls back to env vars if files not found
+    /// Load RSA keys from file paths or environment variables.
+    /// Priority: file path → env var (FLOWCATALYST_JWT_*) → None
     pub fn load_rsa_keys(
         private_key_path: Option<&str>,
         public_key_path: Option<&str>,
     ) -> (Option<String>, Option<String>) {
         let private_key = private_key_path
-            .and_then(|p| Self::load_key_from_path_or_env(p, "FLOWCATALYST_JWT_PRIVATE_KEY"));
+            .and_then(|p| if p.is_empty() { None } else { std::fs::read_to_string(p).ok() })
+            .or_else(|| {
+                std::env::var("FLOWCATALYST_JWT_PRIVATE_KEY").ok().filter(|s| !s.is_empty())
+            });
 
         let public_key = public_key_path
-            .and_then(|p| Self::load_key_from_path_or_env(p, "FLOWCATALYST_JWT_PUBLIC_KEY"));
+            .and_then(|p| if p.is_empty() { None } else { std::fs::read_to_string(p).ok() })
+            .or_else(|| {
+                std::env::var("FLOWCATALYST_JWT_PUBLIC_KEY").ok().filter(|s| !s.is_empty())
+            });
+
+        if private_key.is_some() && public_key.is_some() {
+            info!("Loaded RSA keys from environment/file");
+        }
 
         (private_key, public_key)
     }
