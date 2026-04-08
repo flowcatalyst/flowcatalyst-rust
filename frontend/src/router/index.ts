@@ -29,6 +29,16 @@ const router = createRouter({
 					beforeEnter: guestGuard,
 				},
 				{
+					// Standalone logout confirmation page. Other applications
+					// redirect users here after their own sign-out so the user
+					// can also end their Identity Server session and log back
+					// in as a different identity. No guard — must be reachable
+					// whether the user is currently authenticated or not.
+					path: "logout",
+					name: "logout",
+					component: () => import("@/pages/auth/LogoutPage.vue"),
+				},
+				{
 					path: "",
 					redirect: "/auth/login",
 				},
