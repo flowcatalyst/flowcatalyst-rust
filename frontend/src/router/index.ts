@@ -4,6 +4,18 @@ import { authGuard, guestGuard, createRoutePermissionGuard } from "./guards";
 const router = createRouter({
 	history: createWebHistory(),
 	routes: [
+		// Standalone logout confirmation page. Other applications redirect
+		// users here after their own sign-out so the user can also end their
+		// Identity Server session and log back in as a different identity.
+		// Top-level path (not under /auth) to avoid colliding with the
+		// backend's POST /auth/logout endpoint, which would otherwise return
+		// 405 on the browser's GET request and never reach the SPA fallback.
+		// No guard — must be reachable whether the user is authenticated or not.
+		{
+			path: "/logout",
+			name: "logout",
+			component: () => import("@/pages/auth/LogoutPage.vue"),
+		},
 		// Auth routes (no layout, guest only)
 		{
 			path: "/auth",
@@ -27,16 +39,6 @@ const router = createRouter({
 					component: () =>
 						import("@/pages/auth/ResetPasswordPage.vue"),
 					beforeEnter: guestGuard,
-				},
-				{
-					// Standalone logout confirmation page. Other applications
-					// redirect users here after their own sign-out so the user
-					// can also end their Identity Server session and log back
-					// in as a different identity. No guard — must be reachable
-					// whether the user is currently authenticated or not.
-					path: "logout",
-					name: "logout",
-					component: () => import("@/pages/auth/LogoutPage.vue"),
 				},
 				{
 					path: "",
