@@ -97,7 +97,10 @@ pub const PATH_MONITORING: &str = "/api/monitoring";
 
 // Auth routes
 pub const PATH_AUTH: &str = "/auth";
-pub const PATH_AUTH_ME: &str = "/auth/me";
+/// User-facing "me" routes (my clients, my applications, etc.). Mounted under
+/// `/api/me` to match the TypeScript platform — note this is distinct from the
+/// OIDC session-user endpoint `/auth/me` served by `auth_router`.
+pub const PATH_API_ME: &str = "/api/me";
 pub const PATH_AUTH_CLIENT: &str = "/auth/client";
 pub const PATH_AUTH_PASSWORD_RESET: &str = "/auth/password-reset";
 
@@ -249,7 +252,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_ADMIN_CONFIG_ACCESS, config_access_router(self.config_access).into())
             .nest(PATH_ADMIN_LOGIN_ATTEMPTS, login_attempts_router(self.login_attempts))
             // Auth
-            .nest(PATH_AUTH_ME, me_router(self.me))
+            .nest(PATH_API_ME, me_router(self.me))
             .nest(PATH_AUTH, oidc_login_router(self.oidc_login))
             .nest(PATH_OAUTH, oauth_router(self.oauth))
             .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
