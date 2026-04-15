@@ -392,6 +392,8 @@ pub struct PrincipalsState {
     pub password_service: Option<Arc<PasswordService>>,
     pub anchor_domain_repo: Option<Arc<crate::AnchorDomainRepository>>,
     pub client_auth_config_repo: Option<Arc<crate::ClientAuthConfigRepository>>,
+    pub email_domain_mapping_repo: Option<Arc<crate::EmailDomainMappingRepository>>,
+    pub identity_provider_repo: Option<Arc<crate::IdentityProviderRepository>>,
     pub application_repo: Option<Arc<ApplicationRepository>>,
     pub app_client_config_repo: Option<Arc<ApplicationClientConfigRepository>>,
     /// When configured, enables `POST /api/admin/principals/{id}/send-password-reset`
@@ -1320,26 +1322,41 @@ pub async fn check_email_domain(
         false
     };
 
-    // Check client auth config
+    // Resolve auth provider: anchor domain → INTERNAL; mapped domain → mapped IdP;
+    // otherwise default to INTERNAL (no warning — the internal store is the fallback).
     let (has_auth_config, auth_provider, info, warning) = if is_anchor_domain {
         (true, Some("INTERNAL".to_string()),
          Some("This is an anchor domain. User will have access to all clients.".to_string()),
          None)
-    } else if let Some(ref auth_config_repo) = state.client_auth_config_repo {
-        if let Some(config) = auth_config_repo.find_by_email_domain(&domain).await? {
-            let provider = format!("{:?}", config.auth_provider).to_uppercase();
-            let info_msg = if provider == "OIDC" {
-                Some("This domain uses external OIDC authentication.".to_string())
-            } else {
-                Some("This domain uses internal authentication.".to_string())
-            };
-            (true, Some(provider), info_msg, None)
-        } else {
-            (false, Some("INTERNAL".to_string()), None,
-             Some("No authentication configuration found for this email domain.".to_string()))
+    } else if let (Some(ref edm_repo), Some(ref idp_repo)) =
+        (&state.email_domain_mapping_repo, &state.identity_provider_repo)
+    {
+        match edm_repo.find_by_email_domain(&domain).await? {
+            Some(mapping) => match idp_repo.find_by_id(&mapping.identity_provider_id).await? {
+                Some(idp) => {
+                    let provider = match idp.r#type {
+                        crate::IdentityProviderType::Oidc => "OIDC",
+                        crate::IdentityProviderType::Internal => "INTERNAL",
+                    };
+                    let info_msg = if provider == "OIDC" {
+                        Some("This domain uses external OIDC authentication.".to_string())
+                    } else {
+                        Some("This domain uses internal authentication.".to_string())
+                    };
+                    (true, Some(provider.to_string()), info_msg, None)
+                }
+                None => (false, Some("INTERNAL".to_string()),
+                         Some("Default: user will sign in with an internal password.".to_string()),
+                         None),
+            },
+            None => (false, Some("INTERNAL".to_string()),
+                     Some("Default: user will sign in with an internal password.".to_string()),
+                     None),
         }
     } else {
-        (false, Some("INTERNAL".to_string()), None, None)
+        (false, Some("INTERNAL".to_string()),
+         Some("Default: user will sign in with an internal password.".to_string()),
+         None)
     };
 
     // Add warning if email already exists

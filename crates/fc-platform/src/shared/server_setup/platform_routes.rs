@@ -118,6 +118,8 @@ pub fn build_platform_routes(
         password_service: Some(auth.password.clone()),
         anchor_domain_repo: Some(repos.anchor_domain_repo.clone()),
         client_auth_config_repo: Some(repos.client_auth_config_repo.clone()),
+        email_domain_mapping_repo: Some(repos.edm_repo.clone()),
+        identity_provider_repo: Some(repos.idp_repo.clone()),
         application_repo: Some(repos.application_repo.clone()),
         app_client_config_repo: Some(repos.application_client_config_repo.clone()),
         password_reset_emailer: Some(password_reset_emailer.clone()),
