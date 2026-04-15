@@ -406,7 +406,7 @@ pub struct PrincipalsState {
 /// Create a new user principal
 #[utoipa::path(
     post,
-    path = "",
+    path = "/users",
     tag = "principals",
     operation_id = "postApiAdminPrincipalsUsers",
     request_body = CreateUserRequest,
@@ -430,18 +430,50 @@ pub async fn create_user(
         return Err(PlatformError::duplicate("Principal", "email", &req.email));
     }
 
-    // Determine scope based on client_id
-    let scope = if req.client_id.is_some() {
-        UserScope::Client
+    // Determine scope and default client access based on email domain
+    let domain = req.email.split('@').nth(1)
+        .ok_or_else(|| PlatformError::validation("Invalid email format"))?
+        .to_lowercase();
+
+    let mut scope = UserScope::Client;
+    let mut primary_client_id = req.client_id.clone();
+    let mut granted_client_ids = Vec::new();
+
+    // 1. Check if it's an anchor domain
+    let is_anchor_domain = if let Some(ref anchor_repo) = state.anchor_domain_repo {
+        anchor_repo.is_anchor_domain(&domain).await?
     } else {
-        UserScope::Anchor
+        false
     };
+
+    if is_anchor_domain {
+        scope = UserScope::Anchor;
+    } else if let Some(ref edm_repo) = state.email_domain_mapping_repo {
+        // 2. Check for domain mapping (Partner or Client)
+        if let Some(mapping) = edm_repo.find_by_email_domain(&domain).await? {
+            scope = match mapping.scope_type {
+                crate::email_domain_mapping::entity::ScopeType::Anchor => UserScope::Anchor,
+                crate::email_domain_mapping::entity::ScopeType::Partner => UserScope::Partner,
+                crate::email_domain_mapping::entity::ScopeType::Client => UserScope::Client,
+            };
+            
+            // Apply mapping defaults if not explicitly provided
+            if primary_client_id.is_none() {
+                primary_client_id = mapping.primary_client_id.clone();
+            }
+            granted_client_ids = mapping.granted_client_ids.clone();
+        }
+    }
 
     let mut principal = Principal::new_user(&req.email, scope);
     principal.name = req.name.clone();
 
-    if let Some(cid) = req.client_id.clone() {
+    if let Some(cid) = primary_client_id {
         principal = principal.with_client_id(cid);
+    }
+    
+    for cid in granted_client_ids {
+        principal.grant_client_access(cid);
     }
 
     let id = principal.id.clone();
