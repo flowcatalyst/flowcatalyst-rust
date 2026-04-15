@@ -13,6 +13,22 @@ pub struct CreateUserRequest {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// When set to `false`, the platform skips its password complexity rules
+    /// (uppercase/lowercase/digit/special) and only enforces a 2-character minimum.
+    /// Use when your application enforces its own password policy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enforce_password_complexity: Option<bool>,
+}
+
+/// Request to reset a principal's password via the admin API.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetPasswordRequest {
+    pub new_password: String,
+    /// When set to `false`, the platform skips its password complexity rules
+    /// (uppercase/lowercase/digit/special) and only enforces a 2-character minimum.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enforce_password_complexity: Option<bool>,
 }
 
 /// Request to update a principal.
@@ -276,5 +292,20 @@ impl FlowCatalystClient {
             principal_id, client_id
         ))
         .await
+    }
+
+    /// Reset a principal's password via the admin API.
+    pub async fn reset_principal_password(
+        &self,
+        principal_id: &str,
+        req: &ResetPasswordRequest,
+    ) -> Result<(), ClientError> {
+        let _: serde_json::Value = self
+            .post(
+                &format!("/api/admin/principals/{}/reset-password", principal_id),
+                req,
+            )
+            .await?;
+        Ok(())
     }
 }

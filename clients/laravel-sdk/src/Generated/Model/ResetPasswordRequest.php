@@ -13,13 +13,19 @@ class ResetPasswordRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * New password (min 12 characters)
+     * New password (min 8 characters)
      *
      * @var string|null
      */
     protected $newPassword;
     /**
-     * New password (min 12 characters)
+     * When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true.
+     *
+     * @var bool|null
+     */
+    protected $enforcePasswordComplexity;
+    /**
+     * New password (min 8 characters)
      *
      * @return string|null
      */
@@ -28,7 +34,7 @@ class ResetPasswordRequest extends \ArrayObject
         return $this->newPassword;
     }
     /**
-     * New password (min 12 characters)
+     * New password (min 8 characters)
      *
      * @param string|null $newPassword
      *
@@ -38,6 +44,28 @@ class ResetPasswordRequest extends \ArrayObject
     {
         $this->initialized['newPassword'] = true;
         $this->newPassword = $newPassword;
+        return $this;
+    }
+    /**
+     * When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true.
+     *
+     * @return bool|null
+     */
+    public function getEnforcePasswordComplexity(): ?bool
+    {
+        return $this->enforcePasswordComplexity;
+    }
+    /**
+     * When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true.
+     *
+     * @param bool|null $enforcePasswordComplexity
+     *
+     * @return self
+     */
+    public function setEnforcePasswordComplexity(?bool $enforcePasswordComplexity): self
+    {
+        $this->initialized['enforcePasswordComplexity'] = true;
+        $this->enforcePasswordComplexity = $enforcePasswordComplexity;
         return $this;
     }
 }

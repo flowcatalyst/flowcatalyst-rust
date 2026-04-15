@@ -436,6 +436,28 @@ impl PrincipalRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Grant a single client access to a principal. Idempotent via ON CONFLICT.
+    /// Returns true if a new row was inserted, false if the grant already existed.
+    pub async fn grant_client_access(&self, principal_id: &str, client_id: &str) -> Result<bool> {
+        let now = Utc::now();
+        let result = sqlx::query(
+            "INSERT INTO iam_client_access_grants
+                (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (principal_id, client_id) DO NOTHING"
+        )
+        .bind(crate::TsidGenerator::generate(crate::EntityType::Principal))
+        .bind(principal_id)
+        .bind(client_id)
+        .bind(principal_id)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Search principals by name or email (case-insensitive partial match)
     pub async fn search(&self, term: &str) -> Result<Vec<Principal>> {
         let pattern = format!("%{}%", term);

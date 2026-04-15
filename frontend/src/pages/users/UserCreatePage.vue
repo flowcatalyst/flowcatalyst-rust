@@ -125,8 +125,8 @@ function validatePassword() {
 
 	if (!password.value) {
 		passwordError.value = "Password is required";
-	} else if (password.value.length < 12) {
-		passwordError.value = "Password must be at least 12 characters";
+	} else if (password.value.length < 8) {
+		passwordError.value = "Password must be at least 8 characters";
 	} else if (
 		confirmPassword.value &&
 		password.value !== confirmPassword.value

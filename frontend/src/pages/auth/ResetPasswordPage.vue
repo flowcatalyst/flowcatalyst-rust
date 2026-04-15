@@ -52,13 +52,13 @@ async function checkToken() {
 	}
 }
 
-// Password schema — same rules as the rest of the app (12+ chars, upper, lower, digit, special)
+// Password schema — same rules as the rest of the app (8+ chars, upper, lower, digit, special)
 const passwordSchema = toTypedSchema(
 	z
 		.object({
 			password: z
 				.string()
-				.min(12, "Password must be at least 12 characters")
+				.min(8, "Password must be at least 8 characters")
 				.max(128, "Password must be at most 128 characters")
 				.regex(/[A-Z]/, "Password must contain at least one uppercase letter")
 				.regex(/[a-z]/, "Password must contain at least one lowercase letter")

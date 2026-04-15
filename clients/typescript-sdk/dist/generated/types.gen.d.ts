@@ -742,6 +742,10 @@ export type CreateUserRequest = {
      * Password (optional - only for internal auth users)
      */
     password?: string | null;
+    /**
+     * When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true.
+     */
+    enforcePasswordComplexity?: boolean | null;
 };
 /**
  * Created response with ID
@@ -1334,9 +1338,13 @@ export type RegenerateSecretResponse = {
  */
 export type ResetPasswordRequest = {
     /**
-     * New password (min 12 characters)
+     * New password (min 8 characters)
      */
     newPassword: string;
+    /**
+     * When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true.
+     */
+    enforcePasswordComplexity?: boolean | null;
 };
 /**
  * Role assignment DTO (matches Java RoleAssignmentDto for GET /roles)

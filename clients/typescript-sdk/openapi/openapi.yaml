@@ -3988,6 +3988,11 @@ components:
           - string
           - 'null'
           description: Password (optional - only for internal auth users)
+        enforcePasswordComplexity:
+          type:
+          - boolean
+          - 'null'
+          description: When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true.
     CreatedResponse:
       type: object
       description: Created response with ID
@@ -5141,7 +5146,12 @@ components:
       properties:
         newPassword:
           type: string
-          description: New password (min 12 characters)
+          description: New password (min 8 characters)
+        enforcePasswordComplexity:
+          type:
+          - boolean
+          - 'null'
+          description: When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true.
     RoleAssignmentDto:
       type: object
       description: Role assignment DTO (matches Java RoleAssignmentDto for GET /roles)

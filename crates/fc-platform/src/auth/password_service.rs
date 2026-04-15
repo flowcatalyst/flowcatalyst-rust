@@ -35,7 +35,7 @@ pub struct PasswordPolicy {
 impl Default for PasswordPolicy {
     fn default() -> Self {
         Self {
-            min_length: 12,
+            min_length: 8,
             max_length: 128,
             require_uppercase: true,
             require_lowercase: true,
@@ -86,6 +86,20 @@ impl PasswordPolicy {
     pub fn lenient() -> Self {
         Self {
             min_length: 8,
+            max_length: 128,
+            require_uppercase: false,
+            require_lowercase: false,
+            require_digit: false,
+            require_special: false,
+            special_chars: String::new(),
+        }
+    }
+
+    /// Relaxed policy used when an SDK caller opts out of complexity enforcement.
+    /// Only enforces a non-empty password with a minimal floor — callers own their own rules.
+    pub fn relaxed() -> Self {
+        Self {
+            min_length: 2,
             max_length: 128,
             require_uppercase: false,
             require_lowercase: false,
@@ -158,8 +172,21 @@ impl PasswordService {
 
     /// Hash a password using Argon2id
     pub fn hash_password(&self, password: &str) -> Result<String> {
-        // Validate against policy first
-        if let Err(errors) = self.policy.validate(password) {
+        self.hash_with_policy(password, &self.policy)
+    }
+
+    /// Hash a password, optionally bypassing the configured complexity policy
+    /// for SDK callers that enforce their own rules.
+    pub fn hash_password_with_complexity(&self, password: &str, enforce_complexity: bool) -> Result<String> {
+        if enforce_complexity {
+            self.hash_with_policy(password, &self.policy)
+        } else {
+            self.hash_with_policy(password, &PasswordPolicy::relaxed())
+        }
+    }
+
+    fn hash_with_policy(&self, password: &str, policy: &PasswordPolicy) -> Result<String> {
+        if let Err(errors) = policy.validate(password) {
             return Err(PlatformError::Validation {
                 message: errors.join("; "),
             });
@@ -223,6 +250,20 @@ impl PasswordService {
             PlatformError::Validation {
                 message: errors.join("; "),
             }
+        })
+    }
+
+    /// Validate password, optionally bypassing complexity for SDK callers.
+    pub fn validate_password_with_complexity(&self, password: &str, enforce_complexity: bool) -> Result<()> {
+        let policy = if enforce_complexity {
+            &self.policy
+        } else {
+            return PasswordPolicy::relaxed().validate(password).map_err(|errors| {
+                PlatformError::Validation { message: errors.join("; ") }
+            });
+        };
+        policy.validate(password).map_err(|errors| {
+            PlatformError::Validation { message: errors.join("; ") }
         })
     }
 

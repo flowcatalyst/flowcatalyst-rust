@@ -2029,7 +2029,7 @@
 					},
 					"password": {
 						"type": "string",
-						"minLength": 12
+						"minLength": 8
 					},
 					"name": {
 						"type": "string",
@@ -4139,7 +4139,7 @@
 					"newPassword": {
 						"type": "string",
 						"pattern": "\\S",
-						"minLength": 12
+						"minLength": 8
 					}
 				}
 			},

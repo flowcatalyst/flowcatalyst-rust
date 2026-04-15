@@ -40,6 +40,13 @@ pub struct CreateUserRequest {
     /// Client ID (for client-bound users)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+
+    /// When false, the platform skips its password complexity rules
+    /// (uppercase/lowercase/digit/special) and only enforces a 2-character
+    /// minimum. Intended for SDK callers that apply their own policy.
+    /// Defaults to true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforce_password_complexity: Option<bool>,
 }
 
 /// Update principal request
@@ -223,8 +230,15 @@ pub struct ClientAccessListResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ResetPasswordRequest {
-    /// New password (min 12 characters)
+    /// New password (min 8 characters)
     pub new_password: String,
+
+    /// When false, the platform skips its password complexity rules
+    /// (uppercase/lowercase/digit/special) and only enforces a 2-character
+    /// minimum. Intended for SDK callers that apply their own policy.
+    /// Defaults to true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforce_password_complexity: Option<bool>,
 }
 
 /// Status change response
@@ -422,64 +436,134 @@ pub async fn create_user(
     auth: Authenticated,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<Json<CreatedResponse>, PlatformError> {
-    // Only anchor or appropriate access
     crate::checks::require_anchor(&auth.0)?;
 
-    // Check for duplicate email
-    if let Some(_) = state.principal_repo.find_by_email(&req.email).await? {
-        return Err(PlatformError::duplicate("Principal", "email", &req.email));
-    }
+    let enforce_complexity = req.enforce_password_complexity.unwrap_or(true);
 
-    // Determine scope and default client access based on email domain
+    let password_hash: Option<String> = match req.password.as_deref() {
+        Some(pwd) => {
+            let service = state.password_service.as_ref()
+                .ok_or_else(|| PlatformError::internal("Password service not configured"))?;
+            Some(service.hash_password_with_complexity(pwd, enforce_complexity)?)
+        }
+        None => None,
+    };
+
     let domain = req.email.split('@').nth(1)
         .ok_or_else(|| PlatformError::validation("Invalid email format"))?
         .to_lowercase();
 
-    let mut scope = UserScope::Client;
-    let mut primary_client_id = req.client_id.clone();
-    let mut granted_client_ids = Vec::new();
-
-    // 1. Check if it's an anchor domain
     let is_anchor_domain = if let Some(ref anchor_repo) = state.anchor_domain_repo {
         anchor_repo.is_anchor_domain(&domain).await?
     } else {
         false
     };
 
+    // Anchor domain: ignore any client_id on the request.
     if is_anchor_domain {
-        scope = UserScope::Anchor;
-    } else if let Some(ref edm_repo) = state.email_domain_mapping_repo {
-        // 2. Check for domain mapping (Partner or Client)
-        if let Some(mapping) = edm_repo.find_by_email_domain(&domain).await? {
-            scope = match mapping.scope_type {
-                crate::email_domain_mapping::entity::ScopeType::Anchor => UserScope::Anchor,
-                crate::email_domain_mapping::entity::ScopeType::Partner => UserScope::Partner,
-                crate::email_domain_mapping::entity::ScopeType::Client => UserScope::Client,
-            };
-            
-            // Apply mapping defaults if not explicitly provided
-            if primary_client_id.is_none() {
-                primary_client_id = mapping.primary_client_id.clone();
+        if state.principal_repo.find_by_email(&req.email).await?.is_some() {
+            return Err(PlatformError::duplicate("Principal", "email", &req.email));
+        }
+        let mut principal = Principal::new_user(&req.email, UserScope::Anchor);
+        principal.name = req.name.clone();
+        if let Some(hash) = password_hash.clone() {
+            if let Some(ref mut identity) = principal.user_identity {
+                identity.password_hash = Some(hash);
             }
-            granted_client_ids = mapping.granted_client_ids.clone();
+        }
+        let id = principal.id.clone();
+        state.principal_repo.insert(&principal).await?;
+        if let Some(ref audit) = state.audit_service {
+            let _ = audit.log_create(&auth.0, "Principal", &id, format!("Created anchor user {}", req.email)).await;
+        }
+        return Ok(Json(CreatedResponse::new(id)));
+    }
+
+    let mapping = if let Some(ref edm_repo) = state.email_domain_mapping_repo {
+        edm_repo.find_by_email_domain(&domain).await?
+    } else {
+        None
+    };
+
+    // Partner domain: validate client_id, merge onto existing user if present.
+    if let Some(ref m) = mapping {
+        if m.scope_type == crate::email_domain_mapping::entity::ScopeType::Partner {
+            let client_id = req.client_id.as_deref()
+                .ok_or_else(|| PlatformError::validation("clientId is required for partner users"))?;
+
+            let allowed = m.granted_client_ids.iter().any(|c| c == client_id)
+                || m.primary_client_id.as_deref() == Some(client_id);
+            if !allowed {
+                return Err(PlatformError::validation(format!(
+                    "clientId {} is not allowed for partner domain {}", client_id, domain
+                )));
+            }
+
+            if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
+                let already_linked = existing.client_id.as_deref() == Some(client_id)
+                    || existing.assigned_clients.iter().any(|c| c == client_id);
+                if already_linked {
+                    return Err(PlatformError::duplicate("Principal", "email", &req.email));
+                }
+                state.principal_repo.grant_client_access(&existing.id, client_id).await?;
+                if let Some(ref audit) = state.audit_service {
+                    let _ = audit.log_client_access_granted(&auth.0, &existing.id, client_id).await;
+                }
+                return Ok(Json(CreatedResponse::new(existing.id)));
+            }
+
+            let mut principal = Principal::new_user(&req.email, UserScope::Partner)
+                .with_client_id(client_id);
+            principal.name = req.name.clone();
+            if let Some(hash) = password_hash.clone() {
+                if let Some(ref mut identity) = principal.user_identity {
+                    identity.password_hash = Some(hash);
+                }
+            }
+            principal.grant_client_access(client_id);
+            let id = principal.id.clone();
+            state.principal_repo.insert(&principal).await?;
+            state.principal_repo.grant_client_access(&id, client_id).await?;
+            if let Some(ref audit) = state.audit_service {
+                let _ = audit.log_create(&auth.0, "Principal", &id, format!("Created partner user {}", req.email)).await;
+            }
+            return Ok(Json(CreatedResponse::new(id)));
         }
     }
 
-    let mut principal = Principal::new_user(&req.email, scope);
-    principal.name = req.name.clone();
-
-    if let Some(cid) = primary_client_id {
-        principal = principal.with_client_id(cid);
+    // Client-scoped (mapped EDM=CLIENT, or no mapping at all).
+    if state.principal_repo.find_by_email(&req.email).await?.is_some() {
+        return Err(PlatformError::duplicate("Principal", "email", &req.email));
     }
-    
-    for cid in granted_client_ids {
-        principal.grant_client_access(cid);
+
+    let (primary_client_id, granted_client_ids): (Option<String>, Vec<String>) = match mapping {
+        Some(m) => {
+            let primary = req.client_id.clone().or(m.primary_client_id.clone());
+            (primary, m.granted_client_ids.clone())
+        }
+        None => (req.client_id.clone(), Vec::new()),
+    };
+
+    let mut principal = Principal::new_user(&req.email, UserScope::Client);
+    principal.name = req.name.clone();
+    if let Some(hash) = password_hash {
+        if let Some(ref mut identity) = principal.user_identity {
+            identity.password_hash = Some(hash);
+        }
+    }
+    if let Some(ref cid) = primary_client_id {
+        principal = principal.with_client_id(cid.clone());
+    }
+    for cid in &granted_client_ids {
+        principal.grant_client_access(cid.clone());
     }
 
     let id = principal.id.clone();
     state.principal_repo.insert(&principal).await?;
+    for cid in &granted_client_ids {
+        state.principal_repo.grant_client_access(&id, cid).await?;
+    }
 
-    // Audit log
     if let Some(ref audit) = state.audit_service {
         let _ = audit.log_create(&auth.0, "Principal", &id, format!("Created user {}", req.email)).await;
     }
@@ -1201,8 +1285,10 @@ pub async fn reset_password(
     let password_service = state.password_service.as_ref()
         .ok_or_else(|| PlatformError::internal("Password service not configured"))?;
 
+    let enforce_complexity = req.enforce_password_complexity.unwrap_or(true);
+
     // Validate password
-    password_service.validate_password(&req.new_password)?;
+    password_service.validate_password_with_complexity(&req.new_password, enforce_complexity)?;
 
     let mut principal = state.principal_repo.find_by_id(&id).await?
         .or_not_found("Principal", &id)?;
@@ -1220,7 +1306,7 @@ pub async fn reset_password(
     }
 
     // Hash the new password
-    let password_hash = password_service.hash_password(&req.new_password)?;
+    let password_hash = password_service.hash_password_with_complexity(&req.new_password, enforce_complexity)?;
 
     // Update the password hash
     if let Some(ref mut identity) = principal.user_identity {

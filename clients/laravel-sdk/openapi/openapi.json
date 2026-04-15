@@ -6246,6 +6246,13 @@
               "null"
             ],
             "description": "Password (optional - only for internal auth users)"
+          },
+          "enforcePasswordComplexity": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true."
           }
         }
       },
@@ -7846,7 +7853,14 @@
         "properties": {
           "newPassword": {
             "type": "string",
-            "description": "New password (min 12 characters)"
+            "description": "New password (min 8 characters)"
+          },
+          "enforcePasswordComplexity": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "When false, the platform skips its password complexity rules (uppercase/lowercase/digit/special) and only enforces a 2-character minimum. Intended for SDK callers that apply their own policy. Defaults to true."
           }
         }
       },

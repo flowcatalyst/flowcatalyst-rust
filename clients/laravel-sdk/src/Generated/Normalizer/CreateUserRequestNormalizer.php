@@ -65,6 +65,13 @@ class CreateUserRequestNormalizer implements DenormalizerInterface, NormalizerIn
         elseif (\array_key_exists('password', $data) && $data['password'] === null) {
             $object->setPassword(null);
         }
+        if (\array_key_exists('enforcePasswordComplexity', $data) && $data['enforcePasswordComplexity'] !== null) {
+            $object->setEnforcePasswordComplexity($data['enforcePasswordComplexity']);
+            unset($data['enforcePasswordComplexity']);
+        }
+        elseif (\array_key_exists('enforcePasswordComplexity', $data) && $data['enforcePasswordComplexity'] === null) {
+            $object->setEnforcePasswordComplexity(null);
+        }
         foreach ($data as $key => $value) {
             if (preg_match('/.*/', (string) $key)) {
                 $object[$key] = $value;
@@ -82,6 +89,9 @@ class CreateUserRequestNormalizer implements DenormalizerInterface, NormalizerIn
         $dataArray['name'] = $data->getName();
         if ($data->isInitialized('password')) {
             $dataArray['password'] = $data->getPassword();
+        }
+        if ($data->isInitialized('enforcePasswordComplexity')) {
+            $dataArray['enforcePasswordComplexity'] = $data->getEnforcePasswordComplexity();
         }
         foreach ($data as $key => $value) {
             if (preg_match('/.*/', (string) $key)) {
