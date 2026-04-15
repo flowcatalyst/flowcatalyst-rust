@@ -57,6 +57,13 @@ pub struct UpdatePrincipalRequest {
 
     /// Active status
     pub active: Option<bool>,
+
+    /// User scope (ANCHOR / PARTNER / CLIENT). Changing scope requires anchor.
+    pub scope: Option<String>,
+
+    /// Home client ID (required when scope is CLIENT, ignored otherwise).
+    /// Changing client requires anchor.
+    pub client_id: Option<String>,
 }
 
 /// Assign role request
@@ -577,7 +584,7 @@ pub async fn list_principals(
     ),
     request_body = UpdatePrincipalRequest,
     responses(
-        (status = 204, description = "Principal updated"),
+        (status = 200, description = "Principal updated", body = PrincipalResponse),
         (status = 404, description = "Principal not found")
     ),
     security(("bearer_auth" = []))
@@ -587,11 +594,11 @@ pub async fn update_principal(
     auth: Authenticated,
     Path(id): Path<String>,
     Json(req): Json<UpdatePrincipalRequest>,
-) -> Result<StatusCode, PlatformError> {
+) -> Result<Json<PrincipalResponse>, PlatformError> {
     let mut principal = state.principal_repo.find_by_id(&id).await?
         .or_not_found("Principal", &id)?;
 
-    // Check access
+    // Check access on the current principal
     if !auth.0.is_anchor() {
         if let Some(ref cid) = principal.client_id {
             if !auth.0.can_access_client(cid) {
@@ -611,6 +618,49 @@ pub async fn update_principal(
             principal.activate();
         } else {
             principal.deactivate();
+        }
+    }
+
+    // Scope / client_id changes are high-trust: require anchor.
+    if req.scope.is_some() || req.client_id.is_some() {
+        if !auth.0.is_anchor() {
+            return Err(PlatformError::forbidden(
+                "Only anchor users can change a principal's scope or client",
+            ));
+        }
+    }
+
+    if let Some(scope_str) = req.scope.as_deref() {
+        principal.scope = match scope_str.to_uppercase().as_str() {
+            "ANCHOR" => crate::principal::entity::UserScope::Anchor,
+            "PARTNER" => crate::principal::entity::UserScope::Partner,
+            "CLIENT" => crate::principal::entity::UserScope::Client,
+            other => return Err(PlatformError::validation(format!(
+                "Invalid scope '{}'. Must be ANCHOR, PARTNER, or CLIENT.", other,
+            ))),
+        };
+    }
+
+    // Apply client_id according to the (possibly updated) scope.
+    if req.client_id.is_some() || req.scope.is_some() {
+        match principal.scope {
+            crate::principal::entity::UserScope::Client => {
+                let cid = req.client_id.clone()
+                    .or_else(|| principal.client_id.clone())
+                    .ok_or_else(|| PlatformError::validation(
+                        "client_id is required when scope is CLIENT",
+                    ))?;
+                if cid.trim().is_empty() {
+                    return Err(PlatformError::validation(
+                        "client_id cannot be empty when scope is CLIENT",
+                    ));
+                }
+                principal.client_id = Some(cid);
+            }
+            // Anchor / Partner principals don't have a home client.
+            _ => {
+                principal.client_id = None;
+            }
         }
     }
 
@@ -634,7 +684,7 @@ pub async fn update_principal(
         let _ = audit.log_update(&auth.0, "Principal", &id, format!("Updated principal {}", principal.name)).await;
     }
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(PrincipalResponse::from(principal)))
 }
 
 /// Get roles assigned to a principal
