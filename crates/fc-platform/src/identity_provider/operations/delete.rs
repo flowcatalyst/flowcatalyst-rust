@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::IdentityProviderRepository;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use super::events::IdentityProviderDeleted;
 
 /// Command for deleting an identity provider.
@@ -16,18 +16,19 @@ pub struct DeleteIdentityProviderCommand {
 }
 
 /// Use case for deleting an identity provider.
-pub struct DeleteIdentityProviderUseCase {
+pub struct DeleteIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl DeleteIdentityProviderUseCase {
-    pub fn new(idp_repo: Arc<IdentityProviderRepository>) -> Self {
-        Self { idp_repo }
+impl<U: UnitOfWork> DeleteIdentityProviderUseCase<U> {
+    pub fn new(idp_repo: Arc<IdentityProviderRepository>, unit_of_work: Arc<U>) -> Self {
+        Self { idp_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for DeleteIdentityProviderUseCase {
+impl<U: UnitOfWork> UseCase for DeleteIdentityProviderUseCase<U> {
     type Command = DeleteIdentityProviderCommand;
     type Event = IdentityProviderDeleted;
 
@@ -74,7 +75,7 @@ impl UseCase for DeleteIdentityProviderUseCase {
             )));
         }
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

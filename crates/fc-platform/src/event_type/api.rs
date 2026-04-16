@@ -194,7 +194,7 @@ pub struct SyncResultResponse {
 #[derive(Clone)]
 pub struct EventTypesState {
     pub event_type_repo: Arc<EventTypeRepository>,
-    pub sync_use_case: Arc<SyncEventTypesUseCase>,
+    pub sync_use_case: Arc<SyncEventTypesUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 /// Create a new event type

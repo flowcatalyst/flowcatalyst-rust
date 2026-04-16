@@ -16,7 +16,7 @@ use crate::service_account::entity::RoleAssignment;
 use crate::PrincipalRepository;
 use crate::ApplicationRepository;
 use crate::usecase::{
-    ExecutionContext, UseCase, UseCaseError, UseCaseResult,
+    ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use super::events::PrincipalsSynced;
 
@@ -48,22 +48,24 @@ pub struct SyncPrincipalsCommand {
     pub remove_unlisted: bool,
 }
 
-pub struct SyncPrincipalsUseCase {
+pub struct SyncPrincipalsUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     application_repo: Arc<ApplicationRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl SyncPrincipalsUseCase {
+impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
     pub fn new(
         principal_repo: Arc<PrincipalRepository>,
         application_repo: Arc<ApplicationRepository>,
+        unit_of_work: Arc<U>,
     ) -> Self {
-        Self { principal_repo, application_repo }
+        Self { principal_repo, application_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for SyncPrincipalsUseCase {
+impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
     type Command = SyncPrincipalsCommand;
     type Event = PrincipalsSynced;
 
@@ -215,7 +217,7 @@ impl UseCase for SyncPrincipalsUseCase {
             synced_emails,
         );
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

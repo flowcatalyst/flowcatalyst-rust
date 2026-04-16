@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::DispatchPool;
 use crate::DispatchPoolRepository;
 use crate::usecase::{
-    ExecutionContext, UseCase, UseCaseError, UseCaseResult,
+    ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use super::events::DispatchPoolsSynced;
 
@@ -46,18 +46,21 @@ pub struct SyncDispatchPoolsCommand {
     pub remove_unlisted: bool,
 }
 
-pub struct SyncDispatchPoolsUseCase {
+pub struct SyncDispatchPoolsUseCase<U: UnitOfWork> {
     dispatch_pool_repo: Arc<DispatchPoolRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl SyncDispatchPoolsUseCase {
-    pub fn new(dispatch_pool_repo: Arc<DispatchPoolRepository>) -> Self {
-        Self { dispatch_pool_repo }
+impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
+    pub fn new(dispatch_pool_repo: Arc<DispatchPoolRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
+        Self { dispatch_pool_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for SyncDispatchPoolsUseCase {
+impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
     type Command = SyncDispatchPoolsCommand;
     type Event = DispatchPoolsSynced;
 
@@ -181,7 +184,7 @@ impl UseCase for SyncDispatchPoolsUseCase {
             synced_codes,
         );
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

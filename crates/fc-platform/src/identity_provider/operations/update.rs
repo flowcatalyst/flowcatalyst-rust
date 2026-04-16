@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::IdentityProviderRepository;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use super::events::IdentityProviderUpdated;
 
 /// Command for updating an existing identity provider.
@@ -24,18 +24,19 @@ pub struct UpdateIdentityProviderCommand {
 }
 
 /// Use case for updating an existing identity provider.
-pub struct UpdateIdentityProviderUseCase {
+pub struct UpdateIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl UpdateIdentityProviderUseCase {
-    pub fn new(idp_repo: Arc<IdentityProviderRepository>) -> Self {
-        Self { idp_repo }
+impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
+    pub fn new(idp_repo: Arc<IdentityProviderRepository>, unit_of_work: Arc<U>) -> Self {
+        Self { idp_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for UpdateIdentityProviderUseCase {
+impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
     type Command = UpdateIdentityProviderCommand;
     type Event = IdentityProviderUpdated;
 
@@ -108,7 +109,7 @@ impl UseCase for UpdateIdentityProviderUseCase {
             )));
         }
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

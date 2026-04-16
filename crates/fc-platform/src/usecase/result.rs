@@ -40,10 +40,13 @@ impl<T> UseCaseResult<T> {
 
     /// Create a success result.
     ///
-    /// **Note:** In production code, success should only be created through
-    /// `UnitOfWork::commit()` to ensure domain events are always emitted.
-    /// This method is public to allow testing and internal use.
-    pub(crate) fn success(value: T) -> Self {
+    /// Visible only within the `usecase` module so that only `UnitOfWork`
+    /// (and its associated helpers) can construct a success. Use cases
+    /// defined outside this module — i.e. every `*UseCase::execute` —
+    /// must route through `unit_of_work.commit()` / `commit_delete()` /
+    /// `emit_event()` to return success. Mirrors the TS sealed-Result
+    /// pattern but enforced at compile time.
+    pub(in crate::usecase) fn success(value: T) -> Self {
         UseCaseResult::Success(value)
     }
 

@@ -87,7 +87,10 @@ pub fn build_platform_routes(
 
     // ── Shared use cases (constructed once, shared between states) ────────
     let sync_event_types_use_case = Arc::new(
-        crate::event_type::operations::SyncEventTypesUseCase::new(repos.event_type_repo.clone()),
+        crate::event_type::operations::SyncEventTypesUseCase::new(
+            repos.event_type_repo.clone(),
+            unit_of_work.clone(),
+        ),
     );
     let event_types_state = EventTypesState {
         event_type_repo: repos.event_type_repo.clone(),
@@ -160,6 +163,7 @@ pub fn build_platform_routes(
             repos.subscription_repo.clone(),
             repos.connection_repo.clone(),
             repos.dispatch_pool_repo.clone(),
+            unit_of_work.clone(),
         ),
     );
     let subscriptions_state = SubscriptionsState {
@@ -247,7 +251,23 @@ pub fn build_platform_routes(
 
     // ── Domain states ─────────────────────────────────────────────────────
     let connections_state = ConnectionsState { connection_repo: repos.connection_repo.clone() };
-    let cors_state = CorsState { cors_repo: repos.cors_repo.clone() };
+    let add_cors_use_case = Arc::new(
+        crate::cors::operations::AddCorsOriginUseCase::new(
+            repos.cors_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let delete_cors_use_case = Arc::new(
+        crate::cors::operations::DeleteCorsOriginUseCase::new(
+            repos.cors_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let cors_state = CorsState {
+        cors_repo: repos.cors_repo.clone(),
+        add_use_case: add_cors_use_case,
+        delete_use_case: delete_cors_use_case,
+    };
     let idp_state = IdentityProvidersState { idp_repo: repos.idp_repo.clone() };
     let edm_state = EmailDomainMappingsState {
         edm_repo: repos.edm_repo.clone(),
@@ -309,7 +329,10 @@ pub fn build_platform_routes(
     };
 
     let sync_dispatch_pools_use_case = Arc::new(
-        crate::dispatch_pool::operations::SyncDispatchPoolsUseCase::new(repos.dispatch_pool_repo.clone()),
+        crate::dispatch_pool::operations::SyncDispatchPoolsUseCase::new(
+            repos.dispatch_pool_repo.clone(),
+            unit_of_work.clone(),
+        ),
     );
     let dispatch_pools_state = DispatchPoolsState {
         dispatch_pool_repo: repos.dispatch_pool_repo.clone(),
@@ -321,10 +344,18 @@ pub fn build_platform_routes(
     };
 
     let sync_roles_use_case = Arc::new(
-        crate::role::operations::SyncRolesUseCase::new(repos.role_repo.clone(), repos.application_repo.clone()),
+        crate::role::operations::SyncRolesUseCase::new(
+            repos.role_repo.clone(),
+            repos.application_repo.clone(),
+            unit_of_work.clone(),
+        ),
     );
     let sync_principals_use_case = Arc::new(
-        crate::principal::operations::SyncPrincipalsUseCase::new(repos.principal_repo.clone(), repos.application_repo.clone()),
+        crate::principal::operations::SyncPrincipalsUseCase::new(
+            repos.principal_repo.clone(),
+            repos.application_repo.clone(),
+            unit_of_work.clone(),
+        ),
     );
     let sdk_sync_state = SdkSyncState {
         sync_roles_use_case,

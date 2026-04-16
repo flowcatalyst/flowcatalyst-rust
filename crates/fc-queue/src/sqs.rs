@@ -16,13 +16,15 @@ pub struct SqsQueueConsumer {
     visibility_timeout_seconds: i32,
     wait_time_seconds: i32,
     running: AtomicBool,
-    /// SQS message IDs whose ACK (delete) failed due to expired receipt handle.
-    /// If these messages reappear on the next poll, they are immediately deleted
-    /// to prevent double-processing. Matches Java's `pendingDeleteSqsMessageIds`.
-    /// Entries expire after 1 minute to avoid blocking deliberate resends.
+    /// SQS message IDs that we've acked (successfully or not). SQS standard queues
+    /// are at-least-once — even a successful DeleteMessage can be followed by a
+    /// redelivery, and a failed delete obviously needs the same guard. Every
+    /// redelivery within the TTL is batch-deleted without re-routing to the
+    /// mediator. Entries age out after `PENDING_DELETE_TTL`.
     pending_delete_ids: Mutex<HashMap<String, std::time::Instant>>,
-    /// Maps receipt handle -> SQS message ID for pending-delete tracking on ACK failure.
-    /// Entries are removed on ack() and periodically pruned to prevent unbounded growth.
+    /// Maps receipt handle -> SQS message ID so `ack` (which only receives the
+    /// handle) can record the message ID in `pending_delete_ids`. Entries are
+    /// pruned periodically to prevent unbounded growth.
     receipt_to_message_id: Mutex<HashMap<String, (String, std::time::Instant)>>,
     /// Total messages polled from queue
     total_polled: AtomicU64,
@@ -39,6 +41,10 @@ impl SqsQueueConsumer {
     /// 20 seconds matches TS version and minimises SQS API calls.
     /// AWS SQS max is 20 seconds.
     pub const DEFAULT_WAIT_TIME_SECONDS: i32 = 20;
+
+    /// How long to remember an acked SQS MessageId so redeliveries are
+    /// short-circuited to DeleteMessage without re-routing to the mediator.
+    const PENDING_DELETE_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
     pub fn new(
         client: Client,
@@ -136,24 +142,31 @@ impl QueueConsumer for SqsQueueConsumer {
         let mut messages = Vec::with_capacity(sqs_messages_count);
 
         for sqs_msg in sqs_messages {
-            // Java: check pendingDeleteSqsMessageIds — if this message was previously
-            // processed but its ACK failed (expired receipt handle), delete it immediately
-            // to prevent double-processing.
+            // If this MessageId is in pending-delete (we already acked it once),
+            // delete the redelivery immediately and move on. Keep the entry until
+            // it ages out past the TTL so every redelivery within the window is
+            // short-circuited — not just the first one.
             if let Some(msg_id) = sqs_msg.message_id() {
                 let should_delete = {
                     let mut pending = self.pending_delete_ids.lock();
-                    // Prune expired entries (> 1 min) while we have the lock
-                    pending.retain(|_, ts| ts.elapsed() < std::time::Duration::from_secs(60));
-                    pending.remove(msg_id).is_some()
+                    pending.retain(|_, ts| ts.elapsed() < Self::PENDING_DELETE_TTL);
+                    pending.contains_key(msg_id)
                 };
                 if should_delete {
                     info!(
                         queue = %self.queue_name,
                         message_id = %msg_id,
-                        "Redelivered message found in pending-delete set, deleting immediately"
+                        "Redelivery of acked message — deleting immediately"
                     );
                     if let Some(handle) = sqs_msg.receipt_handle() {
-                        let _ = self.ack(handle).await;
+                        // Delete directly; don't call self.ack() to avoid re-inserting
+                        // into pending_delete_ids or racing with the tracking map.
+                        let _ = self.client
+                            .delete_message()
+                            .queue_url(&self.queue_url)
+                            .receipt_handle(handle)
+                            .send()
+                            .await;
                     }
                     continue;
                 }
@@ -161,12 +174,12 @@ impl QueueConsumer for SqsQueueConsumer {
 
             match self.parse_sqs_message(&sqs_msg) {
                 Ok((message, receipt_handle, broker_message_id)) => {
-                    // Track receipt handle → message ID for pending-delete on ACK failure
+                    // Track receipt handle → message ID so `ack` can record the
+                    // message ID in pending_delete_ids (ack only has the handle).
                     if let Some(ref msg_id) = broker_message_id {
                         let mut map = self.receipt_to_message_id.lock();
-                        // Prune entries older than 15 min to prevent unbounded growth
                         if map.len() > 1000 {
-                            map.retain(|_, (_, ts)| ts.elapsed() < std::time::Duration::from_secs(900));
+                            map.retain(|_, (_, ts)| ts.elapsed() < Self::PENDING_DELETE_TTL);
                         }
                         map.insert(receipt_handle.clone(), (msg_id.clone(), std::time::Instant::now()));
                     }
@@ -204,16 +217,24 @@ impl QueueConsumer for SqsQueueConsumer {
     }
 
     async fn ack(&self, receipt_handle: &str) -> Result<()> {
+        // Always record the MessageId in pending_delete_ids — regardless of
+        // whether DeleteMessage succeeds or fails. SQS standard queues are
+        // at-least-once, so even a successful delete can be followed by a
+        // redelivery; a failed delete obviously needs the same guard.
+        // Redeliveries within the TTL are batch-deleted in `poll` without
+        // being re-routed to the mediator.
+        let msg_id = self.receipt_to_message_id.lock().remove(receipt_handle)
+            .map(|(id, _)| id);
+        if let Some(ref id) = msg_id {
+            self.pending_delete_ids.lock().insert(id.clone(), std::time::Instant::now());
+        }
+
         let result = self.client
             .delete_message()
             .queue_url(&self.queue_url)
             .receipt_handle(receipt_handle)
             .send()
             .await;
-
-        // Clean up tracking regardless of result
-        let msg_id = self.receipt_to_message_id.lock().remove(receipt_handle)
-            .map(|(id, _)| id);
 
         match result {
             Ok(_) => {
@@ -226,17 +247,12 @@ impl QueueConsumer for SqsQueueConsumer {
                 Ok(())
             }
             Err(e) => {
-                // Java: if delete fails (e.g. expired receipt handle), add SQS message ID
-                // to pending-delete set so it gets deleted on next poll instead of reprocessed
-                if let Some(id) = msg_id {
-                    warn!(
-                        queue = %self.queue_name,
-                        message_id = %id,
-                        error = %e,
-                        "ACK failed, adding to pending-delete set for cleanup on next poll"
-                    );
-                    self.pending_delete_ids.lock().insert(id, std::time::Instant::now());
-                }
+                warn!(
+                    queue = %self.queue_name,
+                    message_id = ?msg_id,
+                    error = %e,
+                    "ACK failed — pending-delete guard will short-circuit redeliveries"
+                );
                 Err(QueueError::Sqs(e.to_string()))
             }
         }

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::event_type::entity::{EventType, EventTypeSource};
 use crate::EventTypeRepository;
 use crate::usecase::{
-    ExecutionContext, UseCase, UseCaseError, UseCaseResult,
+    ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use super::events::EventTypesSynced;
 
@@ -51,18 +51,21 @@ pub struct SyncEventTypesResult {
     pub deleted: u32,
 }
 
-pub struct SyncEventTypesUseCase {
+pub struct SyncEventTypesUseCase<U: UnitOfWork> {
     event_type_repo: Arc<EventTypeRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl SyncEventTypesUseCase {
-    pub fn new(event_type_repo: Arc<EventTypeRepository>) -> Self {
-        Self { event_type_repo }
+impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
+    pub fn new(event_type_repo: Arc<EventTypeRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
+        Self { event_type_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for SyncEventTypesUseCase {
+impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
     type Command = SyncEventTypesCommand;
     type Event = EventTypesSynced;
 
@@ -167,7 +170,7 @@ impl UseCase for SyncEventTypesUseCase {
             synced_codes,
         );
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

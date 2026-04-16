@@ -61,6 +61,8 @@ pub struct AllowedOriginsResponse {
 #[derive(Clone)]
 pub struct CorsState {
     pub cors_repo: Arc<CorsOriginRepository>,
+    pub add_use_case: Arc<crate::cors::operations::AddCorsOriginUseCase<crate::usecase::PgUnitOfWork>>,
+    pub delete_use_case: Arc<crate::cors::operations::DeleteCorsOriginUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 /// Create a new CORS allowed origin
@@ -81,19 +83,21 @@ pub async fn create_cors_origin(
     auth: Authenticated,
     Json(req): Json<CreateCorsOriginRequest>,
 ) -> Result<(axum::http::StatusCode, Json<crate::shared::api_common::CreatedResponse>), PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
-    if state.cors_repo.find_by_origin(&req.origin).await?.is_some() {
-        return Err(PlatformError::duplicate("CorsAllowedOrigin", "origin", &req.origin));
-    }
+    use crate::cors::operations::AddCorsOriginCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
 
-    let origin = CorsAllowedOrigin::new(
-        req.origin,
-        req.description,
-        Some(auth.0.principal_id.clone()),
-    );
-    let id = origin.id.clone();
-    state.cors_repo.insert(&origin).await?;
-    Ok((axum::http::StatusCode::CREATED, Json(crate::shared::api_common::CreatedResponse::new(id))))
+    crate::checks::require_anchor(&auth.0)?;
+
+    let cmd = AddCorsOriginCommand {
+        origin: req.origin,
+        description: req.description,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let event = state.add_use_case.run(cmd, ctx).await.into_result()?;
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(crate::shared::api_common::CreatedResponse::new(event.origin_id)),
+    ))
 }
 
 /// List all CORS allowed origins
@@ -183,10 +187,14 @@ pub async fn delete_cors_origin(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
+    use crate::cors::operations::DeleteCorsOriginCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
-    let _ = state.cors_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("CorsAllowedOrigin", &id))?;
-    state.cors_repo.delete(&id).await?;
+
+    let cmd = DeleteCorsOriginCommand { origin_id: id };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    state.delete_use_case.run(cmd, ctx).await.into_result()?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
 

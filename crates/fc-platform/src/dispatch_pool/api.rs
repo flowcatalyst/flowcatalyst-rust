@@ -167,7 +167,7 @@ pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
     pub update_use_case: Arc<UpdateDispatchPoolUseCase<U>>,
     pub archive_use_case: Arc<ArchiveDispatchPoolUseCase<U>>,
     pub delete_use_case: Arc<DeleteDispatchPoolUseCase<U>>,
-    pub sync_use_case: Arc<SyncDispatchPoolsUseCase>,
+    pub sync_use_case: Arc<SyncDispatchPoolsUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 fn parse_status(s: &str) -> Option<DispatchPoolStatus> {

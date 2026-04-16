@@ -12,7 +12,7 @@ use crate::role::entity::{AuthRole, RoleSource};
 use crate::RoleRepository;
 use crate::ApplicationRepository;
 use crate::usecase::{
-    ExecutionContext, UseCase, UseCaseError, UseCaseResult,
+    ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use super::events::RolesSynced;
 
@@ -41,22 +41,24 @@ pub struct SyncRolesCommand {
     pub remove_unlisted: bool,
 }
 
-pub struct SyncRolesUseCase {
+pub struct SyncRolesUseCase<U: UnitOfWork> {
     role_repo: Arc<RoleRepository>,
     application_repo: Arc<crate::ApplicationRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl SyncRolesUseCase {
+impl<U: UnitOfWork> SyncRolesUseCase<U> {
     pub fn new(
         role_repo: Arc<RoleRepository>,
         application_repo: Arc<ApplicationRepository>,
+        unit_of_work: Arc<U>,
     ) -> Self {
-        Self { role_repo, application_repo }
+        Self { role_repo, application_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for SyncRolesUseCase {
+impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
     type Command = SyncRolesCommand;
     type Event = RolesSynced;
 
@@ -185,7 +187,7 @@ impl UseCase for SyncRolesUseCase {
             synced_names,
         );
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

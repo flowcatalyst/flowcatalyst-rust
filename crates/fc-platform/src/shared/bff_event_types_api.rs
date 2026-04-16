@@ -211,7 +211,7 @@ pub struct BffAggregateFilterQuery {
 pub struct BffEventTypesState {
     pub event_type_repo: Arc<EventTypeRepository>,
     pub application_repo: Option<Arc<ApplicationRepository>>,
-    pub sync_use_case: Arc<SyncEventTypesUseCase>,
+    pub sync_use_case: Arc<SyncEventTypesUseCase<crate::usecase::PgUnitOfWork>>,
     pub unit_of_work: Arc<PgUnitOfWork>,
 }
 

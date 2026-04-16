@@ -212,11 +212,11 @@ fn default_active() -> bool { true }
 /// SDK Sync service state
 #[derive(Clone)]
 pub struct SdkSyncState {
-    pub sync_roles_use_case: Arc<SyncRolesUseCase>,
-    pub sync_event_types_use_case: Arc<SyncEventTypesUseCase>,
-    pub sync_subscriptions_use_case: Arc<SyncSubscriptionsUseCase>,
-    pub sync_dispatch_pools_use_case: Arc<SyncDispatchPoolsUseCase>,
-    pub sync_principals_use_case: Arc<SyncPrincipalsUseCase>,
+    pub sync_roles_use_case: Arc<SyncRolesUseCase<crate::usecase::PgUnitOfWork>>,
+    pub sync_event_types_use_case: Arc<SyncEventTypesUseCase<crate::usecase::PgUnitOfWork>>,
+    pub sync_subscriptions_use_case: Arc<SyncSubscriptionsUseCase<crate::usecase::PgUnitOfWork>>,
+    pub sync_dispatch_pools_use_case: Arc<SyncDispatchPoolsUseCase<crate::usecase::PgUnitOfWork>>,
+    pub sync_principals_use_case: Arc<SyncPrincipalsUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 // ---------------------------------------------------------------------------

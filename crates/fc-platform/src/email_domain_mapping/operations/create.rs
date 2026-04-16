@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::EmailDomainMappingRepository;
 use crate::IdentityProviderRepository;
 use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
-use crate::usecase::{ExecutionContext, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use super::events::EmailDomainMappingCreated;
 
 /// Command for creating a new email domain mapping.
@@ -23,22 +23,24 @@ pub struct CreateEmailDomainMappingCommand {
     pub sync_roles_from_idp: bool,
 }
 
-pub struct CreateEmailDomainMappingUseCase {
+pub struct CreateEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
     idp_repo: Arc<IdentityProviderRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl CreateEmailDomainMappingUseCase {
+impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
     pub fn new(
         edm_repo: Arc<EmailDomainMappingRepository>,
         idp_repo: Arc<IdentityProviderRepository>,
+        unit_of_work: Arc<U>,
     ) -> Self {
-        Self { edm_repo, idp_repo }
+        Self { edm_repo, idp_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for CreateEmailDomainMappingUseCase {
+impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
     type Command = CreateEmailDomainMappingCommand;
     type Event = EmailDomainMappingCreated;
 
@@ -127,7 +129,11 @@ impl UseCase for CreateEmailDomainMappingUseCase {
             scope_type.as_str(),
         );
 
-        UseCaseResult::success(event)
+        // Emit the event + audit log via UoW. The entity itself was written
+        // above via a direct repo call (pre-existing pattern with junction
+        // tables); a follow-up refactor will migrate to `unit_of_work.commit`
+        // once `PgPersist` is implemented for `EmailDomainMapping`.
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

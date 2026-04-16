@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::IdentityProviderRepository;
 use crate::identity_provider::entity::IdentityProviderType;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use super::events::IdentityProviderCreated;
 
 /// Command for creating a new identity provider.
@@ -25,18 +25,19 @@ pub struct CreateIdentityProviderCommand {
 }
 
 /// Use case for creating a new identity provider.
-pub struct CreateIdentityProviderUseCase {
+pub struct CreateIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl CreateIdentityProviderUseCase {
-    pub fn new(idp_repo: Arc<IdentityProviderRepository>) -> Self {
-        Self { idp_repo }
+impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
+    pub fn new(idp_repo: Arc<IdentityProviderRepository>, unit_of_work: Arc<U>) -> Self {
+        Self { idp_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for CreateIdentityProviderUseCase {
+impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
     type Command = CreateIdentityProviderCommand;
     type Event = IdentityProviderCreated;
 
@@ -112,7 +113,7 @@ impl UseCase for CreateIdentityProviderUseCase {
             )));
         }
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

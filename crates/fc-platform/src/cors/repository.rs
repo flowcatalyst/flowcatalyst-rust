@@ -1,10 +1,12 @@
 //! CORS Origin Repository — PostgreSQL via SQLx
 
-use sqlx::PgPool;
+use async_trait::async_trait;
+use sqlx::{PgPool, Postgres};
 use chrono::{DateTime, Utc};
 
 use super::entity::CorsAllowedOrigin;
 use crate::shared::error::Result;
+use crate::usecase::{HasId, PgPersist};
 
 #[derive(sqlx::FromRow)]
 struct CorsOriginRow {
@@ -76,26 +78,41 @@ impl CorsOriginRepository {
         Ok(rows)
     }
 
-    pub async fn insert(&self, origin: &CorsAllowedOrigin) -> Result<()> {
+}
+
+impl HasId for CorsAllowedOrigin {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl PgPersist for CorsAllowedOrigin {
+    async fn pg_upsert(&self, txn: &mut sqlx::Transaction<'_, Postgres>) -> Result<()> {
+        let now = Utc::now();
         sqlx::query(
-            r#"INSERT INTO tnt_cors_allowed_origins
+            "INSERT INTO tnt_cors_allowed_origins
                 (id, origin, description, created_by, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, NOW(), NOW())"#
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (id) DO UPDATE SET
+                origin = EXCLUDED.origin,
+                description = EXCLUDED.description,
+                updated_at = EXCLUDED.updated_at"
         )
-        .bind(&origin.id)
-        .bind(&origin.origin)
-        .bind(&origin.description)
-        .bind(&origin.created_by)
-        .execute(&self.pool)
+        .bind(&self.id)
+        .bind(&self.origin)
+        .bind(&self.description)
+        .bind(&self.created_by)
+        .bind(now)
+        .bind(now)
+        .execute(&mut **txn)
         .await?;
         Ok(())
     }
 
-    pub async fn delete(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM tnt_cors_allowed_origins WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
+    async fn pg_delete(&self, txn: &mut sqlx::Transaction<'_, Postgres>) -> Result<()> {
+        sqlx::query("DELETE FROM tnt_cors_allowed_origins WHERE id = $1")
+            .bind(&self.id)
+            .execute(&mut **txn)
             .await?;
-        Ok(result.rows_affected() > 0)
+        Ok(())
     }
 }

@@ -303,7 +303,7 @@ pub struct SyncResultResponse {
 #[derive(Clone)]
 pub struct SubscriptionsState {
     pub subscription_repo: Arc<SubscriptionRepository>,
-    pub sync_use_case: Arc<SyncSubscriptionsUseCase>,
+    pub sync_use_case: Arc<SyncSubscriptionsUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 fn parse_mode(s: &str) -> Result<DispatchMode, PlatformError> {

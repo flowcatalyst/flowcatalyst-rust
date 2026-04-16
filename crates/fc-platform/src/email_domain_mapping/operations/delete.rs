@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::EmailDomainMappingRepository;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use super::events::EmailDomainMappingDeleted;
 
 /// Command for deleting an email domain mapping.
@@ -15,18 +15,19 @@ pub struct DeleteEmailDomainMappingCommand {
     pub mapping_id: String,
 }
 
-pub struct DeleteEmailDomainMappingUseCase {
+pub struct DeleteEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl DeleteEmailDomainMappingUseCase {
-    pub fn new(edm_repo: Arc<EmailDomainMappingRepository>) -> Self {
-        Self { edm_repo }
+impl<U: UnitOfWork> DeleteEmailDomainMappingUseCase<U> {
+    pub fn new(edm_repo: Arc<EmailDomainMappingRepository>, unit_of_work: Arc<U>) -> Self {
+        Self { edm_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for DeleteEmailDomainMappingUseCase {
+impl<U: UnitOfWork> UseCase for DeleteEmailDomainMappingUseCase<U> {
     type Command = DeleteEmailDomainMappingCommand;
     type Event = EmailDomainMappingDeleted;
 
@@ -75,7 +76,7 @@ impl UseCase for DeleteEmailDomainMappingUseCase {
             &mapping.email_domain,
         );
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

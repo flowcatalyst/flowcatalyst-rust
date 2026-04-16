@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::CorsOriginRepository;
 use crate::cors::entity::CorsAllowedOrigin;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use super::events::CorsOriginAdded;
 
 fn origin_pattern() -> &'static Regex {
@@ -26,18 +26,19 @@ pub struct AddCorsOriginCommand {
     pub description: Option<String>,
 }
 
-pub struct AddCorsOriginUseCase {
+pub struct AddCorsOriginUseCase<U: UnitOfWork> {
     cors_repo: Arc<CorsOriginRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl AddCorsOriginUseCase {
-    pub fn new(cors_repo: Arc<CorsOriginRepository>) -> Self {
-        Self { cors_repo }
+impl<U: UnitOfWork> AddCorsOriginUseCase<U> {
+    pub fn new(cors_repo: Arc<CorsOriginRepository>, unit_of_work: Arc<U>) -> Self {
+        Self { cors_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for AddCorsOriginUseCase {
+impl<U: UnitOfWork> UseCase for AddCorsOriginUseCase<U> {
     type Command = AddCorsOriginCommand;
     type Event = CorsOriginAdded;
 
@@ -92,15 +93,9 @@ impl UseCase for AddCorsOriginUseCase {
             Some(ctx.principal_id.clone()),
         );
 
-        if let Err(e) = self.cors_repo.insert(&entity).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
-                "Failed to insert CORS origin: {}", e
-            )));
-        }
-
         let event = CorsOriginAdded::new(&ctx, &entity.id, &entity.origin);
 
-        UseCaseResult::success(event)
+        self.unit_of_work.commit(&entity, event, &command).await
     }
 }
 

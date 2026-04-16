@@ -183,12 +183,14 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             signing_secret,
         };
 
-        // Atomic commit through UnitOfWork
-        // Note: We use a wrapper event for the commit, then return the full result
-        match self.unit_of_work.commit(&service_account, event, &command).await {
-            UseCaseResult::Success(_) => UseCaseResult::success(result),
-            UseCaseResult::Failure(e) => UseCaseResult::Failure(e),
-        }
+        // Atomic commit through UnitOfWork. `.map()` is defined inside the
+        // usecase module, so it can translate the committed event into our
+        // wrapper result (which carries the one-time secrets) without
+        // bypassing the seal.
+        self.unit_of_work
+            .commit(&service_account, event, &command)
+            .await
+            .map(|_| result)
     }
 }
 

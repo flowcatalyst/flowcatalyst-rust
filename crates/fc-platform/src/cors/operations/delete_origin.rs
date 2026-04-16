@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::CorsOriginRepository;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use super::events::CorsOriginDeleted;
 
 /// Command for deleting a CORS allowed origin.
@@ -15,18 +15,19 @@ pub struct DeleteCorsOriginCommand {
     pub origin_id: String,
 }
 
-pub struct DeleteCorsOriginUseCase {
+pub struct DeleteCorsOriginUseCase<U: UnitOfWork> {
     cors_repo: Arc<CorsOriginRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl DeleteCorsOriginUseCase {
-    pub fn new(cors_repo: Arc<CorsOriginRepository>) -> Self {
-        Self { cors_repo }
+impl<U: UnitOfWork> DeleteCorsOriginUseCase<U> {
+    pub fn new(cors_repo: Arc<CorsOriginRepository>, unit_of_work: Arc<U>) -> Self {
+        Self { cors_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for DeleteCorsOriginUseCase {
+impl<U: UnitOfWork> UseCase for DeleteCorsOriginUseCase<U> {
     type Command = DeleteCorsOriginCommand;
     type Event = CorsOriginDeleted;
 
@@ -58,15 +59,9 @@ impl UseCase for DeleteCorsOriginUseCase {
             }
         };
 
-        if let Err(e) = self.cors_repo.delete(&origin.id).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
-                "Failed to delete CORS origin: {}", e
-            )));
-        }
-
         let event = CorsOriginDeleted::new(&ctx, &origin.id, &origin.origin);
 
-        UseCaseResult::success(event)
+        self.unit_of_work.commit_delete(&origin, event, &command).await
     }
 }
 

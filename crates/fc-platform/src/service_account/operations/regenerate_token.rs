@@ -131,11 +131,12 @@ impl<U: UnitOfWork> UseCase for RegenerateAuthTokenUseCase<U> {
             auth_token,
         };
 
-        // Atomic commit
-        match self.unit_of_work.commit(&service_account, event, &command).await {
-            UseCaseResult::Success(_) => UseCaseResult::success(result),
-            UseCaseResult::Failure(e) => UseCaseResult::Failure(e),
-        }
+        // Atomic commit through UnitOfWork, then map the event onto our
+        // wrapper (carrying the one-time token).
+        self.unit_of_work
+            .commit(&service_account, event, &command)
+            .await
+            .map(|_| result)
     }
 }
 

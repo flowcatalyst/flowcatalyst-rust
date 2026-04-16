@@ -12,7 +12,7 @@ use crate::SubscriptionRepository;
 use crate::ConnectionRepository;
 use crate::DispatchPoolRepository;
 use crate::usecase::{
-    ExecutionContext, UseCase, UseCaseError, UseCaseResult,
+    ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use super::events::SubscriptionsSynced;
 use super::create::EventTypeBindingInput;
@@ -51,24 +51,26 @@ pub struct SyncSubscriptionsCommand {
     pub remove_unlisted: bool,
 }
 
-pub struct SyncSubscriptionsUseCase {
+pub struct SyncSubscriptionsUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,
     connection_repo: Arc<ConnectionRepository>,
     dispatch_pool_repo: Arc<DispatchPoolRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl SyncSubscriptionsUseCase {
+impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
     pub fn new(
         subscription_repo: Arc<SubscriptionRepository>,
         connection_repo: Arc<ConnectionRepository>,
         dispatch_pool_repo: Arc<DispatchPoolRepository>,
+        unit_of_work: Arc<U>,
     ) -> Self {
-        Self { subscription_repo, connection_repo, dispatch_pool_repo }
+        Self { subscription_repo, connection_repo, dispatch_pool_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for SyncSubscriptionsUseCase {
+impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
     type Command = SyncSubscriptionsCommand;
     type Event = SubscriptionsSynced;
 
@@ -252,7 +254,7 @@ impl UseCase for SyncSubscriptionsUseCase {
             synced_codes,
         );
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 

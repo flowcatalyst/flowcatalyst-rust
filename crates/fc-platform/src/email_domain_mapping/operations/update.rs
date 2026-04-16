@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::EmailDomainMappingRepository;
 use crate::email_domain_mapping::entity::ScopeType;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use super::events::EmailDomainMappingUpdated;
 
 /// Command for updating an email domain mapping.
@@ -28,18 +28,19 @@ pub struct UpdateEmailDomainMappingCommand {
     pub allowed_role_ids: Option<Vec<String>>,
 }
 
-pub struct UpdateEmailDomainMappingUseCase {
+pub struct UpdateEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
+    unit_of_work: Arc<U>,
 }
 
-impl UpdateEmailDomainMappingUseCase {
-    pub fn new(edm_repo: Arc<EmailDomainMappingRepository>) -> Self {
-        Self { edm_repo }
+impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
+    pub fn new(edm_repo: Arc<EmailDomainMappingRepository>, unit_of_work: Arc<U>) -> Self {
+        Self { edm_repo, unit_of_work }
     }
 }
 
 #[async_trait]
-impl UseCase for UpdateEmailDomainMappingUseCase {
+impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
     type Command = UpdateEmailDomainMappingCommand;
     type Event = EmailDomainMappingUpdated;
 
@@ -113,7 +114,7 @@ impl UseCase for UpdateEmailDomainMappingUseCase {
             &mapping.email_domain,
         );
 
-        UseCaseResult::success(event)
+        self.unit_of_work.emit_event(event, &command).await
     }
 }
 
