@@ -1,7 +1,7 @@
 //! Service Accounts Admin API
 //!
 //! REST endpoints for service account management.
-//! Base path: /api/admin/platform/service-accounts
+//! Base path: /api/service-accounts
 
 use axum::{
     routing::{get, post, put},

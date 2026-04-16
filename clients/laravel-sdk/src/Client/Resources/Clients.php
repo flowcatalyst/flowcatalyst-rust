@@ -20,7 +20,7 @@ class Clients
      */
     public function list(): array
     {
-        $response = $this->client->request('GET', '/api/sdk/clients');
+        $response = $this->client->request('GET', '/api/clients');
 
         return [
             'clients' => array_map(
@@ -36,7 +36,7 @@ class Clients
      */
     public function get(string $id): Client
     {
-        $response = $this->client->request('GET', "/api/sdk/clients/{$id}");
+        $response = $this->client->request('GET', "/api/clients/{$id}");
 
         return Client::fromArray($response);
     }
@@ -51,7 +51,7 @@ class Clients
      */
     public function create(array $data): Client
     {
-        $response = $this->client->request('POST', '/api/sdk/clients', [
+        $response = $this->client->request('POST', '/api/clients', [
             'json' => $data,
         ]);
 
@@ -67,7 +67,7 @@ class Clients
      */
     public function update(string $id, array $data): Client
     {
-        $response = $this->client->request('PUT', "/api/sdk/clients/{$id}", [
+        $response = $this->client->request('PUT', "/api/clients/{$id}", [
             'json' => $data,
         ]);
 
@@ -79,7 +79,7 @@ class Clients
      */
     public function activate(string $id): Client
     {
-        $response = $this->client->request('POST', "/api/sdk/clients/{$id}/activate");
+        $response = $this->client->request('POST', "/api/clients/{$id}/activate");
 
         return Client::fromArray($response);
     }
@@ -89,7 +89,7 @@ class Clients
      */
     public function deactivate(string $id): Client
     {
-        $response = $this->client->request('POST', "/api/sdk/clients/{$id}/deactivate");
+        $response = $this->client->request('POST', "/api/clients/{$id}/deactivate");
 
         return Client::fromArray($response);
     }
@@ -99,7 +99,7 @@ class Clients
      */
     public function suspend(string $id, string $reason): Client
     {
-        $response = $this->client->request('POST', "/api/sdk/clients/{$id}/suspend", [
+        $response = $this->client->request('POST', "/api/clients/{$id}/suspend", [
             'json' => ['reason' => $reason],
         ]);
 
@@ -113,7 +113,7 @@ class Clients
      */
     public function getApplications(string $id): array
     {
-        return $this->client->request('GET', "/api/admin/clients/{$id}/applications");
+        return $this->client->request('GET', "/api/clients/{$id}/applications");
     }
 
     /**
@@ -124,7 +124,7 @@ class Clients
      */
     public function updateApplications(string $id, array $data): array
     {
-        return $this->client->request('PUT', "/api/admin/clients/{$id}/applications", [
+        return $this->client->request('PUT', "/api/clients/{$id}/applications", [
             'json' => $data,
         ]);
     }
@@ -134,7 +134,7 @@ class Clients
      */
     public function enableApplication(string $clientId, string $applicationId): void
     {
-        $this->client->request('POST', "/api/admin/clients/{$clientId}/applications/{$applicationId}/enable");
+        $this->client->request('POST', "/api/clients/{$clientId}/applications/{$applicationId}/enable");
     }
 
     /**
@@ -142,6 +142,6 @@ class Clients
      */
     public function disableApplication(string $clientId, string $applicationId): void
     {
-        $this->client->request('POST', "/api/admin/clients/{$clientId}/applications/{$applicationId}/disable");
+        $this->client->request('POST', "/api/clients/{$clientId}/applications/{$applicationId}/disable");
     }
 }

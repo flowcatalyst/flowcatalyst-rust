@@ -4,7 +4,7 @@
  * Manage dispatch pools for rate limiting and concurrency control.
  *
  * Uses direct HTTP calls since generated SDK functions are not yet available
- * (OpenAPI spec does not include /api/admin/dispatch-pools routes). Will be
+ * (OpenAPI spec does not include /api/dispatch-pools routes). Will be
  * migrated to generated functions once the spec is updated.
  */
 /**
@@ -19,7 +19,7 @@ export class DispatchPoolsResource {
      */
     list(filters) {
         return this.client.request((httpClient, headers) => httpClient.get({
-            url: "/api/admin/dispatch-pools",
+            url: "/api/dispatch-pools",
             headers,
             query: filters,
         }));
@@ -29,7 +29,7 @@ export class DispatchPoolsResource {
      */
     get(id) {
         return this.client.request((httpClient, headers) => httpClient.get({
-            url: "/api/admin/dispatch-pools/{id}",
+            url: "/api/dispatch-pools/{id}",
             headers,
             path: { id },
         }));
@@ -39,7 +39,7 @@ export class DispatchPoolsResource {
      */
     create(data) {
         return this.client.request((httpClient, headers) => httpClient.post({
-            url: "/api/admin/dispatch-pools",
+            url: "/api/dispatch-pools",
             headers: {
                 ...headers,
                 "Content-Type": "application/json",
@@ -52,7 +52,7 @@ export class DispatchPoolsResource {
      */
     update(id, data) {
         return this.client.request((httpClient, headers) => httpClient.put({
-            url: "/api/admin/dispatch-pools/{id}",
+            url: "/api/dispatch-pools/{id}",
             headers: {
                 ...headers,
                 "Content-Type": "application/json",
@@ -66,7 +66,7 @@ export class DispatchPoolsResource {
      */
     delete(id) {
         return this.client.request((httpClient, headers) => httpClient.delete({
-            url: "/api/admin/dispatch-pools/{id}",
+            url: "/api/dispatch-pools/{id}",
             headers,
             path: { id },
         }));
@@ -76,7 +76,7 @@ export class DispatchPoolsResource {
      */
     suspend(id) {
         return this.client.request((httpClient, headers) => httpClient.post({
-            url: "/api/admin/dispatch-pools/{id}/suspend",
+            url: "/api/dispatch-pools/{id}/suspend",
             headers,
             path: { id },
         }));
@@ -86,7 +86,7 @@ export class DispatchPoolsResource {
      */
     activate(id) {
         return this.client.request((httpClient, headers) => httpClient.post({
-            url: "/api/admin/dispatch-pools/{id}/activate",
+            url: "/api/dispatch-pools/{id}/activate",
             headers,
             path: { id },
         }));
@@ -96,7 +96,7 @@ export class DispatchPoolsResource {
      */
     sync(applicationCode, pools, removeUnlisted = false) {
         return this.client.request((httpClient, headers) => httpClient.post({
-            url: "/api/admin/dispatch-pools/sync",
+            url: "/api/dispatch-pools/sync",
             headers: {
                 ...headers,
                 "Content-Type": "application/json",

@@ -21,7 +21,7 @@ class PutApiAdminClientsByIdApplications extends \FlowCatalyst\Generated\Runtime
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/clients/{id}/applications');
+        return str_replace(['{id}'], [$this->id], '/api/clients/{id}/applications');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

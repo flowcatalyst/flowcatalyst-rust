@@ -78,7 +78,7 @@ impl FlowCatalystClient {
         } else {
             format!("?{}", params.join("&"))
         };
-        self.get(&format!("/api/admin/dispatch-pools{}", query))
+        self.get(&format!("/api/dispatch-pools{}", query))
             .await
     }
 
@@ -87,7 +87,7 @@ impl FlowCatalystClient {
         &self,
         id: &str,
     ) -> Result<DispatchPoolResponse, ClientError> {
-        self.get(&format!("/api/admin/dispatch-pools/{}", id)).await
+        self.get(&format!("/api/dispatch-pools/{}", id)).await
     }
 
     /// Create a new dispatch pool.
@@ -95,7 +95,7 @@ impl FlowCatalystClient {
         &self,
         req: &CreateDispatchPoolRequest,
     ) -> Result<DispatchPoolResponse, ClientError> {
-        self.post("/api/admin/dispatch-pools", req).await
+        self.post("/api/dispatch-pools", req).await
     }
 
     /// Update a dispatch pool.
@@ -104,13 +104,13 @@ impl FlowCatalystClient {
         id: &str,
         req: &UpdateDispatchPoolRequest,
     ) -> Result<DispatchPoolResponse, ClientError> {
-        self.put(&format!("/api/admin/dispatch-pools/{}", id), req)
+        self.put(&format!("/api/dispatch-pools/{}", id), req)
             .await
     }
 
     /// Delete a dispatch pool.
     pub async fn delete_dispatch_pool(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/admin/dispatch-pools/{}", id))
+        self.delete_req(&format!("/api/dispatch-pools/{}", id))
             .await
     }
 
@@ -119,7 +119,7 @@ impl FlowCatalystClient {
         &self,
         id: &str,
     ) -> Result<DispatchPoolResponse, ClientError> {
-        self.post_action(&format!("/api/admin/dispatch-pools/{}/suspend", id))
+        self.post_action(&format!("/api/dispatch-pools/{}/suspend", id))
             .await
     }
 
@@ -128,7 +128,7 @@ impl FlowCatalystClient {
         &self,
         id: &str,
     ) -> Result<DispatchPoolResponse, ClientError> {
-        self.post_action(&format!("/api/admin/dispatch-pools/{}/activate", id))
+        self.post_action(&format!("/api/dispatch-pools/{}/activate", id))
             .await
     }
 }

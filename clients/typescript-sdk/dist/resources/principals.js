@@ -79,6 +79,17 @@ export class PrincipalsResource {
         }));
     }
     /**
+     * Reset a user's password.
+     */
+    resetPassword(id, data) {
+        return this.client.request((httpClient, headers) => sdk.postApiAdminPrincipalsByIdResetPassword({
+            client: httpClient,
+            headers,
+            path: { id },
+            body: data,
+        }));
+    }
+    /**
      * Get roles assigned to a principal.
      */
     getRoles(id) {

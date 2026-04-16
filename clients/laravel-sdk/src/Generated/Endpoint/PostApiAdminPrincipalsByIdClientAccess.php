@@ -21,7 +21,7 @@ class PostApiAdminPrincipalsByIdClientAccess extends \FlowCatalyst\Generated\Run
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/principals/{id}/client-access');
+        return str_replace(['{id}'], [$this->id], '/api/principals/{id}/client-access');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

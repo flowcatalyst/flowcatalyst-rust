@@ -19,7 +19,7 @@ class GetApiAdminAuditLogsPrincipalByPrincipalId extends \FlowCatalyst\Generated
     }
     public function getUri(): string
     {
-        return str_replace(['{principal_id}'], [$this->principal_id], '/api/admin/audit-logs/principal/{principal_id}');
+        return str_replace(['{principal_id}'], [$this->principal_id], '/api/audit-logs/principal/{principal_id}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

@@ -18,7 +18,7 @@ class PostApiAdminPrincipalsUsers extends \FlowCatalyst\Generated\Runtime\Client
     }
     public function getUri(): string
     {
-        return '/api/admin/principals';
+        return '/api/principals/users';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

@@ -26,8 +26,8 @@ use crate::api::{
     EventTypesState, EventsState, FilterOptionsState, IdentityProvidersState, InFlightTracker,
     LeaderState, LoginAttemptsState, MeState, MonitoringState, OAuthClientsState, OAuthState,
     OidcLoginApiState, PasswordResetApiState, PlatformConfigState, PrincipalsState, PublicApiState,
-    RolesState, SdkAuditBatchState, SdkClientsState, SdkDispatchJobsState, SdkEventsState,
-    SdkPrincipalsState, SdkRolesState, SdkSyncState, ServiceAccountsState, SubscriptionsState,
+    RolesState, SdkAuditBatchState, SdkDispatchJobsState, SdkEventsState,
+    SdkSyncState, ServiceAccountsState, SubscriptionsState,
     WellKnownState,
 };
 use crate::audit::service::AuditService;
@@ -102,7 +102,7 @@ pub fn build_platform_routes(
         audit_service: Some(audit_service.clone()),
     };
     // Password reset emailer — shared between user-initiated /auth/password-reset/request
-    // and admin-initiated /api/admin/principals/{id}/send-password-reset.
+    // and admin-initiated /api/principals/{id}/send-password-reset.
     let email_service: Arc<dyn crate::shared::email_service::EmailService> =
         Arc::from(crate::shared::email_service::create_email_service());
     let password_reset_emailer = Arc::new(crate::auth::password_reset_api::PasswordResetEmailer {
@@ -319,20 +319,6 @@ pub fn build_platform_routes(
         event_repo: repos.event_repo.clone(),
         dispatch: config.event_dispatch,
     };
-    let sdk_clients_state = SdkClientsState {
-        client_repo: repos.client_repo.clone(),
-        unit_of_work: unit_of_work.clone(),
-    };
-    let sdk_principals_state = SdkPrincipalsState {
-        principal_repo: repos.principal_repo.clone(),
-        role_repo: repos.role_repo.clone(),
-        unit_of_work: unit_of_work.clone(),
-    };
-    let sdk_roles_state = SdkRolesState {
-        role_repo: repos.role_repo.clone(),
-        application_repo: repos.application_repo.clone(),
-    };
-
     let debug_state = DebugState {
         event_repo: repos.event_repo.clone(),
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
@@ -387,9 +373,6 @@ pub fn build_platform_routes(
         login_attempts: login_attempts_state,
         me: me_state,
         sdk_events: sdk_events_state,
-        sdk_clients: sdk_clients_state,
-        sdk_principals: sdk_principals_state,
-        sdk_roles: sdk_roles_state,
         sdk_dispatch_jobs: sdk_dispatch_jobs_state,
         oidc_login: oidc_login_state,
         oauth: oauth_state,

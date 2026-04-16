@@ -24,7 +24,7 @@ class GetApiAdminPrincipals extends \FlowCatalyst\Generated\Runtime\Client\BaseE
     }
     public function getUri(): string
     {
-        return '/api/admin/principals';
+        return '/api/principals';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

@@ -20,7 +20,7 @@ class PostApiAdminPrincipalsByIdActivate extends \FlowCatalyst\Generated\Runtime
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/principals/{id}/activate');
+        return str_replace(['{id}'], [$this->id], '/api/principals/{id}/activate');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

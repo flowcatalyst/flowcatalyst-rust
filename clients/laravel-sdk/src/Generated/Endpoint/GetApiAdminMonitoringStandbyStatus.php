@@ -11,7 +11,7 @@ class GetApiAdminMonitoringStandbyStatus extends \FlowCatalyst\Generated\Runtime
     }
     public function getUri(): string
     {
-        return '/api/admin/monitoring/standby-status';
+        return '/api/monitoring/standby-status';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

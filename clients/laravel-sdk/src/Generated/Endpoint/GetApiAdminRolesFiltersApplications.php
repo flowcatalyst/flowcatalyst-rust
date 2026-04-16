@@ -11,7 +11,7 @@ class GetApiAdminRolesFiltersApplications extends \FlowCatalyst\Generated\Runtim
     }
     public function getUri(): string
     {
-        return '/api/admin/roles/filters/applications';
+        return '/api/roles/filters/applications';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

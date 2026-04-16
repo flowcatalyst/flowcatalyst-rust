@@ -4,7 +4,7 @@
  * Manage applications in the platform.
  *
  * Uses direct HTTP calls since generated SDK functions are not yet available
- * (OpenAPI spec does not include /api/admin/applications routes). Will be
+ * (OpenAPI spec does not include /api/applications routes). Will be
  * migrated to generated functions once the spec is updated.
  */
 
@@ -62,7 +62,7 @@ export class ApplicationsResource {
 	list(): ResultAsync<ApplicationListResponse, SdkError> {
 		return this.client.request<ApplicationListResponse>((httpClient, headers) =>
 			httpClient.get({
-				url: "/api/admin/applications",
+				url: "/api/applications",
 				headers,
 			}),
 		);
@@ -74,7 +74,7 @@ export class ApplicationsResource {
 	get(id: string): ResultAsync<ApplicationResponse, SdkError> {
 		return this.client.request<ApplicationResponse>((httpClient, headers) =>
 			httpClient.get({
-				url: "/api/admin/applications/{id}",
+				url: "/api/applications/{id}",
 				headers,
 				path: { id },
 			}),
@@ -87,7 +87,7 @@ export class ApplicationsResource {
 	getByCode(code: string): ResultAsync<ApplicationResponse, SdkError> {
 		return this.client.request<ApplicationResponse>((httpClient, headers) =>
 			httpClient.get({
-				url: "/api/admin/applications/by-code/{code}",
+				url: "/api/applications/by-code/{code}",
 				headers,
 				path: { code },
 			}),
@@ -102,7 +102,7 @@ export class ApplicationsResource {
 	): ResultAsync<ApplicationResponse, SdkError> {
 		return this.client.request<ApplicationResponse>((httpClient, headers) =>
 			httpClient.post({
-				url: "/api/admin/applications",
+				url: "/api/applications",
 				headers: {
 					...headers,
 					"Content-Type": "application/json",
@@ -121,7 +121,7 @@ export class ApplicationsResource {
 	): ResultAsync<ApplicationResponse, SdkError> {
 		return this.client.request<ApplicationResponse>((httpClient, headers) =>
 			httpClient.put({
-				url: "/api/admin/applications/{id}",
+				url: "/api/applications/{id}",
 				headers: {
 					...headers,
 					"Content-Type": "application/json",
@@ -138,7 +138,7 @@ export class ApplicationsResource {
 	delete(id: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
 			httpClient.delete({
-				url: "/api/admin/applications/{id}",
+				url: "/api/applications/{id}",
 				headers,
 				path: { id },
 			}),
@@ -151,7 +151,7 @@ export class ApplicationsResource {
 	activate(id: string): ResultAsync<ApplicationResponse, SdkError> {
 		return this.client.request<ApplicationResponse>((httpClient, headers) =>
 			httpClient.post({
-				url: "/api/admin/applications/{id}/activate",
+				url: "/api/applications/{id}/activate",
 				headers,
 				path: { id },
 			}),
@@ -164,7 +164,7 @@ export class ApplicationsResource {
 	deactivate(id: string): ResultAsync<ApplicationResponse, SdkError> {
 		return this.client.request<ApplicationResponse>((httpClient, headers) =>
 			httpClient.post({
-				url: "/api/admin/applications/{id}/deactivate",
+				url: "/api/applications/{id}/deactivate",
 				headers,
 				path: { id },
 			}),
@@ -180,7 +180,7 @@ export class ApplicationsResource {
 		return this.client.request<CreateServiceAccountResponse>(
 			(httpClient, headers) =>
 				httpClient.post({
-					url: "/api/admin/applications/{id}/provision-service-account",
+					url: "/api/applications/{id}/provision-service-account",
 					headers,
 					path: { id },
 				}),

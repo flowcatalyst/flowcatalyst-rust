@@ -19,7 +19,7 @@ class PostApiAdminOauthClientsRotateSecret extends \FlowCatalyst\Generated\Runti
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/oauth-clients/{id}/rotate-secret');
+        return str_replace(['{id}'], [$this->id], '/api/oauth-clients/{id}/rotate-secret');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

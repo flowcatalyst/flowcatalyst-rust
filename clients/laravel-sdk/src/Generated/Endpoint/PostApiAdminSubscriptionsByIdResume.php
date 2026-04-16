@@ -19,7 +19,7 @@ class PostApiAdminSubscriptionsByIdResume extends \FlowCatalyst\Generated\Runtim
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/subscriptions/{id}/resume');
+        return str_replace(['{id}'], [$this->id], '/api/subscriptions/{id}/resume');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

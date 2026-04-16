@@ -23,7 +23,7 @@ class EventTypes
     public function list(array $filters = []): array
     {
         $query = http_build_query($filters);
-        $endpoint = '/api/admin/event-types' . ($query ? "?{$query}" : '');
+        $endpoint = '/api/event-types' . ($query ? "?{$query}" : '');
 
         $response = $this->client->request('GET', $endpoint);
 
@@ -41,7 +41,7 @@ class EventTypes
      */
     public function get(string $id): EventType
     {
-        $response = $this->client->request('GET', "/api/admin/event-types/{$id}");
+        $response = $this->client->request('GET', "/api/event-types/{$id}");
 
         return EventType::fromArray($response);
     }
@@ -53,7 +53,7 @@ class EventTypes
      */
     public function create(array $data): EventType
     {
-        $response = $this->client->request('POST', '/api/admin/event-types', [
+        $response = $this->client->request('POST', '/api/event-types', [
             'json' => $data,
         ]);
 
@@ -67,7 +67,7 @@ class EventTypes
      */
     public function update(string $id, array $data): EventType
     {
-        $response = $this->client->request('PATCH', "/api/admin/event-types/{$id}", [
+        $response = $this->client->request('PATCH', "/api/event-types/{$id}", [
             'json' => $data,
         ]);
 
@@ -85,7 +85,7 @@ class EventTypes
             $schema['schemaType'] = $schema['schemaType']->value;
         }
 
-        $response = $this->client->request('POST', "/api/admin/event-types/{$id}/schemas", [
+        $response = $this->client->request('POST', "/api/event-types/{$id}/schemas", [
             'json' => $schema,
         ]);
 
@@ -97,7 +97,7 @@ class EventTypes
      */
     public function finaliseSchema(string $id, string $version): EventType
     {
-        $response = $this->client->request('POST', "/api/admin/event-types/{$id}/schemas/{$version}/finalise");
+        $response = $this->client->request('POST', "/api/event-types/{$id}/schemas/{$version}/finalise");
 
         return EventType::fromArray($response);
     }
@@ -107,7 +107,7 @@ class EventTypes
      */
     public function deprecateSchema(string $id, string $version): EventType
     {
-        $response = $this->client->request('POST', "/api/admin/event-types/{$id}/schemas/{$version}/deprecate");
+        $response = $this->client->request('POST', "/api/event-types/{$id}/schemas/{$version}/deprecate");
 
         return EventType::fromArray($response);
     }
@@ -117,7 +117,7 @@ class EventTypes
      */
     public function archive(string $id): EventType
     {
-        $response = $this->client->request('POST', "/api/admin/event-types/{$id}/archive");
+        $response = $this->client->request('POST', "/api/event-types/{$id}/archive");
 
         return EventType::fromArray($response);
     }
@@ -127,7 +127,7 @@ class EventTypes
      */
     public function delete(string $id): void
     {
-        $this->client->request('DELETE', "/api/admin/event-types/{$id}");
+        $this->client->request('DELETE', "/api/event-types/{$id}");
     }
 
     /**
@@ -137,7 +137,7 @@ class EventTypes
      */
     public function filterApplications(): array
     {
-        $response = $this->client->request('GET', '/api/admin/event-types/filters/applications');
+        $response = $this->client->request('GET', '/api/event-types/filters/applications');
 
         return $response['applications'] ?? $response ?? [];
     }
@@ -150,7 +150,7 @@ class EventTypes
     public function filterSubdomains(?string $application = null): array
     {
         $query = $application ? "?application={$application}" : '';
-        $response = $this->client->request('GET', "/api/admin/event-types/filters/subdomains{$query}");
+        $response = $this->client->request('GET', "/api/event-types/filters/subdomains{$query}");
 
         return $response['subdomains'] ?? $response ?? [];
     }
@@ -167,7 +167,7 @@ class EventTypes
             'subdomain' => $subdomain,
         ]);
         $query = $params ? '?' . http_build_query($params) : '';
-        $response = $this->client->request('GET', "/api/admin/event-types/filters/aggregates{$query}");
+        $response = $this->client->request('GET', "/api/event-types/filters/aggregates{$query}");
 
         return $response['aggregates'] ?? $response ?? [];
     }

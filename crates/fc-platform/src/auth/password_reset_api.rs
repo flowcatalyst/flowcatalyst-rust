@@ -25,7 +25,7 @@ use crate::{PgUnitOfWork, UnitOfWork};
 /// Shared service that creates a single-use reset token and emails the
 /// recipient with a link back to the SPA. Used by both the user-initiated
 /// `/auth/password-reset/request` flow and the admin-initiated
-/// `/api/admin/principals/{id}/send-password-reset` action.
+/// `/api/principals/{id}/send-password-reset` action.
 #[derive(Clone)]
 pub struct PasswordResetEmailer {
     pub password_reset_repo: Arc<PasswordResetTokenRepository>,

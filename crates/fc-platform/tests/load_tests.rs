@@ -318,7 +318,7 @@ async fn test_api_batch_events_throughput() {
     let event_repo = Arc::new(EventRepository::new(&pool));
     let sdk_events_state = SdkEventsState { event_repo, dispatch: None };
     let app: Router = Router::new()
-        .nest("/api/sdk/events", sdk_events_batch_router(sdk_events_state))
+        .nest("/api/events", sdk_events_batch_router(sdk_events_state))
         .layer(AuthLayer::new(app_state));
 
     let principal = Principal::new_user("load@test.local", UserScope::Anchor);
@@ -338,7 +338,7 @@ async fn test_api_batch_events_throughput() {
         let response = app.clone().oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/sdk/events/batch")
+                .uri("/api/events/batch")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {}", token))
                 .body(Body::from(serde_json::to_string(&serde_json::json!({"items": items})).unwrap()))

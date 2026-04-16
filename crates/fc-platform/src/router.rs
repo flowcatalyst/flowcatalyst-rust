@@ -40,9 +40,6 @@ use crate::api::{
     login_attempts_router, LoginAttemptsState,
     me_router, MeState,
     sdk_events_batch_router, SdkEventsState,
-    sdk_clients_router, SdkClientsState,
-    sdk_principals_router, SdkPrincipalsState,
-    sdk_roles_router, SdkRolesState,
     sdk_dispatch_jobs_batch_router, SdkDispatchJobsState,
     oidc_login_router, OidcLoginApiState,
     oauth_router, OAuthState,
@@ -71,28 +68,30 @@ pub const PATH_BFF_EVENT_TYPES: &str = "/bff/event-types";
 pub const PATH_BFF_DEBUG_EVENTS: &str = "/bff/debug/events";
 pub const PATH_BFF_DEBUG_DISPATCH_JOBS: &str = "/bff/debug/dispatch-jobs";
 
-// Admin API routes
-pub const PATH_ADMIN_EVENTS: &str = "/api/admin/events";
-pub const PATH_ADMIN_EVENT_TYPES: &str = "/api/admin/event-types";
-pub const PATH_ADMIN_CLIENTS: &str = "/api/admin/clients";
-pub const PATH_ADMIN_PRINCIPALS: &str = "/api/admin/principals";
-pub const PATH_ADMIN_ROLES: &str = "/api/admin/roles";
-pub const PATH_ADMIN_SUBSCRIPTIONS: &str = "/api/admin/subscriptions";
-pub const PATH_ADMIN_OAUTH_CLIENTS: &str = "/api/admin/oauth-clients";
-pub const PATH_ADMIN_AUDIT_LOGS: &str = "/api/admin/audit-logs";
-pub const PATH_ADMIN_ANCHOR_DOMAINS: &str = "/api/admin/anchor-domains";
-pub const PATH_ADMIN_AUTH_CONFIGS: &str = "/api/admin/auth-configs";
-pub const PATH_ADMIN_IDP_ROLE_MAPPINGS: &str = "/api/admin/idp-role-mappings";
-pub const PATH_ADMIN_APPLICATIONS: &str = "/api/admin/applications";
-pub const PATH_ADMIN_DISPATCH_POOLS: &str = "/api/admin/dispatch-pools";
-pub const PATH_ADMIN_SERVICE_ACCOUNTS: &str = "/api/admin/service-accounts";
-pub const PATH_ADMIN_CONNECTIONS: &str = "/api/admin/connections";
-pub const PATH_ADMIN_CORS: &str = "/api/admin/platform/cors";
-pub const PATH_ADMIN_IDENTITY_PROVIDERS: &str = "/api/admin/identity-providers";
-pub const PATH_ADMIN_EMAIL_DOMAIN_MAPPINGS: &str = "/api/admin/email-domain-mappings";
-pub const PATH_ADMIN_CONFIG: &str = "/api/admin/config";
-pub const PATH_ADMIN_CONFIG_ACCESS: &str = "/api/admin/config-access";
-pub const PATH_ADMIN_LOGIN_ATTEMPTS: &str = "/api/admin/login-attempts";
+// API routes (single programmable surface; gated by permissions, not URL tier)
+pub const PATH_API_EVENTS: &str = "/api/events";
+pub const PATH_API_EVENT_TYPES: &str = "/api/event-types";
+pub const PATH_API_CLIENTS: &str = "/api/clients";
+pub const PATH_API_PRINCIPALS: &str = "/api/principals";
+pub const PATH_API_ROLES: &str = "/api/roles";
+pub const PATH_API_SUBSCRIPTIONS: &str = "/api/subscriptions";
+pub const PATH_API_OAUTH_CLIENTS: &str = "/api/oauth-clients";
+// Audit logs admin CRUD reuses the same prefix as batch ingest; the two routers
+// occupy non-overlapping sub-paths, so both nest at `/api/audit-logs`.
+pub const PATH_API_ANCHOR_DOMAINS: &str = "/api/anchor-domains";
+pub const PATH_API_AUTH_CONFIGS: &str = "/api/auth-configs";
+pub const PATH_API_IDP_ROLE_MAPPINGS: &str = "/api/idp-role-mappings";
+pub const PATH_API_DISPATCH_JOBS: &str = "/api/dispatch-jobs";
+pub const PATH_API_DISPATCH_POOLS: &str = "/api/dispatch-pools";
+pub const PATH_API_SERVICE_ACCOUNTS: &str = "/api/service-accounts";
+pub const PATH_API_CONNECTIONS: &str = "/api/connections";
+pub const PATH_API_CORS: &str = "/api/platform/cors";
+pub const PATH_API_IDENTITY_PROVIDERS: &str = "/api/identity-providers";
+pub const PATH_API_EMAIL_DOMAIN_MAPPINGS: &str = "/api/email-domain-mappings";
+// Admin config reuses `/api/config`; shared with platform_config_router on
+// non-overlapping sub-paths.
+pub const PATH_API_CONFIG_ACCESS: &str = "/api/config-access";
+pub const PATH_API_LOGIN_ATTEMPTS: &str = "/api/login-attempts";
 
 // Monitoring
 pub const PATH_MONITORING: &str = "/api/monitoring";
@@ -110,12 +109,9 @@ pub const PATH_AUTH_PASSWORD_RESET: &str = "/auth/password-reset";
 pub const PATH_OAUTH: &str = "/oauth";
 pub const PATH_WELL_KNOWN: &str = "/.well-known";
 
-// SDK routes
-pub const PATH_SDK_EVENTS: &str = "/api/sdk/events";
-pub const PATH_SDK_CLIENTS: &str = "/api/sdk/clients";
-pub const PATH_SDK_PRINCIPALS: &str = "/api/sdk/principals";
-pub const PATH_SDK_ROLES: &str = "/api/sdk/roles";
-pub const PATH_SDK_DISPATCH_JOBS: &str = "/api/sdk/dispatch-jobs";
+// NOTE: the legacy `/api/sdk/*` tier was consolidated into `/api/*`. Batch
+// ingest endpoints (events, dispatch-jobs) now live under their resource's
+// main router; all other SDK-tier CRUD was duplicative and has been removed.
 
 // Dispatch processing (internal callback from message router)
 pub const PATH_API_DISPATCH: &str = "/api/dispatch";
@@ -172,9 +168,6 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub login_attempts: LoginAttemptsState,
     pub me: MeState,
     pub sdk_events: SdkEventsState,
-    pub sdk_clients: SdkClientsState,
-    pub sdk_principals: SdkPrincipalsState,
-    pub sdk_roles: SdkRolesState,
     pub sdk_dispatch_jobs: SdkDispatchJobsState,
     pub oidc_login: OidcLoginApiState,
     pub oauth: OAuthState,
@@ -205,17 +198,17 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
     pub fn build(self) -> (Router, utoipa::openapi::OpenApi) {
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
         let (router, mut openapi) = OpenApiRouter::new()
-            .nest(PATH_ADMIN_EVENTS, admin_events_router(self.events.clone()).into())
+            .nest(PATH_API_EVENTS, admin_events_router(self.events.clone()).into())
             .nest(PATH_BFF_EVENTS, events_router(self.events))
-            .nest(PATH_ADMIN_EVENT_TYPES, event_types_router(self.event_types))
+            .nest(PATH_API_EVENT_TYPES, event_types_router(self.event_types))
             .nest(PATH_BFF_DISPATCH_JOBS, dispatch_jobs_router(self.dispatch_jobs))
             .nest(PATH_BFF_FILTER_OPTIONS, filter_options_router(self.filter_options))
-            .nest(PATH_ADMIN_CLIENTS, clients_router(self.clients))
-            .nest(PATH_ADMIN_PRINCIPALS, principals_router(self.principals))
-            .nest(PATH_ADMIN_ROLES, roles_router(self.roles))
-            .nest(PATH_ADMIN_SUBSCRIPTIONS, subscriptions_router(self.subscriptions))
-            .nest(PATH_ADMIN_OAUTH_CLIENTS, oauth_clients_router(self.oauth_clients))
-            .nest(PATH_ADMIN_AUDIT_LOGS, audit_logs_router(self.audit_logs))
+            .nest(PATH_API_CLIENTS, clients_router(self.clients))
+            .nest(PATH_API_PRINCIPALS, principals_router(self.principals))
+            .nest(PATH_API_ROLES, roles_router(self.roles))
+            .nest(PATH_API_SUBSCRIPTIONS, subscriptions_router(self.subscriptions))
+            .nest(PATH_API_OAUTH_CLIENTS, oauth_clients_router(self.oauth_clients))
+            .nest(PATH_API_AUDIT_LOGS, audit_logs_router(self.audit_logs))
             .nest(PATH_MONITORING, monitoring_router(self.monitoring))
             .nest(PATH_AUTH, auth_router(self.auth))
             .split_for_parts();
@@ -245,21 +238,21 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_BFF_EVENT_TYPES, bff_event_types_router(self.bff_event_types).into())
             .nest(PATH_BFF_DEBUG_EVENTS, debug_events_router(self.debug.clone()))
             .nest(PATH_BFF_DEBUG_DISPATCH_JOBS, debug_dispatch_jobs_router(self.debug))
-            // Admin — auth config
-            .nest(PATH_ADMIN_ANCHOR_DOMAINS, anchor_domains_router(self.auth_config.clone()))
-            .nest(PATH_ADMIN_AUTH_CONFIGS, client_auth_configs_router(self.auth_config.clone()))
-            .nest(PATH_ADMIN_IDP_ROLE_MAPPINGS, idp_role_mappings_router(self.auth_config))
-            // Admin — domain aggregates
-            .nest(PATH_ADMIN_APPLICATIONS, applications_router(self.applications))
-            .nest(PATH_ADMIN_DISPATCH_POOLS, dispatch_pools_router(self.dispatch_pools))
-            .nest(PATH_ADMIN_SERVICE_ACCOUNTS, service_accounts_router(self.service_accounts))
-            .nest(PATH_ADMIN_CONNECTIONS, connections_router(self.connections).into())
-            .nest(PATH_ADMIN_CORS, cors_router(self.cors))
-            .nest(PATH_ADMIN_IDENTITY_PROVIDERS, identity_providers_router(self.identity_providers))
-            .nest(PATH_ADMIN_EMAIL_DOMAIN_MAPPINGS, email_domain_mappings_router(self.email_domain_mappings).into())
-            .nest(PATH_ADMIN_CONFIG, admin_platform_config_router(self.platform_config).into())
-            .nest(PATH_ADMIN_CONFIG_ACCESS, config_access_router(self.config_access).into())
-            .nest(PATH_ADMIN_LOGIN_ATTEMPTS, login_attempts_router(self.login_attempts))
+            // API — auth config
+            .nest(PATH_API_ANCHOR_DOMAINS, anchor_domains_router(self.auth_config.clone()))
+            .nest(PATH_API_AUTH_CONFIGS, client_auth_configs_router(self.auth_config.clone()))
+            .nest(PATH_API_IDP_ROLE_MAPPINGS, idp_role_mappings_router(self.auth_config))
+            // API — domain aggregates
+            .nest(PATH_API_APPLICATIONS, applications_router(self.applications))
+            .nest(PATH_API_DISPATCH_POOLS, dispatch_pools_router(self.dispatch_pools))
+            .nest(PATH_API_SERVICE_ACCOUNTS, service_accounts_router(self.service_accounts))
+            .nest(PATH_API_CONNECTIONS, connections_router(self.connections).into())
+            .nest(PATH_API_CORS, cors_router(self.cors))
+            .nest(PATH_API_IDENTITY_PROVIDERS, identity_providers_router(self.identity_providers))
+            .nest(PATH_API_EMAIL_DOMAIN_MAPPINGS, email_domain_mappings_router(self.email_domain_mappings).into())
+            .nest(PATH_API_CONFIG, admin_platform_config_router(self.platform_config).into())
+            .nest(PATH_API_CONFIG_ACCESS, config_access_router(self.config_access).into())
+            .nest(PATH_API_LOGIN_ATTEMPTS, login_attempts_router(self.login_attempts))
             // Auth
             .nest(PATH_API_ME, me_router(self.me))
             .nest(PATH_AUTH, oidc_login_router(self.oidc_login))
@@ -267,12 +260,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
             .nest(PATH_AUTH_CLIENT, client_selection_router(self.client_selection))
             .nest(PATH_AUTH_PASSWORD_RESET, password_reset_router(self.password_reset))
-            // SDK
-            .nest(PATH_SDK_EVENTS, sdk_events_batch_router(self.sdk_events))
-            .nest(PATH_SDK_CLIENTS, sdk_clients_router(self.sdk_clients))
-            .nest(PATH_SDK_PRINCIPALS, sdk_principals_router(self.sdk_principals))
-            .nest(PATH_SDK_ROLES, sdk_roles_router(self.sdk_roles))
-            .nest(PATH_SDK_DISPATCH_JOBS, sdk_dispatch_jobs_batch_router(self.sdk_dispatch_jobs))
+            // Batch ingest endpoints (merged into resource routers)
+            .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))
+            .nest(PATH_API_DISPATCH_JOBS, sdk_dispatch_jobs_batch_router(self.sdk_dispatch_jobs))
             // Shared API
             .nest(PATH_API_APPLICATIONS, application_roles_sdk_router(self.application_roles_sdk))
             .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))

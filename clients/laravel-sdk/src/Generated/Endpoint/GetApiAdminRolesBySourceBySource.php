@@ -19,7 +19,7 @@ class GetApiAdminRolesBySourceBySource extends \FlowCatalyst\Generated\Runtime\C
     }
     public function getUri(): string
     {
-        return str_replace(['{source}'], [$this->source], '/api/admin/roles/by-source/{source}');
+        return str_replace(['{source}'], [$this->source], '/api/roles/by-source/{source}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

@@ -121,7 +121,7 @@ impl FlowCatalystClient {
         &self,
         req: &CreateClientRequest,
     ) -> Result<CreatedResponse, ClientError> {
-        self.post("/api/admin/clients", req).await
+        self.post("/api/clients", req).await
     }
 
     /// List clients with optional pagination and status filter.
@@ -148,12 +148,12 @@ impl FlowCatalystClient {
             format!("?{}", params.join("&"))
         };
 
-        self.get(&format!("/api/admin/clients{}", query)).await
+        self.get(&format!("/api/clients{}", query)).await
     }
 
     /// Get a client by ID.
     pub async fn get_client(&self, id: &str) -> Result<ClientResponse, ClientError> {
-        self.get(&format!("/api/admin/clients/{}", id)).await
+        self.get(&format!("/api/clients/{}", id)).await
     }
 
     /// Get a client by identifier (slug/domain).
@@ -161,13 +161,13 @@ impl FlowCatalystClient {
         &self,
         identifier: &str,
     ) -> Result<ClientResponse, ClientError> {
-        self.get(&format!("/api/admin/clients/by-identifier/{}", identifier))
+        self.get(&format!("/api/clients/by-identifier/{}", identifier))
             .await
     }
 
     /// Search clients by name or identifier.
     pub async fn search_clients(&self, query: &str) -> Result<ClientListResponse, ClientError> {
-        self.get(&format!("/api/admin/clients/search?q={}", query)).await
+        self.get(&format!("/api/clients/search?q={}", query)).await
     }
 
     /// Update a client.
@@ -176,17 +176,17 @@ impl FlowCatalystClient {
         id: &str,
         req: &UpdateClientRequest,
     ) -> Result<ClientResponse, ClientError> {
-        self.put(&format!("/api/admin/clients/{}", id), req).await
+        self.put(&format!("/api/clients/{}", id), req).await
     }
 
     /// Delete (deactivate) a client.
     pub async fn delete_client(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/admin/clients/{}", id)).await
+        self.delete_req(&format!("/api/clients/{}", id)).await
     }
 
     /// Activate a client.
     pub async fn activate_client(&self, id: &str) -> Result<StatusChangeResponse, ClientError> {
-        self.post_action(&format!("/api/admin/clients/{}/activate", id))
+        self.post_action(&format!("/api/clients/{}/activate", id))
             .await
     }
 
@@ -196,7 +196,7 @@ impl FlowCatalystClient {
         id: &str,
         req: &StatusChangeRequest,
     ) -> Result<StatusChangeResponse, ClientError> {
-        self.post(&format!("/api/admin/clients/{}/suspend", id), req)
+        self.post(&format!("/api/clients/{}/suspend", id), req)
             .await
     }
 
@@ -206,7 +206,7 @@ impl FlowCatalystClient {
         id: &str,
         req: &StatusChangeRequest,
     ) -> Result<StatusChangeResponse, ClientError> {
-        self.post(&format!("/api/admin/clients/{}/deactivate", id), req)
+        self.post(&format!("/api/clients/{}/deactivate", id), req)
             .await
     }
 
@@ -216,7 +216,7 @@ impl FlowCatalystClient {
         id: &str,
         req: &AddNoteRequest,
     ) -> Result<AddNoteResponse, ClientError> {
-        self.post(&format!("/api/admin/clients/{}/notes", id), req).await
+        self.post(&format!("/api/clients/{}/notes", id), req).await
     }
 
     /// List applications for a client (with enabled status).
@@ -224,7 +224,7 @@ impl FlowCatalystClient {
         &self,
         client_id: &str,
     ) -> Result<ClientApplicationsResponse, ClientError> {
-        self.get(&format!("/api/admin/clients/{}/applications", client_id))
+        self.get(&format!("/api/clients/{}/applications", client_id))
             .await
     }
 
@@ -235,7 +235,7 @@ impl FlowCatalystClient {
         application_id: &str,
     ) -> Result<SuccessResponse, ClientError> {
         self.post_action(&format!(
-            "/api/admin/clients/{}/applications/{}/enable",
+            "/api/clients/{}/applications/{}/enable",
             client_id, application_id
         ))
         .await
@@ -248,7 +248,7 @@ impl FlowCatalystClient {
         application_id: &str,
     ) -> Result<SuccessResponse, ClientError> {
         self.post_action(&format!(
-            "/api/admin/clients/{}/applications/{}/disable",
+            "/api/clients/{}/applications/{}/disable",
             client_id, application_id
         ))
         .await
@@ -261,7 +261,7 @@ impl FlowCatalystClient {
         req: &UpdateClientApplicationsRequest,
     ) -> Result<SuccessResponse, ClientError> {
         self.put(
-            &format!("/api/admin/clients/{}/applications", client_id),
+            &format!("/api/clients/{}/applications", client_id),
             req,
         )
         .await

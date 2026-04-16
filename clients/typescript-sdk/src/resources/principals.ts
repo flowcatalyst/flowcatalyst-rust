@@ -13,6 +13,7 @@ import type {
 	GetApiAdminPrincipalsByIdResponse,
 	PostApiAdminPrincipalsUsersData,
 	PutApiAdminPrincipalsByIdData,
+	PostApiAdminPrincipalsByIdResetPasswordData,
 	GetApiAdminPrincipalsByIdRolesResponse,
 	GetApiAdminPrincipalsByIdClientAccessResponse,
 } from "../generated/types.gen";
@@ -21,6 +22,8 @@ export type PrincipalListResponse = GetApiAdminPrincipalsResponse;
 export type PrincipalDto = GetApiAdminPrincipalsByIdResponse;
 export type CreateUserRequest = PostApiAdminPrincipalsUsersData["body"];
 export type UpdatePrincipalRequest = PutApiAdminPrincipalsByIdData["body"];
+export type ResetPasswordRequest =
+	PostApiAdminPrincipalsByIdResetPasswordData["body"];
 export type RoleListResponse = GetApiAdminPrincipalsByIdRolesResponse;
 export type ClientAccessListResponse =
 	GetApiAdminPrincipalsByIdClientAccessResponse;
@@ -129,6 +132,27 @@ export class PrincipalsResource {
 				client: httpClient,
 				headers,
 				path: { id },
+			}),
+		);
+	}
+
+	/**
+	 * Reset a user's password.
+	 *
+	 * Set `enforcePasswordComplexity` on `data` to `false` when the caller
+	 * enforces its own password policy; only the platform's 2-character
+	 * minimum will apply. Defaults to `true`.
+	 */
+	resetPassword(
+		id: string,
+		data: ResetPasswordRequest,
+	): ResultAsync<unknown, SdkError> {
+		return this.client.request<unknown>((httpClient, headers) =>
+			sdk.postApiAdminPrincipalsByIdResetPassword({
+				client: httpClient,
+				headers,
+				path: { id },
+				body: data,
 			}),
 		);
 	}

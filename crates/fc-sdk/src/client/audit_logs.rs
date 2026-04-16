@@ -76,11 +76,11 @@ impl FlowCatalystClient {
         } else {
             format!("?{}", params.join("&"))
         };
-        self.get(&format!("/api/admin/audit-logs{}", query)).await
+        self.get(&format!("/api/audit-logs{}", query)).await
     }
 
     /// Get a single audit log entry by ID.
     pub async fn get_audit_log(&self, id: &str) -> Result<AuditLogResponse, ClientError> {
-        self.get(&format!("/api/admin/audit-logs/{}", id)).await
+        self.get(&format!("/api/audit-logs/{}", id)).await
     }
 }

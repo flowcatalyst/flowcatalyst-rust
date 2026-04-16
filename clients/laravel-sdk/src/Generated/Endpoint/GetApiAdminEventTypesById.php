@@ -19,7 +19,7 @@ class GetApiAdminEventTypesById extends \FlowCatalyst\Generated\Runtime\Client\B
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/event-types/{id}');
+        return str_replace(['{id}'], [$this->id], '/api/event-types/{id}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

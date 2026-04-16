@@ -22,7 +22,7 @@ class PostApiAdminClientsByIdApplicationsByAppIdEnable extends \FlowCatalyst\Gen
     }
     public function getUri(): string
     {
-        return str_replace(['{id}', '{application_id}'], [$this->id, $this->application_id], '/api/admin/clients/{id}/applications/{application_id}/enable');
+        return str_replace(['{id}', '{application_id}'], [$this->id, $this->application_id], '/api/clients/{id}/applications/{application_id}/enable');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

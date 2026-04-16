@@ -20,25 +20,25 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 
 export const getApiAdminPrincipals = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminPrincipalsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminPrincipalsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals',
+    url: '/api/principals',
     ...options
 });
 
 export const deleteApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdResponses, DeleteApiAdminPrincipalsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}',
+    url: '/api/principals/{id}',
     ...options
 });
 
 export const getApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdResponses, GetApiAdminPrincipalsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}',
+    url: '/api/principals/{id}',
     ...options
 });
 
 export const putApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdResponses, PutApiAdminPrincipalsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}',
+    url: '/api/principals/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -48,7 +48,7 @@ export const putApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(
 
 export const postApiAdminPrincipalsUsers = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsUsersData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsUsersResponses, PostApiAdminPrincipalsUsersErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/users',
+    url: '/api/principals/users',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -58,19 +58,19 @@ export const postApiAdminPrincipalsUsers = <ThrowOnError extends boolean = false
 
 export const postApiAdminPrincipalsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdActivateResponses, PostApiAdminPrincipalsByIdActivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/activate',
+    url: '/api/principals/{id}/activate',
     ...options
 });
 
 export const postApiAdminPrincipalsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdDeactivateResponses, PostApiAdminPrincipalsByIdDeactivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/deactivate',
+    url: '/api/principals/{id}/deactivate',
     ...options
 });
 
 export const postApiAdminPrincipalsByIdResetPassword = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdResetPasswordData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdResetPasswordResponses, PostApiAdminPrincipalsByIdResetPasswordErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/reset-password',
+    url: '/api/principals/{id}/reset-password',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -80,13 +80,13 @@ export const postApiAdminPrincipalsByIdResetPassword = <ThrowOnError extends boo
 
 export const getApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdRolesResponses, GetApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options
 });
 
 export const postApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdRolesResponses, PostApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -96,7 +96,7 @@ export const postApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = f
 
 export const putApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdRolesResponses, PutApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -106,19 +106,19 @@ export const putApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = fa
 
 export const deleteApiAdminPrincipalsByIdRolesByRoleName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdRolesByRoleNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdRolesByRoleNameResponses, DeleteApiAdminPrincipalsByIdRolesByRoleNameErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/roles/{roleName}',
+    url: '/api/principals/{id}/roles/{roleName}',
     ...options
 });
 
 export const getApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdClientAccessResponses, GetApiAdminPrincipalsByIdClientAccessErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/client-access',
+    url: '/api/principals/{id}/client-access',
     ...options
 });
 
 export const postApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdClientAccessResponses, PostApiAdminPrincipalsByIdClientAccessErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/client-access',
+    url: '/api/principals/{id}/client-access',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -128,25 +128,25 @@ export const postApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends bool
 
 export const deleteApiAdminPrincipalsByIdClientAccessByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdClientAccessByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponses, DeleteApiAdminPrincipalsByIdClientAccessByClientIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/client-access/{clientId}',
+    url: '/api/principals/{id}/client-access/{clientId}',
     ...options
 });
 
 export const getApiAdminPrincipalsCheckEmailDomain = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminPrincipalsCheckEmailDomainData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminPrincipalsCheckEmailDomainResponses, GetApiAdminPrincipalsCheckEmailDomainErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/check-email-domain',
+    url: '/api/principals/check-email-domain',
     ...options
 });
 
 export const getApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdApplicationAccessResponses, GetApiAdminPrincipalsByIdApplicationAccessErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/application-access',
+    url: '/api/principals/{id}/application-access',
     ...options
 });
 
 export const putApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdApplicationAccessResponses, PutApiAdminPrincipalsByIdApplicationAccessErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/application-access',
+    url: '/api/principals/{id}/application-access',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -156,19 +156,19 @@ export const putApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends 
 
 export const getApiAdminPrincipalsByIdAvailableApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdAvailableApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdAvailableApplicationsResponses, GetApiAdminPrincipalsByIdAvailableApplicationsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/principals/{id}/available-applications',
+    url: '/api/principals/{id}/available-applications',
     ...options
 });
 
 export const getApiAdminClients = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminClientsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminClientsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients',
+    url: '/api/clients',
     ...options
 });
 
 export const postApiAdminClients = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsResponses, PostApiAdminClientsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients',
+    url: '/api/clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -178,25 +178,25 @@ export const postApiAdminClients = <ThrowOnError extends boolean = false>(option
 
 export const getApiAdminClientsSearch = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminClientsSearchData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminClientsSearchResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/search',
+    url: '/api/clients/search',
     ...options
 });
 
 export const deleteApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminClientsByIdResponses, DeleteApiAdminClientsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}',
+    url: '/api/clients/{id}',
     ...options
 });
 
 export const getApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdResponses, GetApiAdminClientsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}',
+    url: '/api/clients/{id}',
     ...options
 });
 
 export const putApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminClientsByIdResponses, PutApiAdminClientsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}',
+    url: '/api/clients/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -206,13 +206,13 @@ export const putApiAdminClientsById = <ThrowOnError extends boolean = false>(opt
 
 export const getApiAdminClientsByIdentifierByIdentifier = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdentifierByIdentifierData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdentifierByIdentifierResponses, GetApiAdminClientsByIdentifierByIdentifierErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/by-identifier/{identifier}',
+    url: '/api/clients/by-identifier/{identifier}',
     ...options
 });
 
 export const postApiAdminClientsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdActivateResponses, PostApiAdminClientsByIdActivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}/activate',
+    url: '/api/clients/{id}/activate',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -222,7 +222,7 @@ export const postApiAdminClientsByIdActivate = <ThrowOnError extends boolean = f
 
 export const postApiAdminClientsByIdSuspend = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdSuspendData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdSuspendResponses, PostApiAdminClientsByIdSuspendErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}/suspend',
+    url: '/api/clients/{id}/suspend',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -232,7 +232,7 @@ export const postApiAdminClientsByIdSuspend = <ThrowOnError extends boolean = fa
 
 export const postApiAdminClientsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdDeactivateResponses, PostApiAdminClientsByIdDeactivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}/deactivate',
+    url: '/api/clients/{id}/deactivate',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -242,7 +242,7 @@ export const postApiAdminClientsByIdDeactivate = <ThrowOnError extends boolean =
 
 export const postApiAdminClientsByIdNotes = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdNotesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdNotesResponses, PostApiAdminClientsByIdNotesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}/notes',
+    url: '/api/clients/{id}/notes',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -252,13 +252,13 @@ export const postApiAdminClientsByIdNotes = <ThrowOnError extends boolean = fals
 
 export const getApiAdminClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdApplicationsResponses, GetApiAdminClientsByIdApplicationsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}/applications',
+    url: '/api/clients/{id}/applications',
     ...options
 });
 
 export const putApiAdminClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminClientsByIdApplicationsResponses, PutApiAdminClientsByIdApplicationsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}/applications',
+    url: '/api/clients/{id}/applications',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -268,25 +268,25 @@ export const putApiAdminClientsByIdApplications = <ThrowOnError extends boolean 
 
 export const postApiAdminClientsByIdApplicationsByAppIdEnable = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdApplicationsByAppIdEnableData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdApplicationsByAppIdEnableResponses, PostApiAdminClientsByIdApplicationsByAppIdEnableErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}/applications/{appId}/enable',
+    url: '/api/clients/{id}/applications/{appId}/enable',
     ...options
 });
 
 export const postApiAdminClientsByIdApplicationsByAppIdDisable = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdApplicationsByAppIdDisableData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdApplicationsByAppIdDisableResponses, PostApiAdminClientsByIdApplicationsByAppIdDisableErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/clients/{id}/applications/{appId}/disable',
+    url: '/api/clients/{id}/applications/{appId}/disable',
     ...options
 });
 
 export const getApiAdminAnchorDomains = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAnchorDomainsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAnchorDomainsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/anchor-domains',
+    url: '/api/anchor-domains',
     ...options
 });
 
 export const postApiAdminAnchorDomains = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminAnchorDomainsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminAnchorDomainsResponses, PostApiAdminAnchorDomainsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/anchor-domains',
+    url: '/api/anchor-domains',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -296,19 +296,19 @@ export const postApiAdminAnchorDomains = <ThrowOnError extends boolean = false>(
 
 export const deleteApiAdminAnchorDomainsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminAnchorDomainsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminAnchorDomainsByIdResponses, DeleteApiAdminAnchorDomainsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/anchor-domains/{id}',
+    url: '/api/anchor-domains/{id}',
     ...options
 });
 
 export const getApiAdminAnchorDomainsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAnchorDomainsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAnchorDomainsByIdResponses, GetApiAdminAnchorDomainsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/anchor-domains/{id}',
+    url: '/api/anchor-domains/{id}',
     ...options
 });
 
 export const putApiAdminAnchorDomainsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminAnchorDomainsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminAnchorDomainsByIdResponses, PutApiAdminAnchorDomainsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/anchor-domains/{id}',
+    url: '/api/anchor-domains/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -318,13 +318,13 @@ export const putApiAdminAnchorDomainsById = <ThrowOnError extends boolean = fals
 
 export const getApiAdminApplications = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminApplicationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminApplicationsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications',
+    url: '/api/applications',
     ...options
 });
 
 export const postApiAdminApplications = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminApplicationsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminApplicationsResponses, PostApiAdminApplicationsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications',
+    url: '/api/applications',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -334,19 +334,19 @@ export const postApiAdminApplications = <ThrowOnError extends boolean = false>(o
 
 export const deleteApiAdminApplicationsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminApplicationsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminApplicationsByIdResponses, DeleteApiAdminApplicationsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}',
+    url: '/api/applications/{id}',
     ...options
 });
 
 export const getApiAdminApplicationsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminApplicationsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminApplicationsByIdResponses, GetApiAdminApplicationsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}',
+    url: '/api/applications/{id}',
     ...options
 });
 
 export const putApiAdminApplicationsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminApplicationsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminApplicationsByIdResponses, PutApiAdminApplicationsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}',
+    url: '/api/applications/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -356,31 +356,31 @@ export const putApiAdminApplicationsById = <ThrowOnError extends boolean = false
 
 export const getApiAdminApplicationsByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminApplicationsByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminApplicationsByCodeByCodeResponses, GetApiAdminApplicationsByCodeByCodeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/by-code/{code}',
+    url: '/api/applications/by-code/{code}',
     ...options
 });
 
 export const postApiAdminApplicationsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminApplicationsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminApplicationsByIdActivateResponses, PostApiAdminApplicationsByIdActivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}/activate',
+    url: '/api/applications/{id}/activate',
     ...options
 });
 
 export const postApiAdminApplicationsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminApplicationsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminApplicationsByIdDeactivateResponses, PostApiAdminApplicationsByIdDeactivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}/deactivate',
+    url: '/api/applications/{id}/deactivate',
     ...options
 });
 
 export const getApiAdminApplicationsByIdClients = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminApplicationsByIdClientsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminApplicationsByIdClientsResponses, GetApiAdminApplicationsByIdClientsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}/clients',
+    url: '/api/applications/{id}/clients',
     ...options
 });
 
 export const postApiAdminApplicationsByIdClients = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminApplicationsByIdClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminApplicationsByIdClientsResponses, PostApiAdminApplicationsByIdClientsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}/clients',
+    url: '/api/applications/{id}/clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -390,19 +390,19 @@ export const postApiAdminApplicationsByIdClients = <ThrowOnError extends boolean
 
 export const deleteApiAdminApplicationsByIdClientsByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminApplicationsByIdClientsByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminApplicationsByIdClientsByClientIdResponses, DeleteApiAdminApplicationsByIdClientsByClientIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}/clients/{clientId}',
+    url: '/api/applications/{id}/clients/{clientId}',
     ...options
 });
 
 export const getApiAdminApplicationsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminApplicationsByIdRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminApplicationsByIdRolesResponses, GetApiAdminApplicationsByIdRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}/roles',
+    url: '/api/applications/{id}/roles',
     ...options
 });
 
 export const postApiAdminApplicationsByIdProvisionServiceAccount = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminApplicationsByIdProvisionServiceAccountData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminApplicationsByIdProvisionServiceAccountResponses, PostApiAdminApplicationsByIdProvisionServiceAccountErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/applications/{id}/provision-service-account',
+    url: '/api/applications/{id}/provision-service-account',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -412,13 +412,13 @@ export const postApiAdminApplicationsByIdProvisionServiceAccount = <ThrowOnError
 
 export const getApiAdminRoles = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminRolesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminRolesResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles',
+    url: '/api/roles',
     ...options
 });
 
 export const postApiAdminRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminRolesResponses, PostApiAdminRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles',
+    url: '/api/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -428,19 +428,19 @@ export const postApiAdminRoles = <ThrowOnError extends boolean = false>(options:
 
 export const deleteApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminRolesByNameResponses, DeleteApiAdminRolesByNameErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles/{name}',
+    url: '/api/roles/{name}',
     ...options
 });
 
 export const getApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByNameResponses, GetApiAdminRolesByNameErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles/{name}',
+    url: '/api/roles/{name}',
     ...options
 });
 
 export const putApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminRolesByNameResponses, PutApiAdminRolesByNameErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles/{name}',
+    url: '/api/roles/{name}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -450,55 +450,55 @@ export const putApiAdminRolesByName = <ThrowOnError extends boolean = false>(opt
 
 export const getApiAdminRolesBySourceBySource = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesBySourceBySourceData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesBySourceBySourceResponses, GetApiAdminRolesBySourceBySourceErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles/by-source/{source}',
+    url: '/api/roles/by-source/{source}',
     ...options
 });
 
 export const getApiAdminRolesByApplicationByApplicationId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByApplicationByApplicationIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByApplicationByApplicationIdResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles/by-application/{applicationId}',
+    url: '/api/roles/by-application/{applicationId}',
     ...options
 });
 
 export const getApiAdminRolesPermissions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminRolesPermissionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminRolesPermissionsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles/permissions',
+    url: '/api/roles/permissions',
     ...options
 });
 
 export const getApiAdminRolesPermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesPermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesPermissionsByPermissionResponses, GetApiAdminRolesPermissionsByPermissionErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/roles/permissions/{permission}',
+    url: '/api/roles/permissions/{permission}',
     ...options
 });
 
 export const getApiAdminAuthConfigs = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuthConfigsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuthConfigsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs',
+    url: '/api/auth-configs',
     ...options
 });
 
 export const deleteApiAdminAuthConfigsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminAuthConfigsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminAuthConfigsByIdResponses, DeleteApiAdminAuthConfigsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/{id}',
+    url: '/api/auth-configs/{id}',
     ...options
 });
 
 export const getApiAdminAuthConfigsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuthConfigsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuthConfigsByIdResponses, GetApiAdminAuthConfigsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/{id}',
+    url: '/api/auth-configs/{id}',
     ...options
 });
 
 export const getApiAdminAuthConfigsByDomainByDomain = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuthConfigsByDomainByDomainData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuthConfigsByDomainByDomainResponses, GetApiAdminAuthConfigsByDomainByDomainErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/by-domain/{domain}',
+    url: '/api/auth-configs/by-domain/{domain}',
     ...options
 });
 
 export const postApiAdminAuthConfigsInternal = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminAuthConfigsInternalData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminAuthConfigsInternalResponses, PostApiAdminAuthConfigsInternalErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/internal',
+    url: '/api/auth-configs/internal',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -508,7 +508,7 @@ export const postApiAdminAuthConfigsInternal = <ThrowOnError extends boolean = f
 
 export const postApiAdminAuthConfigsOidc = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminAuthConfigsOidcData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminAuthConfigsOidcResponses, PostApiAdminAuthConfigsOidcErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/oidc',
+    url: '/api/auth-configs/oidc',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -518,7 +518,7 @@ export const postApiAdminAuthConfigsOidc = <ThrowOnError extends boolean = false
 
 export const putApiAdminAuthConfigsByIdOidc = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminAuthConfigsByIdOidcData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminAuthConfigsByIdOidcResponses, PutApiAdminAuthConfigsByIdOidcErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/{id}/oidc',
+    url: '/api/auth-configs/{id}/oidc',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -528,7 +528,7 @@ export const putApiAdminAuthConfigsByIdOidc = <ThrowOnError extends boolean = fa
 
 export const putApiAdminAuthConfigsByIdConfigType = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminAuthConfigsByIdConfigTypeData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminAuthConfigsByIdConfigTypeResponses, PutApiAdminAuthConfigsByIdConfigTypeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/{id}/config-type',
+    url: '/api/auth-configs/{id}/config-type',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -538,7 +538,7 @@ export const putApiAdminAuthConfigsByIdConfigType = <ThrowOnError extends boolea
 
 export const putApiAdminAuthConfigsByIdAdditionalClients = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminAuthConfigsByIdAdditionalClientsData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminAuthConfigsByIdAdditionalClientsResponses, PutApiAdminAuthConfigsByIdAdditionalClientsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/{id}/additional-clients',
+    url: '/api/auth-configs/{id}/additional-clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -548,7 +548,7 @@ export const putApiAdminAuthConfigsByIdAdditionalClients = <ThrowOnError extends
 
 export const putApiAdminAuthConfigsByIdGrantedClients = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminAuthConfigsByIdGrantedClientsData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminAuthConfigsByIdGrantedClientsResponses, PutApiAdminAuthConfigsByIdGrantedClientsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/auth-configs/{id}/granted-clients',
+    url: '/api/auth-configs/{id}/granted-clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -558,13 +558,13 @@ export const putApiAdminAuthConfigsByIdGrantedClients = <ThrowOnError extends bo
 
 export const getApiAdminOauthClients = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminOauthClientsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminOauthClientsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients',
+    url: '/api/oauth-clients',
     ...options
 });
 
 export const postApiAdminOauthClients = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsResponses, PostApiAdminOauthClientsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients',
+    url: '/api/oauth-clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -574,19 +574,19 @@ export const postApiAdminOauthClients = <ThrowOnError extends boolean = false>(o
 
 export const deleteApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminOauthClientsByIdResponses, DeleteApiAdminOauthClientsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients/{id}',
+    url: '/api/oauth-clients/{id}',
     ...options
 });
 
 export const getApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsByIdResponses, GetApiAdminOauthClientsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients/{id}',
+    url: '/api/oauth-clients/{id}',
     ...options
 });
 
 export const putApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminOauthClientsByIdResponses, PutApiAdminOauthClientsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients/{id}',
+    url: '/api/oauth-clients/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -596,85 +596,85 @@ export const putApiAdminOauthClientsById = <ThrowOnError extends boolean = false
 
 export const getApiAdminOauthClientsByClientIdByClientId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsByClientIdByClientIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsByClientIdByClientIdResponses, GetApiAdminOauthClientsByClientIdByClientIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients/by-client-id/{clientId}',
+    url: '/api/oauth-clients/by-client-id/{clientId}',
     ...options
 });
 
 export const postApiAdminOauthClientsByIdRegenerateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsByIdRegenerateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsByIdRegenerateSecretResponses, PostApiAdminOauthClientsByIdRegenerateSecretErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients/{id}/regenerate-secret',
+    url: '/api/oauth-clients/{id}/regenerate-secret',
     ...options
 });
 
 export const postApiAdminOauthClientsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsByIdActivateResponses, PostApiAdminOauthClientsByIdActivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients/{id}/activate',
+    url: '/api/oauth-clients/{id}/activate',
     ...options
 });
 
 export const postApiAdminOauthClientsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsByIdDeactivateResponses, PostApiAdminOauthClientsByIdDeactivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients/{id}/deactivate',
+    url: '/api/oauth-clients/{id}/deactivate',
     ...options
 });
 
 export const postApiAdminOauthClientsByIdRotateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsByIdRotateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsByIdRotateSecretResponses, PostApiAdminOauthClientsByIdRotateSecretErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/oauth-clients/{id}/rotate-secret',
+    url: '/api/oauth-clients/{id}/rotate-secret',
     ...options
 });
 
 export const getApiAdminAuditLogs = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/audit-logs',
+    url: '/api/audit-logs',
     ...options
 });
 
 export const getApiAdminAuditLogsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsByIdResponses, GetApiAdminAuditLogsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/audit-logs/{id}',
+    url: '/api/audit-logs/{id}',
     ...options
 });
 
 export const getApiAdminAuditLogsEntityByEntityTypeByEntityId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsEntityByEntityTypeByEntityIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/audit-logs/entity/{entityType}/{entityId}',
+    url: '/api/audit-logs/entity/{entityType}/{entityId}',
     ...options
 });
 
 export const getApiAdminAuditLogsEntityTypes = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsEntityTypesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsEntityTypesResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/audit-logs/entity-types',
+    url: '/api/audit-logs/entity-types',
     ...options
 });
 
 export const getApiAdminAuditLogsOperations = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsOperationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsOperationsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/audit-logs/operations',
+    url: '/api/audit-logs/operations',
     ...options
 });
 
 export const getApiAdminAuditLogsApplicationIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsApplicationIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsApplicationIdsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/audit-logs/application-ids',
+    url: '/api/audit-logs/application-ids',
     ...options
 });
 
 export const getApiAdminAuditLogsClientIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsClientIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsClientIdsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/audit-logs/client-ids',
+    url: '/api/audit-logs/client-ids',
     ...options
 });
 
 export const getApiAdminEventTypes = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventTypesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventTypesResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types',
+    url: '/api/event-types',
     ...options
 });
 
 export const postApiAdminEventTypes = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesResponses, PostApiAdminEventTypesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types',
+    url: '/api/event-types',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -684,19 +684,19 @@ export const postApiAdminEventTypes = <ThrowOnError extends boolean = false>(opt
 
 export const deleteApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminEventTypesByIdResponses, DeleteApiAdminEventTypesByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/{id}',
+    url: '/api/event-types/{id}',
     ...options
 });
 
 export const getApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesByIdResponses, GetApiAdminEventTypesByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/{id}',
+    url: '/api/event-types/{id}',
     ...options
 });
 
 export const patchApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<PatchApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).patch<PatchApiAdminEventTypesByIdResponses, PatchApiAdminEventTypesByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/{id}',
+    url: '/api/event-types/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -706,7 +706,7 @@ export const patchApiAdminEventTypesById = <ThrowOnError extends boolean = false
 
 export const postApiAdminEventTypesByIdCodegen = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesByIdCodegenData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesByIdCodegenResponses, PostApiAdminEventTypesByIdCodegenErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/{id}/codegen',
+    url: '/api/event-types/{id}/codegen',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -716,13 +716,13 @@ export const postApiAdminEventTypesByIdCodegen = <ThrowOnError extends boolean =
 
 export const postApiAdminEventTypesByIdArchive = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesByIdArchiveData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesByIdArchiveResponses, PostApiAdminEventTypesByIdArchiveErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/{id}/archive',
+    url: '/api/event-types/{id}/archive',
     ...options
 });
 
 export const postApiAdminEventTypesByIdSchemas = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesByIdSchemasData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesByIdSchemasResponses, PostApiAdminEventTypesByIdSchemasErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/{id}/schemas',
+    url: '/api/event-types/{id}/schemas',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -732,19 +732,19 @@ export const postApiAdminEventTypesByIdSchemas = <ThrowOnError extends boolean =
 
 export const postApiAdminEventTypesByIdSchemasByVersionFinalise = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesByIdSchemasByVersionFinaliseData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesByIdSchemasByVersionFinaliseResponses, PostApiAdminEventTypesByIdSchemasByVersionFinaliseErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/{id}/schemas/{version}/finalise',
+    url: '/api/event-types/{id}/schemas/{version}/finalise',
     ...options
 });
 
 export const postApiAdminEventTypesByIdSchemasByVersionDeprecate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesByIdSchemasByVersionDeprecateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesByIdSchemasByVersionDeprecateResponses, PostApiAdminEventTypesByIdSchemasByVersionDeprecateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/{id}/schemas/{version}/deprecate',
+    url: '/api/event-types/{id}/schemas/{version}/deprecate',
     ...options
 });
 
 export const postApiAdminEventTypesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesSyncResponses, PostApiAdminEventTypesSyncErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/sync',
+    url: '/api/event-types/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -754,31 +754,31 @@ export const postApiAdminEventTypesSync = <ThrowOnError extends boolean = false>
 
 export const getApiAdminEventTypesFiltersApplications = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventTypesFiltersApplicationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventTypesFiltersApplicationsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/filters/applications',
+    url: '/api/event-types/filters/applications',
     ...options
 });
 
 export const getApiAdminEventTypesFiltersSubdomains = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventTypesFiltersSubdomainsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventTypesFiltersSubdomainsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/filters/subdomains',
+    url: '/api/event-types/filters/subdomains',
     ...options
 });
 
 export const getApiAdminEventTypesFiltersAggregates = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventTypesFiltersAggregatesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventTypesFiltersAggregatesResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/event-types/filters/aggregates',
+    url: '/api/event-types/filters/aggregates',
     ...options
 });
 
 export const getApiAdminDispatchPools = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminDispatchPoolsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminDispatchPoolsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-pools',
+    url: '/api/dispatch-pools',
     ...options
 });
 
 export const postApiAdminDispatchPools = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminDispatchPoolsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminDispatchPoolsResponses, PostApiAdminDispatchPoolsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-pools',
+    url: '/api/dispatch-pools',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -788,19 +788,19 @@ export const postApiAdminDispatchPools = <ThrowOnError extends boolean = false>(
 
 export const deleteApiAdminDispatchPoolsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminDispatchPoolsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminDispatchPoolsByIdResponses, DeleteApiAdminDispatchPoolsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-pools/{id}',
+    url: '/api/dispatch-pools/{id}',
     ...options
 });
 
 export const getApiAdminDispatchPoolsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminDispatchPoolsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminDispatchPoolsByIdResponses, GetApiAdminDispatchPoolsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-pools/{id}',
+    url: '/api/dispatch-pools/{id}',
     ...options
 });
 
 export const putApiAdminDispatchPoolsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminDispatchPoolsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminDispatchPoolsByIdResponses, PutApiAdminDispatchPoolsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-pools/{id}',
+    url: '/api/dispatch-pools/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -810,19 +810,19 @@ export const putApiAdminDispatchPoolsById = <ThrowOnError extends boolean = fals
 
 export const postApiAdminDispatchPoolsByIdSuspend = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminDispatchPoolsByIdSuspendData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminDispatchPoolsByIdSuspendResponses, PostApiAdminDispatchPoolsByIdSuspendErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-pools/{id}/suspend',
+    url: '/api/dispatch-pools/{id}/suspend',
     ...options
 });
 
 export const postApiAdminDispatchPoolsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminDispatchPoolsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminDispatchPoolsByIdActivateResponses, PostApiAdminDispatchPoolsByIdActivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-pools/{id}/activate',
+    url: '/api/dispatch-pools/{id}/activate',
     ...options
 });
 
 export const postApiAdminDispatchPoolsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminDispatchPoolsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminDispatchPoolsSyncResponses, PostApiAdminDispatchPoolsSyncErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-pools/sync',
+    url: '/api/dispatch-pools/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -832,13 +832,13 @@ export const postApiAdminDispatchPoolsSync = <ThrowOnError extends boolean = fal
 
 export const getApiAdminConnections = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminConnectionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminConnectionsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/connections',
+    url: '/api/connections',
     ...options
 });
 
 export const postApiAdminConnections = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminConnectionsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminConnectionsResponses, PostApiAdminConnectionsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/connections',
+    url: '/api/connections',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -848,19 +848,19 @@ export const postApiAdminConnections = <ThrowOnError extends boolean = false>(op
 
 export const deleteApiAdminConnectionsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminConnectionsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminConnectionsByIdResponses, DeleteApiAdminConnectionsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/connections/{id}',
+    url: '/api/connections/{id}',
     ...options
 });
 
 export const getApiAdminConnectionsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminConnectionsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminConnectionsByIdResponses, GetApiAdminConnectionsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/connections/{id}',
+    url: '/api/connections/{id}',
     ...options
 });
 
 export const putApiAdminConnectionsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminConnectionsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminConnectionsByIdResponses, PutApiAdminConnectionsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/connections/{id}',
+    url: '/api/connections/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -870,25 +870,25 @@ export const putApiAdminConnectionsById = <ThrowOnError extends boolean = false>
 
 export const postApiAdminConnectionsByIdPause = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminConnectionsByIdPauseData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminConnectionsByIdPauseResponses, PostApiAdminConnectionsByIdPauseErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/connections/{id}/pause',
+    url: '/api/connections/{id}/pause',
     ...options
 });
 
 export const postApiAdminConnectionsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminConnectionsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminConnectionsByIdActivateResponses, PostApiAdminConnectionsByIdActivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/connections/{id}/activate',
+    url: '/api/connections/{id}/activate',
     ...options
 });
 
 export const getApiAdminSubscriptions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminSubscriptionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminSubscriptionsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/subscriptions',
+    url: '/api/subscriptions',
     ...options
 });
 
 export const postApiAdminSubscriptions = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsResponses, PostApiAdminSubscriptionsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/subscriptions',
+    url: '/api/subscriptions',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -898,19 +898,19 @@ export const postApiAdminSubscriptions = <ThrowOnError extends boolean = false>(
 
 export const deleteApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminSubscriptionsByIdResponses, DeleteApiAdminSubscriptionsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/subscriptions/{id}',
+    url: '/api/subscriptions/{id}',
     ...options
 });
 
 export const getApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminSubscriptionsByIdResponses, GetApiAdminSubscriptionsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/subscriptions/{id}',
+    url: '/api/subscriptions/{id}',
     ...options
 });
 
 export const putApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminSubscriptionsByIdResponses, PutApiAdminSubscriptionsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/subscriptions/{id}',
+    url: '/api/subscriptions/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -920,19 +920,19 @@ export const putApiAdminSubscriptionsById = <ThrowOnError extends boolean = fals
 
 export const postApiAdminSubscriptionsByIdPause = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsByIdPauseData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsByIdPauseResponses, PostApiAdminSubscriptionsByIdPauseErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/subscriptions/{id}/pause',
+    url: '/api/subscriptions/{id}/pause',
     ...options
 });
 
 export const postApiAdminSubscriptionsByIdResume = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsByIdResumeData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsByIdResumeResponses, PostApiAdminSubscriptionsByIdResumeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/subscriptions/{id}/resume',
+    url: '/api/subscriptions/{id}/resume',
     ...options
 });
 
 export const postApiAdminSubscriptionsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsSyncResponses, PostApiAdminSubscriptionsSyncErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/subscriptions/sync',
+    url: '/api/subscriptions/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -942,67 +942,67 @@ export const postApiAdminSubscriptionsSync = <ThrowOnError extends boolean = fal
 
 export const getApiAdminEvents = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/events',
+    url: '/api/events',
     ...options
 });
 
 export const getApiAdminEventsFilterOptions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventsFilterOptionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventsFilterOptionsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/events/filter-options',
+    url: '/api/events/filter-options',
     ...options
 });
 
 export const getApiAdminEventsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventsByIdResponses, GetApiAdminEventsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/events/{id}',
+    url: '/api/events/{id}',
     ...options
 });
 
 export const getApiAdminEventsRaw = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventsRawData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventsRawResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/events/raw',
+    url: '/api/events/raw',
     ...options
 });
 
 export const getApiAdminDispatchJobs = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminDispatchJobsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminDispatchJobsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-jobs',
+    url: '/api/dispatch-jobs',
     ...options
 });
 
 export const getApiAdminDispatchJobsFilterOptions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminDispatchJobsFilterOptionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminDispatchJobsFilterOptionsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-jobs/filter-options',
+    url: '/api/dispatch-jobs/filter-options',
     ...options
 });
 
 export const getApiAdminDispatchJobsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminDispatchJobsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminDispatchJobsByIdResponses, GetApiAdminDispatchJobsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-jobs/{id}',
+    url: '/api/dispatch-jobs/{id}',
     ...options
 });
 
 export const getApiAdminDispatchJobsByIdAttempts = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminDispatchJobsByIdAttemptsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminDispatchJobsByIdAttemptsResponses, GetApiAdminDispatchJobsByIdAttemptsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-jobs/{id}/attempts',
+    url: '/api/dispatch-jobs/{id}/attempts',
     ...options
 });
 
 export const getApiAdminDispatchJobsRaw = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminDispatchJobsRawData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminDispatchJobsRawResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/dispatch-jobs/raw',
+    url: '/api/dispatch-jobs/raw',
     ...options
 });
 
 export const getApiAdminIdentityProviders = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminIdentityProvidersData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminIdentityProvidersResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/identity-providers',
+    url: '/api/identity-providers',
     ...options
 });
 
 export const postApiAdminIdentityProviders = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminIdentityProvidersData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminIdentityProvidersResponses, PostApiAdminIdentityProvidersErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/identity-providers',
+    url: '/api/identity-providers',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1012,19 +1012,19 @@ export const postApiAdminIdentityProviders = <ThrowOnError extends boolean = fal
 
 export const deleteApiAdminIdentityProvidersById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminIdentityProvidersByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminIdentityProvidersByIdResponses, DeleteApiAdminIdentityProvidersByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/identity-providers/{id}',
+    url: '/api/identity-providers/{id}',
     ...options
 });
 
 export const getApiAdminIdentityProvidersById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminIdentityProvidersByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminIdentityProvidersByIdResponses, GetApiAdminIdentityProvidersByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/identity-providers/{id}',
+    url: '/api/identity-providers/{id}',
     ...options
 });
 
 export const putApiAdminIdentityProvidersById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminIdentityProvidersByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminIdentityProvidersByIdResponses, PutApiAdminIdentityProvidersByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/identity-providers/{id}',
+    url: '/api/identity-providers/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1034,13 +1034,13 @@ export const putApiAdminIdentityProvidersById = <ThrowOnError extends boolean = 
 
 export const getApiAdminEmailDomainMappings = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEmailDomainMappingsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEmailDomainMappingsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/email-domain-mappings',
+    url: '/api/email-domain-mappings',
     ...options
 });
 
 export const postApiAdminEmailDomainMappings = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEmailDomainMappingsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEmailDomainMappingsResponses, PostApiAdminEmailDomainMappingsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/email-domain-mappings',
+    url: '/api/email-domain-mappings',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1050,19 +1050,19 @@ export const postApiAdminEmailDomainMappings = <ThrowOnError extends boolean = f
 
 export const deleteApiAdminEmailDomainMappingsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminEmailDomainMappingsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminEmailDomainMappingsByIdResponses, DeleteApiAdminEmailDomainMappingsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/email-domain-mappings/{id}',
+    url: '/api/email-domain-mappings/{id}',
     ...options
 });
 
 export const getApiAdminEmailDomainMappingsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEmailDomainMappingsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEmailDomainMappingsByIdResponses, GetApiAdminEmailDomainMappingsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/email-domain-mappings/{id}',
+    url: '/api/email-domain-mappings/{id}',
     ...options
 });
 
 export const putApiAdminEmailDomainMappingsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminEmailDomainMappingsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminEmailDomainMappingsByIdResponses, PutApiAdminEmailDomainMappingsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/email-domain-mappings/{id}',
+    url: '/api/email-domain-mappings/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1072,19 +1072,19 @@ export const putApiAdminEmailDomainMappingsById = <ThrowOnError extends boolean 
 
 export const getApiAdminEmailDomainMappingsLookupByDomain = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEmailDomainMappingsLookupByDomainData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEmailDomainMappingsLookupByDomainResponses, GetApiAdminEmailDomainMappingsLookupByDomainErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/email-domain-mappings/lookup/{domain}',
+    url: '/api/email-domain-mappings/lookup/{domain}',
     ...options
 });
 
 export const getApiAdminServiceAccounts = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminServiceAccountsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminServiceAccountsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts',
+    url: '/api/service-accounts',
     ...options
 });
 
 export const postApiAdminServiceAccounts = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminServiceAccountsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminServiceAccountsResponses, PostApiAdminServiceAccountsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts',
+    url: '/api/service-accounts',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1094,19 +1094,19 @@ export const postApiAdminServiceAccounts = <ThrowOnError extends boolean = false
 
 export const deleteApiAdminServiceAccountsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminServiceAccountsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminServiceAccountsByIdResponses, DeleteApiAdminServiceAccountsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}',
+    url: '/api/service-accounts/{id}',
     ...options
 });
 
 export const getApiAdminServiceAccountsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminServiceAccountsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminServiceAccountsByIdResponses, GetApiAdminServiceAccountsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}',
+    url: '/api/service-accounts/{id}',
     ...options
 });
 
 export const putApiAdminServiceAccountsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminServiceAccountsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminServiceAccountsByIdResponses, PutApiAdminServiceAccountsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}',
+    url: '/api/service-accounts/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1116,13 +1116,13 @@ export const putApiAdminServiceAccountsById = <ThrowOnError extends boolean = fa
 
 export const getApiAdminServiceAccountsCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminServiceAccountsCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminServiceAccountsCodeByCodeResponses, GetApiAdminServiceAccountsCodeByCodeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/code/{code}',
+    url: '/api/service-accounts/code/{code}',
     ...options
 });
 
 export const putApiAdminServiceAccountsByIdAuthToken = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminServiceAccountsByIdAuthTokenData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminServiceAccountsByIdAuthTokenResponses, PutApiAdminServiceAccountsByIdAuthTokenErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}/auth-token',
+    url: '/api/service-accounts/{id}/auth-token',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1132,37 +1132,37 @@ export const putApiAdminServiceAccountsByIdAuthToken = <ThrowOnError extends boo
 
 export const postApiAdminServiceAccountsByIdRegenerateToken = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminServiceAccountsByIdRegenerateTokenData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminServiceAccountsByIdRegenerateTokenResponses, PostApiAdminServiceAccountsByIdRegenerateTokenErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}/regenerate-token',
+    url: '/api/service-accounts/{id}/regenerate-token',
     ...options
 });
 
 export const postApiAdminServiceAccountsByIdRegenerateAuthToken = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminServiceAccountsByIdRegenerateAuthTokenData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminServiceAccountsByIdRegenerateAuthTokenResponses, PostApiAdminServiceAccountsByIdRegenerateAuthTokenErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}/regenerate-auth-token',
+    url: '/api/service-accounts/{id}/regenerate-auth-token',
     ...options
 });
 
 export const postApiAdminServiceAccountsByIdRegenerateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminServiceAccountsByIdRegenerateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminServiceAccountsByIdRegenerateSecretResponses, PostApiAdminServiceAccountsByIdRegenerateSecretErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}/regenerate-secret',
+    url: '/api/service-accounts/{id}/regenerate-secret',
     ...options
 });
 
 export const postApiAdminServiceAccountsByIdRegenerateSigningSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminServiceAccountsByIdRegenerateSigningSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminServiceAccountsByIdRegenerateSigningSecretResponses, PostApiAdminServiceAccountsByIdRegenerateSigningSecretErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}/regenerate-signing-secret',
+    url: '/api/service-accounts/{id}/regenerate-signing-secret',
     ...options
 });
 
 export const getApiAdminServiceAccountsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminServiceAccountsByIdRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminServiceAccountsByIdRolesResponses, GetApiAdminServiceAccountsByIdRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}/roles',
+    url: '/api/service-accounts/{id}/roles',
     ...options
 });
 
 export const putApiAdminServiceAccountsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminServiceAccountsByIdRolesData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminServiceAccountsByIdRolesResponses, PutApiAdminServiceAccountsByIdRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/service-accounts/{id}/roles',
+    url: '/api/service-accounts/{id}/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1172,13 +1172,13 @@ export const putApiAdminServiceAccountsByIdRoles = <ThrowOnError extends boolean
 
 export const getApiAdminPlatformCors = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminPlatformCorsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminPlatformCorsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/platform/cors',
+    url: '/api/platform/cors',
     ...options
 });
 
 export const postApiAdminPlatformCors = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPlatformCorsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPlatformCorsResponses, PostApiAdminPlatformCorsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/platform/cors',
+    url: '/api/platform/cors',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1188,49 +1188,49 @@ export const postApiAdminPlatformCors = <ThrowOnError extends boolean = false>(o
 
 export const getApiAdminPlatformCorsAllowed = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminPlatformCorsAllowedData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminPlatformCorsAllowedResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/platform/cors/allowed',
+    url: '/api/platform/cors/allowed',
     ...options
 });
 
 export const deleteApiAdminPlatformCorsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPlatformCorsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPlatformCorsByIdResponses, DeleteApiAdminPlatformCorsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/platform/cors/{id}',
+    url: '/api/platform/cors/{id}',
     ...options
 });
 
 export const getApiAdminPlatformCorsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPlatformCorsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPlatformCorsByIdResponses, GetApiAdminPlatformCorsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/platform/cors/{id}',
+    url: '/api/platform/cors/{id}',
     ...options
 });
 
 export const getApiAdminConfigByAppCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminConfigByAppCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminConfigByAppCodeResponses, GetApiAdminConfigByAppCodeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config/{appCode}',
+    url: '/api/config/{appCode}',
     ...options
 });
 
 export const getApiAdminConfigByAppCodeBySection = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminConfigByAppCodeBySectionData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminConfigByAppCodeBySectionResponses, GetApiAdminConfigByAppCodeBySectionErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config/{appCode}/{section}',
+    url: '/api/config/{appCode}/{section}',
     ...options
 });
 
 export const deleteApiAdminConfigByAppCodeBySectionByProperty = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminConfigByAppCodeBySectionByPropertyData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminConfigByAppCodeBySectionByPropertyResponses, DeleteApiAdminConfigByAppCodeBySectionByPropertyErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config/{appCode}/{section}/{property}',
+    url: '/api/config/{appCode}/{section}/{property}',
     ...options
 });
 
 export const getApiAdminConfigByAppCodeBySectionByProperty = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminConfigByAppCodeBySectionByPropertyData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminConfigByAppCodeBySectionByPropertyResponses, GetApiAdminConfigByAppCodeBySectionByPropertyErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config/{appCode}/{section}/{property}',
+    url: '/api/config/{appCode}/{section}/{property}',
     ...options
 });
 
 export const putApiAdminConfigByAppCodeBySectionByProperty = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminConfigByAppCodeBySectionByPropertyData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminConfigByAppCodeBySectionByPropertyResponses, PutApiAdminConfigByAppCodeBySectionByPropertyErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config/{appCode}/{section}/{property}',
+    url: '/api/config/{appCode}/{section}/{property}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1240,13 +1240,13 @@ export const putApiAdminConfigByAppCodeBySectionByProperty = <ThrowOnError exten
 
 export const getApiAdminConfigAccessByAppCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminConfigAccessByAppCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminConfigAccessByAppCodeResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config-access/{appCode}',
+    url: '/api/config-access/{appCode}',
     ...options
 });
 
 export const postApiAdminConfigAccessByAppCode = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminConfigAccessByAppCodeData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminConfigAccessByAppCodeResponses, PostApiAdminConfigAccessByAppCodeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config-access/{appCode}',
+    url: '/api/config-access/{appCode}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1256,13 +1256,13 @@ export const postApiAdminConfigAccessByAppCode = <ThrowOnError extends boolean =
 
 export const deleteApiAdminConfigAccessByAppCodeByRoleCode = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminConfigAccessByAppCodeByRoleCodeData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminConfigAccessByAppCodeByRoleCodeResponses, DeleteApiAdminConfigAccessByAppCodeByRoleCodeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config-access/{appCode}/{roleCode}',
+    url: '/api/config-access/{appCode}/{roleCode}',
     ...options
 });
 
 export const putApiAdminConfigAccessByAppCodeByRoleCode = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminConfigAccessByAppCodeByRoleCodeData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminConfigAccessByAppCodeByRoleCodeResponses, PutApiAdminConfigAccessByAppCodeByRoleCodeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/config-access/{appCode}/{roleCode}',
+    url: '/api/config-access/{appCode}/{roleCode}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1272,19 +1272,19 @@ export const putApiAdminConfigAccessByAppCodeByRoleCode = <ThrowOnError extends 
 
 export const getApiAdminLoginAttempts = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminLoginAttemptsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminLoginAttemptsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/admin/login-attempts',
+    url: '/api/login-attempts',
     ...options
 });
 
 export const getApiSdkClients = <ThrowOnError extends boolean = false>(options?: Options<GetApiSdkClientsData, ThrowOnError>) => (options?.client ?? client).get<GetApiSdkClientsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/clients',
+    url: '/api/clients',
     ...options
 });
 
 export const postApiSdkClients = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkClientsResponses, PostApiSdkClientsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/clients',
+    url: '/api/clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1294,13 +1294,13 @@ export const postApiSdkClients = <ThrowOnError extends boolean = false>(options:
 
 export const getApiSdkClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiSdkClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiSdkClientsByIdResponses, GetApiSdkClientsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/clients/{id}',
+    url: '/api/clients/{id}',
     ...options
 });
 
 export const putApiSdkClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiSdkClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiSdkClientsByIdResponses, PutApiSdkClientsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/clients/{id}',
+    url: '/api/clients/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1310,7 +1310,7 @@ export const putApiSdkClientsById = <ThrowOnError extends boolean = false>(optio
 
 export const postApiSdkClientsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkClientsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkClientsByIdActivateResponses, PostApiSdkClientsByIdActivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/clients/{id}/activate',
+    url: '/api/clients/{id}/activate',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1320,7 +1320,7 @@ export const postApiSdkClientsByIdActivate = <ThrowOnError extends boolean = fal
 
 export const postApiSdkClientsByIdSuspend = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkClientsByIdSuspendData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkClientsByIdSuspendResponses, PostApiSdkClientsByIdSuspendErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/clients/{id}/suspend',
+    url: '/api/clients/{id}/suspend',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1330,7 +1330,7 @@ export const postApiSdkClientsByIdSuspend = <ThrowOnError extends boolean = fals
 
 export const postApiSdkClientsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkClientsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkClientsByIdDeactivateResponses, PostApiSdkClientsByIdDeactivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/clients/{id}/deactivate',
+    url: '/api/clients/{id}/deactivate',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1340,13 +1340,13 @@ export const postApiSdkClientsByIdDeactivate = <ThrowOnError extends boolean = f
 
 export const getApiSdkRoles = <ThrowOnError extends boolean = false>(options?: Options<GetApiSdkRolesData, ThrowOnError>) => (options?.client ?? client).get<GetApiSdkRolesResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/roles',
+    url: '/api/roles',
     ...options
 });
 
 export const postApiSdkRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkRolesResponses, PostApiSdkRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/roles',
+    url: '/api/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1356,19 +1356,19 @@ export const postApiSdkRoles = <ThrowOnError extends boolean = false>(options: O
 
 export const deleteApiSdkRolesByRoleName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiSdkRolesByRoleNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiSdkRolesByRoleNameResponses, DeleteApiSdkRolesByRoleNameErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/roles/{roleName}',
+    url: '/api/roles/{roleName}',
     ...options
 });
 
 export const getApiSdkRolesByRoleName = <ThrowOnError extends boolean = false>(options: Options<GetApiSdkRolesByRoleNameData, ThrowOnError>) => (options.client ?? client).get<GetApiSdkRolesByRoleNameResponses, GetApiSdkRolesByRoleNameErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/roles/{roleName}',
+    url: '/api/roles/{roleName}',
     ...options
 });
 
 export const putApiSdkRolesByRoleName = <ThrowOnError extends boolean = false>(options: Options<PutApiSdkRolesByRoleNameData, ThrowOnError>) => (options.client ?? client).put<PutApiSdkRolesByRoleNameResponses, PutApiSdkRolesByRoleNameErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/roles/{roleName}',
+    url: '/api/roles/{roleName}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1378,19 +1378,19 @@ export const putApiSdkRolesByRoleName = <ThrowOnError extends boolean = false>(o
 
 export const getApiSdkPrincipals = <ThrowOnError extends boolean = false>(options?: Options<GetApiSdkPrincipalsData, ThrowOnError>) => (options?.client ?? client).get<GetApiSdkPrincipalsResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals',
+    url: '/api/principals',
     ...options
 });
 
 export const getApiSdkPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<GetApiSdkPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiSdkPrincipalsByIdResponses, GetApiSdkPrincipalsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}',
+    url: '/api/principals/{id}',
     ...options
 });
 
 export const putApiSdkPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<PutApiSdkPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiSdkPrincipalsByIdResponses, PutApiSdkPrincipalsByIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}',
+    url: '/api/principals/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1400,7 +1400,7 @@ export const putApiSdkPrincipalsById = <ThrowOnError extends boolean = false>(op
 
 export const postApiSdkPrincipalsUser = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkPrincipalsUserData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkPrincipalsUserResponses, PostApiSdkPrincipalsUserErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/user',
+    url: '/api/principals/users',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1410,25 +1410,25 @@ export const postApiSdkPrincipalsUser = <ThrowOnError extends boolean = false>(o
 
 export const postApiSdkPrincipalsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkPrincipalsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkPrincipalsByIdActivateResponses, PostApiSdkPrincipalsByIdActivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}/activate',
+    url: '/api/principals/{id}/activate',
     ...options
 });
 
 export const postApiSdkPrincipalsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkPrincipalsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkPrincipalsByIdDeactivateResponses, PostApiSdkPrincipalsByIdDeactivateErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}/deactivate',
+    url: '/api/principals/{id}/deactivate',
     ...options
 });
 
 export const getApiSdkPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiSdkPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiSdkPrincipalsByIdRolesResponses, GetApiSdkPrincipalsByIdRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options
 });
 
 export const putApiSdkPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PutApiSdkPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).put<PutApiSdkPrincipalsByIdRolesResponses, PutApiSdkPrincipalsByIdRolesErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -1438,19 +1438,19 @@ export const putApiSdkPrincipalsByIdRoles = <ThrowOnError extends boolean = fals
 
 export const getApiSdkPrincipalsByIdClients = <ThrowOnError extends boolean = false>(options: Options<GetApiSdkPrincipalsByIdClientsData, ThrowOnError>) => (options.client ?? client).get<GetApiSdkPrincipalsByIdClientsResponses, GetApiSdkPrincipalsByIdClientsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}/clients',
+    url: '/api/principals/{id}/clients',
     ...options
 });
 
 export const deleteApiSdkPrincipalsByIdClientsByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiSdkPrincipalsByIdClientsByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiSdkPrincipalsByIdClientsByClientIdResponses, DeleteApiSdkPrincipalsByIdClientsByClientIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}/clients/{clientId}',
+    url: '/api/principals/{id}/clients/{clientId}',
     ...options
 });
 
 export const postApiSdkPrincipalsByIdClientsByClientId = <ThrowOnError extends boolean = false>(options: Options<PostApiSdkPrincipalsByIdClientsByClientIdData, ThrowOnError>) => (options.client ?? client).post<PostApiSdkPrincipalsByIdClientsByClientIdResponses, PostApiSdkPrincipalsByIdClientsByClientIdErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
-    url: '/api/sdk/principals/{id}/clients/{clientId}',
+    url: '/api/principals/{id}/clients/{clientId}',
     ...options
 });
 

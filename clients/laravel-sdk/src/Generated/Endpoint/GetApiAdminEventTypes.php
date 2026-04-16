@@ -23,7 +23,7 @@ class GetApiAdminEventTypes extends \FlowCatalyst\Generated\Runtime\Client\BaseE
     }
     public function getUri(): string
     {
-        return '/api/admin/event-types';
+        return '/api/event-types';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

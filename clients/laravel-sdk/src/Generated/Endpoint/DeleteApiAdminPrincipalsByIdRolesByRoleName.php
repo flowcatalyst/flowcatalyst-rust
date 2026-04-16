@@ -22,7 +22,7 @@ class DeleteApiAdminPrincipalsByIdRolesByRoleName extends \FlowCatalyst\Generate
     }
     public function getUri(): string
     {
-        return str_replace(['{id}', '{role}'], [$this->id, $this->role], '/api/admin/principals/{id}/roles/{role}');
+        return str_replace(['{id}', '{role}'], [$this->id, $this->role], '/api/principals/{id}/roles/{role}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

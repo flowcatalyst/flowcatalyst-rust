@@ -410,7 +410,7 @@ pub struct PrincipalsState {
     pub identity_provider_repo: Option<Arc<crate::IdentityProviderRepository>>,
     pub application_repo: Option<Arc<ApplicationRepository>>,
     pub app_client_config_repo: Option<Arc<ApplicationClientConfigRepository>>,
-    /// When configured, enables `POST /api/admin/principals/{id}/send-password-reset`
+    /// When configured, enables `POST /api/principals/{id}/send-password-reset`
     /// which emails the user a single-use reset link (same flow as
     /// user-initiated `/auth/password-reset/request`).
     pub password_reset_emailer: Option<Arc<crate::auth::password_reset_api::PasswordResetEmailer>>,

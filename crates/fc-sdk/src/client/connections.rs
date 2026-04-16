@@ -65,12 +65,12 @@ impl FlowCatalystClient {
         &self,
         req: &CreateConnectionRequest,
     ) -> Result<serde_json::Value, ClientError> {
-        self.post("/api/admin/connections", req).await
+        self.post("/api/connections", req).await
     }
 
     /// Get a connection by ID
     pub async fn get_connection(&self, id: &str) -> Result<ConnectionResponse, ClientError> {
-        self.get(&format!("/api/admin/connections/{}", id)).await
+        self.get(&format!("/api/connections/{}", id)).await
     }
 
     /// List connections with optional filters
@@ -88,7 +88,7 @@ impl FlowCatalystClient {
         if !params.is_empty() {
             query = format!("?{}", params.join("&"));
         }
-        self.get(&format!("/api/admin/connections{}", query)).await
+        self.get(&format!("/api/connections{}", query)).await
     }
 
     /// Update a connection
@@ -97,23 +97,23 @@ impl FlowCatalystClient {
         id: &str,
         req: &UpdateConnectionRequest,
     ) -> Result<(), ClientError> {
-        self.put(&format!("/api/admin/connections/{}", id), req).await
+        self.put(&format!("/api/connections/{}", id), req).await
     }
 
     /// Delete a connection
     pub async fn delete_connection(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/admin/connections/{}", id)).await
+        self.delete_req(&format!("/api/connections/{}", id)).await
     }
 
     /// Pause a connection
     pub async fn pause_connection(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/admin/connections/{}/pause", id))
+        self.post_empty(&format!("/api/connections/{}/pause", id))
             .await
     }
 
     /// Activate a connection
     pub async fn activate_connection(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/admin/connections/{}/activate", id))
+        self.post_empty(&format!("/api/connections/{}/activate", id))
             .await
     }
 }

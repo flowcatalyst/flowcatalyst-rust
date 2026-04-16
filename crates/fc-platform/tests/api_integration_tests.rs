@@ -113,15 +113,15 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
 
     let router: Router = Router::new()
         .nest(
-            "/api/admin/clients",
+            "/api/clients",
             Into::<Router>::into(clients_router(clients_state)),
         )
         .nest(
-            "/api/sdk/events",
+            "/api/events",
             sdk_events_batch_router(sdk_events_state),
         )
         .nest(
-            "/api/sdk/dispatch-jobs",
+            "/api/dispatch-jobs",
             sdk_dispatch_jobs_batch_router(sdk_dispatch_jobs_state),
         )
         .layer(AuthLayer::new(app_state));
@@ -151,7 +151,7 @@ async fn test_create_client_via_api() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/admin/clients")
+                .uri("/api/clients")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {}", token))
                 .body(Body::from(
@@ -196,7 +196,7 @@ async fn test_list_clients_via_api() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/api/admin/clients")
+                .uri("/api/clients")
                 .header("authorization", format!("Bearer {}", token))
                 .body(Body::empty())
                 .unwrap(),
@@ -239,7 +239,7 @@ async fn test_get_client_by_id_via_api() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri(&format!("/api/admin/clients/{}", client.id))
+                .uri(&format!("/api/clients/{}", client.id))
                 .header("authorization", format!("Bearer {}", token))
                 .body(Body::empty())
                 .unwrap(),
@@ -268,7 +268,7 @@ async fn test_unauthorized_request() {
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/api/admin/clients")
+                .uri("/api/clients")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -291,7 +291,7 @@ async fn test_batch_events_via_api() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/sdk/events/batch")
+                .uri("/api/events/batch")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {}", token))
                 .body(Body::from(
@@ -345,7 +345,7 @@ async fn test_batch_events_exceeds_limit() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/sdk/events/batch")
+                .uri("/api/events/batch")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {}", token))
                 .body(Body::from(
@@ -372,7 +372,7 @@ async fn test_batch_dispatch_jobs_via_api() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/api/sdk/dispatch-jobs/batch")
+                .uri("/api/dispatch-jobs/batch")
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {}", token))
                 .body(Body::from(

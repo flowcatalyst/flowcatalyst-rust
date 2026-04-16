@@ -22,7 +22,7 @@ class DeleteApiAdminRolesByNamePermissionsByPermission extends \FlowCatalyst\Gen
     }
     public function getUri(): string
     {
-        return str_replace(['{role_name}', '{permission}'], [$this->role_name, $this->permission], '/api/admin/roles/{role_name}/permissions/{permission}');
+        return str_replace(['{role_name}', '{permission}'], [$this->role_name, $this->permission], '/api/roles/{role_name}/permissions/{permission}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

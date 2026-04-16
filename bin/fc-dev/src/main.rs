@@ -378,8 +378,8 @@ async fn main() -> Result<()> {
     );
     let (platform_app, _openapi) = routes.build();
 
-    // Dev-specific extra admin route states (the shared builder doesn't wire
-    // /api/admin/dispatch-jobs or /api/admin/event-types/filters — fc-dev does
+    // Dev-specific extra route states (the shared builder doesn't wire
+    // /api/dispatch-jobs or /api/event-types/filters — fc-dev does
     // this itself as compatibility for the generated frontend client).
     let dispatch_jobs_state = fc_platform::api::DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
@@ -392,12 +392,11 @@ async fn main() -> Result<()> {
         application_repo: repos.application_repo.clone(),
     };
 
-    // Dev-specific extra routes: admin API mirrors of BFF routes
-    // (frontend generated client uses /api/admin/*)
-    // NOTE: /api/admin/events is now provided by PlatformRoutes via admin_events_router
+    // Dev-specific extra routes: API-surface mirrors of BFF routes.
+    // NOTE: /api/events is now provided by PlatformRoutes via admin_events_router.
     let platform_router = platform_app
-        .nest("/api/admin/dispatch-jobs", dispatch_jobs_router(dispatch_jobs_state).into())
-        .nest("/api/admin/event-types/filters", event_type_filters_router(filter_options_state).into())
+        .nest("/api/dispatch-jobs", dispatch_jobs_router(dispatch_jobs_state).into())
+        .nest("/api/event-types/filters", event_type_filters_router(filter_options_state).into())
         // Add auth middleware
         .layer(AuthLayer::new(app_state));
 

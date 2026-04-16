@@ -11,7 +11,7 @@ class GetApiAdminMonitoringCircuitBreakers extends \FlowCatalyst\Generated\Runti
     }
     public function getUri(): string
     {
-        return '/api/admin/monitoring/circuit-breakers';
+        return '/api/monitoring/circuit-breakers';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

@@ -20,7 +20,7 @@ class GetApiAdminClientsSearch extends \FlowCatalyst\Generated\Runtime\Client\Ba
     }
     public function getUri(): string
     {
-        return '/api/admin/clients/search';
+        return '/api/clients/search';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

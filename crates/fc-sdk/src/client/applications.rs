@@ -172,7 +172,7 @@ impl FlowCatalystClient {
         &self,
         req: &CreateApplicationRequest,
     ) -> Result<CreatedResponse, ClientError> {
-        self.post("/api/admin/applications", req).await
+        self.post("/api/applications", req).await
     }
 
     /// List applications with optional pagination and filters.
@@ -199,12 +199,12 @@ impl FlowCatalystClient {
             format!("?{}", params.join("&"))
         };
 
-        self.get(&format!("/api/admin/applications{}", query)).await
+        self.get(&format!("/api/applications{}", query)).await
     }
 
     /// Get an application by ID.
     pub async fn get_application(&self, id: &str) -> Result<ApplicationResponse, ClientError> {
-        self.get(&format!("/api/admin/applications/{}", id)).await
+        self.get(&format!("/api/applications/{}", id)).await
     }
 
     /// Get an application by code.
@@ -212,7 +212,7 @@ impl FlowCatalystClient {
         &self,
         code: &str,
     ) -> Result<ApplicationResponse, ClientError> {
-        self.get(&format!("/api/admin/applications/by-code/{}", code))
+        self.get(&format!("/api/applications/by-code/{}", code))
             .await
     }
 
@@ -222,17 +222,17 @@ impl FlowCatalystClient {
         id: &str,
         req: &UpdateApplicationRequest,
     ) -> Result<ApplicationResponse, ClientError> {
-        self.put(&format!("/api/admin/applications/{}", id), req).await
+        self.put(&format!("/api/applications/{}", id), req).await
     }
 
     /// Delete (deactivate) an application.
     pub async fn delete_application(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/admin/applications/{}", id)).await
+        self.delete_req(&format!("/api/applications/{}", id)).await
     }
 
     /// Activate an application.
     pub async fn activate_application(&self, id: &str) -> Result<ApplicationResponse, ClientError> {
-        self.post_action(&format!("/api/admin/applications/{}/activate", id))
+        self.post_action(&format!("/api/applications/{}/activate", id))
             .await
     }
 
@@ -241,7 +241,7 @@ impl FlowCatalystClient {
         &self,
         id: &str,
     ) -> Result<ApplicationResponse, ClientError> {
-        self.post_action(&format!("/api/admin/applications/{}/deactivate", id))
+        self.post_action(&format!("/api/applications/{}/deactivate", id))
             .await
     }
 
@@ -251,7 +251,7 @@ impl FlowCatalystClient {
         application_id: &str,
     ) -> Result<ServiceAccountResponse, ClientError> {
         self.post_action(&format!(
-            "/api/admin/applications/{}/provision-service-account",
+            "/api/applications/{}/provision-service-account",
             application_id
         ))
         .await
@@ -263,7 +263,7 @@ impl FlowCatalystClient {
         application_id: &str,
     ) -> Result<ServiceAccountResponse, ClientError> {
         self.get(&format!(
-            "/api/admin/applications/{}/service-account",
+            "/api/applications/{}/service-account",
             application_id
         ))
         .await
@@ -274,7 +274,7 @@ impl FlowCatalystClient {
         &self,
         application_id: &str,
     ) -> Result<Vec<ApplicationRoleResponse>, ClientError> {
-        self.get(&format!("/api/admin/applications/{}/roles", application_id))
+        self.get(&format!("/api/applications/{}/roles", application_id))
             .await
     }
 
@@ -283,7 +283,7 @@ impl FlowCatalystClient {
         &self,
         application_id: &str,
     ) -> Result<ClientConfigsResponse, ClientError> {
-        self.get(&format!("/api/admin/applications/{}/clients", application_id))
+        self.get(&format!("/api/applications/{}/clients", application_id))
             .await
     }
 
@@ -296,7 +296,7 @@ impl FlowCatalystClient {
     ) -> Result<ClientConfigResponse, ClientError> {
         self.put(
             &format!(
-                "/api/admin/applications/{}/clients/{}",
+                "/api/applications/{}/clients/{}",
                 application_id, client_id
             ),
             req,
@@ -311,7 +311,7 @@ impl FlowCatalystClient {
         client_id: &str,
     ) -> Result<ClientConfigResponse, ClientError> {
         self.post_action(&format!(
-            "/api/admin/applications/{}/clients/{}/enable",
+            "/api/applications/{}/clients/{}/enable",
             application_id, client_id
         ))
         .await
@@ -324,7 +324,7 @@ impl FlowCatalystClient {
         client_id: &str,
     ) -> Result<ClientConfigResponse, ClientError> {
         self.post_action(&format!(
-            "/api/admin/applications/{}/clients/{}/disable",
+            "/api/applications/{}/clients/{}/disable",
             application_id, client_id
         ))
         .await

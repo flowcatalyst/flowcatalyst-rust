@@ -18,7 +18,7 @@ class PostApiAdminOauthClients extends \FlowCatalyst\Generated\Runtime\Client\Ba
     }
     public function getUri(): string
     {
-        return '/api/admin/oauth-clients';
+        return '/api/oauth-clients';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

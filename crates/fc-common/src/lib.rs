@@ -588,8 +588,8 @@ impl OutboxItemType {
     /// Get the API endpoint path for this item type
     pub fn api_path(&self) -> &'static str {
         match self {
-            OutboxItemType::EVENT => "/api/sdk/events/batch",
-            OutboxItemType::DISPATCH_JOB => "/api/sdk/dispatch-jobs/batch",
+            OutboxItemType::EVENT => "/api/events/batch",
+            OutboxItemType::DISPATCH_JOB => "/api/dispatch-jobs/batch",
             OutboxItemType::AUDIT_LOG => "/api/audit-logs/batch",
         }
     }

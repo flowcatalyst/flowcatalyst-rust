@@ -22,7 +22,7 @@ class PutApiAdminPrincipalsByIdApplicationAccess extends \FlowCatalyst\Generated
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/principals/{id}/application-access');
+        return str_replace(['{id}'], [$this->id], '/api/principals/{id}/application-access');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

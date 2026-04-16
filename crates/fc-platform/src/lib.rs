@@ -301,9 +301,6 @@ pub mod api {
     pub use crate::login_attempt::api::{login_attempts_router, LoginAttemptsState};
     pub use crate::shared::me_api::{me_router, MeState};
     pub use crate::shared::batch_api::{sdk_events_batch_router, SdkEventsState, EventDispatchDeps};
-    pub use crate::shared::sdk_clients_api::{sdk_clients_router, SdkClientsState};
-    pub use crate::shared::sdk_principals_api::{sdk_principals_router, SdkPrincipalsState};
-    pub use crate::shared::sdk_roles_api::{sdk_roles_router, SdkRolesState};
     pub use crate::shared::public_api::{public_router, PublicApiState};
     pub use crate::shared::sdk_sync_api::{sdk_sync_router, SdkSyncState};
     pub use crate::shared::sdk_audit_batch_api::{sdk_audit_batch_router, SdkAuditBatchState};

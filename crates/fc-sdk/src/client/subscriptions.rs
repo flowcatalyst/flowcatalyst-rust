@@ -132,12 +132,12 @@ impl FlowCatalystClient {
         &self,
         req: &CreateSubscriptionRequest,
     ) -> Result<SubscriptionResponse, ClientError> {
-        self.post("/api/admin/subscriptions", req).await
+        self.post("/api/subscriptions", req).await
     }
 
     /// Get a subscription by ID.
     pub async fn get_subscription(&self, id: &str) -> Result<SubscriptionResponse, ClientError> {
-        self.get(&format!("/api/admin/subscriptions/{}", id)).await
+        self.get(&format!("/api/subscriptions/{}", id)).await
     }
 
     /// List subscriptions with optional filters.
@@ -160,7 +160,7 @@ impl FlowCatalystClient {
             format!("?{}", params.join("&"))
         };
 
-        self.get(&format!("/api/admin/subscriptions{}", query)).await
+        self.get(&format!("/api/subscriptions{}", query)).await
     }
 
     /// Update a subscription.
@@ -169,23 +169,23 @@ impl FlowCatalystClient {
         id: &str,
         req: &UpdateSubscriptionRequest,
     ) -> Result<SubscriptionResponse, ClientError> {
-        self.put(&format!("/api/admin/subscriptions/{}", id), req).await
+        self.put(&format!("/api/subscriptions/{}", id), req).await
     }
 
     /// Pause a subscription.
     pub async fn pause_subscription(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/admin/subscriptions/{}/pause", id))
+        self.post_empty(&format!("/api/subscriptions/{}/pause", id))
             .await
     }
 
     /// Resume a subscription.
     pub async fn resume_subscription(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/admin/subscriptions/{}/resume", id))
+        self.post_empty(&format!("/api/subscriptions/{}/resume", id))
             .await
     }
 
     /// Delete a subscription.
     pub async fn delete_subscription(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/admin/subscriptions/{}", id)).await
+        self.delete_req(&format!("/api/subscriptions/{}", id)).await
     }
 }

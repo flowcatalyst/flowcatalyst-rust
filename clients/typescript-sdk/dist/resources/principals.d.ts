@@ -6,11 +6,12 @@
 import type { ResultAsync } from "neverthrow";
 import type { SdkError } from "../errors";
 import type { FlowCatalystClient } from "../client";
-import type { GetApiAdminPrincipalsResponse, GetApiAdminPrincipalsByIdResponse, PostApiAdminPrincipalsUsersData, PutApiAdminPrincipalsByIdData, GetApiAdminPrincipalsByIdRolesResponse, GetApiAdminPrincipalsByIdClientAccessResponse } from "../generated/types.gen";
+import type { GetApiAdminPrincipalsResponse, GetApiAdminPrincipalsByIdResponse, PostApiAdminPrincipalsUsersData, PutApiAdminPrincipalsByIdData, PostApiAdminPrincipalsByIdResetPasswordData, GetApiAdminPrincipalsByIdRolesResponse, GetApiAdminPrincipalsByIdClientAccessResponse } from "../generated/types.gen";
 export type PrincipalListResponse = GetApiAdminPrincipalsResponse;
 export type PrincipalDto = GetApiAdminPrincipalsByIdResponse;
 export type CreateUserRequest = PostApiAdminPrincipalsUsersData["body"];
 export type UpdatePrincipalRequest = PutApiAdminPrincipalsByIdData["body"];
+export type ResetPasswordRequest = PostApiAdminPrincipalsByIdResetPasswordData["body"];
 export type RoleListResponse = GetApiAdminPrincipalsByIdRolesResponse;
 export type ClientAccessListResponse = GetApiAdminPrincipalsByIdClientAccessResponse;
 export interface PrincipalFilters {
@@ -53,6 +54,10 @@ export declare class PrincipalsResource {
      * Deactivate a principal.
      */
     deactivate(id: string): ResultAsync<PrincipalDto, SdkError>;
+    /**
+     * Reset a user's password.
+     */
+    resetPassword(id: string, data: ResetPasswordRequest): ResultAsync<unknown, SdkError>;
     /**
      * Get roles assigned to a principal.
      */

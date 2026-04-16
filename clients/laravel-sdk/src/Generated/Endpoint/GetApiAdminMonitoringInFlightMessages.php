@@ -11,7 +11,7 @@ class GetApiAdminMonitoringInFlightMessages extends \FlowCatalyst\Generated\Runt
     }
     public function getUri(): string
     {
-        return '/api/admin/monitoring/in-flight-messages';
+        return '/api/monitoring/in-flight-messages';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

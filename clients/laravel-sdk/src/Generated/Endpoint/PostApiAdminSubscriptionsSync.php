@@ -22,7 +22,7 @@ class PostApiAdminSubscriptionsSync extends \FlowCatalyst\Generated\Runtime\Clie
     }
     public function getUri(): string
     {
-        return '/api/admin/subscriptions/sync';
+        return '/api/subscriptions/sync';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

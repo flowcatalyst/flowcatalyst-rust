@@ -1931,7 +1931,7 @@ export type GetApiAdminAuditLogsData = {
          */
         principalId?: string;
     };
-    url: '/api/admin/audit-logs';
+    url: '/api/audit-logs';
 };
 
 export type GetApiAdminAuditLogsResponses = {
@@ -1947,7 +1947,7 @@ export type GetApiAdminAuditLogsApplicationIdsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/admin/audit-logs/application-ids';
+    url: '/api/audit-logs/application-ids';
 };
 
 export type GetApiAdminAuditLogsApplicationIdsResponses = {
@@ -1963,7 +1963,7 @@ export type GetApiAdminAuditLogsClientIdsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/admin/audit-logs/client-ids';
+    url: '/api/audit-logs/client-ids';
 };
 
 export type GetApiAdminAuditLogsClientIdsResponses = {
@@ -1979,7 +1979,7 @@ export type GetApiAdminAuditLogsEntityTypesData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/admin/audit-logs/entity-types';
+    url: '/api/audit-logs/entity-types';
 };
 
 export type GetApiAdminAuditLogsEntityTypesResponses = {
@@ -2004,7 +2004,7 @@ export type GetApiAdminAuditLogsEntityByEntityTypeByEntityIdData = {
         entity_id: string;
     };
     query?: never;
-    url: '/api/admin/audit-logs/entity/{entity_type}/{entity_id}';
+    url: '/api/audit-logs/entity/{entity_type}/{entity_id}';
 };
 
 export type GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses = {
@@ -2020,7 +2020,7 @@ export type GetApiAdminAuditLogsOperationsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/admin/audit-logs/operations';
+    url: '/api/audit-logs/operations';
 };
 
 export type GetApiAdminAuditLogsOperationsResponses = {
@@ -2041,7 +2041,7 @@ export type GetApiAdminAuditLogsPrincipalByPrincipalIdData = {
         principal_id: string;
     };
     query?: never;
-    url: '/api/admin/audit-logs/principal/{principal_id}';
+    url: '/api/audit-logs/principal/{principal_id}';
 };
 
 export type GetApiAdminAuditLogsPrincipalByPrincipalIdResponses = {
@@ -2057,7 +2057,7 @@ export type GetApiAdminAuditLogsRecentData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/admin/audit-logs/recent';
+    url: '/api/audit-logs/recent';
 };
 
 export type GetApiAdminAuditLogsRecentResponses = {
@@ -2078,7 +2078,7 @@ export type GetApiAdminAuditLogsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/audit-logs/{id}';
+    url: '/api/audit-logs/{id}';
 };
 
 export type GetApiAdminAuditLogsByIdErrors = {
@@ -2114,7 +2114,7 @@ export type GetApiAdminClientsData = {
          */
         status?: string;
     };
-    url: '/api/admin/clients';
+    url: '/api/clients';
 };
 
 export type GetApiAdminClientsResponses = {
@@ -2130,7 +2130,7 @@ export type PostApiAdminClientsData = {
     body: CreateClientRequest;
     path?: never;
     query?: never;
-    url: '/api/admin/clients';
+    url: '/api/clients';
 };
 
 export type PostApiAdminClientsErrors = {
@@ -2162,7 +2162,7 @@ export type GetApiAdminClientsByIdentifierByIdentifierData = {
         identifier: string;
     };
     query?: never;
-    url: '/api/admin/clients/by-identifier/{identifier}';
+    url: '/api/clients/by-identifier/{identifier}';
 };
 
 export type GetApiAdminClientsByIdentifierByIdentifierErrors = {
@@ -2190,7 +2190,7 @@ export type GetApiAdminClientsSearchData = {
          */
         q?: string;
     };
-    url: '/api/admin/clients/search';
+    url: '/api/clients/search';
 };
 
 export type GetApiAdminClientsSearchResponses = {
@@ -2211,7 +2211,7 @@ export type DeleteApiAdminClientsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}';
+    url: '/api/clients/{id}';
 };
 
 export type DeleteApiAdminClientsByIdErrors = {
@@ -2239,7 +2239,7 @@ export type GetApiAdminClientsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}';
+    url: '/api/clients/{id}';
 };
 
 export type GetApiAdminClientsByIdErrors = {
@@ -2267,7 +2267,7 @@ export type PutApiAdminClientsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}';
+    url: '/api/clients/{id}';
 };
 
 export type PutApiAdminClientsByIdErrors = {
@@ -2295,7 +2295,7 @@ export type PostApiAdminClientsByIdActivateData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}/activate';
+    url: '/api/clients/{id}/activate';
 };
 
 export type PostApiAdminClientsByIdActivateErrors = {
@@ -2327,7 +2327,7 @@ export type GetApiAdminClientsByIdApplicationsData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}/applications';
+    url: '/api/clients/{id}/applications';
 };
 
 export type GetApiAdminClientsByIdApplicationsErrors = {
@@ -2355,7 +2355,7 @@ export type PutApiAdminClientsByIdApplicationsData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}/applications';
+    url: '/api/clients/{id}/applications';
 };
 
 export type PutApiAdminClientsByIdApplicationsErrors = {
@@ -2387,7 +2387,7 @@ export type PostApiAdminClientsByIdApplicationsByAppIdDisableData = {
         application_id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}/applications/{application_id}/disable';
+    url: '/api/clients/{id}/applications/{application_id}/disable';
 };
 
 export type PostApiAdminClientsByIdApplicationsByAppIdDisableErrors = {
@@ -2419,7 +2419,7 @@ export type PostApiAdminClientsByIdApplicationsByAppIdEnableData = {
         application_id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}/applications/{application_id}/enable';
+    url: '/api/clients/{id}/applications/{application_id}/enable';
 };
 
 export type PostApiAdminClientsByIdApplicationsByAppIdEnableErrors = {
@@ -2447,7 +2447,7 @@ export type PostApiAdminClientsByIdDeactivateData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}/deactivate';
+    url: '/api/clients/{id}/deactivate';
 };
 
 export type PostApiAdminClientsByIdDeactivateErrors = {
@@ -2479,7 +2479,7 @@ export type PostApiAdminClientsByIdNotesData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}/notes';
+    url: '/api/clients/{id}/notes';
 };
 
 export type PostApiAdminClientsByIdNotesErrors = {
@@ -2507,7 +2507,7 @@ export type PostApiAdminClientsByIdSuspendData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/clients/{id}/suspend';
+    url: '/api/clients/{id}/suspend';
 };
 
 export type PostApiAdminClientsByIdSuspendErrors = {
@@ -2548,7 +2548,7 @@ export type GetApiAdminEventTypesData = {
          */
         status?: string;
     };
-    url: '/api/admin/event-types';
+    url: '/api/event-types';
 };
 
 export type GetApiAdminEventTypesResponses = {
@@ -2564,7 +2564,7 @@ export type PostApiAdminEventTypesData = {
     body: CreateEventTypeRequest;
     path?: never;
     query?: never;
-    url: '/api/admin/event-types';
+    url: '/api/event-types';
 };
 
 export type PostApiAdminEventTypesErrors = {
@@ -2596,7 +2596,7 @@ export type GetApiAdminEventTypesByCodeByCodeData = {
         code: string;
     };
     query?: never;
-    url: '/api/admin/event-types/by-code/{code}';
+    url: '/api/event-types/by-code/{code}';
 };
 
 export type GetApiAdminEventTypesByCodeByCodeErrors = {
@@ -2624,7 +2624,7 @@ export type PostApiAdminEventTypesSyncData = {
          */
         removeUnlisted?: boolean;
     };
-    url: '/api/admin/event-types/sync';
+    url: '/api/event-types/sync';
 };
 
 export type PostApiAdminEventTypesSyncErrors = {
@@ -2656,7 +2656,7 @@ export type DeleteApiAdminEventTypesByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/event-types/{id}';
+    url: '/api/event-types/{id}';
 };
 
 export type DeleteApiAdminEventTypesByIdErrors = {
@@ -2684,7 +2684,7 @@ export type GetApiAdminEventTypesByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/event-types/{id}';
+    url: '/api/event-types/{id}';
 };
 
 export type GetApiAdminEventTypesByIdErrors = {
@@ -2712,7 +2712,7 @@ export type PutApiAdminEventTypesByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/event-types/{id}';
+    url: '/api/event-types/{id}';
 };
 
 export type PutApiAdminEventTypesByIdErrors = {
@@ -2740,7 +2740,7 @@ export type PostApiAdminEventTypesByIdSchemasData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/event-types/{id}/versions';
+    url: '/api/event-types/{id}/versions';
 };
 
 export type PostApiAdminEventTypesByIdSchemasErrors = {
@@ -2769,7 +2769,7 @@ export type GetApiAdminOauthClientsData = {
          */
         active?: boolean;
     };
-    url: '/api/admin/oauth-clients';
+    url: '/api/oauth-clients';
 };
 
 export type GetApiAdminOauthClientsResponses = {
@@ -2785,7 +2785,7 @@ export type PostApiAdminOauthClientsData = {
     body: CreateOAuthClientRequest;
     path?: never;
     query?: never;
-    url: '/api/admin/oauth-clients';
+    url: '/api/oauth-clients';
 };
 
 export type PostApiAdminOauthClientsErrors = {
@@ -2817,7 +2817,7 @@ export type GetApiAdminOauthClientsByClientIdData = {
         clientId: string;
     };
     query?: never;
-    url: '/api/admin/oauth-clients/by-client-id/{clientId}';
+    url: '/api/oauth-clients/by-client-id/{clientId}';
 };
 
 export type GetApiAdminOauthClientsByClientIdErrors = {
@@ -2845,7 +2845,7 @@ export type DeleteApiAdminOauthClientsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/oauth-clients/{id}';
+    url: '/api/oauth-clients/{id}';
 };
 
 export type DeleteApiAdminOauthClientsByIdErrors = {
@@ -2873,7 +2873,7 @@ export type GetApiAdminOauthClientsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/oauth-clients/{id}';
+    url: '/api/oauth-clients/{id}';
 };
 
 export type GetApiAdminOauthClientsByIdErrors = {
@@ -2901,7 +2901,7 @@ export type PutApiAdminOauthClientsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/oauth-clients/{id}';
+    url: '/api/oauth-clients/{id}';
 };
 
 export type PutApiAdminOauthClientsByIdErrors = {
@@ -2929,7 +2929,7 @@ export type PostApiAdminOauthClientsActivateData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/oauth-clients/{id}/activate';
+    url: '/api/oauth-clients/{id}/activate';
 };
 
 export type PostApiAdminOauthClientsActivateErrors = {
@@ -2957,7 +2957,7 @@ export type PostApiAdminOauthClientsDeactivateData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/oauth-clients/{id}/deactivate';
+    url: '/api/oauth-clients/{id}/deactivate';
 };
 
 export type PostApiAdminOauthClientsDeactivateErrors = {
@@ -2985,7 +2985,7 @@ export type PostApiAdminOauthClientsRegenerateSecretData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/oauth-clients/{id}/regenerate-secret';
+    url: '/api/oauth-clients/{id}/regenerate-secret';
 };
 
 export type PostApiAdminOauthClientsRegenerateSecretErrors = {
@@ -3013,7 +3013,7 @@ export type PostApiAdminOauthClientsRotateSecretData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/oauth-clients/{id}/rotate-secret';
+    url: '/api/oauth-clients/{id}/rotate-secret';
 };
 
 export type PostApiAdminOauthClientsRotateSecretErrors = {
@@ -3057,7 +3057,7 @@ export type GetApiAdminPrincipalsData = {
          */
         client_id?: string;
     };
-    url: '/api/admin/principals';
+    url: '/api/principals';
 };
 
 export type GetApiAdminPrincipalsResponses = {
@@ -3073,7 +3073,7 @@ export type PostApiAdminPrincipalsUsersData = {
     body: CreateUserRequest;
     path?: never;
     query?: never;
-    url: '/api/admin/principals';
+    url: '/api/principals/users';
 };
 
 export type PostApiAdminPrincipalsUsersErrors = {
@@ -3105,7 +3105,7 @@ export type GetApiAdminPrincipalsCheckEmailDomainData = {
          */
         domain: string;
     };
-    url: '/api/admin/principals/check-email-domain';
+    url: '/api/principals/check-email-domain';
 };
 
 export type GetApiAdminPrincipalsCheckEmailDomainResponses = {
@@ -3126,7 +3126,7 @@ export type DeleteApiAdminPrincipalsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}';
+    url: '/api/principals/{id}';
 };
 
 export type DeleteApiAdminPrincipalsByIdErrors = {
@@ -3154,7 +3154,7 @@ export type GetApiAdminPrincipalsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}';
+    url: '/api/principals/{id}';
 };
 
 export type GetApiAdminPrincipalsByIdErrors = {
@@ -3182,7 +3182,7 @@ export type PutApiAdminPrincipalsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}';
+    url: '/api/principals/{id}';
 };
 
 export type PutApiAdminPrincipalsByIdErrors = {
@@ -3210,7 +3210,7 @@ export type PostApiAdminPrincipalsByIdActivateData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/activate';
+    url: '/api/principals/{id}/activate';
 };
 
 export type PostApiAdminPrincipalsByIdActivateErrors = {
@@ -3242,7 +3242,7 @@ export type GetApiAdminPrincipalsByIdApplicationAccessData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/application-access';
+    url: '/api/principals/{id}/application-access';
 };
 
 export type GetApiAdminPrincipalsByIdApplicationAccessErrors = {
@@ -3270,7 +3270,7 @@ export type PutApiAdminPrincipalsByIdApplicationAccessData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/application-access';
+    url: '/api/principals/{id}/application-access';
 };
 
 export type PutApiAdminPrincipalsByIdApplicationAccessErrors = {
@@ -3298,7 +3298,7 @@ export type GetApiAdminPrincipalsByIdAvailableApplicationsData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/available-applications';
+    url: '/api/principals/{id}/available-applications';
 };
 
 export type GetApiAdminPrincipalsByIdAvailableApplicationsErrors = {
@@ -3326,7 +3326,7 @@ export type GetApiAdminPrincipalsByIdClientAccessData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/client-access';
+    url: '/api/principals/{id}/client-access';
 };
 
 export type GetApiAdminPrincipalsByIdClientAccessErrors = {
@@ -3354,7 +3354,7 @@ export type PostApiAdminPrincipalsByIdClientAccessData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/client-access';
+    url: '/api/principals/{id}/client-access';
 };
 
 export type PostApiAdminPrincipalsByIdClientAccessErrors = {
@@ -3386,7 +3386,7 @@ export type DeleteApiAdminPrincipalsByIdClientAccessByClientIdData = {
         client_id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/client-access/{client_id}';
+    url: '/api/principals/{id}/client-access/{client_id}';
 };
 
 export type DeleteApiAdminPrincipalsByIdClientAccessByClientIdErrors = {
@@ -3414,7 +3414,7 @@ export type PostApiAdminPrincipalsByIdDeactivateData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/deactivate';
+    url: '/api/principals/{id}/deactivate';
 };
 
 export type PostApiAdminPrincipalsByIdDeactivateErrors = {
@@ -3446,7 +3446,7 @@ export type PostApiAdminPrincipalsByIdResetPasswordData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/reset-password';
+    url: '/api/principals/{id}/reset-password';
 };
 
 export type PostApiAdminPrincipalsByIdResetPasswordErrors = {
@@ -3482,7 +3482,7 @@ export type GetApiAdminPrincipalsByIdRolesData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/roles';
+    url: '/api/principals/{id}/roles';
 };
 
 export type GetApiAdminPrincipalsByIdRolesErrors = {
@@ -3510,7 +3510,7 @@ export type PostApiAdminPrincipalsByIdRolesData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/roles';
+    url: '/api/principals/{id}/roles';
 };
 
 export type PostApiAdminPrincipalsByIdRolesErrors = {
@@ -3538,7 +3538,7 @@ export type PutApiAdminPrincipalsByIdRolesData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/roles';
+    url: '/api/principals/{id}/roles';
 };
 
 export type PutApiAdminPrincipalsByIdRolesErrors = {
@@ -3570,7 +3570,7 @@ export type DeleteApiAdminPrincipalsByIdRolesByRoleNameData = {
         role: string;
     };
     query?: never;
-    url: '/api/admin/principals/{id}/roles/{role}';
+    url: '/api/principals/{id}/roles/{role}';
 };
 
 export type DeleteApiAdminPrincipalsByIdRolesByRoleNameErrors = {
@@ -3607,7 +3607,7 @@ export type GetApiAdminRolesData = {
          */
         clientManaged?: boolean;
     };
-    url: '/api/admin/roles';
+    url: '/api/roles';
 };
 
 export type GetApiAdminRolesResponses = {
@@ -3623,7 +3623,7 @@ export type PostApiAdminRolesData = {
     body: CreateRoleRequest;
     path?: never;
     query?: never;
-    url: '/api/admin/roles';
+    url: '/api/roles';
 };
 
 export type PostApiAdminRolesErrors = {
@@ -3655,7 +3655,7 @@ export type GetApiAdminRolesByApplicationByApplicationIdData = {
         application_id: string;
     };
     query?: never;
-    url: '/api/admin/roles/by-application/{application_id}';
+    url: '/api/roles/by-application/{application_id}';
 };
 
 export type GetApiAdminRolesByApplicationByApplicationIdResponses = {
@@ -3676,7 +3676,7 @@ export type GetApiAdminRolesByCodeByCodeData = {
         code: string;
     };
     query?: never;
-    url: '/api/admin/roles/by-code/{code}';
+    url: '/api/roles/by-code/{code}';
 };
 
 export type GetApiAdminRolesByCodeByCodeErrors = {
@@ -3704,7 +3704,7 @@ export type GetApiAdminRolesBySourceBySourceData = {
         source: string;
     };
     query?: never;
-    url: '/api/admin/roles/by-source/{source}';
+    url: '/api/roles/by-source/{source}';
 };
 
 export type GetApiAdminRolesBySourceBySourceErrors = {
@@ -3727,7 +3727,7 @@ export type GetApiAdminRolesFiltersApplicationsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/admin/roles/filters/applications';
+    url: '/api/roles/filters/applications';
 };
 
 export type GetApiAdminRolesFiltersApplicationsResponses = {
@@ -3743,7 +3743,7 @@ export type GetApiAdminRolesPermissionsData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/admin/roles/permissions';
+    url: '/api/roles/permissions';
 };
 
 export type GetApiAdminRolesPermissionsResponses = {
@@ -3764,7 +3764,7 @@ export type GetApiAdminRolesPermissionsByPermissionData = {
         permission: string;
     };
     query?: never;
-    url: '/api/admin/roles/permissions/{permission}';
+    url: '/api/roles/permissions/{permission}';
 };
 
 export type GetApiAdminRolesPermissionsByPermissionErrors = {
@@ -3792,7 +3792,7 @@ export type DeleteApiAdminRolesByNameData = {
         role_name: string;
     };
     query?: never;
-    url: '/api/admin/roles/{role_name}';
+    url: '/api/roles/{role_name}';
 };
 
 export type DeleteApiAdminRolesByNameErrors = {
@@ -3820,7 +3820,7 @@ export type GetApiAdminRolesByNameData = {
         role_name: string;
     };
     query?: never;
-    url: '/api/admin/roles/{role_name}';
+    url: '/api/roles/{role_name}';
 };
 
 export type GetApiAdminRolesByNameErrors = {
@@ -3848,7 +3848,7 @@ export type PutApiAdminRolesByNameData = {
         role_name: string;
     };
     query?: never;
-    url: '/api/admin/roles/{role_name}';
+    url: '/api/roles/{role_name}';
 };
 
 export type PutApiAdminRolesByNameErrors = {
@@ -3876,7 +3876,7 @@ export type PostApiAdminRolesByNamePermissionsData = {
         role_name: string;
     };
     query?: never;
-    url: '/api/admin/roles/{role_name}/permissions';
+    url: '/api/roles/{role_name}/permissions';
 };
 
 export type PostApiAdminRolesByNamePermissionsErrors = {
@@ -3908,7 +3908,7 @@ export type DeleteApiAdminRolesByNamePermissionsByPermissionData = {
         permission: string;
     };
     query?: never;
-    url: '/api/admin/roles/{role_name}/permissions/{permission}';
+    url: '/api/roles/{role_name}/permissions/{permission}';
 };
 
 export type DeleteApiAdminRolesByNamePermissionsByPermissionErrors = {
@@ -3941,7 +3941,7 @@ export type GetApiAdminSubscriptionsData = {
          */
         status?: string;
     };
-    url: '/api/admin/subscriptions';
+    url: '/api/subscriptions';
 };
 
 export type GetApiAdminSubscriptionsResponses = {
@@ -3957,7 +3957,7 @@ export type PostApiAdminSubscriptionsData = {
     body: CreateSubscriptionRequest;
     path?: never;
     query?: never;
-    url: '/api/admin/subscriptions';
+    url: '/api/subscriptions';
 };
 
 export type PostApiAdminSubscriptionsErrors = {
@@ -3989,7 +3989,7 @@ export type PostApiAdminSubscriptionsSyncData = {
          */
         removeUnlisted?: boolean;
     };
-    url: '/api/admin/subscriptions/sync';
+    url: '/api/subscriptions/sync';
 };
 
 export type PostApiAdminSubscriptionsSyncErrors = {
@@ -4021,7 +4021,7 @@ export type DeleteApiAdminSubscriptionsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/subscriptions/{id}';
+    url: '/api/subscriptions/{id}';
 };
 
 export type DeleteApiAdminSubscriptionsByIdErrors = {
@@ -4049,7 +4049,7 @@ export type GetApiAdminSubscriptionsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/subscriptions/{id}';
+    url: '/api/subscriptions/{id}';
 };
 
 export type GetApiAdminSubscriptionsByIdErrors = {
@@ -4077,7 +4077,7 @@ export type PutApiAdminSubscriptionsByIdData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/subscriptions/{id}';
+    url: '/api/subscriptions/{id}';
 };
 
 export type PutApiAdminSubscriptionsByIdErrors = {
@@ -4105,7 +4105,7 @@ export type PostApiAdminSubscriptionsByIdPauseData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/subscriptions/{id}/pause';
+    url: '/api/subscriptions/{id}/pause';
 };
 
 export type PostApiAdminSubscriptionsByIdPauseErrors = {
@@ -4133,7 +4133,7 @@ export type PostApiAdminSubscriptionsByIdResumeData = {
         id: string;
     };
     query?: never;
-    url: '/api/admin/subscriptions/{id}/resume';
+    url: '/api/subscriptions/{id}/resume';
 };
 
 export type PostApiAdminSubscriptionsByIdResumeErrors = {

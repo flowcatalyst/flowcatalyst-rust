@@ -1,5 +1,24 @@
 # FlowCatalyst Rust - Development Guidelines
 
+## HTTP Tier Convention
+
+The platform exposes exactly two programmable tiers and an internal one:
+
+- **`/bff/*`** — frontend-only. Cookie/session auth. Response shapes are tuned
+  to screens; callers outside the frontend should not depend on them.
+- **`/api/*`** — the single programmable surface for SDKs and external
+  consumers. Bearer token auth. Authorization is enforced by **permissions**
+  (role/permission checks inside handlers), not by URL tier.
+- **`/auth/*`, `/oauth/*`, `/.well-known/*`, `/api/dispatch/*`, `/api/monitoring/*`,
+  `/api/me/*`, `/api/public/*`** — platform-owned, do not move.
+
+**There is no `/api/admin/*` or `/api/sdk/*` anymore.** Any write handler under
+`/api/*` MUST call an explicit authorization check (`require_anchor`,
+`require_permission`, or one of the `can_*` helpers) — because the URL prefix
+no longer provides a second line of defense. Missing a permission call on a
+write handler is a privilege-escalation bug.
+
+
 ## Database Access Rules
 
 ### N+1 Query Prevention
@@ -112,8 +131,8 @@ The **only** operations that bypass UseCase/UnitOfWork are the platform's own in
 infrastructure — the machinery that moves messages through the pipeline. These cannot
 generate events/audit logs (that would be recursive):
 
-- **Event ingest**: `POST /api/sdk/events/batch` — stores events received from consumer apps
-- **Dispatch job ingest**: `POST /api/sdk/dispatch-jobs/batch` — stores dispatch jobs from consumer apps
+- **Event ingest**: `POST /api/events/batch` — stores events received from consumer apps
+- **Dispatch job ingest**: `POST /api/dispatch-jobs/batch` — stores dispatch jobs from consumer apps
 - **Stream processing**: `events_raw` CQRS projection into `msg_events`
 - **Dispatch job delivery lifecycle**: status transitions during webhook delivery (pending → in_progress → success/failed), attempt recording
 - **Outbox processing**: polling `outbox_messages` and forwarding to platform API

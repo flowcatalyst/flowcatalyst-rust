@@ -20,7 +20,7 @@ class Roles
      */
     public function list(): array
     {
-        $response = $this->client->request('GET', '/api/sdk/roles');
+        $response = $this->client->request('GET', '/api/roles');
 
         return [
             'roles' => array_map(
@@ -36,7 +36,7 @@ class Roles
      */
     public function get(string $roleName): Role
     {
-        $response = $this->client->request('GET', "/api/sdk/roles/{$roleName}");
+        $response = $this->client->request('GET', "/api/roles/{$roleName}");
 
         return Role::fromArray($response);
     }
@@ -55,7 +55,7 @@ class Roles
      */
     public function create(array $data): Role
     {
-        $response = $this->client->request('POST', '/api/sdk/roles', [
+        $response = $this->client->request('POST', '/api/roles', [
             'json' => $data,
         ]);
 
@@ -73,7 +73,7 @@ class Roles
      */
     public function update(string $roleName, array $data): Role
     {
-        $response = $this->client->request('PUT', "/api/sdk/roles/{$roleName}", [
+        $response = $this->client->request('PUT', "/api/roles/{$roleName}", [
             'json' => $data,
         ]);
 
@@ -85,7 +85,7 @@ class Roles
      */
     public function delete(string $roleName): void
     {
-        $this->client->request('DELETE', "/api/sdk/roles/{$roleName}");
+        $this->client->request('DELETE', "/api/roles/{$roleName}");
     }
 
     /**

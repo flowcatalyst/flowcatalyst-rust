@@ -22,7 +22,7 @@ class PostApiAdminPrincipalsByIdResetPassword extends \FlowCatalyst\Generated\Ru
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/principals/{id}/reset-password');
+        return str_replace(['{id}'], [$this->id], '/api/principals/{id}/reset-password');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

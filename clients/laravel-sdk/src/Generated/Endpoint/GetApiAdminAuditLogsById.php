@@ -19,7 +19,7 @@ class GetApiAdminAuditLogsById extends \FlowCatalyst\Generated\Runtime\Client\Ba
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/audit-logs/{id}');
+        return str_replace(['{id}'], [$this->id], '/api/audit-logs/{id}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

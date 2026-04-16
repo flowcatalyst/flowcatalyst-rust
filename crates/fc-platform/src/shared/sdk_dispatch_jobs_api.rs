@@ -1,6 +1,6 @@
-//! SDK Dispatch Jobs Batch API
+//! Dispatch Jobs Batch API
 //!
-//! Exposes dispatch job batch creation as an SDK endpoint at `/api/sdk/dispatch-jobs/batch`.
+//! Exposes dispatch job batch creation at `/api/dispatch-jobs/batch`.
 
 use axum::{
     routing::post,

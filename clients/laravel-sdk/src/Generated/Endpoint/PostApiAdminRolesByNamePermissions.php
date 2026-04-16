@@ -21,7 +21,7 @@ class PostApiAdminRolesByNamePermissions extends \FlowCatalyst\Generated\Runtime
     }
     public function getUri(): string
     {
-        return str_replace(['{role_name}'], [$this->role_name], '/api/admin/roles/{role_name}/permissions');
+        return str_replace(['{role_name}'], [$this->role_name], '/api/roles/{role_name}/permissions');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

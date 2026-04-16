@@ -131,7 +131,7 @@ impl FlowCatalystClient {
         &self,
         req: &CreateUserRequest,
     ) -> Result<PrincipalResponse, ClientError> {
-        self.post("/api/admin/principals/users", req).await
+        self.post("/api/principals/users", req).await
     }
 
     /// List principals with optional filters.
@@ -157,12 +157,12 @@ impl FlowCatalystClient {
         } else {
             format!("?{}", params.join("&"))
         };
-        self.get(&format!("/api/admin/principals{}", query)).await
+        self.get(&format!("/api/principals{}", query)).await
     }
 
     /// Get a principal by ID.
     pub async fn get_principal(&self, id: &str) -> Result<PrincipalResponse, ClientError> {
-        self.get(&format!("/api/admin/principals/{}", id)).await
+        self.get(&format!("/api/principals/{}", id)).await
     }
 
     /// Find principals by email.
@@ -183,7 +183,7 @@ impl FlowCatalystClient {
         id: &str,
         req: &UpdatePrincipalRequest,
     ) -> Result<PrincipalResponse, ClientError> {
-        self.put(&format!("/api/admin/principals/{}", id), req).await
+        self.put(&format!("/api/principals/{}", id), req).await
     }
 
     /// Activate a principal.
@@ -191,7 +191,7 @@ impl FlowCatalystClient {
         &self,
         id: &str,
     ) -> Result<PrincipalResponse, ClientError> {
-        self.post_action(&format!("/api/admin/principals/{}/activate", id))
+        self.post_action(&format!("/api/principals/{}/activate", id))
             .await
     }
 
@@ -200,7 +200,7 @@ impl FlowCatalystClient {
         &self,
         id: &str,
     ) -> Result<PrincipalResponse, ClientError> {
-        self.post_action(&format!("/api/admin/principals/{}/deactivate", id))
+        self.post_action(&format!("/api/principals/{}/deactivate", id))
             .await
     }
 
@@ -209,7 +209,7 @@ impl FlowCatalystClient {
         &self,
         id: &str,
     ) -> Result<ListResponse<PrincipalRoleResponse>, ClientError> {
-        self.get(&format!("/api/admin/principals/{}/roles", id))
+        self.get(&format!("/api/principals/{}/roles", id))
             .await
     }
 
@@ -223,7 +223,7 @@ impl FlowCatalystClient {
             role_name: role_name.to_string(),
         };
         let _: serde_json::Value = self
-            .post(&format!("/api/admin/principals/{}/roles", id), &body)
+            .post(&format!("/api/principals/{}/roles", id), &body)
             .await?;
         Ok(())
     }
@@ -235,7 +235,7 @@ impl FlowCatalystClient {
         role_name: &str,
     ) -> Result<(), ClientError> {
         self.delete_req(&format!(
-            "/api/admin/principals/{}/roles/{}",
+            "/api/principals/{}/roles/{}",
             id, role_name
         ))
         .await
@@ -249,7 +249,7 @@ impl FlowCatalystClient {
     ) -> Result<(), ClientError> {
         let body = ReplaceRolesRequest { roles };
         let _: serde_json::Value = self
-            .put(&format!("/api/admin/principals/{}/roles", id), &body)
+            .put(&format!("/api/principals/{}/roles", id), &body)
             .await?;
         Ok(())
     }
@@ -259,7 +259,7 @@ impl FlowCatalystClient {
         &self,
         id: &str,
     ) -> Result<ListResponse<ClientAccessGrantResponse>, ClientError> {
-        self.get(&format!("/api/admin/principals/{}/client-access", id))
+        self.get(&format!("/api/principals/{}/client-access", id))
             .await
     }
 
@@ -274,7 +274,7 @@ impl FlowCatalystClient {
         };
         let _: serde_json::Value = self
             .post(
-                &format!("/api/admin/principals/{}/client-access", principal_id),
+                &format!("/api/principals/{}/client-access", principal_id),
                 &body,
             )
             .await?;
@@ -288,7 +288,7 @@ impl FlowCatalystClient {
         client_id: &str,
     ) -> Result<(), ClientError> {
         self.delete_req(&format!(
-            "/api/admin/principals/{}/client-access/{}",
+            "/api/principals/{}/client-access/{}",
             principal_id, client_id
         ))
         .await
@@ -302,7 +302,7 @@ impl FlowCatalystClient {
     ) -> Result<(), ClientError> {
         let _: serde_json::Value = self
             .post(
-                &format!("/api/admin/principals/{}/reset-password", principal_id),
+                &format!("/api/principals/{}/reset-password", principal_id),
                 req,
             )
             .await?;

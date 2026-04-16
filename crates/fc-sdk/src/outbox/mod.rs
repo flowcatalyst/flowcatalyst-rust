@@ -57,8 +57,8 @@
 //! fc-outbox-processor (polls outbox_messages)
 //!         ↓
 //! FlowCatalyst Platform API
-//!   ├── /api/sdk/events/batch       (EVENT items)
-//!   ├── /api/sdk/dispatch-jobs/batch (DISPATCH_JOB items)
+//!   ├── /api/events/batch       (EVENT items)
+//!   ├── /api/dispatch-jobs/batch (DISPATCH_JOB items)
 //!   └── /api/audit-logs/batch       (AUDIT_LOG items)
 //! ```
 

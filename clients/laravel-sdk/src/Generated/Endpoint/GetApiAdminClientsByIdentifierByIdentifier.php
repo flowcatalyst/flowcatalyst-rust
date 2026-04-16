@@ -19,7 +19,7 @@ class GetApiAdminClientsByIdentifierByIdentifier extends \FlowCatalyst\Generated
     }
     public function getUri(): string
     {
-        return str_replace(['{identifier}'], [$this->identifier], '/api/admin/clients/by-identifier/{identifier}');
+        return str_replace(['{identifier}'], [$this->identifier], '/api/clients/by-identifier/{identifier}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

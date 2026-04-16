@@ -3,48 +3,48 @@ import { client } from './client.gen';
 /**
  * List audit logs with filters (matches Java AuditLogAdminResource)
  */
-export const getApiAdminAuditLogs = (options) => (options?.client ?? client).get({ url: '/api/admin/audit-logs', ...options });
+export const getApiAdminAuditLogs = (options) => (options?.client ?? client).get({ url: '/api/audit-logs', ...options });
 /**
  * Get distinct application IDs
  */
-export const getApiAdminAuditLogsApplicationIds = (options) => (options?.client ?? client).get({ url: '/api/admin/audit-logs/application-ids', ...options });
+export const getApiAdminAuditLogsApplicationIds = (options) => (options?.client ?? client).get({ url: '/api/audit-logs/application-ids', ...options });
 /**
  * Get distinct client IDs
  */
-export const getApiAdminAuditLogsClientIds = (options) => (options?.client ?? client).get({ url: '/api/admin/audit-logs/client-ids', ...options });
+export const getApiAdminAuditLogsClientIds = (options) => (options?.client ?? client).get({ url: '/api/audit-logs/client-ids', ...options });
 /**
  * Get distinct entity types
  */
-export const getApiAdminAuditLogsEntityTypes = (options) => (options?.client ?? client).get({ url: '/api/admin/audit-logs/entity-types', ...options });
+export const getApiAdminAuditLogsEntityTypes = (options) => (options?.client ?? client).get({ url: '/api/audit-logs/entity-types', ...options });
 /**
  * Get audit logs for a specific entity
  */
-export const getApiAdminAuditLogsEntityByEntityTypeByEntityId = (options) => (options.client ?? client).get({ url: '/api/admin/audit-logs/entity/{entity_type}/{entity_id}', ...options });
+export const getApiAdminAuditLogsEntityByEntityTypeByEntityId = (options) => (options.client ?? client).get({ url: '/api/audit-logs/entity/{entity_type}/{entity_id}', ...options });
 /**
  * Get distinct operations
  */
-export const getApiAdminAuditLogsOperations = (options) => (options?.client ?? client).get({ url: '/api/admin/audit-logs/operations', ...options });
+export const getApiAdminAuditLogsOperations = (options) => (options?.client ?? client).get({ url: '/api/audit-logs/operations', ...options });
 /**
  * Get audit logs for a principal
  */
-export const getApiAdminAuditLogsPrincipalByPrincipalId = (options) => (options.client ?? client).get({ url: '/api/admin/audit-logs/principal/{principal_id}', ...options });
+export const getApiAdminAuditLogsPrincipalByPrincipalId = (options) => (options.client ?? client).get({ url: '/api/audit-logs/principal/{principal_id}', ...options });
 /**
  * Get recent audit logs
  */
-export const getApiAdminAuditLogsRecent = (options) => (options?.client ?? client).get({ url: '/api/admin/audit-logs/recent', ...options });
+export const getApiAdminAuditLogsRecent = (options) => (options?.client ?? client).get({ url: '/api/audit-logs/recent', ...options });
 /**
  * Get audit log by ID
  */
-export const getApiAdminAuditLogsById = (options) => (options.client ?? client).get({ url: '/api/admin/audit-logs/{id}', ...options });
+export const getApiAdminAuditLogsById = (options) => (options.client ?? client).get({ url: '/api/audit-logs/{id}', ...options });
 /**
  * List clients
  */
-export const getApiAdminClients = (options) => (options?.client ?? client).get({ url: '/api/admin/clients', ...options });
+export const getApiAdminClients = (options) => (options?.client ?? client).get({ url: '/api/clients', ...options });
 /**
  * Create a new client
  */
 export const postApiAdminClients = (options) => (options.client ?? client).post({
-    url: '/api/admin/clients',
+    url: '/api/clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -54,24 +54,24 @@ export const postApiAdminClients = (options) => (options.client ?? client).post(
 /**
  * Get client by identifier
  */
-export const getApiAdminClientsByIdentifierByIdentifier = (options) => (options.client ?? client).get({ url: '/api/admin/clients/by-identifier/{identifier}', ...options });
+export const getApiAdminClientsByIdentifierByIdentifier = (options) => (options.client ?? client).get({ url: '/api/clients/by-identifier/{identifier}', ...options });
 /**
  * Search clients
  */
-export const getApiAdminClientsSearch = (options) => (options?.client ?? client).get({ url: '/api/admin/clients/search', ...options });
+export const getApiAdminClientsSearch = (options) => (options?.client ?? client).get({ url: '/api/clients/search', ...options });
 /**
  * Delete client (soft delete)
  */
-export const deleteApiAdminClientsById = (options) => (options.client ?? client).delete({ url: '/api/admin/clients/{id}', ...options });
+export const deleteApiAdminClientsById = (options) => (options.client ?? client).delete({ url: '/api/clients/{id}', ...options });
 /**
  * Get client by ID
  */
-export const getApiAdminClientsById = (options) => (options.client ?? client).get({ url: '/api/admin/clients/{id}', ...options });
+export const getApiAdminClientsById = (options) => (options.client ?? client).get({ url: '/api/clients/{id}', ...options });
 /**
  * Update client
  */
 export const putApiAdminClientsById = (options) => (options.client ?? client).put({
-    url: '/api/admin/clients/{id}',
+    url: '/api/clients/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -83,16 +83,16 @@ export const putApiAdminClientsById = (options) => (options.client ?? client).pu
  *
  * Transitions a suspended or pending client to active status.
  */
-export const postApiAdminClientsByIdActivate = (options) => (options.client ?? client).post({ url: '/api/admin/clients/{id}/activate', ...options });
+export const postApiAdminClientsByIdActivate = (options) => (options.client ?? client).post({ url: '/api/clients/{id}/activate', ...options });
 /**
  * Get client applications
  */
-export const getApiAdminClientsByIdApplications = (options) => (options.client ?? client).get({ url: '/api/admin/clients/{id}/applications', ...options });
+export const getApiAdminClientsByIdApplications = (options) => (options.client ?? client).get({ url: '/api/clients/{id}/applications', ...options });
 /**
  * Update client applications (bulk)
  */
 export const putApiAdminClientsByIdApplications = (options) => (options.client ?? client).put({
-    url: '/api/admin/clients/{id}/applications',
+    url: '/api/clients/{id}/applications',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -102,18 +102,18 @@ export const putApiAdminClientsByIdApplications = (options) => (options.client ?
 /**
  * Disable application for client
  */
-export const postApiAdminClientsByIdApplicationsByAppIdDisable = (options) => (options.client ?? client).post({ url: '/api/admin/clients/{id}/applications/{application_id}/disable', ...options });
+export const postApiAdminClientsByIdApplicationsByAppIdDisable = (options) => (options.client ?? client).post({ url: '/api/clients/{id}/applications/{application_id}/disable', ...options });
 /**
  * Enable application for client
  */
-export const postApiAdminClientsByIdApplicationsByAppIdEnable = (options) => (options.client ?? client).post({ url: '/api/admin/clients/{id}/applications/{application_id}/enable', ...options });
+export const postApiAdminClientsByIdApplicationsByAppIdEnable = (options) => (options.client ?? client).post({ url: '/api/clients/{id}/applications/{application_id}/enable', ...options });
 /**
  * Deactivate a client (soft delete)
  *
  * Deactivates/soft-deletes a client. Requires a reason.
  */
 export const postApiAdminClientsByIdDeactivate = (options) => (options.client ?? client).post({
-    url: '/api/admin/clients/{id}/deactivate',
+    url: '/api/clients/{id}/deactivate',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -124,7 +124,7 @@ export const postApiAdminClientsByIdDeactivate = (options) => (options.client ??
  * Add note to client
  */
 export const postApiAdminClientsByIdNotes = (options) => (options.client ?? client).post({
-    url: '/api/admin/clients/{id}/notes',
+    url: '/api/clients/{id}/notes',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -137,7 +137,7 @@ export const postApiAdminClientsByIdNotes = (options) => (options.client ?? clie
  * Suspends a client (e.g., for billing issues). Requires a reason.
  */
 export const postApiAdminClientsByIdSuspend = (options) => (options.client ?? client).post({
-    url: '/api/admin/clients/{id}/suspend',
+    url: '/api/clients/{id}/suspend',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -147,12 +147,12 @@ export const postApiAdminClientsByIdSuspend = (options) => (options.client ?? cl
 /**
  * List event types
  */
-export const getApiAdminEventTypes = (options) => (options.client ?? client).get({ url: '/api/admin/event-types', ...options });
+export const getApiAdminEventTypes = (options) => (options.client ?? client).get({ url: '/api/event-types', ...options });
 /**
  * Create a new event type
  */
 export const postApiAdminEventTypes = (options) => (options.client ?? client).post({
-    url: '/api/admin/event-types',
+    url: '/api/event-types',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -162,12 +162,12 @@ export const postApiAdminEventTypes = (options) => (options.client ?? client).po
 /**
  * Get event type by code
  */
-export const getApiAdminEventTypesByCodeByCode = (options) => (options.client ?? client).get({ url: '/api/admin/event-types/by-code/{code}', ...options });
+export const getApiAdminEventTypesByCodeByCode = (options) => (options.client ?? client).get({ url: '/api/event-types/by-code/{code}', ...options });
 /**
  * Sync event types
  */
 export const postApiAdminEventTypesSync = (options) => (options.client ?? client).post({
-    url: '/api/admin/event-types/sync',
+    url: '/api/event-types/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -177,16 +177,16 @@ export const postApiAdminEventTypesSync = (options) => (options.client ?? client
 /**
  * Delete event type (archive)
  */
-export const deleteApiAdminEventTypesById = (options) => (options.client ?? client).delete({ url: '/api/admin/event-types/{id}', ...options });
+export const deleteApiAdminEventTypesById = (options) => (options.client ?? client).delete({ url: '/api/event-types/{id}', ...options });
 /**
  * Get event type by ID
  */
-export const getApiAdminEventTypesById = (options) => (options.client ?? client).get({ url: '/api/admin/event-types/{id}', ...options });
+export const getApiAdminEventTypesById = (options) => (options.client ?? client).get({ url: '/api/event-types/{id}', ...options });
 /**
  * Update event type
  */
 export const putApiAdminEventTypesById = (options) => (options.client ?? client).put({
-    url: '/api/admin/event-types/{id}',
+    url: '/api/event-types/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -197,7 +197,7 @@ export const putApiAdminEventTypesById = (options) => (options.client ?? client)
  * Add schema version to event type
  */
 export const postApiAdminEventTypesByIdSchemas = (options) => (options.client ?? client).post({
-    url: '/api/admin/event-types/{id}/versions',
+    url: '/api/event-types/{id}/versions',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -207,12 +207,12 @@ export const postApiAdminEventTypesByIdSchemas = (options) => (options.client ??
 /**
  * List OAuth clients
  */
-export const getApiAdminOauthClients = (options) => (options.client ?? client).get({ url: '/api/admin/oauth-clients', ...options });
+export const getApiAdminOauthClients = (options) => (options.client ?? client).get({ url: '/api/oauth-clients', ...options });
 /**
  * Create a new OAuth client
  */
 export const postApiAdminOauthClients = (options) => (options.client ?? client).post({
-    url: '/api/admin/oauth-clients',
+    url: '/api/oauth-clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -222,20 +222,20 @@ export const postApiAdminOauthClients = (options) => (options.client ?? client).
 /**
  * Get OAuth client by client_id (public identifier)
  */
-export const getApiAdminOauthClientsByClientId = (options) => (options.client ?? client).get({ url: '/api/admin/oauth-clients/by-client-id/{clientId}', ...options });
+export const getApiAdminOauthClientsByClientId = (options) => (options.client ?? client).get({ url: '/api/oauth-clients/by-client-id/{clientId}', ...options });
 /**
  * Delete OAuth client
  */
-export const deleteApiAdminOauthClientsById = (options) => (options.client ?? client).delete({ url: '/api/admin/oauth-clients/{id}', ...options });
+export const deleteApiAdminOauthClientsById = (options) => (options.client ?? client).delete({ url: '/api/oauth-clients/{id}', ...options });
 /**
  * Get OAuth client by ID
  */
-export const getApiAdminOauthClientsById = (options) => (options.client ?? client).get({ url: '/api/admin/oauth-clients/{id}', ...options });
+export const getApiAdminOauthClientsById = (options) => (options.client ?? client).get({ url: '/api/oauth-clients/{id}', ...options });
 /**
  * Update OAuth client
  */
 export const putApiAdminOauthClientsById = (options) => (options.client ?? client).put({
-    url: '/api/admin/oauth-clients/{id}',
+    url: '/api/oauth-clients/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -245,28 +245,28 @@ export const putApiAdminOauthClientsById = (options) => (options.client ?? clien
 /**
  * Activate OAuth client
  */
-export const postApiAdminOauthClientsActivate = (options) => (options.client ?? client).post({ url: '/api/admin/oauth-clients/{id}/activate', ...options });
+export const postApiAdminOauthClientsActivate = (options) => (options.client ?? client).post({ url: '/api/oauth-clients/{id}/activate', ...options });
 /**
  * Deactivate OAuth client
  */
-export const postApiAdminOauthClientsDeactivate = (options) => (options.client ?? client).post({ url: '/api/admin/oauth-clients/{id}/deactivate', ...options });
+export const postApiAdminOauthClientsDeactivate = (options) => (options.client ?? client).post({ url: '/api/oauth-clients/{id}/deactivate', ...options });
 /**
  * Regenerate OAuth client secret
  */
-export const postApiAdminOauthClientsRegenerateSecret = (options) => (options.client ?? client).post({ url: '/api/admin/oauth-clients/{id}/regenerate-secret', ...options });
+export const postApiAdminOauthClientsRegenerateSecret = (options) => (options.client ?? client).post({ url: '/api/oauth-clients/{id}/regenerate-secret', ...options });
 /**
  * Rotate OAuth client secret (alias for regenerate-secret, matches TS API)
  */
-export const postApiAdminOauthClientsRotateSecret = (options) => (options.client ?? client).post({ url: '/api/admin/oauth-clients/{id}/rotate-secret', ...options });
+export const postApiAdminOauthClientsRotateSecret = (options) => (options.client ?? client).post({ url: '/api/oauth-clients/{id}/rotate-secret', ...options });
 /**
  * List principals
  */
-export const getApiAdminPrincipals = (options) => (options?.client ?? client).get({ url: '/api/admin/principals', ...options });
+export const getApiAdminPrincipals = (options) => (options?.client ?? client).get({ url: '/api/principals', ...options });
 /**
  * Create a new user principal
  */
 export const postApiAdminPrincipalsUsers = (options) => (options.client ?? client).post({
-    url: '/api/admin/principals',
+    url: '/api/principals/users',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -276,20 +276,20 @@ export const postApiAdminPrincipalsUsers = (options) => (options.client ?? clien
 /**
  * Check email domain configuration
  */
-export const getApiAdminPrincipalsCheckEmailDomain = (options) => (options.client ?? client).get({ url: '/api/admin/principals/check-email-domain', ...options });
+export const getApiAdminPrincipalsCheckEmailDomain = (options) => (options.client ?? client).get({ url: '/api/principals/check-email-domain', ...options });
 /**
  * Delete principal (deactivate)
  */
-export const deleteApiAdminPrincipalsById = (options) => (options.client ?? client).delete({ url: '/api/admin/principals/{id}', ...options });
+export const deleteApiAdminPrincipalsById = (options) => (options.client ?? client).delete({ url: '/api/principals/{id}', ...options });
 /**
  * Get principal by ID
  */
-export const getApiAdminPrincipalsById = (options) => (options.client ?? client).get({ url: '/api/admin/principals/{id}', ...options });
+export const getApiAdminPrincipalsById = (options) => (options.client ?? client).get({ url: '/api/principals/{id}', ...options });
 /**
  * Update principal
  */
 export const putApiAdminPrincipalsById = (options) => (options.client ?? client).put({
-    url: '/api/admin/principals/{id}',
+    url: '/api/principals/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -301,20 +301,20 @@ export const putApiAdminPrincipalsById = (options) => (options.client ?? client)
  *
  * Reactivates a deactivated principal.
  */
-export const postApiAdminPrincipalsByIdActivate = (options) => (options.client ?? client).post({ url: '/api/admin/principals/{id}/activate', ...options });
+export const postApiAdminPrincipalsByIdActivate = (options) => (options.client ?? client).post({ url: '/api/principals/{id}/activate', ...options });
 /**
  * Get application access for a principal
  *
  * Returns all applications the principal has been granted access to.
  */
-export const getApiAdminPrincipalsByIdApplicationAccess = (options) => (options.client ?? client).get({ url: '/api/admin/principals/{id}/application-access', ...options });
+export const getApiAdminPrincipalsByIdApplicationAccess = (options) => (options.client ?? client).get({ url: '/api/principals/{id}/application-access', ...options });
 /**
  * Set application access for a principal (batch replace)
  *
  * Replaces all application access with the provided list.
  */
 export const putApiAdminPrincipalsByIdApplicationAccess = (options) => (options.client ?? client).put({
-    url: '/api/admin/principals/{id}/application-access',
+    url: '/api/principals/{id}/application-access',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -327,16 +327,16 @@ export const putApiAdminPrincipalsByIdApplicationAccess = (options) => (options.
  * ANCHOR users see all active applications.
  * CLIENT users see only applications enabled for their accessible client configs.
  */
-export const getApiAdminPrincipalsByIdAvailableApplications = (options) => (options.client ?? client).get({ url: '/api/admin/principals/{id}/available-applications', ...options });
+export const getApiAdminPrincipalsByIdAvailableApplications = (options) => (options.client ?? client).get({ url: '/api/principals/{id}/available-applications', ...options });
 /**
  * Get client access grants for a principal
  */
-export const getApiAdminPrincipalsByIdClientAccess = (options) => (options.client ?? client).get({ url: '/api/admin/principals/{id}/client-access', ...options });
+export const getApiAdminPrincipalsByIdClientAccess = (options) => (options.client ?? client).get({ url: '/api/principals/{id}/client-access', ...options });
 /**
  * Grant client access to principal
  */
 export const postApiAdminPrincipalsByIdClientAccess = (options) => (options.client ?? client).post({
-    url: '/api/admin/principals/{id}/client-access',
+    url: '/api/principals/{id}/client-access',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -346,20 +346,20 @@ export const postApiAdminPrincipalsByIdClientAccess = (options) => (options.clie
 /**
  * Revoke client access from principal
  */
-export const deleteApiAdminPrincipalsByIdClientAccessByClientId = (options) => (options.client ?? client).delete({ url: '/api/admin/principals/{id}/client-access/{client_id}', ...options });
+export const deleteApiAdminPrincipalsByIdClientAccessByClientId = (options) => (options.client ?? client).delete({ url: '/api/principals/{id}/client-access/{client_id}', ...options });
 /**
  * Deactivate a principal
  *
  * Deactivates an active principal.
  */
-export const postApiAdminPrincipalsByIdDeactivate = (options) => (options.client ?? client).post({ url: '/api/admin/principals/{id}/deactivate', ...options });
+export const postApiAdminPrincipalsByIdDeactivate = (options) => (options.client ?? client).post({ url: '/api/principals/{id}/deactivate', ...options });
 /**
  * Reset a user's password
  *
  * Resets the password for an internal auth user. Does not work for OIDC users.
  */
 export const postApiAdminPrincipalsByIdResetPassword = (options) => (options.client ?? client).post({
-    url: '/api/admin/principals/{id}/reset-password',
+    url: '/api/principals/{id}/reset-password',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -369,12 +369,12 @@ export const postApiAdminPrincipalsByIdResetPassword = (options) => (options.cli
 /**
  * Get roles assigned to a principal
  */
-export const getApiAdminPrincipalsByIdRoles = (options) => (options.client ?? client).get({ url: '/api/admin/principals/{id}/roles', ...options });
+export const getApiAdminPrincipalsByIdRoles = (options) => (options.client ?? client).get({ url: '/api/principals/{id}/roles', ...options });
 /**
  * Assign role to principal
  */
 export const postApiAdminPrincipalsByIdRoles = (options) => (options.client ?? client).post({
-    url: '/api/admin/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -385,7 +385,7 @@ export const postApiAdminPrincipalsByIdRoles = (options) => (options.client ?? c
  * Batch assign roles to principal (declarative - replaces all roles)
  */
 export const putApiAdminPrincipalsByIdRoles = (options) => (options.client ?? client).put({
-    url: '/api/admin/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -395,16 +395,16 @@ export const putApiAdminPrincipalsByIdRoles = (options) => (options.client ?? cl
 /**
  * Remove role from principal
  */
-export const deleteApiAdminPrincipalsByIdRolesByRoleName = (options) => (options.client ?? client).delete({ url: '/api/admin/principals/{id}/roles/{role}', ...options });
+export const deleteApiAdminPrincipalsByIdRolesByRoleName = (options) => (options.client ?? client).delete({ url: '/api/principals/{id}/roles/{role}', ...options });
 /**
  * List roles
  */
-export const getApiAdminRoles = (options) => (options.client ?? client).get({ url: '/api/admin/roles', ...options });
+export const getApiAdminRoles = (options) => (options.client ?? client).get({ url: '/api/roles', ...options });
 /**
  * Create a new role
  */
 export const postApiAdminRoles = (options) => (options.client ?? client).post({
-    url: '/api/admin/roles',
+    url: '/api/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -414,43 +414,43 @@ export const postApiAdminRoles = (options) => (options.client ?? client).post({
 /**
  * Get roles by application ID
  */
-export const getApiAdminRolesByApplicationByApplicationId = (options) => (options.client ?? client).get({ url: '/api/admin/roles/by-application/{application_id}', ...options });
+export const getApiAdminRolesByApplicationByApplicationId = (options) => (options.client ?? client).get({ url: '/api/roles/by-application/{application_id}', ...options });
 /**
  * Get role by code (name)
  */
-export const getApiAdminRolesByCodeByCode = (options) => (options.client ?? client).get({ url: '/api/admin/roles/by-code/{code}', ...options });
+export const getApiAdminRolesByCodeByCode = (options) => (options.client ?? client).get({ url: '/api/roles/by-code/{code}', ...options });
 /**
  * Get roles by source (CODE, DATABASE, SDK)
  */
-export const getApiAdminRolesBySourceBySource = (options) => (options.client ?? client).get({ url: '/api/admin/roles/by-source/{source}', ...options });
+export const getApiAdminRolesBySourceBySource = (options) => (options.client ?? client).get({ url: '/api/roles/by-source/{source}', ...options });
 /**
  * Get applications for role filter dropdown
  */
-export const getApiAdminRolesFiltersApplications = (options) => (options?.client ?? client).get({ url: '/api/admin/roles/filters/applications', ...options });
+export const getApiAdminRolesFiltersApplications = (options) => (options?.client ?? client).get({ url: '/api/roles/filters/applications', ...options });
 /**
  * List all permissions
  */
-export const getApiAdminRolesPermissions = (options) => (options?.client ?? client).get({ url: '/api/admin/roles/permissions', ...options });
+export const getApiAdminRolesPermissions = (options) => (options?.client ?? client).get({ url: '/api/roles/permissions', ...options });
 /**
  * Get permission by string
  */
-export const getApiAdminRolesPermissionsByPermission = (options) => (options.client ?? client).get({ url: '/api/admin/roles/permissions/{permission}', ...options });
+export const getApiAdminRolesPermissionsByPermission = (options) => (options.client ?? client).get({ url: '/api/roles/permissions/{permission}', ...options });
 /**
  * Delete role
  */
-export const deleteApiAdminRolesByName = (options) => (options.client ?? client).delete({ url: '/api/admin/roles/{role_name}', ...options });
+export const deleteApiAdminRolesByName = (options) => (options.client ?? client).delete({ url: '/api/roles/{role_name}', ...options });
 /**
  * Get role by ID or name (code)
  *
  * The frontend calls this with the role name (e.g., "platform:super-admin"),
  * so we try by code first if it contains ":", otherwise by ID.
  */
-export const getApiAdminRolesByName = (options) => (options.client ?? client).get({ url: '/api/admin/roles/{role_name}', ...options });
+export const getApiAdminRolesByName = (options) => (options.client ?? client).get({ url: '/api/roles/{role_name}', ...options });
 /**
  * Update role
  */
 export const putApiAdminRolesByName = (options) => (options.client ?? client).put({
-    url: '/api/admin/roles/{role_name}',
+    url: '/api/roles/{role_name}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -461,7 +461,7 @@ export const putApiAdminRolesByName = (options) => (options.client ?? client).pu
  * Grant permission to role
  */
 export const postApiAdminRolesByNamePermissions = (options) => (options.client ?? client).post({
-    url: '/api/admin/roles/{role_name}/permissions',
+    url: '/api/roles/{role_name}/permissions',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -471,16 +471,16 @@ export const postApiAdminRolesByNamePermissions = (options) => (options.client ?
 /**
  * Revoke permission from role
  */
-export const deleteApiAdminRolesByNamePermissionsByPermission = (options) => (options.client ?? client).delete({ url: '/api/admin/roles/{role_name}/permissions/{permission}', ...options });
+export const deleteApiAdminRolesByNamePermissionsByPermission = (options) => (options.client ?? client).delete({ url: '/api/roles/{role_name}/permissions/{permission}', ...options });
 /**
  * List subscriptions
  */
-export const getApiAdminSubscriptions = (options) => (options.client ?? client).get({ url: '/api/admin/subscriptions', ...options });
+export const getApiAdminSubscriptions = (options) => (options.client ?? client).get({ url: '/api/subscriptions', ...options });
 /**
  * Create a new subscription
  */
 export const postApiAdminSubscriptions = (options) => (options.client ?? client).post({
-    url: '/api/admin/subscriptions',
+    url: '/api/subscriptions',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -491,7 +491,7 @@ export const postApiAdminSubscriptions = (options) => (options.client ?? client)
  * Sync subscriptions
  */
 export const postApiAdminSubscriptionsSync = (options) => (options.client ?? client).post({
-    url: '/api/admin/subscriptions/sync',
+    url: '/api/subscriptions/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -501,16 +501,16 @@ export const postApiAdminSubscriptionsSync = (options) => (options.client ?? cli
 /**
  * Delete subscription (archive)
  */
-export const deleteApiAdminSubscriptionsById = (options) => (options.client ?? client).delete({ url: '/api/admin/subscriptions/{id}', ...options });
+export const deleteApiAdminSubscriptionsById = (options) => (options.client ?? client).delete({ url: '/api/subscriptions/{id}', ...options });
 /**
  * Get subscription by ID
  */
-export const getApiAdminSubscriptionsById = (options) => (options.client ?? client).get({ url: '/api/admin/subscriptions/{id}', ...options });
+export const getApiAdminSubscriptionsById = (options) => (options.client ?? client).get({ url: '/api/subscriptions/{id}', ...options });
 /**
  * Update subscription
  */
 export const putApiAdminSubscriptionsById = (options) => (options.client ?? client).put({
-    url: '/api/admin/subscriptions/{id}',
+    url: '/api/subscriptions/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -520,11 +520,11 @@ export const putApiAdminSubscriptionsById = (options) => (options.client ?? clie
 /**
  * Pause subscription
  */
-export const postApiAdminSubscriptionsByIdPause = (options) => (options.client ?? client).post({ url: '/api/admin/subscriptions/{id}/pause', ...options });
+export const postApiAdminSubscriptionsByIdPause = (options) => (options.client ?? client).post({ url: '/api/subscriptions/{id}/pause', ...options });
 /**
  * Resume subscription
  */
-export const postApiAdminSubscriptionsByIdResume = (options) => (options.client ?? client).post({ url: '/api/admin/subscriptions/{id}/resume', ...options });
+export const postApiAdminSubscriptionsByIdResume = (options) => (options.client ?? client).post({ url: '/api/subscriptions/{id}/resume', ...options });
 /**
  * Get circuit breaker states
  */

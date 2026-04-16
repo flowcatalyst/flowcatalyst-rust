@@ -25,7 +25,7 @@ class GetApiAdminAuditLogs extends \FlowCatalyst\Generated\Runtime\Client\BaseEn
     }
     public function getUri(): string
     {
-        return '/api/admin/audit-logs';
+        return '/api/audit-logs';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

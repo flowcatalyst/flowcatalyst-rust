@@ -19,7 +19,7 @@ class PostApiAdminOauthClientsActivate extends \FlowCatalyst\Generated\Runtime\C
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/oauth-clients/{id}/activate');
+        return str_replace(['{id}'], [$this->id], '/api/oauth-clients/{id}/activate');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

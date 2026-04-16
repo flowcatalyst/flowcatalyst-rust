@@ -4,7 +4,7 @@
  * Manage dispatch pools for rate limiting and concurrency control.
  *
  * Uses direct HTTP calls since generated SDK functions are not yet available
- * (OpenAPI spec does not include /api/admin/dispatch-pools routes). Will be
+ * (OpenAPI spec does not include /api/dispatch-pools routes). Will be
  * migrated to generated functions once the spec is updated.
  */
 import type { ResultAsync } from "neverthrow";

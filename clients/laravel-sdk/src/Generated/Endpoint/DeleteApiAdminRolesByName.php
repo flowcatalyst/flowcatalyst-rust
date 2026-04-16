@@ -19,7 +19,7 @@ class DeleteApiAdminRolesByName extends \FlowCatalyst\Generated\Runtime\Client\B
     }
     public function getUri(): string
     {
-        return str_replace(['{role_name}'], [$this->role_name], '/api/admin/roles/{role_name}');
+        return str_replace(['{role_name}'], [$this->role_name], '/api/roles/{role_name}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

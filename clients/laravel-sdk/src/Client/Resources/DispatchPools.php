@@ -23,7 +23,7 @@ class DispatchPools
     public function list(array $filters = []): array
     {
         $query = http_build_query($filters);
-        $endpoint = '/api/admin/dispatch-pools' . ($query ? "?{$query}" : '');
+        $endpoint = '/api/dispatch-pools' . ($query ? "?{$query}" : '');
 
         $response = $this->client->request('GET', $endpoint);
 
@@ -41,7 +41,7 @@ class DispatchPools
      */
     public function get(string $id): DispatchPool
     {
-        $response = $this->client->request('GET', "/api/admin/dispatch-pools/{$id}");
+        $response = $this->client->request('GET', "/api/dispatch-pools/{$id}");
 
         return DispatchPool::fromArray($response);
     }
@@ -60,7 +60,7 @@ class DispatchPools
      */
     public function create(array $data): DispatchPool
     {
-        $response = $this->client->request('POST', '/api/admin/dispatch-pools', [
+        $response = $this->client->request('POST', '/api/dispatch-pools', [
             'json' => $data,
         ]);
 
@@ -85,7 +85,7 @@ class DispatchPools
             $data['status'] = $data['status']->value;
         }
 
-        $response = $this->client->request('PUT', "/api/admin/dispatch-pools/{$id}", [
+        $response = $this->client->request('PUT', "/api/dispatch-pools/{$id}", [
             'json' => $data,
         ]);
 
@@ -97,7 +97,7 @@ class DispatchPools
      */
     public function delete(string $id): void
     {
-        $this->client->request('DELETE', "/api/admin/dispatch-pools/{$id}");
+        $this->client->request('DELETE', "/api/dispatch-pools/{$id}");
     }
 
     /**
@@ -105,7 +105,7 @@ class DispatchPools
      */
     public function suspend(string $id): DispatchPool
     {
-        $response = $this->client->request('POST', "/api/admin/dispatch-pools/{$id}/suspend");
+        $response = $this->client->request('POST', "/api/dispatch-pools/{$id}/suspend");
 
         return DispatchPool::fromArray($response);
     }
@@ -115,7 +115,7 @@ class DispatchPools
      */
     public function activate(string $id): DispatchPool
     {
-        $response = $this->client->request('POST', "/api/admin/dispatch-pools/{$id}/activate");
+        $response = $this->client->request('POST', "/api/dispatch-pools/{$id}/activate");
 
         return DispatchPool::fromArray($response);
     }

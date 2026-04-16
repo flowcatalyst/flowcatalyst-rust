@@ -73,12 +73,12 @@ impl FlowCatalystClient {
 
     /// List all roles.
     pub async fn list_roles(&self) -> Result<ListResponse<RoleResponse>, ClientError> {
-        self.get("/api/admin/roles").await
+        self.get("/api/roles").await
     }
 
     /// Get a role by name.
     pub async fn get_role(&self, name: &str) -> Result<RoleResponse, ClientError> {
-        self.get(&format!("/api/admin/roles/{}", name)).await
+        self.get(&format!("/api/roles/{}", name)).await
     }
 
     /// Create a new role.
@@ -86,7 +86,7 @@ impl FlowCatalystClient {
         &self,
         req: &CreateRoleRequest,
     ) -> Result<RoleResponse, ClientError> {
-        self.post("/api/admin/roles", req).await
+        self.post("/api/roles", req).await
     }
 
     /// Update an existing role by name.
@@ -95,12 +95,12 @@ impl FlowCatalystClient {
         name: &str,
         req: &UpdateRoleRequest,
     ) -> Result<RoleResponse, ClientError> {
-        self.put(&format!("/api/admin/roles/{}", name), req).await
+        self.put(&format!("/api/roles/{}", name), req).await
     }
 
     /// Delete a role by name.
     pub async fn delete_role(&self, name: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/admin/roles/{}", name)).await
+        self.delete_req(&format!("/api/roles/{}", name)).await
     }
 
     /// List roles scoped to an application.
@@ -109,7 +109,7 @@ impl FlowCatalystClient {
         application_id: &str,
     ) -> Result<ListResponse<RoleResponse>, ClientError> {
         self.get(&format!(
-            "/api/admin/roles/by-application/{}",
+            "/api/roles/by-application/{}",
             application_id
         ))
         .await
@@ -121,7 +121,7 @@ impl FlowCatalystClient {
     pub async fn list_permissions(
         &self,
     ) -> Result<ListResponse<PermissionResponse>, ClientError> {
-        self.get("/api/admin/roles/permissions").await
+        self.get("/api/roles/permissions").await
     }
 
     /// Get a permission by name.
@@ -129,7 +129,7 @@ impl FlowCatalystClient {
         &self,
         name: &str,
     ) -> Result<PermissionResponse, ClientError> {
-        self.get(&format!("/api/admin/roles/permissions/{}", name))
+        self.get(&format!("/api/roles/permissions/{}", name))
             .await
     }
 }

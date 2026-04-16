@@ -14,7 +14,7 @@
     "version": "1.0.0"
   },
   "paths": {
-    "/api/admin/audit-logs": {
+    "/api/audit-logs": {
       "get": {
         "tags": [
           "audit-logs"
@@ -98,7 +98,7 @@
         ]
       }
     },
-    "/api/admin/audit-logs/application-ids": {
+    "/api/audit-logs/application-ids": {
       "get": {
         "tags": [
           "audit-logs"
@@ -124,7 +124,7 @@
         ]
       }
     },
-    "/api/admin/audit-logs/client-ids": {
+    "/api/audit-logs/client-ids": {
       "get": {
         "tags": [
           "audit-logs"
@@ -150,7 +150,7 @@
         ]
       }
     },
-    "/api/admin/audit-logs/entity-types": {
+    "/api/audit-logs/entity-types": {
       "get": {
         "tags": [
           "audit-logs"
@@ -176,7 +176,7 @@
         ]
       }
     },
-    "/api/admin/audit-logs/entity/{entity_type}/{entity_id}": {
+    "/api/audit-logs/entity/{entity_type}/{entity_id}": {
       "get": {
         "tags": [
           "audit-logs"
@@ -222,7 +222,7 @@
         ]
       }
     },
-    "/api/admin/audit-logs/operations": {
+    "/api/audit-logs/operations": {
       "get": {
         "tags": [
           "audit-logs"
@@ -248,7 +248,7 @@
         ]
       }
     },
-    "/api/admin/audit-logs/principal/{principal_id}": {
+    "/api/audit-logs/principal/{principal_id}": {
       "get": {
         "tags": [
           "audit-logs"
@@ -288,7 +288,7 @@
         ]
       }
     },
-    "/api/admin/audit-logs/recent": {
+    "/api/audit-logs/recent": {
       "get": {
         "tags": [
           "audit-logs"
@@ -317,7 +317,7 @@
         ]
       }
     },
-    "/api/admin/audit-logs/{id}": {
+    "/api/audit-logs/{id}": {
       "get": {
         "tags": [
           "audit-logs"
@@ -357,7 +357,7 @@
         ]
       }
     },
-    "/api/admin/clients": {
+    "/api/clients": {
       "get": {
         "tags": [
           "clients"
@@ -456,7 +456,7 @@
         ]
       }
     },
-    "/api/admin/clients/by-identifier/{identifier}": {
+    "/api/clients/by-identifier/{identifier}": {
       "get": {
         "tags": [
           "clients"
@@ -496,7 +496,7 @@
         ]
       }
     },
-    "/api/admin/clients/search": {
+    "/api/clients/search": {
       "get": {
         "tags": [
           "clients"
@@ -533,7 +533,7 @@
         ]
       }
     },
-    "/api/admin/clients/{id}": {
+    "/api/clients/{id}": {
       "get": {
         "tags": [
           "clients"
@@ -652,7 +652,7 @@
         ]
       }
     },
-    "/api/admin/clients/{id}/activate": {
+    "/api/clients/{id}/activate": {
       "post": {
         "tags": [
           "clients"
@@ -696,7 +696,7 @@
         ]
       }
     },
-    "/api/admin/clients/{id}/applications": {
+    "/api/clients/{id}/applications": {
       "get": {
         "tags": [
           "clients"
@@ -777,7 +777,7 @@
         ]
       }
     },
-    "/api/admin/clients/{id}/applications/{application_id}/disable": {
+    "/api/clients/{id}/applications/{application_id}/disable": {
       "post": {
         "tags": [
           "clients"
@@ -819,7 +819,7 @@
         ]
       }
     },
-    "/api/admin/clients/{id}/applications/{application_id}/enable": {
+    "/api/clients/{id}/applications/{application_id}/enable": {
       "post": {
         "tags": [
           "clients"
@@ -861,7 +861,7 @@
         ]
       }
     },
-    "/api/admin/clients/{id}/deactivate": {
+    "/api/clients/{id}/deactivate": {
       "post": {
         "tags": [
           "clients"
@@ -915,7 +915,7 @@
         ]
       }
     },
-    "/api/admin/clients/{id}/notes": {
+    "/api/clients/{id}/notes": {
       "post": {
         "tags": [
           "clients"
@@ -965,7 +965,7 @@
         ]
       }
     },
-    "/api/admin/clients/{id}/suspend": {
+    "/api/clients/{id}/suspend": {
       "post": {
         "tags": [
           "clients"
@@ -1019,7 +1019,7 @@
         ]
       }
     },
-    "/api/admin/event-types": {
+    "/api/event-types": {
       "get": {
         "tags": [
           "event-types"
@@ -1122,7 +1122,7 @@
         ]
       }
     },
-    "/api/admin/event-types/by-code/{code}": {
+    "/api/event-types/by-code/{code}": {
       "get": {
         "tags": [
           "event-types"
@@ -1162,7 +1162,7 @@
         ]
       }
     },
-    "/api/admin/event-types/sync": {
+    "/api/event-types/sync": {
       "post": {
         "tags": [
           "event-types"
@@ -1215,7 +1215,7 @@
         ]
       }
     },
-    "/api/admin/event-types/{id}": {
+    "/api/event-types/{id}": {
       "get": {
         "tags": [
           "event-types"
@@ -1334,7 +1334,7 @@
         ]
       }
     },
-    "/api/admin/event-types/{id}/versions": {
+    "/api/event-types/{id}/versions": {
       "post": {
         "tags": [
           "event-types"
@@ -1384,7 +1384,7 @@
         ]
       }
     },
-    "/api/admin/oauth-clients": {
+    "/api/oauth-clients": {
       "get": {
         "tags": [
           "oauth-clients"
@@ -1472,7 +1472,7 @@
         ]
       }
     },
-    "/api/admin/oauth-clients/by-client-id/{clientId}": {
+    "/api/oauth-clients/by-client-id/{clientId}": {
       "get": {
         "tags": [
           "oauth-clients"
@@ -1512,7 +1512,7 @@
         ]
       }
     },
-    "/api/admin/oauth-clients/{id}": {
+    "/api/oauth-clients/{id}": {
       "get": {
         "tags": [
           "oauth-clients"
@@ -1631,7 +1631,7 @@
         ]
       }
     },
-    "/api/admin/oauth-clients/{id}/activate": {
+    "/api/oauth-clients/{id}/activate": {
       "post": {
         "tags": [
           "oauth-clients"
@@ -1671,7 +1671,7 @@
         ]
       }
     },
-    "/api/admin/oauth-clients/{id}/deactivate": {
+    "/api/oauth-clients/{id}/deactivate": {
       "post": {
         "tags": [
           "oauth-clients"
@@ -1711,7 +1711,7 @@
         ]
       }
     },
-    "/api/admin/oauth-clients/{id}/regenerate-secret": {
+    "/api/oauth-clients/{id}/regenerate-secret": {
       "post": {
         "tags": [
           "oauth-clients"
@@ -1751,7 +1751,7 @@
         ]
       }
     },
-    "/api/admin/oauth-clients/{id}/rotate-secret": {
+    "/api/oauth-clients/{id}/rotate-secret": {
       "post": {
         "tags": [
           "oauth-clients"
@@ -1791,7 +1791,7 @@
         ]
       }
     },
-    "/api/admin/principals": {
+    "/api/principals": {
       "get": {
         "tags": [
           "principals"
@@ -1866,49 +1866,9 @@
             "bearer_auth": []
           }
         ]
-      },
-      "post": {
-        "tags": [
-          "principals"
-        ],
-        "summary": "Create a new user principal",
-        "operationId": "postApiAdminPrincipalsUsers",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateUserRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "User created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrincipalResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error"
-          },
-          "409": {
-            "description": "Duplicate email"
-          }
-        },
-        "security": [
-          {
-            "bearer_auth": []
-          }
-        ]
       }
     },
-    "/api/admin/principals/check-email-domain": {
+    "/api/principals/check-email-domain": {
       "get": {
         "tags": [
           "principals"
@@ -1945,7 +1905,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}": {
+    "/api/principals/{id}": {
       "get": {
         "tags": [
           "principals"
@@ -2064,7 +2024,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/activate": {
+    "/api/principals/{id}/activate": {
       "post": {
         "tags": [
           "principals"
@@ -2108,7 +2068,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/application-access": {
+    "/api/principals/{id}/application-access": {
       "get": {
         "tags": [
           "principals"
@@ -2198,7 +2158,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/available-applications": {
+    "/api/principals/{id}/available-applications": {
       "get": {
         "tags": [
           "principals"
@@ -2239,7 +2199,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/client-access": {
+    "/api/principals/{id}/client-access": {
       "get": {
         "tags": [
           "principals"
@@ -2327,7 +2287,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/client-access/{client_id}": {
+    "/api/principals/{id}/client-access/{client_id}": {
       "delete": {
         "tags": [
           "principals"
@@ -2369,7 +2329,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/deactivate": {
+    "/api/principals/{id}/deactivate": {
       "post": {
         "tags": [
           "principals"
@@ -2413,7 +2373,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/reset-password": {
+    "/api/principals/{id}/reset-password": {
       "post": {
         "tags": [
           "principals"
@@ -2470,7 +2430,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/roles": {
+    "/api/principals/{id}/roles": {
       "get": {
         "tags": [
           "principals"
@@ -2606,7 +2566,7 @@
         ]
       }
     },
-    "/api/admin/principals/{id}/roles/{role}": {
+    "/api/principals/{id}/roles/{role}": {
       "delete": {
         "tags": [
           "principals"
@@ -2655,7 +2615,7 @@
         ]
       }
     },
-    "/api/admin/roles": {
+    "/api/roles": {
       "get": {
         "tags": [
           "roles"
@@ -2758,7 +2718,7 @@
         ]
       }
     },
-    "/api/admin/roles/by-application/{application_id}": {
+    "/api/roles/by-application/{application_id}": {
       "get": {
         "tags": [
           "roles"
@@ -2798,7 +2758,7 @@
         ]
       }
     },
-    "/api/admin/roles/by-code/{code}": {
+    "/api/roles/by-code/{code}": {
       "get": {
         "tags": [
           "roles"
@@ -2838,7 +2798,7 @@
         ]
       }
     },
-    "/api/admin/roles/by-source/{source}": {
+    "/api/roles/by-source/{source}": {
       "get": {
         "tags": [
           "roles"
@@ -2881,7 +2841,7 @@
         ]
       }
     },
-    "/api/admin/roles/filters/applications": {
+    "/api/roles/filters/applications": {
       "get": {
         "tags": [
           "roles"
@@ -2907,7 +2867,7 @@
         ]
       }
     },
-    "/api/admin/roles/permissions": {
+    "/api/roles/permissions": {
       "get": {
         "tags": [
           "roles"
@@ -2933,7 +2893,7 @@
         ]
       }
     },
-    "/api/admin/roles/permissions/{permission}": {
+    "/api/roles/permissions/{permission}": {
       "get": {
         "tags": [
           "roles"
@@ -2973,7 +2933,7 @@
         ]
       }
     },
-    "/api/admin/roles/{role_name}": {
+    "/api/roles/{role_name}": {
       "get": {
         "tags": [
           "roles"
@@ -3093,7 +3053,7 @@
         ]
       }
     },
-    "/api/admin/roles/{role_name}/permissions": {
+    "/api/roles/{role_name}/permissions": {
       "post": {
         "tags": [
           "roles"
@@ -3143,7 +3103,7 @@
         ]
       }
     },
-    "/api/admin/roles/{role_name}/permissions/{permission}": {
+    "/api/roles/{role_name}/permissions/{permission}": {
       "delete": {
         "tags": [
           "roles"
@@ -3192,7 +3152,7 @@
         ]
       }
     },
-    "/api/admin/subscriptions": {
+    "/api/subscriptions": {
       "get": {
         "tags": [
           "subscriptions"
@@ -3286,7 +3246,7 @@
         ]
       }
     },
-    "/api/admin/subscriptions/sync": {
+    "/api/subscriptions/sync": {
       "post": {
         "tags": [
           "subscriptions"
@@ -3339,7 +3299,7 @@
         ]
       }
     },
-    "/api/admin/subscriptions/{id}": {
+    "/api/subscriptions/{id}": {
       "get": {
         "tags": [
           "subscriptions"
@@ -3458,7 +3418,7 @@
         ]
       }
     },
-    "/api/admin/subscriptions/{id}/pause": {
+    "/api/subscriptions/{id}/pause": {
       "post": {
         "tags": [
           "subscriptions"
@@ -3498,7 +3458,7 @@
         ]
       }
     },
-    "/api/admin/subscriptions/{id}/resume": {
+    "/api/subscriptions/{id}/resume": {
       "post": {
         "tags": [
           "subscriptions"
@@ -3538,7 +3498,7 @@
         ]
       }
     },
-    "/api/admin/monitoring/circuit-breakers": {
+    "/api/monitoring/circuit-breakers": {
       "get": {
         "tags": [
           "monitoring"
@@ -3564,7 +3524,7 @@
         ]
       }
     },
-    "/api/admin/monitoring/dashboard": {
+    "/api/monitoring/dashboard": {
       "get": {
         "tags": [
           "monitoring"
@@ -3590,7 +3550,7 @@
         ]
       }
     },
-    "/api/admin/monitoring/in-flight-messages": {
+    "/api/monitoring/in-flight-messages": {
       "get": {
         "tags": [
           "monitoring"
@@ -3616,7 +3576,7 @@
         ]
       }
     },
-    "/api/admin/monitoring/pool-stats": {
+    "/api/monitoring/pool-stats": {
       "get": {
         "tags": [
           "monitoring"
@@ -3642,7 +3602,7 @@
         ]
       }
     },
-    "/api/admin/monitoring/standby-status": {
+    "/api/monitoring/standby-status": {
       "get": {
         "tags": [
           "monitoring"
@@ -4757,6 +4717,48 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/principals/users": {
+      "post": {
+        "tags": [
+          "principals"
+        ],
+        "summary": "Create a new user principal",
+        "operationId": "postApiAdminPrincipalsUsers",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "User created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "409": {
+            "description": "Duplicate email"
           }
         },
         "security": [

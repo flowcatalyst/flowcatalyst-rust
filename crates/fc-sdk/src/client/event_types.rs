@@ -80,12 +80,12 @@ impl FlowCatalystClient {
         &self,
         req: &CreateEventTypeRequest,
     ) -> Result<EventTypeResponse, ClientError> {
-        self.post("/api/admin/event-types", req).await
+        self.post("/api/event-types", req).await
     }
 
     /// Get an event type by ID.
     pub async fn get_event_type(&self, id: &str) -> Result<EventTypeResponse, ClientError> {
-        self.get(&format!("/api/admin/event-types/{}", id)).await
+        self.get(&format!("/api/event-types/{}", id)).await
     }
 
     /// Get an event type by code.
@@ -93,7 +93,7 @@ impl FlowCatalystClient {
         &self,
         code: &str,
     ) -> Result<EventTypeResponse, ClientError> {
-        self.get(&format!("/api/admin/event-types/by-code/{}", code)).await
+        self.get(&format!("/api/event-types/by-code/{}", code)).await
     }
 
     /// List event types with optional filters.
@@ -120,7 +120,7 @@ impl FlowCatalystClient {
             format!("?{}", params.join("&"))
         };
 
-        self.get(&format!("/api/admin/event-types{}", query)).await
+        self.get(&format!("/api/event-types{}", query)).await
     }
 
     /// Update an event type.
@@ -129,7 +129,7 @@ impl FlowCatalystClient {
         id: &str,
         req: &UpdateEventTypeRequest,
     ) -> Result<EventTypeResponse, ClientError> {
-        self.put(&format!("/api/admin/event-types/{}", id), req).await
+        self.put(&format!("/api/event-types/{}", id), req).await
     }
 
     /// Add a schema version to an event type.
@@ -138,12 +138,12 @@ impl FlowCatalystClient {
         id: &str,
         req: &AddSchemaVersionRequest,
     ) -> Result<EventTypeResponse, ClientError> {
-        self.post(&format!("/api/admin/event-types/{}/versions", id), req)
+        self.post(&format!("/api/event-types/{}/versions", id), req)
             .await
     }
 
     /// Archive (soft-delete) an event type.
     pub async fn archive_event_type(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/admin/event-types/{}", id)).await
+        self.delete_req(&format!("/api/event-types/{}", id)).await
     }
 }

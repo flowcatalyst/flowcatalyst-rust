@@ -19,7 +19,7 @@ class GetApiAdminOauthClientsByClientId extends \FlowCatalyst\Generated\Runtime\
     }
     public function getUri(): string
     {
-        return str_replace(['{clientId}'], [$this->clientId], '/api/admin/oauth-clients/by-client-id/{clientId}');
+        return str_replace(['{clientId}'], [$this->clientId], '/api/oauth-clients/by-client-id/{clientId}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

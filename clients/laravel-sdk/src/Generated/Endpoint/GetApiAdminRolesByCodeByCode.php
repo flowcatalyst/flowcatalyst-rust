@@ -19,7 +19,7 @@ class GetApiAdminRolesByCodeByCode extends \FlowCatalyst\Generated\Runtime\Clien
     }
     public function getUri(): string
     {
-        return str_replace(['{code}'], [$this->code], '/api/admin/roles/by-code/{code}');
+        return str_replace(['{code}'], [$this->code], '/api/roles/by-code/{code}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

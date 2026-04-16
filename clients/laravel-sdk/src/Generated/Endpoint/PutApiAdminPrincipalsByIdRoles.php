@@ -21,7 +21,7 @@ class PutApiAdminPrincipalsByIdRoles extends \FlowCatalyst\Generated\Runtime\Cli
     }
     public function getUri(): string
     {
-        return str_replace(['{id}'], [$this->id], '/api/admin/principals/{id}/roles');
+        return str_replace(['{id}'], [$this->id], '/api/principals/{id}/roles');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

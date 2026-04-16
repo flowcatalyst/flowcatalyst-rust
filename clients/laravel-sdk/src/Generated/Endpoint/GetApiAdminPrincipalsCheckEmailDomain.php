@@ -20,7 +20,7 @@ class GetApiAdminPrincipalsCheckEmailDomain extends \FlowCatalyst\Generated\Runt
     }
     public function getUri(): string
     {
-        return '/api/admin/principals/check-email-domain';
+        return '/api/principals/check-email-domain';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

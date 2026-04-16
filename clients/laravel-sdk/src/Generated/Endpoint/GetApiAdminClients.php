@@ -22,7 +22,7 @@ class GetApiAdminClients extends \FlowCatalyst\Generated\Runtime\Client\BaseEndp
     }
     public function getUri(): string
     {
-        return '/api/admin/clients';
+        return '/api/clients';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

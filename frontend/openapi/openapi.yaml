@@ -15,7 +15,7 @@ components:
       name: fc_session
   schemas: {}
 paths:
-  "/api/admin/principals":
+  "/api/principals":
     get:
       parameters:
         - schema:
@@ -125,7 +125,7 @@ paths:
                           type: string
                   total:
                     type: integer
-  "/api/admin/principals/{id}":
+  "/api/principals/{id}":
     get:
       parameters:
         - schema:
@@ -372,7 +372,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/users":
+  "/api/principals/users":
     post:
       requestBody:
         required: true
@@ -501,7 +501,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/activate":
+  "/api/principals/{id}/activate":
     post:
       parameters:
         - schema:
@@ -541,7 +541,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/deactivate":
+  "/api/principals/{id}/deactivate":
     post:
       parameters:
         - schema:
@@ -581,7 +581,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/reset-password":
+  "/api/principals/{id}/reset-password":
     post:
       requestBody:
         required: true
@@ -653,7 +653,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/roles":
+  "/api/principals/{id}/roles":
     get:
       parameters:
         - schema:
@@ -881,7 +881,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/roles/{roleName}":
+  "/api/principals/{id}/roles/{roleName}":
     delete:
       parameters:
         - schema:
@@ -917,7 +917,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/client-access":
+  "/api/principals/{id}/client-access":
     get:
       parameters:
         - schema:
@@ -1074,7 +1074,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/client-access/{clientId}":
+  "/api/principals/{id}/client-access/{clientId}":
     delete:
       parameters:
         - schema:
@@ -1110,7 +1110,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/check-email-domain":
+  "/api/principals/check-email-domain":
     get:
       parameters:
         - schema:
@@ -1172,7 +1172,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/application-access":
+  "/api/principals/{id}/application-access":
     get:
       parameters:
         - schema:
@@ -1332,7 +1332,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/principals/{id}/available-applications":
+  "/api/principals/{id}/available-applications":
     get:
       parameters:
         - schema:
@@ -1391,7 +1391,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients":
+  "/api/clients":
     post:
       requestBody:
         required: true
@@ -1604,7 +1604,7 @@ paths:
                     type: integer
                   pageSize:
                     type: integer
-  "/api/admin/clients/search":
+  "/api/clients/search":
     get:
       parameters:
         - schema:
@@ -1698,7 +1698,7 @@ paths:
                     type: integer
                   pageSize:
                     type: integer
-  "/api/admin/clients/{id}":
+  "/api/clients/{id}":
     get:
       parameters:
         - schema:
@@ -1956,7 +1956,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients/by-identifier/{identifier}":
+  "/api/clients/by-identifier/{identifier}":
     get:
       parameters:
         - schema:
@@ -2044,7 +2044,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients/{id}/activate":
+  "/api/clients/{id}/activate":
     post:
       requestBody:
         required: true
@@ -2189,7 +2189,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients/{id}/suspend":
+  "/api/clients/{id}/suspend":
     post:
       requestBody:
         required: true
@@ -2334,7 +2334,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients/{id}/deactivate":
+  "/api/clients/{id}/deactivate":
     post:
       requestBody:
         required: true
@@ -2479,7 +2479,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients/{id}/notes":
+  "/api/clients/{id}/notes":
     post:
       requestBody:
         required: true
@@ -2605,7 +2605,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients/{id}/applications":
+  "/api/clients/{id}/applications":
     get:
       parameters:
         - schema:
@@ -2740,7 +2740,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients/{id}/applications/{appId}/enable":
+  "/api/clients/{id}/applications/{appId}/enable":
     post:
       parameters:
         - schema:
@@ -2786,7 +2786,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/clients/{id}/applications/{appId}/disable":
+  "/api/clients/{id}/applications/{appId}/disable":
     post:
       parameters:
         - schema:
@@ -2832,7 +2832,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/anchor-domains":
+  "/api/anchor-domains":
     post:
       requestBody:
         required: true
@@ -2936,7 +2936,7 @@ paths:
                           type: string
                   total:
                     type: integer
-  "/api/admin/anchor-domains/{id}":
+  "/api/anchor-domains/{id}":
     get:
       parameters:
         - schema:
@@ -3092,7 +3092,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/applications":
+  "/api/applications":
     post:
       requestBody:
         required: true
@@ -3361,7 +3361,7 @@ paths:
                     type: integer
                   pageSize:
                     type: integer
-  "/api/admin/applications/{id}":
+  "/api/applications/{id}":
     get:
       parameters:
         - schema:
@@ -3662,7 +3662,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/applications/by-code/{code}":
+  "/api/applications/by-code/{code}":
     get:
       parameters:
         - schema:
@@ -3757,7 +3757,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/applications/{id}/activate":
+  "/api/applications/{id}/activate":
     post:
       parameters:
         - schema:
@@ -3872,7 +3872,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/applications/{id}/deactivate":
+  "/api/applications/{id}/deactivate":
     post:
       parameters:
         - schema:
@@ -3987,7 +3987,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/applications/{id}/clients":
+  "/api/applications/{id}/clients":
     get:
       parameters:
         - schema:
@@ -4160,7 +4160,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/applications/{id}/clients/{clientId}":
+  "/api/applications/{id}/clients/{clientId}":
     delete:
       parameters:
         - schema:
@@ -4196,7 +4196,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/applications/{id}/roles":
+  "/api/applications/{id}/roles":
     get:
       parameters:
         - schema:
@@ -4262,7 +4262,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/applications/{id}/provision-service-account":
+  "/api/applications/{id}/provision-service-account":
     post:
       requestBody:
         required: true
@@ -4375,7 +4375,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/roles":
+  "/api/roles":
     post:
       requestBody:
         required: true
@@ -4613,7 +4613,7 @@ paths:
                     type: integer
                   pageSize:
                     type: integer
-  "/api/admin/roles/{name}":
+  "/api/roles/{name}":
     get:
       parameters:
         - schema:
@@ -4866,7 +4866,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/roles/by-source/{source}":
+  "/api/roles/by-source/{source}":
     get:
       parameters:
         - schema:
@@ -4953,7 +4953,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/roles/by-application/{applicationId}":
+  "/api/roles/by-application/{applicationId}":
     get:
       parameters:
         - schema:
@@ -5020,7 +5020,7 @@ paths:
                         updatedAt:
                           format: date-time
                           type: string
-  "/api/admin/roles/permissions":
+  "/api/roles/permissions":
     get:
       responses:
         "200":
@@ -5061,7 +5061,7 @@ paths:
                           anyOf:
                             - type: string
                             - type: "null"
-  "/api/admin/roles/permissions/{permission}":
+  "/api/roles/permissions/{permission}":
     get:
       parameters:
         - schema:
@@ -5121,7 +5121,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/auth-configs":
+  "/api/auth-configs":
     get:
       parameters:
         - schema:
@@ -5209,7 +5209,7 @@ paths:
                           type: string
                   total:
                     type: integer
-  "/api/admin/auth-configs/{id}":
+  "/api/auth-configs/{id}":
     get:
       parameters:
         - schema:
@@ -5332,7 +5332,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/auth-configs/by-domain/{domain}":
+  "/api/auth-configs/by-domain/{domain}":
     get:
       parameters:
         - schema:
@@ -5425,7 +5425,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/auth-configs/internal":
+  "/api/auth-configs/internal":
     post:
       requestBody:
         required: true
@@ -5568,7 +5568,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/auth-configs/oidc":
+  "/api/auth-configs/oidc":
     post:
       requestBody:
         required: true
@@ -5729,7 +5729,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/auth-configs/{id}/oidc":
+  "/api/auth-configs/{id}/oidc":
     put:
       requestBody:
         required: true
@@ -5888,7 +5888,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/auth-configs/{id}/config-type":
+  "/api/auth-configs/{id}/config-type":
     put:
       requestBody:
         required: true
@@ -6045,7 +6045,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/auth-configs/{id}/additional-clients":
+  "/api/auth-configs/{id}/additional-clients":
     put:
       requestBody:
         required: true
@@ -6171,7 +6171,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/auth-configs/{id}/granted-clients":
+  "/api/auth-configs/{id}/granted-clients":
     put:
       requestBody:
         required: true
@@ -6297,7 +6297,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/oauth-clients":
+  "/api/oauth-clients":
     get:
       parameters:
         - schema:
@@ -6580,7 +6580,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/oauth-clients/{id}":
+  "/api/oauth-clients/{id}":
     get:
       parameters:
         - schema:
@@ -6916,7 +6916,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/oauth-clients/by-client-id/{clientId}":
+  "/api/oauth-clients/by-client-id/{clientId}":
     get:
       parameters:
         - schema:
@@ -7025,7 +7025,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/oauth-clients/{id}/regenerate-secret":
+  "/api/oauth-clients/{id}/regenerate-secret":
     post:
       parameters:
         - schema:
@@ -7163,7 +7163,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/oauth-clients/{id}/activate":
+  "/api/oauth-clients/{id}/activate":
     post:
       parameters:
         - schema:
@@ -7204,7 +7204,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/oauth-clients/{id}/deactivate":
+  "/api/oauth-clients/{id}/deactivate":
     post:
       parameters:
         - schema:
@@ -7245,7 +7245,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/oauth-clients/{id}/rotate-secret":
+  "/api/oauth-clients/{id}/rotate-secret":
     post:
       parameters:
         - schema:
@@ -7383,7 +7383,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/audit-logs":
+  "/api/audit-logs":
     get:
       parameters:
         - schema:
@@ -7472,7 +7472,7 @@ paths:
                     type: integer
                   pageSize:
                     type: integer
-  "/api/admin/audit-logs/{id}":
+  "/api/audit-logs/{id}":
     get:
       parameters:
         - schema:
@@ -7540,7 +7540,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/audit-logs/entity/{entityType}/{entityId}":
+  "/api/audit-logs/entity/{entityType}/{entityId}":
     get:
       parameters:
         - schema:
@@ -7619,7 +7619,7 @@ paths:
                     type: integer
                   pageSize:
                     type: integer
-  "/api/admin/audit-logs/entity-types":
+  "/api/audit-logs/entity-types":
     get:
       responses:
         "200":
@@ -7635,7 +7635,7 @@ paths:
                     type: array
                     items:
                       type: string
-  "/api/admin/audit-logs/operations":
+  "/api/audit-logs/operations":
     get:
       responses:
         "200":
@@ -7651,7 +7651,7 @@ paths:
                     type: array
                     items:
                       type: string
-  "/api/admin/event-types":
+  "/api/event-types":
     get:
       parameters:
         - schema:
@@ -7967,7 +7967,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/event-types/{id}":
+  "/api/event-types/{id}":
     get:
       parameters:
         - schema:
@@ -8278,7 +8278,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/event-types/{id}/archive":
+  "/api/event-types/{id}/archive":
     post:
       parameters:
         - schema:
@@ -8401,7 +8401,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/event-types/{id}/schemas":
+  "/api/event-types/{id}/schemas":
     post:
       requestBody:
         required: true
@@ -8575,7 +8575,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/event-types/{id}/schemas/{version}/finalise":
+  "/api/event-types/{id}/schemas/{version}/finalise":
     post:
       parameters:
         - schema:
@@ -8703,7 +8703,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/event-types/{id}/schemas/{version}/deprecate":
+  "/api/event-types/{id}/schemas/{version}/deprecate":
     post:
       parameters:
         - schema:
@@ -8831,7 +8831,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/event-types/sync":
+  "/api/event-types/sync":
     post:
       requestBody:
         required: true
@@ -8923,7 +8923,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/event-types/filters/applications":
+  "/api/event-types/filters/applications":
     get:
       responses:
         "200":
@@ -8939,7 +8939,7 @@ paths:
                     type: array
                     items:
                       type: string
-  "/api/admin/event-types/filters/subdomains":
+  "/api/event-types/filters/subdomains":
     get:
       parameters:
         - schema:
@@ -8965,7 +8965,7 @@ paths:
                     type: array
                     items:
                       type: string
-  "/api/admin/event-types/filters/aggregates":
+  "/api/event-types/filters/aggregates":
     get:
       parameters:
         - schema:
@@ -9000,7 +9000,7 @@ paths:
                     type: array
                     items:
                       type: string
-  "/api/admin/dispatch-pools":
+  "/api/dispatch-pools":
     get:
       parameters:
         - schema:
@@ -9203,7 +9203,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/dispatch-pools/{id}":
+  "/api/dispatch-pools/{id}":
     get:
       parameters:
         - schema:
@@ -9438,7 +9438,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/dispatch-pools/{id}/suspend":
+  "/api/dispatch-pools/{id}/suspend":
     post:
       parameters:
         - schema:
@@ -9516,7 +9516,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/dispatch-pools/{id}/activate":
+  "/api/dispatch-pools/{id}/activate":
     post:
       parameters:
         - schema:
@@ -9594,7 +9594,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/dispatch-pools/sync":
+  "/api/dispatch-pools/sync":
     post:
       requestBody:
         required: true
@@ -9681,7 +9681,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/subscriptions":
+  "/api/subscriptions":
     get:
       parameters:
         - schema:
@@ -10139,7 +10139,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/subscriptions/{id}":
+  "/api/subscriptions/{id}":
     get:
       parameters:
         - schema:
@@ -10611,7 +10611,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/subscriptions/{id}/pause":
+  "/api/subscriptions/{id}/pause":
     post:
       parameters:
         - schema:
@@ -10771,7 +10771,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/subscriptions/{id}/resume":
+  "/api/subscriptions/{id}/resume":
     post:
       parameters:
         - schema:
@@ -10931,7 +10931,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/subscriptions/sync":
+  "/api/subscriptions/sync":
     post:
       requestBody:
         required: true
@@ -11087,7 +11087,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/events":
+  "/api/events":
     get:
       parameters:
         - schema:
@@ -11255,7 +11255,7 @@ paths:
                     type: integer
                   totalPages:
                     type: integer
-  "/api/admin/events/filter-options":
+  "/api/events/filter-options":
     get:
       parameters:
         - schema:
@@ -11307,7 +11307,7 @@ paths:
                     type: array
                     items:
                       type: string
-  "/api/admin/events/{id}":
+  "/api/events/{id}":
     get:
       parameters:
         - schema:
@@ -11416,7 +11416,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/dispatch-jobs":
+  "/api/dispatch-jobs":
     get:
       parameters:
         - schema:
@@ -11692,7 +11692,7 @@ paths:
                     type: integer
                   totalPages:
                     type: integer
-  "/api/admin/dispatch-jobs/filter-options":
+  "/api/dispatch-jobs/filter-options":
     get:
       parameters:
         - schema:
@@ -11749,7 +11749,7 @@ paths:
                     type: array
                     items:
                       type: string
-  "/api/admin/dispatch-jobs/{id}":
+  "/api/dispatch-jobs/{id}":
     get:
       parameters:
         - schema:
@@ -11956,7 +11956,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/dispatch-jobs/{id}/attempts":
+  "/api/dispatch-jobs/{id}/attempts":
     get:
       parameters:
         - schema:
@@ -12062,7 +12062,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/identity-providers":
+  "/api/identity-providers":
     get:
       responses:
         "200":
@@ -12275,7 +12275,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/identity-providers/{id}":
+  "/api/identity-providers/{id}":
     get:
       parameters:
         - schema:
@@ -12551,7 +12551,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/email-domain-mappings":
+  "/api/email-domain-mappings":
     get:
       responses:
         "200":
@@ -12799,7 +12799,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/email-domain-mappings/{id}":
+  "/api/email-domain-mappings/{id}":
     get:
       parameters:
         - schema:
@@ -13111,7 +13111,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/email-domain-mappings/lookup/{domain}":
+  "/api/email-domain-mappings/lookup/{domain}":
     get:
       parameters:
         - schema:
@@ -13211,7 +13211,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/service-accounts":
+  "/api/service-accounts":
     post:
       requestBody:
         required: true
@@ -13499,7 +13499,7 @@ paths:
                           type: string
                   total:
                     type: integer
-  "/api/admin/service-accounts/{id}":
+  "/api/service-accounts/{id}":
     get:
       parameters:
         - schema:
@@ -13765,7 +13765,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/service-accounts/code/{code}":
+  "/api/service-accounts/code/{code}":
     get:
       parameters:
         - schema:
@@ -13858,7 +13858,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/service-accounts/{id}/auth-token":
+  "/api/service-accounts/{id}/auth-token":
     put:
       requestBody:
         required: true
@@ -13983,7 +13983,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/service-accounts/{id}/regenerate-token":
+  "/api/service-accounts/{id}/regenerate-token":
     post:
       parameters:
         - schema:
@@ -14023,7 +14023,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/service-accounts/{id}/regenerate-auth-token":
+  "/api/service-accounts/{id}/regenerate-auth-token":
     post:
       parameters:
         - schema:
@@ -14063,7 +14063,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/service-accounts/{id}/regenerate-secret":
+  "/api/service-accounts/{id}/regenerate-secret":
     post:
       parameters:
         - schema:
@@ -14103,7 +14103,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/service-accounts/{id}/regenerate-signing-secret":
+  "/api/service-accounts/{id}/regenerate-signing-secret":
     post:
       parameters:
         - schema:
@@ -14143,7 +14143,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/service-accounts/{id}/roles":
+  "/api/service-accounts/{id}/roles":
     get:
       parameters:
         - schema:
@@ -14294,7 +14294,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/platform/cors":
+  "/api/platform/cors":
     post:
       requestBody:
         required: true
@@ -14429,7 +14429,7 @@ paths:
                           type: string
                   total:
                     type: integer
-  "/api/admin/platform/cors/allowed":
+  "/api/platform/cors/allowed":
     get:
       responses:
         "200":
@@ -14445,7 +14445,7 @@ paths:
                     type: array
                     items:
                       type: string
-  "/api/admin/platform/cors/{id}":
+  "/api/platform/cors/{id}":
     get:
       parameters:
         - schema:
@@ -14536,7 +14536,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/config/{appCode}":
+  "/api/config/{appCode}":
     get:
       parameters:
         - schema:
@@ -14635,7 +14635,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/config/{appCode}/{section}":
+  "/api/config/{appCode}/{section}":
     get:
       parameters:
         - schema:
@@ -14712,7 +14712,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/config/{appCode}/{section}/{property}":
+  "/api/config/{appCode}/{section}/{property}":
     get:
       parameters:
         - schema:
@@ -15080,7 +15080,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/config-access/{appCode}":
+  "/api/config-access/{appCode}":
     get:
       parameters:
         - schema:
@@ -15194,7 +15194,7 @@ paths:
                     description: Additional error details
                     type: object
                     additionalProperties: {}
-  "/api/admin/config-access/{appCode}/{roleCode}":
+  "/api/config-access/{appCode}/{roleCode}":
     put:
       requestBody:
         required: true
@@ -20463,1751 +20463,6 @@ paths:
                             - type: "null"
                   total:
                     type: integer
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/clients":
-    get:
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - clients
-                  - total
-                properties:
-                  clients:
-                    type: array
-                    items:
-                      type: object
-                      required:
-                        - id
-                        - name
-                        - identifier
-                        - status
-                        - statusReason
-                        - statusChangedAt
-                        - createdAt
-                        - updatedAt
-                      properties:
-                        id:
-                          type: string
-                        name:
-                          type: string
-                        identifier:
-                          type: string
-                        status:
-                          type: string
-                        statusReason:
-                          anyOf:
-                            - type: string
-                            - type: "null"
-                        statusChangedAt:
-                          anyOf:
-                            - format: date-time
-                              type: string
-                            - type: "null"
-                        createdAt:
-                          format: date-time
-                          type: string
-                        updatedAt:
-                          format: date-time
-                          type: string
-                  total:
-                    type: integer
-    post:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              required:
-                - name
-                - identifier
-              properties:
-                name:
-                  minLength: 1
-                  maxLength: 255
-                  type: string
-                identifier:
-                  minLength: 1
-                  maxLength: 60
-                  type: string
-      responses:
-        "201":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - id
-                  - name
-                  - identifier
-                  - status
-                  - statusReason
-                  - statusChangedAt
-                  - createdAt
-                  - updatedAt
-                properties:
-                  id:
-                    type: string
-                  name:
-                    type: string
-                  identifier:
-                    type: string
-                  status:
-                    type: string
-                  statusReason:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  statusChangedAt:
-                    anyOf:
-                      - format: date-time
-                        type: string
-                      - type: "null"
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "409":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/clients/{id}":
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - id
-                  - name
-                  - identifier
-                  - status
-                  - statusReason
-                  - statusChangedAt
-                  - createdAt
-                  - updatedAt
-                properties:
-                  id:
-                    type: string
-                  name:
-                    type: string
-                  identifier:
-                    type: string
-                  status:
-                    type: string
-                  statusReason:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  statusChangedAt:
-                    anyOf:
-                      - format: date-time
-                        type: string
-                      - type: "null"
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-    put:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              required:
-                - name
-              properties:
-                name:
-                  minLength: 1
-                  maxLength: 255
-                  type: string
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - id
-                  - name
-                  - identifier
-                  - status
-                  - statusReason
-                  - statusChangedAt
-                  - createdAt
-                  - updatedAt
-                properties:
-                  id:
-                    type: string
-                  name:
-                    type: string
-                  identifier:
-                    type: string
-                  status:
-                    type: string
-                  statusReason:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  statusChangedAt:
-                    anyOf:
-                      - format: date-time
-                        type: string
-                      - type: "null"
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/clients/{id}/activate":
-    post:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              properties:
-                reason:
-                  anyOf:
-                    - maxLength: 255
-                      type: string
-                    - type: "null"
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                properties:
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "409":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/clients/{id}/suspend":
-    post:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              properties:
-                reason:
-                  anyOf:
-                    - maxLength: 255
-                      type: string
-                    - type: "null"
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                properties:
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "409":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/clients/{id}/deactivate":
-    post:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              properties:
-                reason:
-                  anyOf:
-                    - maxLength: 255
-                      type: string
-                    - type: "null"
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                properties:
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "409":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/roles":
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: query
-          name: application
-          required: false
-        - schema:
-            type: string
-          in: query
-          name: source
-          required: false
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - roles
-                  - total
-                properties:
-                  roles:
-                    type: array
-                    items:
-                      type: object
-                      required:
-                        - name
-                        - applicationCode
-                        - displayName
-                        - shortName
-                        - description
-                        - permissions
-                        - source
-                        - clientManaged
-                        - createdAt
-                        - updatedAt
-                      properties:
-                        name:
-                          type: string
-                        applicationCode:
-                          type: string
-                        displayName:
-                          type: string
-                        shortName:
-                          type: string
-                        description:
-                          anyOf:
-                            - type: string
-                            - type: "null"
-                        permissions:
-                          type: array
-                          items:
-                            type: string
-                        source:
-                          type: string
-                        clientManaged:
-                          type: boolean
-                        createdAt:
-                          format: date-time
-                          type: string
-                        updatedAt:
-                          format: date-time
-                          type: string
-                  total:
-                    type: integer
-    post:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              required:
-                - applicationCode
-                - name
-              properties:
-                applicationCode:
-                  minLength: 1
-                  maxLength: 50
-                  type: string
-                name:
-                  minLength: 1
-                  maxLength: 100
-                  type: string
-                displayName:
-                  minLength: 1
-                  maxLength: 255
-                  type: string
-                description:
-                  maxLength: 1000
-                  type: string
-                permissions:
-                  type: array
-                  items:
-                    type: string
-                clientManaged:
-                  type: boolean
-      responses:
-        "201":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - name
-                  - applicationCode
-                  - displayName
-                  - shortName
-                  - description
-                  - permissions
-                  - source
-                  - clientManaged
-                  - createdAt
-                  - updatedAt
-                properties:
-                  name:
-                    type: string
-                  applicationCode:
-                    type: string
-                  displayName:
-                    type: string
-                  shortName:
-                    type: string
-                  description:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  permissions:
-                    type: array
-                    items:
-                      type: string
-                  source:
-                    type: string
-                  clientManaged:
-                    type: boolean
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "409":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/roles/{roleName}":
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: roleName
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - name
-                  - applicationCode
-                  - displayName
-                  - shortName
-                  - description
-                  - permissions
-                  - source
-                  - clientManaged
-                  - createdAt
-                  - updatedAt
-                properties:
-                  name:
-                    type: string
-                  applicationCode:
-                    type: string
-                  displayName:
-                    type: string
-                  shortName:
-                    type: string
-                  description:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  permissions:
-                    type: array
-                    items:
-                      type: string
-                  source:
-                    type: string
-                  clientManaged:
-                    type: boolean
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-    put:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              properties:
-                displayName:
-                  minLength: 1
-                  maxLength: 255
-                  type: string
-                description:
-                  maxLength: 1000
-                  type: string
-                permissions:
-                  type: array
-                  items:
-                    type: string
-                clientManaged:
-                  type: boolean
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: roleName
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - name
-                  - applicationCode
-                  - displayName
-                  - shortName
-                  - description
-                  - permissions
-                  - source
-                  - clientManaged
-                  - createdAt
-                  - updatedAt
-                properties:
-                  name:
-                    type: string
-                  applicationCode:
-                    type: string
-                  displayName:
-                    type: string
-                  shortName:
-                    type: string
-                  description:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  permissions:
-                    type: array
-                    items:
-                      type: string
-                  source:
-                    type: string
-                  clientManaged:
-                    type: boolean
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-    delete:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: roleName
-          required: true
-      responses:
-        "204":
-          description: Default Response
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/principals":
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: query
-          name: clientId
-          required: false
-        - schema:
-            type: string
-          in: query
-          name: type
-          required: false
-        - schema:
-            type: string
-          in: query
-          name: active
-          required: false
-        - schema:
-            type: string
-          in: query
-          name: email
-          required: false
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - principals
-                  - total
-                properties:
-                  principals:
-                    type: array
-                    items:
-                      type: object
-                      required:
-                        - id
-                        - type
-                        - scope
-                        - clientId
-                        - name
-                        - active
-                        - email
-                        - idpType
-                        - roles
-                        - grantedClientIds
-                        - createdAt
-                        - updatedAt
-                      properties:
-                        id:
-                          type: string
-                        type:
-                          type: string
-                        scope:
-                          anyOf:
-                            - type: string
-                            - type: "null"
-                        clientId:
-                          anyOf:
-                            - type: string
-                            - type: "null"
-                        name:
-                          type: string
-                        active:
-                          type: boolean
-                        email:
-                          anyOf:
-                            - type: string
-                            - type: "null"
-                        idpType:
-                          anyOf:
-                            - type: string
-                            - type: "null"
-                        roles:
-                          type: array
-                          items:
-                            type: string
-                        grantedClientIds:
-                          type: array
-                          items:
-                            type: string
-                        createdAt:
-                          format: date-time
-                          type: string
-                        updatedAt:
-                          format: date-time
-                          type: string
-                  total:
-                    type: integer
-  "/api/sdk/principals/{id}":
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - id
-                  - type
-                  - scope
-                  - clientId
-                  - name
-                  - active
-                  - email
-                  - idpType
-                  - roles
-                  - grantedClientIds
-                  - createdAt
-                  - updatedAt
-                properties:
-                  id:
-                    type: string
-                  type:
-                    type: string
-                  scope:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  clientId:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  name:
-                    type: string
-                  active:
-                    type: boolean
-                  email:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  idpType:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  roles:
-                    type: array
-                    items:
-                      type: string
-                  grantedClientIds:
-                    type: array
-                    items:
-                      type: string
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-    put:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              required:
-                - name
-              properties:
-                name:
-                  minLength: 1
-                  type: string
-                scope:
-                  type: string
-                clientId:
-                  anyOf:
-                    - type: string
-                    - type: "null"
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - id
-                  - type
-                  - scope
-                  - clientId
-                  - name
-                  - active
-                  - email
-                  - idpType
-                  - roles
-                  - grantedClientIds
-                  - createdAt
-                  - updatedAt
-                properties:
-                  id:
-                    type: string
-                  type:
-                    type: string
-                  scope:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  clientId:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  name:
-                    type: string
-                  active:
-                    type: boolean
-                  email:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  idpType:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  roles:
-                    type: array
-                    items:
-                      type: string
-                  grantedClientIds:
-                    type: array
-                    items:
-                      type: string
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/principals/user":
-    post:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              required:
-                - email
-                - name
-              properties:
-                email:
-                  format: email
-                  type: string
-                password:
-                  anyOf:
-                    - minLength: 8
-                      type: string
-                    - type: "null"
-                name:
-                  minLength: 1
-                  type: string
-                clientId:
-                  anyOf:
-                    - type: string
-                    - type: "null"
-      responses:
-        "201":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - id
-                  - type
-                  - scope
-                  - clientId
-                  - name
-                  - active
-                  - email
-                  - idpType
-                  - roles
-                  - grantedClientIds
-                  - createdAt
-                  - updatedAt
-                properties:
-                  id:
-                    type: string
-                  type:
-                    type: string
-                  scope:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  clientId:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  name:
-                    type: string
-                  active:
-                    type: boolean
-                  email:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  idpType:
-                    anyOf:
-                      - type: string
-                      - type: "null"
-                  roles:
-                    type: array
-                    items:
-                      type: string
-                  grantedClientIds:
-                    type: array
-                    items:
-                      type: string
-                  createdAt:
-                    format: date-time
-                    type: string
-                  updatedAt:
-                    format: date-time
-                    type: string
-        "400":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "409":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/principals/{id}/activate":
-    post:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                properties:
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/principals/{id}/deactivate":
-    post:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                properties:
-                  message:
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/principals/{id}/roles":
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - roles
-                properties:
-                  roles:
-                    type: array
-                    items:
-                      type: object
-                      required:
-                        - roleName
-                        - assignmentSource
-                        - assignedAt
-                      properties:
-                        roleName:
-                          type: string
-                        assignmentSource:
-                          type: string
-                        assignedAt:
-                          format: date-time
-                          type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-    put:
-      requestBody:
-        required: true
-        content:
-          "application/json":
-            schema:
-              type: object
-              required:
-                - roles
-              properties:
-                roles:
-                  type: array
-                  items:
-                    type: string
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - roles
-                properties:
-                  roles:
-                    type: array
-                    items:
-                      type: object
-                      required:
-                        - roleName
-                        - assignmentSource
-                        - assignedAt
-                      properties:
-                        roleName:
-                          type: string
-                        assignmentSource:
-                          type: string
-                        assignedAt:
-                          format: date-time
-                          type: string
-        "400":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/principals/{id}/clients":
-    get:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-      responses:
-        "200":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - grants
-                properties:
-                  grants:
-                    type: array
-                    items:
-                      type: object
-                      required:
-                        - id
-                        - clientId
-                        - grantedAt
-                      properties:
-                        id:
-                          type: string
-                        clientId:
-                          type: string
-                        grantedAt:
-                          format: date-time
-                          type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-  "/api/sdk/principals/{id}/clients/{clientId}":
-    post:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-        - schema:
-            type: string
-          in: path
-          name: clientId
-          required: true
-      responses:
-        "201":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - id
-                  - clientId
-                  - grantedAt
-                properties:
-                  id:
-                    type: string
-                  clientId:
-                    type: string
-                  grantedAt:
-                    format: date-time
-                    type: string
-        "404":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-        "409":
-          description: Default Response
-          content:
-            "application/json":
-              schema:
-                type: object
-                required:
-                  - message
-                  - code
-                properties:
-                  message:
-                    description: Human-readable error message
-                    type: string
-                  code:
-                    description: Machine-readable error code
-                    type: string
-                  details:
-                    description: Additional error details
-                    type: object
-                    additionalProperties: {}
-    delete:
-      parameters:
-        - schema:
-            type: string
-          in: path
-          name: id
-          required: true
-        - schema:
-            type: string
-          in: path
-          name: clientId
-          required: true
-      responses:
-        "204":
-          description: Default Response
         "404":
           description: Default Response
           content:

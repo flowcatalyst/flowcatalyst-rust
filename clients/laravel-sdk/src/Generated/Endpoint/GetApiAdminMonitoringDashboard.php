@@ -11,7 +11,7 @@ class GetApiAdminMonitoringDashboard extends \FlowCatalyst\Generated\Runtime\Cli
     }
     public function getUri(): string
     {
-        return '/api/admin/monitoring/dashboard';
+        return '/api/monitoring/dashboard';
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

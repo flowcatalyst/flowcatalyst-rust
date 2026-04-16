@@ -20,7 +20,7 @@ class Permissions
      */
     public function list(): array
     {
-        $response = $this->client->request('GET', '/api/admin/roles/permissions');
+        $response = $this->client->request('GET', '/api/roles/permissions');
 
         return [
             'permissions' => array_map(
@@ -36,7 +36,7 @@ class Permissions
      */
     public function get(string $permission): Permission
     {
-        $response = $this->client->request('GET', "/api/admin/roles/permissions/{$permission}");
+        $response = $this->client->request('GET', "/api/roles/permissions/{$permission}");
 
         return Permission::fromArray($response);
     }

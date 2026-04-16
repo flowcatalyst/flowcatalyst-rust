@@ -23,7 +23,7 @@ class Connections
     public function list(array $filters = []): array
     {
         $query = http_build_query($filters);
-        $endpoint = '/api/admin/connections' . ($query ? "?{$query}" : '');
+        $endpoint = '/api/connections' . ($query ? "?{$query}" : '');
 
         $response = $this->client->request('GET', $endpoint);
 
@@ -41,7 +41,7 @@ class Connections
      */
     public function get(string $id): Connection
     {
-        $response = $this->client->request('GET', "/api/admin/connections/{$id}");
+        $response = $this->client->request('GET', "/api/connections/{$id}");
 
         return Connection::fromArray($response);
     }
@@ -61,7 +61,7 @@ class Connections
      */
     public function create(array $data): Connection
     {
-        $response = $this->client->request('POST', '/api/admin/connections', [
+        $response = $this->client->request('POST', '/api/connections', [
             'json' => $data,
         ]);
 
@@ -86,7 +86,7 @@ class Connections
             $data['status'] = $data['status']->value;
         }
 
-        $response = $this->client->request('PUT', "/api/admin/connections/{$id}", [
+        $response = $this->client->request('PUT', "/api/connections/{$id}", [
             'json' => $data,
         ]);
 
@@ -98,7 +98,7 @@ class Connections
      */
     public function delete(string $id): void
     {
-        $this->client->request('DELETE', "/api/admin/connections/{$id}");
+        $this->client->request('DELETE', "/api/connections/{$id}");
     }
 
     /**
@@ -106,7 +106,7 @@ class Connections
      */
     public function pause(string $id): Connection
     {
-        $response = $this->client->request('POST', "/api/admin/connections/{$id}/pause");
+        $response = $this->client->request('POST', "/api/connections/{$id}/pause");
 
         return Connection::fromArray($response);
     }
@@ -116,7 +116,7 @@ class Connections
      */
     public function activate(string $id): Connection
     {
-        $response = $this->client->request('POST', "/api/admin/connections/{$id}/activate");
+        $response = $this->client->request('POST', "/api/connections/{$id}/activate");
 
         return Connection::fromArray($response);
     }

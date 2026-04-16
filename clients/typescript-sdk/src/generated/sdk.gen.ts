@@ -21,58 +21,58 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 /**
  * List audit logs with filters (matches Java AuditLogAdminResource)
  */
-export const getApiAdminAuditLogs = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsResponses, unknown, ThrowOnError>({ url: '/api/admin/audit-logs', ...options });
+export const getApiAdminAuditLogs = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs', ...options });
 
 /**
  * Get distinct application IDs
  */
-export const getApiAdminAuditLogsApplicationIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsApplicationIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsApplicationIdsResponses, unknown, ThrowOnError>({ url: '/api/admin/audit-logs/application-ids', ...options });
+export const getApiAdminAuditLogsApplicationIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsApplicationIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsApplicationIdsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/application-ids', ...options });
 
 /**
  * Get distinct client IDs
  */
-export const getApiAdminAuditLogsClientIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsClientIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsClientIdsResponses, unknown, ThrowOnError>({ url: '/api/admin/audit-logs/client-ids', ...options });
+export const getApiAdminAuditLogsClientIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsClientIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsClientIdsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/client-ids', ...options });
 
 /**
  * Get distinct entity types
  */
-export const getApiAdminAuditLogsEntityTypes = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsEntityTypesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsEntityTypesResponses, unknown, ThrowOnError>({ url: '/api/admin/audit-logs/entity-types', ...options });
+export const getApiAdminAuditLogsEntityTypes = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsEntityTypesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsEntityTypesResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/entity-types', ...options });
 
 /**
  * Get audit logs for a specific entity
  */
-export const getApiAdminAuditLogsEntityByEntityTypeByEntityId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsEntityByEntityTypeByEntityIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses, unknown, ThrowOnError>({ url: '/api/admin/audit-logs/entity/{entity_type}/{entity_id}', ...options });
+export const getApiAdminAuditLogsEntityByEntityTypeByEntityId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsEntityByEntityTypeByEntityIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/entity/{entity_type}/{entity_id}', ...options });
 
 /**
  * Get distinct operations
  */
-export const getApiAdminAuditLogsOperations = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsOperationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsOperationsResponses, unknown, ThrowOnError>({ url: '/api/admin/audit-logs/operations', ...options });
+export const getApiAdminAuditLogsOperations = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsOperationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsOperationsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/operations', ...options });
 
 /**
  * Get audit logs for a principal
  */
-export const getApiAdminAuditLogsPrincipalByPrincipalId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsPrincipalByPrincipalIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsPrincipalByPrincipalIdResponses, unknown, ThrowOnError>({ url: '/api/admin/audit-logs/principal/{principal_id}', ...options });
+export const getApiAdminAuditLogsPrincipalByPrincipalId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsPrincipalByPrincipalIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsPrincipalByPrincipalIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/principal/{principal_id}', ...options });
 
 /**
  * Get recent audit logs
  */
-export const getApiAdminAuditLogsRecent = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsRecentData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsRecentResponses, unknown, ThrowOnError>({ url: '/api/admin/audit-logs/recent', ...options });
+export const getApiAdminAuditLogsRecent = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsRecentData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsRecentResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/recent', ...options });
 
 /**
  * Get audit log by ID
  */
-export const getApiAdminAuditLogsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsByIdResponses, GetApiAdminAuditLogsByIdErrors, ThrowOnError>({ url: '/api/admin/audit-logs/{id}', ...options });
+export const getApiAdminAuditLogsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsByIdResponses, GetApiAdminAuditLogsByIdErrors, ThrowOnError>({ url: '/api/audit-logs/{id}', ...options });
 
 /**
  * List clients
  */
-export const getApiAdminClients = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminClientsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminClientsResponses, unknown, ThrowOnError>({ url: '/api/admin/clients', ...options });
+export const getApiAdminClients = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminClientsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminClientsResponses, unknown, ThrowOnError>({ url: '/api/clients', ...options });
 
 /**
  * Create a new client
  */
 export const postApiAdminClients = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsResponses, PostApiAdminClientsErrors, ThrowOnError>({
-    url: '/api/admin/clients',
+    url: '/api/clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -83,28 +83,28 @@ export const postApiAdminClients = <ThrowOnError extends boolean = false>(option
 /**
  * Get client by identifier
  */
-export const getApiAdminClientsByIdentifierByIdentifier = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdentifierByIdentifierData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdentifierByIdentifierResponses, GetApiAdminClientsByIdentifierByIdentifierErrors, ThrowOnError>({ url: '/api/admin/clients/by-identifier/{identifier}', ...options });
+export const getApiAdminClientsByIdentifierByIdentifier = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdentifierByIdentifierData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdentifierByIdentifierResponses, GetApiAdminClientsByIdentifierByIdentifierErrors, ThrowOnError>({ url: '/api/clients/by-identifier/{identifier}', ...options });
 
 /**
  * Search clients
  */
-export const getApiAdminClientsSearch = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminClientsSearchData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminClientsSearchResponses, unknown, ThrowOnError>({ url: '/api/admin/clients/search', ...options });
+export const getApiAdminClientsSearch = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminClientsSearchData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminClientsSearchResponses, unknown, ThrowOnError>({ url: '/api/clients/search', ...options });
 
 /**
  * Delete client (soft delete)
  */
-export const deleteApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminClientsByIdResponses, DeleteApiAdminClientsByIdErrors, ThrowOnError>({ url: '/api/admin/clients/{id}', ...options });
+export const deleteApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminClientsByIdResponses, DeleteApiAdminClientsByIdErrors, ThrowOnError>({ url: '/api/clients/{id}', ...options });
 
 /**
  * Get client by ID
  */
-export const getApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdResponses, GetApiAdminClientsByIdErrors, ThrowOnError>({ url: '/api/admin/clients/{id}', ...options });
+export const getApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdResponses, GetApiAdminClientsByIdErrors, ThrowOnError>({ url: '/api/clients/{id}', ...options });
 
 /**
  * Update client
  */
 export const putApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminClientsByIdResponses, PutApiAdminClientsByIdErrors, ThrowOnError>({
-    url: '/api/admin/clients/{id}',
+    url: '/api/clients/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -117,18 +117,18 @@ export const putApiAdminClientsById = <ThrowOnError extends boolean = false>(opt
  *
  * Transitions a suspended or pending client to active status.
  */
-export const postApiAdminClientsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdActivateResponses, PostApiAdminClientsByIdActivateErrors, ThrowOnError>({ url: '/api/admin/clients/{id}/activate', ...options });
+export const postApiAdminClientsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdActivateResponses, PostApiAdminClientsByIdActivateErrors, ThrowOnError>({ url: '/api/clients/{id}/activate', ...options });
 
 /**
  * Get client applications
  */
-export const getApiAdminClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdApplicationsResponses, GetApiAdminClientsByIdApplicationsErrors, ThrowOnError>({ url: '/api/admin/clients/{id}/applications', ...options });
+export const getApiAdminClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdApplicationsResponses, GetApiAdminClientsByIdApplicationsErrors, ThrowOnError>({ url: '/api/clients/{id}/applications', ...options });
 
 /**
  * Update client applications (bulk)
  */
 export const putApiAdminClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminClientsByIdApplicationsResponses, PutApiAdminClientsByIdApplicationsErrors, ThrowOnError>({
-    url: '/api/admin/clients/{id}/applications',
+    url: '/api/clients/{id}/applications',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -139,12 +139,12 @@ export const putApiAdminClientsByIdApplications = <ThrowOnError extends boolean 
 /**
  * Disable application for client
  */
-export const postApiAdminClientsByIdApplicationsByAppIdDisable = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdApplicationsByAppIdDisableData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdApplicationsByAppIdDisableResponses, PostApiAdminClientsByIdApplicationsByAppIdDisableErrors, ThrowOnError>({ url: '/api/admin/clients/{id}/applications/{application_id}/disable', ...options });
+export const postApiAdminClientsByIdApplicationsByAppIdDisable = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdApplicationsByAppIdDisableData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdApplicationsByAppIdDisableResponses, PostApiAdminClientsByIdApplicationsByAppIdDisableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{application_id}/disable', ...options });
 
 /**
  * Enable application for client
  */
-export const postApiAdminClientsByIdApplicationsByAppIdEnable = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdApplicationsByAppIdEnableData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdApplicationsByAppIdEnableResponses, PostApiAdminClientsByIdApplicationsByAppIdEnableErrors, ThrowOnError>({ url: '/api/admin/clients/{id}/applications/{application_id}/enable', ...options });
+export const postApiAdminClientsByIdApplicationsByAppIdEnable = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdApplicationsByAppIdEnableData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdApplicationsByAppIdEnableResponses, PostApiAdminClientsByIdApplicationsByAppIdEnableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{application_id}/enable', ...options });
 
 /**
  * Deactivate a client (soft delete)
@@ -152,7 +152,7 @@ export const postApiAdminClientsByIdApplicationsByAppIdEnable = <ThrowOnError ex
  * Deactivates/soft-deletes a client. Requires a reason.
  */
 export const postApiAdminClientsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdDeactivateResponses, PostApiAdminClientsByIdDeactivateErrors, ThrowOnError>({
-    url: '/api/admin/clients/{id}/deactivate',
+    url: '/api/clients/{id}/deactivate',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -164,7 +164,7 @@ export const postApiAdminClientsByIdDeactivate = <ThrowOnError extends boolean =
  * Add note to client
  */
 export const postApiAdminClientsByIdNotes = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdNotesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdNotesResponses, PostApiAdminClientsByIdNotesErrors, ThrowOnError>({
-    url: '/api/admin/clients/{id}/notes',
+    url: '/api/clients/{id}/notes',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -178,7 +178,7 @@ export const postApiAdminClientsByIdNotes = <ThrowOnError extends boolean = fals
  * Suspends a client (e.g., for billing issues). Requires a reason.
  */
 export const postApiAdminClientsByIdSuspend = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdSuspendData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdSuspendResponses, PostApiAdminClientsByIdSuspendErrors, ThrowOnError>({
-    url: '/api/admin/clients/{id}/suspend',
+    url: '/api/clients/{id}/suspend',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -189,13 +189,13 @@ export const postApiAdminClientsByIdSuspend = <ThrowOnError extends boolean = fa
 /**
  * List event types
  */
-export const getApiAdminEventTypes = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesResponses, unknown, ThrowOnError>({ url: '/api/admin/event-types', ...options });
+export const getApiAdminEventTypes = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesResponses, unknown, ThrowOnError>({ url: '/api/event-types', ...options });
 
 /**
  * Create a new event type
  */
 export const postApiAdminEventTypes = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesResponses, PostApiAdminEventTypesErrors, ThrowOnError>({
-    url: '/api/admin/event-types',
+    url: '/api/event-types',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -206,13 +206,13 @@ export const postApiAdminEventTypes = <ThrowOnError extends boolean = false>(opt
 /**
  * Get event type by code
  */
-export const getApiAdminEventTypesByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesByCodeByCodeResponses, GetApiAdminEventTypesByCodeByCodeErrors, ThrowOnError>({ url: '/api/admin/event-types/by-code/{code}', ...options });
+export const getApiAdminEventTypesByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesByCodeByCodeResponses, GetApiAdminEventTypesByCodeByCodeErrors, ThrowOnError>({ url: '/api/event-types/by-code/{code}', ...options });
 
 /**
  * Sync event types
  */
 export const postApiAdminEventTypesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesSyncResponses, PostApiAdminEventTypesSyncErrors, ThrowOnError>({
-    url: '/api/admin/event-types/sync',
+    url: '/api/event-types/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -223,18 +223,18 @@ export const postApiAdminEventTypesSync = <ThrowOnError extends boolean = false>
 /**
  * Delete event type (archive)
  */
-export const deleteApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminEventTypesByIdResponses, DeleteApiAdminEventTypesByIdErrors, ThrowOnError>({ url: '/api/admin/event-types/{id}', ...options });
+export const deleteApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminEventTypesByIdResponses, DeleteApiAdminEventTypesByIdErrors, ThrowOnError>({ url: '/api/event-types/{id}', ...options });
 
 /**
  * Get event type by ID
  */
-export const getApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesByIdResponses, GetApiAdminEventTypesByIdErrors, ThrowOnError>({ url: '/api/admin/event-types/{id}', ...options });
+export const getApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesByIdResponses, GetApiAdminEventTypesByIdErrors, ThrowOnError>({ url: '/api/event-types/{id}', ...options });
 
 /**
  * Update event type
  */
 export const putApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminEventTypesByIdResponses, PutApiAdminEventTypesByIdErrors, ThrowOnError>({
-    url: '/api/admin/event-types/{id}',
+    url: '/api/event-types/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -246,7 +246,7 @@ export const putApiAdminEventTypesById = <ThrowOnError extends boolean = false>(
  * Add schema version to event type
  */
 export const postApiAdminEventTypesByIdSchemas = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesByIdSchemasData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesByIdSchemasResponses, PostApiAdminEventTypesByIdSchemasErrors, ThrowOnError>({
-    url: '/api/admin/event-types/{id}/versions',
+    url: '/api/event-types/{id}/versions',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -257,13 +257,13 @@ export const postApiAdminEventTypesByIdSchemas = <ThrowOnError extends boolean =
 /**
  * List OAuth clients
  */
-export const getApiAdminOauthClients = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsResponses, unknown, ThrowOnError>({ url: '/api/admin/oauth-clients', ...options });
+export const getApiAdminOauthClients = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsResponses, unknown, ThrowOnError>({ url: '/api/oauth-clients', ...options });
 
 /**
  * Create a new OAuth client
  */
 export const postApiAdminOauthClients = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsResponses, PostApiAdminOauthClientsErrors, ThrowOnError>({
-    url: '/api/admin/oauth-clients',
+    url: '/api/oauth-clients',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -274,23 +274,23 @@ export const postApiAdminOauthClients = <ThrowOnError extends boolean = false>(o
 /**
  * Get OAuth client by client_id (public identifier)
  */
-export const getApiAdminOauthClientsByClientId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsByClientIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsByClientIdResponses, GetApiAdminOauthClientsByClientIdErrors, ThrowOnError>({ url: '/api/admin/oauth-clients/by-client-id/{clientId}', ...options });
+export const getApiAdminOauthClientsByClientId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsByClientIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsByClientIdResponses, GetApiAdminOauthClientsByClientIdErrors, ThrowOnError>({ url: '/api/oauth-clients/by-client-id/{clientId}', ...options });
 
 /**
  * Delete OAuth client
  */
-export const deleteApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminOauthClientsByIdResponses, DeleteApiAdminOauthClientsByIdErrors, ThrowOnError>({ url: '/api/admin/oauth-clients/{id}', ...options });
+export const deleteApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminOauthClientsByIdResponses, DeleteApiAdminOauthClientsByIdErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}', ...options });
 
 /**
  * Get OAuth client by ID
  */
-export const getApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsByIdResponses, GetApiAdminOauthClientsByIdErrors, ThrowOnError>({ url: '/api/admin/oauth-clients/{id}', ...options });
+export const getApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsByIdResponses, GetApiAdminOauthClientsByIdErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}', ...options });
 
 /**
  * Update OAuth client
  */
 export const putApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminOauthClientsByIdResponses, PutApiAdminOauthClientsByIdErrors, ThrowOnError>({
-    url: '/api/admin/oauth-clients/{id}',
+    url: '/api/oauth-clients/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -301,33 +301,33 @@ export const putApiAdminOauthClientsById = <ThrowOnError extends boolean = false
 /**
  * Activate OAuth client
  */
-export const postApiAdminOauthClientsActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsActivateResponses, PostApiAdminOauthClientsActivateErrors, ThrowOnError>({ url: '/api/admin/oauth-clients/{id}/activate', ...options });
+export const postApiAdminOauthClientsActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsActivateResponses, PostApiAdminOauthClientsActivateErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/activate', ...options });
 
 /**
  * Deactivate OAuth client
  */
-export const postApiAdminOauthClientsDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsDeactivateResponses, PostApiAdminOauthClientsDeactivateErrors, ThrowOnError>({ url: '/api/admin/oauth-clients/{id}/deactivate', ...options });
+export const postApiAdminOauthClientsDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsDeactivateResponses, PostApiAdminOauthClientsDeactivateErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/deactivate', ...options });
 
 /**
  * Regenerate OAuth client secret
  */
-export const postApiAdminOauthClientsRegenerateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsRegenerateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsRegenerateSecretResponses, PostApiAdminOauthClientsRegenerateSecretErrors, ThrowOnError>({ url: '/api/admin/oauth-clients/{id}/regenerate-secret', ...options });
+export const postApiAdminOauthClientsRegenerateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsRegenerateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsRegenerateSecretResponses, PostApiAdminOauthClientsRegenerateSecretErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/regenerate-secret', ...options });
 
 /**
  * Rotate OAuth client secret (alias for regenerate-secret, matches TS API)
  */
-export const postApiAdminOauthClientsRotateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsRotateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsRotateSecretResponses, PostApiAdminOauthClientsRotateSecretErrors, ThrowOnError>({ url: '/api/admin/oauth-clients/{id}/rotate-secret', ...options });
+export const postApiAdminOauthClientsRotateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsRotateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsRotateSecretResponses, PostApiAdminOauthClientsRotateSecretErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/rotate-secret', ...options });
 
 /**
  * List principals
  */
-export const getApiAdminPrincipals = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminPrincipalsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminPrincipalsResponses, unknown, ThrowOnError>({ url: '/api/admin/principals', ...options });
+export const getApiAdminPrincipals = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminPrincipalsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminPrincipalsResponses, unknown, ThrowOnError>({ url: '/api/principals', ...options });
 
 /**
  * Create a new user principal
  */
 export const postApiAdminPrincipalsUsers = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsUsersData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsUsersResponses, PostApiAdminPrincipalsUsersErrors, ThrowOnError>({
-    url: '/api/admin/principals',
+    url: '/api/principals/users',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -338,23 +338,23 @@ export const postApiAdminPrincipalsUsers = <ThrowOnError extends boolean = false
 /**
  * Check email domain configuration
  */
-export const getApiAdminPrincipalsCheckEmailDomain = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsCheckEmailDomainData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsCheckEmailDomainResponses, unknown, ThrowOnError>({ url: '/api/admin/principals/check-email-domain', ...options });
+export const getApiAdminPrincipalsCheckEmailDomain = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsCheckEmailDomainData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsCheckEmailDomainResponses, unknown, ThrowOnError>({ url: '/api/principals/check-email-domain', ...options });
 
 /**
  * Delete principal (deactivate)
  */
-export const deleteApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdResponses, DeleteApiAdminPrincipalsByIdErrors, ThrowOnError>({ url: '/api/admin/principals/{id}', ...options });
+export const deleteApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdResponses, DeleteApiAdminPrincipalsByIdErrors, ThrowOnError>({ url: '/api/principals/{id}', ...options });
 
 /**
  * Get principal by ID
  */
-export const getApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdResponses, GetApiAdminPrincipalsByIdErrors, ThrowOnError>({ url: '/api/admin/principals/{id}', ...options });
+export const getApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdResponses, GetApiAdminPrincipalsByIdErrors, ThrowOnError>({ url: '/api/principals/{id}', ...options });
 
 /**
  * Update principal
  */
 export const putApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdResponses, PutApiAdminPrincipalsByIdErrors, ThrowOnError>({
-    url: '/api/admin/principals/{id}',
+    url: '/api/principals/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -367,14 +367,14 @@ export const putApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(
  *
  * Reactivates a deactivated principal.
  */
-export const postApiAdminPrincipalsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdActivateResponses, PostApiAdminPrincipalsByIdActivateErrors, ThrowOnError>({ url: '/api/admin/principals/{id}/activate', ...options });
+export const postApiAdminPrincipalsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdActivateResponses, PostApiAdminPrincipalsByIdActivateErrors, ThrowOnError>({ url: '/api/principals/{id}/activate', ...options });
 
 /**
  * Get application access for a principal
  *
  * Returns all applications the principal has been granted access to.
  */
-export const getApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdApplicationAccessResponses, GetApiAdminPrincipalsByIdApplicationAccessErrors, ThrowOnError>({ url: '/api/admin/principals/{id}/application-access', ...options });
+export const getApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdApplicationAccessResponses, GetApiAdminPrincipalsByIdApplicationAccessErrors, ThrowOnError>({ url: '/api/principals/{id}/application-access', ...options });
 
 /**
  * Set application access for a principal (batch replace)
@@ -382,7 +382,7 @@ export const getApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends 
  * Replaces all application access with the provided list.
  */
 export const putApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdApplicationAccessResponses, PutApiAdminPrincipalsByIdApplicationAccessErrors, ThrowOnError>({
-    url: '/api/admin/principals/{id}/application-access',
+    url: '/api/principals/{id}/application-access',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -396,18 +396,18 @@ export const putApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends 
  * ANCHOR users see all active applications.
  * CLIENT users see only applications enabled for their accessible client configs.
  */
-export const getApiAdminPrincipalsByIdAvailableApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdAvailableApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdAvailableApplicationsResponses, GetApiAdminPrincipalsByIdAvailableApplicationsErrors, ThrowOnError>({ url: '/api/admin/principals/{id}/available-applications', ...options });
+export const getApiAdminPrincipalsByIdAvailableApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdAvailableApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdAvailableApplicationsResponses, GetApiAdminPrincipalsByIdAvailableApplicationsErrors, ThrowOnError>({ url: '/api/principals/{id}/available-applications', ...options });
 
 /**
  * Get client access grants for a principal
  */
-export const getApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdClientAccessResponses, GetApiAdminPrincipalsByIdClientAccessErrors, ThrowOnError>({ url: '/api/admin/principals/{id}/client-access', ...options });
+export const getApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdClientAccessResponses, GetApiAdminPrincipalsByIdClientAccessErrors, ThrowOnError>({ url: '/api/principals/{id}/client-access', ...options });
 
 /**
  * Grant client access to principal
  */
 export const postApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdClientAccessResponses, PostApiAdminPrincipalsByIdClientAccessErrors, ThrowOnError>({
-    url: '/api/admin/principals/{id}/client-access',
+    url: '/api/principals/{id}/client-access',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -418,14 +418,14 @@ export const postApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends bool
 /**
  * Revoke client access from principal
  */
-export const deleteApiAdminPrincipalsByIdClientAccessByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdClientAccessByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponses, DeleteApiAdminPrincipalsByIdClientAccessByClientIdErrors, ThrowOnError>({ url: '/api/admin/principals/{id}/client-access/{client_id}', ...options });
+export const deleteApiAdminPrincipalsByIdClientAccessByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdClientAccessByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponses, DeleteApiAdminPrincipalsByIdClientAccessByClientIdErrors, ThrowOnError>({ url: '/api/principals/{id}/client-access/{client_id}', ...options });
 
 /**
  * Deactivate a principal
  *
  * Deactivates an active principal.
  */
-export const postApiAdminPrincipalsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdDeactivateResponses, PostApiAdminPrincipalsByIdDeactivateErrors, ThrowOnError>({ url: '/api/admin/principals/{id}/deactivate', ...options });
+export const postApiAdminPrincipalsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdDeactivateResponses, PostApiAdminPrincipalsByIdDeactivateErrors, ThrowOnError>({ url: '/api/principals/{id}/deactivate', ...options });
 
 /**
  * Reset a user's password
@@ -433,7 +433,7 @@ export const postApiAdminPrincipalsByIdDeactivate = <ThrowOnError extends boolea
  * Resets the password for an internal auth user. Does not work for OIDC users.
  */
 export const postApiAdminPrincipalsByIdResetPassword = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdResetPasswordData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdResetPasswordResponses, PostApiAdminPrincipalsByIdResetPasswordErrors, ThrowOnError>({
-    url: '/api/admin/principals/{id}/reset-password',
+    url: '/api/principals/{id}/reset-password',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -444,13 +444,13 @@ export const postApiAdminPrincipalsByIdResetPassword = <ThrowOnError extends boo
 /**
  * Get roles assigned to a principal
  */
-export const getApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdRolesResponses, GetApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({ url: '/api/admin/principals/{id}/roles', ...options });
+export const getApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdRolesResponses, GetApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({ url: '/api/principals/{id}/roles', ...options });
 
 /**
  * Assign role to principal
  */
 export const postApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdRolesResponses, PostApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({
-    url: '/api/admin/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -462,7 +462,7 @@ export const postApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = f
  * Batch assign roles to principal (declarative - replaces all roles)
  */
 export const putApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdRolesResponses, PutApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({
-    url: '/api/admin/principals/{id}/roles',
+    url: '/api/principals/{id}/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -473,18 +473,18 @@ export const putApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = fa
 /**
  * Remove role from principal
  */
-export const deleteApiAdminPrincipalsByIdRolesByRoleName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdRolesByRoleNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdRolesByRoleNameResponses, DeleteApiAdminPrincipalsByIdRolesByRoleNameErrors, ThrowOnError>({ url: '/api/admin/principals/{id}/roles/{role}', ...options });
+export const deleteApiAdminPrincipalsByIdRolesByRoleName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdRolesByRoleNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdRolesByRoleNameResponses, DeleteApiAdminPrincipalsByIdRolesByRoleNameErrors, ThrowOnError>({ url: '/api/principals/{id}/roles/{role}', ...options });
 
 /**
  * List roles
  */
-export const getApiAdminRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesResponses, unknown, ThrowOnError>({ url: '/api/admin/roles', ...options });
+export const getApiAdminRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesResponses, unknown, ThrowOnError>({ url: '/api/roles', ...options });
 
 /**
  * Create a new role
  */
 export const postApiAdminRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminRolesResponses, PostApiAdminRolesErrors, ThrowOnError>({
-    url: '/api/admin/roles',
+    url: '/api/roles',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -495,37 +495,37 @@ export const postApiAdminRoles = <ThrowOnError extends boolean = false>(options:
 /**
  * Get roles by application ID
  */
-export const getApiAdminRolesByApplicationByApplicationId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByApplicationByApplicationIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByApplicationByApplicationIdResponses, unknown, ThrowOnError>({ url: '/api/admin/roles/by-application/{application_id}', ...options });
+export const getApiAdminRolesByApplicationByApplicationId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByApplicationByApplicationIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByApplicationByApplicationIdResponses, unknown, ThrowOnError>({ url: '/api/roles/by-application/{application_id}', ...options });
 
 /**
  * Get role by code (name)
  */
-export const getApiAdminRolesByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByCodeByCodeResponses, GetApiAdminRolesByCodeByCodeErrors, ThrowOnError>({ url: '/api/admin/roles/by-code/{code}', ...options });
+export const getApiAdminRolesByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByCodeByCodeResponses, GetApiAdminRolesByCodeByCodeErrors, ThrowOnError>({ url: '/api/roles/by-code/{code}', ...options });
 
 /**
  * Get roles by source (CODE, DATABASE, SDK)
  */
-export const getApiAdminRolesBySourceBySource = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesBySourceBySourceData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesBySourceBySourceResponses, GetApiAdminRolesBySourceBySourceErrors, ThrowOnError>({ url: '/api/admin/roles/by-source/{source}', ...options });
+export const getApiAdminRolesBySourceBySource = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesBySourceBySourceData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesBySourceBySourceResponses, GetApiAdminRolesBySourceBySourceErrors, ThrowOnError>({ url: '/api/roles/by-source/{source}', ...options });
 
 /**
  * Get applications for role filter dropdown
  */
-export const getApiAdminRolesFiltersApplications = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminRolesFiltersApplicationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminRolesFiltersApplicationsResponses, unknown, ThrowOnError>({ url: '/api/admin/roles/filters/applications', ...options });
+export const getApiAdminRolesFiltersApplications = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminRolesFiltersApplicationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminRolesFiltersApplicationsResponses, unknown, ThrowOnError>({ url: '/api/roles/filters/applications', ...options });
 
 /**
  * List all permissions
  */
-export const getApiAdminRolesPermissions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminRolesPermissionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminRolesPermissionsResponses, unknown, ThrowOnError>({ url: '/api/admin/roles/permissions', ...options });
+export const getApiAdminRolesPermissions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminRolesPermissionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminRolesPermissionsResponses, unknown, ThrowOnError>({ url: '/api/roles/permissions', ...options });
 
 /**
  * Get permission by string
  */
-export const getApiAdminRolesPermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesPermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesPermissionsByPermissionResponses, GetApiAdminRolesPermissionsByPermissionErrors, ThrowOnError>({ url: '/api/admin/roles/permissions/{permission}', ...options });
+export const getApiAdminRolesPermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesPermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesPermissionsByPermissionResponses, GetApiAdminRolesPermissionsByPermissionErrors, ThrowOnError>({ url: '/api/roles/permissions/{permission}', ...options });
 
 /**
  * Delete role
  */
-export const deleteApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminRolesByNameResponses, DeleteApiAdminRolesByNameErrors, ThrowOnError>({ url: '/api/admin/roles/{role_name}', ...options });
+export const deleteApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminRolesByNameResponses, DeleteApiAdminRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{role_name}', ...options });
 
 /**
  * Get role by ID or name (code)
@@ -533,13 +533,13 @@ export const deleteApiAdminRolesByName = <ThrowOnError extends boolean = false>(
  * The frontend calls this with the role name (e.g., "platform:super-admin"),
  * so we try by code first if it contains ":", otherwise by ID.
  */
-export const getApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByNameResponses, GetApiAdminRolesByNameErrors, ThrowOnError>({ url: '/api/admin/roles/{role_name}', ...options });
+export const getApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByNameResponses, GetApiAdminRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{role_name}', ...options });
 
 /**
  * Update role
  */
 export const putApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminRolesByNameResponses, PutApiAdminRolesByNameErrors, ThrowOnError>({
-    url: '/api/admin/roles/{role_name}',
+    url: '/api/roles/{role_name}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -551,7 +551,7 @@ export const putApiAdminRolesByName = <ThrowOnError extends boolean = false>(opt
  * Grant permission to role
  */
 export const postApiAdminRolesByNamePermissions = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminRolesByNamePermissionsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminRolesByNamePermissionsResponses, PostApiAdminRolesByNamePermissionsErrors, ThrowOnError>({
-    url: '/api/admin/roles/{role_name}/permissions',
+    url: '/api/roles/{role_name}/permissions',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -562,18 +562,18 @@ export const postApiAdminRolesByNamePermissions = <ThrowOnError extends boolean 
 /**
  * Revoke permission from role
  */
-export const deleteApiAdminRolesByNamePermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminRolesByNamePermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminRolesByNamePermissionsByPermissionResponses, DeleteApiAdminRolesByNamePermissionsByPermissionErrors, ThrowOnError>({ url: '/api/admin/roles/{role_name}/permissions/{permission}', ...options });
+export const deleteApiAdminRolesByNamePermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminRolesByNamePermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminRolesByNamePermissionsByPermissionResponses, DeleteApiAdminRolesByNamePermissionsByPermissionErrors, ThrowOnError>({ url: '/api/roles/{role_name}/permissions/{permission}', ...options });
 
 /**
  * List subscriptions
  */
-export const getApiAdminSubscriptions = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminSubscriptionsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminSubscriptionsResponses, unknown, ThrowOnError>({ url: '/api/admin/subscriptions', ...options });
+export const getApiAdminSubscriptions = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminSubscriptionsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminSubscriptionsResponses, unknown, ThrowOnError>({ url: '/api/subscriptions', ...options });
 
 /**
  * Create a new subscription
  */
 export const postApiAdminSubscriptions = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsResponses, PostApiAdminSubscriptionsErrors, ThrowOnError>({
-    url: '/api/admin/subscriptions',
+    url: '/api/subscriptions',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -585,7 +585,7 @@ export const postApiAdminSubscriptions = <ThrowOnError extends boolean = false>(
  * Sync subscriptions
  */
 export const postApiAdminSubscriptionsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsSyncResponses, PostApiAdminSubscriptionsSyncErrors, ThrowOnError>({
-    url: '/api/admin/subscriptions/sync',
+    url: '/api/subscriptions/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -596,18 +596,18 @@ export const postApiAdminSubscriptionsSync = <ThrowOnError extends boolean = fal
 /**
  * Delete subscription (archive)
  */
-export const deleteApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminSubscriptionsByIdResponses, DeleteApiAdminSubscriptionsByIdErrors, ThrowOnError>({ url: '/api/admin/subscriptions/{id}', ...options });
+export const deleteApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminSubscriptionsByIdResponses, DeleteApiAdminSubscriptionsByIdErrors, ThrowOnError>({ url: '/api/subscriptions/{id}', ...options });
 
 /**
  * Get subscription by ID
  */
-export const getApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminSubscriptionsByIdResponses, GetApiAdminSubscriptionsByIdErrors, ThrowOnError>({ url: '/api/admin/subscriptions/{id}', ...options });
+export const getApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminSubscriptionsByIdResponses, GetApiAdminSubscriptionsByIdErrors, ThrowOnError>({ url: '/api/subscriptions/{id}', ...options });
 
 /**
  * Update subscription
  */
 export const putApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminSubscriptionsByIdResponses, PutApiAdminSubscriptionsByIdErrors, ThrowOnError>({
-    url: '/api/admin/subscriptions/{id}',
+    url: '/api/subscriptions/{id}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -618,12 +618,12 @@ export const putApiAdminSubscriptionsById = <ThrowOnError extends boolean = fals
 /**
  * Pause subscription
  */
-export const postApiAdminSubscriptionsByIdPause = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsByIdPauseData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsByIdPauseResponses, PostApiAdminSubscriptionsByIdPauseErrors, ThrowOnError>({ url: '/api/admin/subscriptions/{id}/pause', ...options });
+export const postApiAdminSubscriptionsByIdPause = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsByIdPauseData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsByIdPauseResponses, PostApiAdminSubscriptionsByIdPauseErrors, ThrowOnError>({ url: '/api/subscriptions/{id}/pause', ...options });
 
 /**
  * Resume subscription
  */
-export const postApiAdminSubscriptionsByIdResume = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsByIdResumeData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsByIdResumeResponses, PostApiAdminSubscriptionsByIdResumeErrors, ThrowOnError>({ url: '/api/admin/subscriptions/{id}/resume', ...options });
+export const postApiAdminSubscriptionsByIdResume = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsByIdResumeData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsByIdResumeResponses, PostApiAdminSubscriptionsByIdResumeErrors, ThrowOnError>({ url: '/api/subscriptions/{id}/resume', ...options });
 
 /**
  * Get circuit breaker states
