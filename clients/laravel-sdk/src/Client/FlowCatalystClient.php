@@ -62,6 +62,12 @@ class FlowCatalystClient
             'base_uri' => rtrim($this->baseUrl, '/'),
             'timeout' => $this->timeout,
             'http_errors' => false,
+            // strict: true preserves the request method across 3xx redirects.
+            // Guzzle's default follows 301/302 with GET (per RFC 7231), so a
+            // POST through an intermediary that normalises hostnames/paths
+            // silently becomes a GET — the platform then returns 405 on
+            // write-only routes.
+            'allow_redirects' => ['max' => 5, 'strict' => true],
         ]);
     }
 

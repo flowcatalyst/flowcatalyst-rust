@@ -144,6 +144,36 @@ impl TestApp {
             .expect("anchor token")
     }
 
+    /// Token for an anchor-scoped principal with the `platform:*:*:*`
+    /// wildcard permission. Seeds a role on first call; the token carries
+    /// the role name so the authz middleware resolves it to ADMIN_ALL.
+    ///
+    /// Use this when testing endpoints that check `can_read_*` / `can_write_*`
+    /// (permission-based) rather than `require_anchor` (scope-based).
+    pub async fn anchor_admin_token(&self) -> String {
+        use fc_platform::role::entity::{AuthRole, permissions};
+        use fc_platform::service_account::entity::RoleAssignment;
+
+        let role_code = "platform:test-admin";
+
+        // Idempotent seed so repeated calls in the same test don't duplicate.
+        if self.repos.role_repo.find_by_name(role_code).await.ok().flatten().is_none() {
+            let role = AuthRole::new("platform", "test-admin", "Test Admin")
+                .with_permission(permissions::ADMIN_ALL);
+            self.repos
+                .role_repo
+                .insert(&role)
+                .await
+                .expect("insert test-admin role");
+        }
+
+        let mut principal = Principal::new_user("admin@flowcatalyst.test", UserScope::Anchor);
+        principal.roles = vec![RoleAssignment::new(role_code)];
+        self.auth_service
+            .generate_access_token(&principal)
+            .expect("anchor-admin token")
+    }
+
     /// Token for a partner-scoped principal (cross-client access).
     pub fn partner_token(&self) -> String {
         let principal = Principal::new_user("partner@flowcatalyst.test", UserScope::Partner);
