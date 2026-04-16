@@ -51,7 +51,7 @@ export const configApi = {
 		scope = "GLOBAL",
 		clientId?: string,
 	): Promise<PlatformConfig> {
-		let url = `/admin/config/${appCode}/${section}/${property}?scope=${scope}`;
+		let url = `/config/${appCode}/${section}/${property}?scope=${scope}`;
 		if (clientId) url += `&clientId=${encodeURIComponent(clientId)}`;
 		return apiFetch(url);
 	},
@@ -65,7 +65,7 @@ export const configApi = {
 		scope = "GLOBAL",
 		clientId?: string,
 	): Promise<PlatformConfig> {
-		let url = `/admin/config/${appCode}/${section}/${property}?scope=${scope}`;
+		let url = `/config/${appCode}/${section}/${property}?scope=${scope}`;
 		if (clientId) url += `&clientId=${encodeURIComponent(clientId)}`;
 		return apiFetch(url, {
 			method: "PUT",
@@ -81,7 +81,7 @@ export const configApi = {
 		scope = "GLOBAL",
 		clientId?: string,
 	): Promise<void> {
-		let url = `/admin/config/${appCode}/${section}/${property}?scope=${scope}`;
+		let url = `/config/${appCode}/${section}/${property}?scope=${scope}`;
 		if (clientId) url += `&clientId=${encodeURIComponent(clientId)}`;
 		return apiFetch(url, { method: "DELETE" });
 	},
@@ -89,14 +89,14 @@ export const configApi = {
 	// Helper specifically for login theme
 	getLoginThemeConfig(): Promise<string | null> {
 		return apiFetch<PlatformConfig>(
-			"/admin/config/platform/login/theme?scope=GLOBAL",
+			"/config/platform/login/theme?scope=GLOBAL",
 		)
 			.then((response: PlatformConfig) => response.value)
 			.catch(() => null);
 	},
 
 	setLoginThemeConfig(theme: LoginTheme): Promise<PlatformConfig> {
-		return apiFetch("/admin/config/platform/login/theme?scope=GLOBAL", {
+		return apiFetch("/config/platform/login/theme?scope=GLOBAL", {
 			method: "PUT",
 			body: JSON.stringify({
 				value: JSON.stringify(theme),

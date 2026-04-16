@@ -53,41 +53,41 @@ export const connectionsApi = {
 		if (filters.status) params.set("status", filters.status);
 
 		const query = params.toString();
-		return apiFetch(`/admin/connections${query ? `?${query}` : ""}`);
+		return apiFetch(`/connections${query ? `?${query}` : ""}`);
 	},
 
 	get(id: string): Promise<Connection> {
-		return apiFetch(`/admin/connections/${id}`);
+		return apiFetch(`/connections/${id}`);
 	},
 
 	create(data: CreateConnectionRequest): Promise<Connection> {
-		return apiFetch("/admin/connections", {
+		return apiFetch("/connections", {
 			method: "POST",
 			body: JSON.stringify(data),
 		});
 	},
 
 	update(id: string, data: UpdateConnectionRequest): Promise<Connection> {
-		return apiFetch(`/admin/connections/${id}`, {
+		return apiFetch(`/connections/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
 		});
 	},
 
 	delete(id: string): Promise<StatusResponse> {
-		return apiFetch(`/admin/connections/${id}`, {
+		return apiFetch(`/connections/${id}`, {
 			method: "DELETE",
 		});
 	},
 
 	pause(id: string): Promise<StatusResponse> {
-		return apiFetch(`/admin/connections/${id}/pause`, {
+		return apiFetch(`/connections/${id}/pause`, {
 			method: "POST",
 		});
 	},
 
 	activate(id: string): Promise<StatusResponse> {
-		return apiFetch(`/admin/connections/${id}/activate`, {
+		return apiFetch(`/connections/${id}/activate`, {
 			method: "POST",
 		});
 	},

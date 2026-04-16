@@ -124,41 +124,41 @@ export const usersApi = {
 		if (filters?.sortOrder) params.append("sortOrder", filters.sortOrder);
 
 		const query = params.toString();
-		return apiFetch(`/admin/principals${query ? `?${query}` : ""}`);
+		return apiFetch(`/principals${query ? `?${query}` : ""}`);
 	},
 
 	get(id: string): Promise<User> {
-		return apiFetch(`/admin/principals/${id}`);
+		return apiFetch(`/principals/${id}`);
 	},
 
 	create(data: CreateUserRequest): Promise<User> {
-		return apiFetch("/admin/principals/users", {
+		return apiFetch("/principals/users", {
 			method: "POST",
 			body: JSON.stringify(data),
 		});
 	},
 
 	update(id: string, data: UpdateUserRequest): Promise<User> {
-		return apiFetch(`/admin/principals/${id}`, {
+		return apiFetch(`/principals/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
 		});
 	},
 
 	activate(id: string): Promise<{ message: string }> {
-		return apiFetch(`/admin/principals/${id}/activate`, {
+		return apiFetch(`/principals/${id}/activate`, {
 			method: "POST",
 		});
 	},
 
 	deactivate(id: string): Promise<{ message: string }> {
-		return apiFetch(`/admin/principals/${id}/deactivate`, {
+		return apiFetch(`/principals/${id}/deactivate`, {
 			method: "POST",
 		});
 	},
 
 	resetPassword(id: string, newPassword: string): Promise<{ message: string }> {
-		return apiFetch(`/admin/principals/${id}/reset-password`, {
+		return apiFetch(`/principals/${id}/reset-password`, {
 			method: "POST",
 			body: JSON.stringify({ newPassword }),
 		});
@@ -170,48 +170,48 @@ export const usersApi = {
 	 * Rejects OIDC users and users without an email.
 	 */
 	sendPasswordReset(id: string): Promise<{ message: string }> {
-		return apiFetch(`/admin/principals/${id}/send-password-reset`, {
+		return apiFetch(`/principals/${id}/send-password-reset`, {
 			method: "POST",
 		});
 	},
 
 	// Client access grants
 	getClientAccess(id: string): Promise<{ grants: ClientAccessGrant[] }> {
-		return apiFetch(`/admin/principals/${id}/client-access`);
+		return apiFetch(`/principals/${id}/client-access`);
 	},
 
 	grantClientAccess(id: string, clientId: string): Promise<ClientAccessGrant> {
-		return apiFetch(`/admin/principals/${id}/client-access`, {
+		return apiFetch(`/principals/${id}/client-access`, {
 			method: "POST",
 			body: JSON.stringify({ clientId }),
 		});
 	},
 
 	revokeClientAccess(id: string, clientId: string): Promise<void> {
-		return apiFetch(`/admin/principals/${id}/client-access/${clientId}`, {
+		return apiFetch(`/principals/${id}/client-access/${clientId}`, {
 			method: "DELETE",
 		});
 	},
 
 	delete(id: string): Promise<void> {
-		return apiFetch(`/admin/principals/${id}`, {
+		return apiFetch(`/principals/${id}`, {
 			method: "DELETE",
 		});
 	},
 
 	checkEmailDomain(email: string): Promise<EmailDomainCheckResponse> {
 		return apiFetch(
-			`/admin/principals/check-email-domain?email=${encodeURIComponent(email)}`,
+			`/principals/check-email-domain?email=${encodeURIComponent(email)}`,
 		);
 	},
 
 	// Role management
 	getRoles(id: string): Promise<{ roles: RoleAssignment[] }> {
-		return apiFetch(`/admin/principals/${id}/roles`);
+		return apiFetch(`/principals/${id}/roles`);
 	},
 
 	assignRole(id: string, roleName: string): Promise<RoleAssignment> {
-		return apiFetch(`/admin/principals/${id}/roles`, {
+		return apiFetch(`/principals/${id}/roles`, {
 			method: "POST",
 			body: JSON.stringify({ roleName }),
 		});
@@ -219,7 +219,7 @@ export const usersApi = {
 
 	removeRole(id: string, roleName: string): Promise<void> {
 		return apiFetch(
-			`/admin/principals/${id}/roles/${encodeURIComponent(roleName)}`,
+			`/principals/${id}/roles/${encodeURIComponent(roleName)}`,
 			{
 				method: "DELETE",
 			},
@@ -232,7 +232,7 @@ export const usersApi = {
 	 * Roles not in the list will be removed, new roles will be added.
 	 */
 	assignRoles(id: string, roles: string[]): Promise<RolesAssignedResponse> {
-		return apiFetch(`/admin/principals/${id}/roles`, {
+		return apiFetch(`/principals/${id}/roles`, {
 			method: "PUT",
 			body: JSON.stringify({ roles }),
 		});
@@ -244,7 +244,7 @@ export const usersApi = {
 	 * Get the application access grants for a user.
 	 */
 	getApplicationAccess(id: string): Promise<ApplicationAccessListResponse> {
-		return apiFetch(`/admin/principals/${id}/application-access`);
+		return apiFetch(`/principals/${id}/application-access`);
 	},
 
 	/**
@@ -252,7 +252,7 @@ export const usersApi = {
 	 * Returns applications that are enabled for at least one of the user's accessible clients.
 	 */
 	getAvailableApplications(id: string): Promise<AvailableApplicationsResponse> {
-		return apiFetch(`/admin/principals/${id}/available-applications`);
+		return apiFetch(`/principals/${id}/available-applications`);
 	},
 
 	/**
@@ -264,7 +264,7 @@ export const usersApi = {
 		id: string,
 		applicationIds: string[],
 	): Promise<ApplicationAccessAssignedResponse> {
-		return apiFetch(`/admin/principals/${id}/application-access`, {
+		return apiFetch(`/principals/${id}/application-access`, {
 			method: "PUT",
 			body: JSON.stringify({ applicationIds }),
 		});

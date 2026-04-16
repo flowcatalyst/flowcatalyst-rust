@@ -20,26 +20,26 @@ export interface CreateCorsOriginRequest {
 
 export const corsApi = {
 	list(): Promise<CorsOriginListResponse> {
-		return apiFetch("/admin/platform/cors");
+		return apiFetch("/platform/cors");
 	},
 
 	get(id: string): Promise<CorsOrigin> {
-		return apiFetch(`/admin/platform/cors/${id}`);
+		return apiFetch(`/platform/cors/${id}`);
 	},
 
 	getAllowed(): Promise<{ origins: string[] }> {
-		return apiFetch("/admin/platform/cors/allowed");
+		return apiFetch("/platform/cors/allowed");
 	},
 
 	create(data: CreateCorsOriginRequest): Promise<CorsOrigin> {
-		return apiFetch("/admin/platform/cors", {
+		return apiFetch("/platform/cors", {
 			method: "POST",
 			body: JSON.stringify(data),
 		});
 	},
 
 	delete(id: string): Promise<void> {
-		return apiFetch(`/admin/platform/cors/${id}`, {
+		return apiFetch(`/platform/cors/${id}`, {
 			method: "DELETE",
 		});
 	},

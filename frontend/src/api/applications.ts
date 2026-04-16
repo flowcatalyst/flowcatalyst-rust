@@ -74,7 +74,7 @@ export const applicationsApi = {
 		if (options.type) params.append("type", options.type);
 		const queryString = params.toString();
 		return apiFetch(
-			`/admin/applications${queryString ? `?${queryString}` : ""}`,
+			`/applications${queryString ? `?${queryString}` : ""}`,
 		);
 	},
 
@@ -94,11 +94,11 @@ export const applicationsApi = {
 	},
 
 	get(id: string): Promise<Application> {
-		return apiFetch(`/admin/applications/${id}`);
+		return apiFetch(`/applications/${id}`);
 	},
 
 	getByCode(code: string): Promise<Application> {
-		return apiFetch(`/admin/applications/by-code/${code}`);
+		return apiFetch(`/applications/by-code/${code}`);
 	},
 
 	/**
@@ -108,29 +108,29 @@ export const applicationsApi = {
 	create(
 		data: CreateApplicationRequest,
 	): Promise<ApplicationWithServiceAccount> {
-		return apiFetch("/admin/applications", {
+		return apiFetch("/applications", {
 			method: "POST",
 			body: JSON.stringify(data),
 		});
 	},
 
 	update(id: string, data: UpdateApplicationRequest): Promise<Application> {
-		return apiFetch(`/admin/applications/${id}`, {
+		return apiFetch(`/applications/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
 		});
 	},
 
 	activate(id: string): Promise<Application> {
-		return apiFetch(`/admin/applications/${id}/activate`, { method: "POST" });
+		return apiFetch(`/applications/${id}/activate`, { method: "POST" });
 	},
 
 	deactivate(id: string): Promise<Application> {
-		return apiFetch(`/admin/applications/${id}/deactivate`, { method: "POST" });
+		return apiFetch(`/applications/${id}/deactivate`, { method: "POST" });
 	},
 
 	delete(id: string): Promise<void> {
-		return apiFetch(`/admin/applications/${id}`, { method: "DELETE" });
+		return apiFetch(`/applications/${id}`, { method: "DELETE" });
 	},
 
 	/**
@@ -141,7 +141,7 @@ export const applicationsApi = {
 		message: string;
 		serviceAccount: ServiceAccountCredentials;
 	}> {
-		return apiFetch(`/admin/applications/${id}/provision-service-account`, {
+		return apiFetch(`/applications/${id}/provision-service-account`, {
 			method: "POST",
 		});
 	},

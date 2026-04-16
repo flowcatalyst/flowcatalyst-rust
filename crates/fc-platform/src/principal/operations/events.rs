@@ -741,6 +741,33 @@ impl PasswordResetCompleted {
             email: email.to_string(),
         }
     }
+
+    /// Emit a password-reset event attributed to an authenticated caller
+    /// (e.g. an admin invoking the reset endpoint). Preserves the caller's
+    /// execution/correlation IDs so audit logs and downstream projections can
+    /// trace the action back to them.
+    pub fn from_ctx(
+        ctx: &ExecutionContext,
+        principal_id: &str,
+        email: &str,
+    ) -> Self {
+        let event_id = TsidGenerator::generate_untyped();
+        let subject = format!("platform.user.{}", principal_id);
+        let message_group = format!("platform:user:{}", principal_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(),
+                ctx.correlation_id.clone(),
+                ctx.causation_id.clone(),
+                ctx.principal_id.clone(),
+            ),
+            principal_id: principal_id.to_string(),
+            email: email.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]

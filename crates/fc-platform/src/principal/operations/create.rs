@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 
+use crate::auth::password_service::PasswordService;
 use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::usecase::{
@@ -32,29 +33,49 @@ pub struct CreateUserCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
-    /// User scope (ANCHOR, PARTNER, CLIENT)
+    /// User scope (ANCHOR, PARTNER, CLIENT). The admin handler resolves this
+    /// from the email domain (anchor domain / email-domain-mapping) before
+    /// calling the use case.
     pub scope: UserScope,
 
-    /// Client ID (required for CLIENT scope users)
+    /// Home client ID. For CLIENT scope, typically the user's single client.
+    /// For PARTNER, the primary client the grants attach to (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
 
-    /// Initial password (optional, for embedded auth)
+    /// Client IDs to grant access to. Persisted as `iam_client_access_grants`
+    /// rows atomically with the principal insert (via `pg_persist`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub granted_client_ids: Vec<String>,
+
+    /// Initial password (optional, for embedded auth). Hashed by the use case.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+
+    /// When `false`, skip the platform's password complexity rules (uppercase/
+    /// lowercase/digit/special) and enforce only a 2-character minimum. Used
+    /// by SDK callers that apply their own policy. Defaults to `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enforce_password_complexity: Option<bool>,
 }
 
 
 /// Use case for creating a new user.
 pub struct CreateUserUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
+    password_service: Arc<PasswordService>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> CreateUserUseCase<U> {
-    pub fn new(principal_repo: Arc<PrincipalRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        principal_repo: Arc<PrincipalRepository>,
+        password_service: Arc<PasswordService>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             principal_repo,
+            password_service,
             unit_of_work,
         }
     }
@@ -123,18 +144,39 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             }
         }
 
-        // Set client_id if provided
+        // Set home client_id if provided
         if let Some(ref client_id) = command.client_id {
             principal = principal.with_client_id(client_id);
         }
 
-        // Set password if provided
+        // Grants — persisted atomically via `pg_persist` (syncs
+        // `iam_client_access_grants` in the same transaction as the principal
+        // insert).
+        for cid in &command.granted_client_ids {
+            principal.grant_client_access(cid.clone());
+        }
+
+        // Hash + set password if provided (internal-auth users).
         if let Some(ref password) = command.password {
-            if let Some(ref mut identity) = principal.user_identity {
-                // In production, this would be hashed
-                identity.password_hash = Some(password.clone());
+            let enforce = command.enforce_password_complexity.unwrap_or(true);
+            let hash = match self
+                .password_service
+                .hash_password_with_complexity(password, enforce)
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    return UseCaseResult::failure(UseCaseError::validation(
+                        "INVALID_PASSWORD",
+                        e.to_string(),
+                    ));
+                }
+            };
+            if let Some(identity) = principal.user_identity.as_mut() {
+                identity.password_hash = Some(hash);
             }
         }
+
+        let is_anchor_user = command.scope == UserScope::Anchor;
 
         // Create domain event using builder pattern
         let event = UserCreated::builder()
@@ -143,11 +185,11 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             .email(&email)
             .name(&principal.name)
             .scope(command.scope)
-            .client_id(command.client_id.as_deref())
-            .is_anchor_user(false)
+            .client_id(principal.client_id.as_deref())
+            .is_anchor_user(is_anchor_user)
             .build();
 
-        // Atomic commit
+        // Atomic commit — principal + event + audit log, in one transaction.
         self.unit_of_work.commit(&principal, event, &command).await
     }
 }
@@ -164,7 +206,9 @@ mod tests {
             name: Some("Test User".to_string()),
             scope: UserScope::Client,
             client_id: Some("client-123".to_string()),
+            granted_client_ids: vec![],
             password: None,
+            enforce_password_complexity: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

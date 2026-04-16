@@ -58,41 +58,41 @@ export const dispatchPoolsApi = {
 			params.set("anchorLevel", String(filters.anchorLevel));
 
 		const query = params.toString();
-		return apiFetch(`/admin/dispatch-pools${query ? `?${query}` : ""}`);
+		return apiFetch(`/dispatch-pools${query ? `?${query}` : ""}`);
 	},
 
 	get(id: string): Promise<DispatchPool> {
-		return apiFetch(`/admin/dispatch-pools/${id}`);
+		return apiFetch(`/dispatch-pools/${id}`);
 	},
 
 	create(data: CreateDispatchPoolRequest): Promise<DispatchPool> {
-		return apiFetch("/admin/dispatch-pools", {
+		return apiFetch("/dispatch-pools", {
 			method: "POST",
 			body: JSON.stringify(data),
 		});
 	},
 
 	update(id: string, data: UpdateDispatchPoolRequest): Promise<DispatchPool> {
-		return apiFetch(`/admin/dispatch-pools/${id}`, {
+		return apiFetch(`/dispatch-pools/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
 		});
 	},
 
 	delete(id: string): Promise<StatusResponse> {
-		return apiFetch(`/admin/dispatch-pools/${id}`, {
+		return apiFetch(`/dispatch-pools/${id}`, {
 			method: "DELETE",
 		});
 	},
 
 	suspend(id: string): Promise<StatusResponse> {
-		return apiFetch(`/admin/dispatch-pools/${id}/suspend`, {
+		return apiFetch(`/dispatch-pools/${id}/suspend`, {
 			method: "POST",
 		});
 	},
 
 	activate(id: string): Promise<StatusResponse> {
-		return apiFetch(`/admin/dispatch-pools/${id}/activate`, {
+		return apiFetch(`/dispatch-pools/${id}/activate`, {
 			method: "POST",
 		});
 	},

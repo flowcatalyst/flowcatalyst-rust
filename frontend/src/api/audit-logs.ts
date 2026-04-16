@@ -61,7 +61,7 @@ export async function fetchAuditLogs(
 
 	const query = params.toString();
 	return apiFetch<AuditLogListResponse>(
-		`/admin/audit-logs${query ? `?${query}` : ""}`,
+		`/audit-logs${query ? `?${query}` : ""}`,
 	);
 }
 
@@ -69,7 +69,7 @@ export async function fetchAuditLogs(
  * Fetch a single audit log by ID.
  */
 export async function fetchAuditLogById(id: string): Promise<AuditLogDetail> {
-	return apiFetch<AuditLogDetail>(`/admin/audit-logs/${id}`);
+	return apiFetch<AuditLogDetail>(`/audit-logs/${id}`);
 }
 
 /**
@@ -80,7 +80,7 @@ export async function fetchAuditLogsForEntity(
 	entityId: string,
 ): Promise<AuditLogListResponse> {
 	return apiFetch<AuditLogListResponse>(
-		`/admin/audit-logs/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+		`/audit-logs/entity/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
 	);
 }
 
@@ -88,26 +88,26 @@ export async function fetchAuditLogsForEntity(
  * Fetch distinct entity types that have audit logs.
  */
 export async function fetchEntityTypes(): Promise<{ entityTypes: string[] }> {
-	return apiFetch<{ entityTypes: string[] }>("/admin/audit-logs/entity-types");
+	return apiFetch<{ entityTypes: string[] }>("/audit-logs/entity-types");
 }
 
 /**
  * Fetch distinct operations that have audit logs.
  */
 export async function fetchOperations(): Promise<{ operations: string[] }> {
-	return apiFetch<{ operations: string[] }>("/admin/audit-logs/operations");
+	return apiFetch<{ operations: string[] }>("/audit-logs/operations");
 }
 
 /**
  * Fetch distinct application IDs present in audit logs.
  */
 export async function fetchDistinctApplicationIds(): Promise<{ applicationIds: string[] }> {
-	return apiFetch<{ applicationIds: string[] }>("/admin/audit-logs/application-ids");
+	return apiFetch<{ applicationIds: string[] }>("/audit-logs/application-ids");
 }
 
 /**
  * Fetch distinct client IDs present in audit logs.
  */
 export async function fetchDistinctClientIds(): Promise<{ clientIds: string[] }> {
-	return apiFetch<{ clientIds: string[] }>("/admin/audit-logs/client-ids");
+	return apiFetch<{ clientIds: string[] }>("/audit-logs/client-ids");
 }

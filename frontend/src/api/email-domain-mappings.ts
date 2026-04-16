@@ -62,22 +62,22 @@ export const emailDomainMappingsApi = {
 		if (params?.scopeType) searchParams.set("scopeType", params.scopeType);
 		const queryString = searchParams.toString();
 		return apiFetch(
-			`/admin/email-domain-mappings${queryString ? `?${queryString}` : ""}`,
+			`/email-domain-mappings${queryString ? `?${queryString}` : ""}`,
 		);
 	},
 
 	get(id: string): Promise<EmailDomainMapping> {
-		return apiFetch(`/admin/email-domain-mappings/${id}`);
+		return apiFetch(`/email-domain-mappings/${id}`);
 	},
 
 	getByDomain(domain: string): Promise<EmailDomainMapping> {
 		return apiFetch(
-			`/admin/email-domain-mappings/by-domain/${encodeURIComponent(domain)}`,
+			`/email-domain-mappings/by-domain/${encodeURIComponent(domain)}`,
 		);
 	},
 
 	create(data: CreateEmailDomainMappingRequest): Promise<EmailDomainMapping> {
-		return apiFetch("/admin/email-domain-mappings", {
+		return apiFetch("/email-domain-mappings", {
 			method: "POST",
 			body: JSON.stringify(data),
 		});
@@ -87,14 +87,14 @@ export const emailDomainMappingsApi = {
 		id: string,
 		data: UpdateEmailDomainMappingRequest,
 	): Promise<EmailDomainMapping> {
-		return apiFetch(`/admin/email-domain-mappings/${id}`, {
+		return apiFetch(`/email-domain-mappings/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
 		});
 	},
 
 	delete(id: string): Promise<void> {
-		return apiFetch(`/admin/email-domain-mappings/${id}`, {
+		return apiFetch(`/email-domain-mappings/${id}`, {
 			method: "DELETE",
 		});
 	},

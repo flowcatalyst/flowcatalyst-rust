@@ -57,6 +57,6 @@ export async function fetchLoginAttempts(
 
 	const query = params.toString();
 	return apiFetch<LoginAttemptListResponse>(
-		`/admin/login-attempts${query ? `?${query}` : ""}`,
+		`/login-attempts${query ? `?${query}` : ""}`,
 	);
 }

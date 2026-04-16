@@ -46,21 +46,21 @@ export interface UpdateIdentityProviderRequest {
 
 export const identityProvidersApi = {
 	list(): Promise<IdentityProviderListResponse> {
-		return apiFetch("/admin/identity-providers");
+		return apiFetch("/identity-providers");
 	},
 
 	get(id: string): Promise<IdentityProvider> {
-		return apiFetch(`/admin/identity-providers/${id}`);
+		return apiFetch(`/identity-providers/${id}`);
 	},
 
 	getByCode(code: string): Promise<IdentityProvider> {
 		return apiFetch(
-			`/admin/identity-providers/by-code/${encodeURIComponent(code)}`,
+			`/identity-providers/by-code/${encodeURIComponent(code)}`,
 		);
 	},
 
 	create(data: CreateIdentityProviderRequest): Promise<IdentityProvider> {
-		return apiFetch("/admin/identity-providers", {
+		return apiFetch("/identity-providers", {
 			method: "POST",
 			body: JSON.stringify(data),
 		});
@@ -70,14 +70,14 @@ export const identityProvidersApi = {
 		id: string,
 		data: UpdateIdentityProviderRequest,
 	): Promise<IdentityProvider> {
-		return apiFetch(`/admin/identity-providers/${id}`, {
+		return apiFetch(`/identity-providers/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
 		});
 	},
 
 	delete(id: string): Promise<void> {
-		return apiFetch(`/admin/identity-providers/${id}`, {
+		return apiFetch(`/identity-providers/${id}`, {
 			method: "DELETE",
 		});
 	},

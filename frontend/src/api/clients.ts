@@ -60,7 +60,7 @@ export const clientsApi = {
 			if (params.status) searchParams.set("status", params.status);
 		}
 		const query = searchParams.toString();
-		return apiFetch(`/admin/clients${query ? `?${query}` : ""}`);
+		return apiFetch(`/clients${query ? `?${query}` : ""}`);
 	},
 
 	search(params: ClientSearchParams = {}): Promise<ClientListResponse> {
@@ -70,47 +70,47 @@ export const clientsApi = {
 		if (params.limit) searchParams.set("limit", String(params.limit));
 		const queryString = searchParams.toString();
 		return apiFetch(
-			`/admin/clients/search${queryString ? `?${queryString}` : ""}`,
+			`/clients/search${queryString ? `?${queryString}` : ""}`,
 		);
 	},
 
 	get(id: string): Promise<Client> {
-		return apiFetch(`/admin/clients/${id}`);
+		return apiFetch(`/clients/${id}`);
 	},
 
 	getByIdentifier(identifier: string): Promise<Client> {
-		return apiFetch(`/admin/clients/by-identifier/${identifier}`);
+		return apiFetch(`/clients/by-identifier/${identifier}`);
 	},
 
 	create(data: CreateClientRequest): Promise<Client> {
-		return apiFetch("/admin/clients", {
+		return apiFetch("/clients", {
 			method: "POST",
 			body: JSON.stringify(data),
 		});
 	},
 
 	update(id: string, data: UpdateClientRequest): Promise<Client> {
-		return apiFetch(`/admin/clients/${id}`, {
+		return apiFetch(`/clients/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
 		});
 	},
 
 	activate(id: string): Promise<{ message: string }> {
-		return apiFetch(`/admin/clients/${id}/activate`, {
+		return apiFetch(`/clients/${id}/activate`, {
 			method: "POST",
 		});
 	},
 
 	suspend(id: string, reason: string): Promise<{ message: string }> {
-		return apiFetch(`/admin/clients/${id}/suspend`, {
+		return apiFetch(`/clients/${id}/suspend`, {
 			method: "POST",
 			body: JSON.stringify({ reason }),
 		});
 	},
 
 	deactivate(id: string, reason: string): Promise<{ message: string }> {
-		return apiFetch(`/admin/clients/${id}/deactivate`, {
+		return apiFetch(`/clients/${id}/deactivate`, {
 			method: "POST",
 			body: JSON.stringify({ reason }),
 		});
@@ -121,7 +121,7 @@ export const clientsApi = {
 		category: string,
 		text: string,
 	): Promise<{ message: string }> {
-		return apiFetch(`/admin/clients/${id}/notes`, {
+		return apiFetch(`/clients/${id}/notes`, {
 			method: "POST",
 			body: JSON.stringify({ category, text }),
 		});
@@ -129,7 +129,7 @@ export const clientsApi = {
 
 	// Application management
 	getApplications(clientId: string): Promise<ClientApplicationsResponse> {
-		return apiFetch(`/admin/clients/${clientId}/applications`);
+		return apiFetch(`/clients/${clientId}/applications`);
 	},
 
 	enableApplication(
@@ -137,7 +137,7 @@ export const clientsApi = {
 		applicationId: string,
 	): Promise<{ message: string }> {
 		return apiFetch(
-			`/admin/clients/${clientId}/applications/${applicationId}/enable`,
+			`/clients/${clientId}/applications/${applicationId}/enable`,
 			{
 				method: "POST",
 			},
@@ -149,7 +149,7 @@ export const clientsApi = {
 		applicationId: string,
 	): Promise<{ message: string }> {
 		return apiFetch(
-			`/admin/clients/${clientId}/applications/${applicationId}/disable`,
+			`/clients/${clientId}/applications/${applicationId}/disable`,
 			{
 				method: "POST",
 			},
@@ -160,7 +160,7 @@ export const clientsApi = {
 		clientId: string,
 		enabledApplicationIds: string[],
 	): Promise<{ message: string }> {
-		return apiFetch(`/admin/clients/${clientId}/applications`, {
+		return apiFetch(`/clients/${clientId}/applications`, {
 			method: "PUT",
 			body: JSON.stringify({ enabledApplicationIds }),
 		});

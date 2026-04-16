@@ -414,6 +414,11 @@ pub struct PrincipalsState {
     /// which emails the user a single-use reset link (same flow as
     /// user-initiated `/auth/password-reset/request`).
     pub password_reset_emailer: Option<Arc<crate::auth::password_reset_api::PasswordResetEmailer>>,
+    // Use cases — writes go through these so that events + audit logs are
+    // emitted atomically via UnitOfWork.
+    pub create_user_use_case: Arc<crate::principal::operations::CreateUserUseCase<crate::usecase::PgUnitOfWork>>,
+    pub grant_client_access_use_case: Arc<crate::principal::operations::GrantClientAccessUseCase<crate::usecase::PgUnitOfWork>>,
+    pub reset_password_use_case: Arc<crate::principal::operations::ResetPasswordUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 
@@ -436,18 +441,10 @@ pub async fn create_user(
     auth: Authenticated,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
+    use crate::principal::operations::{CreateUserCommand, GrantClientAccessCommand};
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
-
-    let enforce_complexity = req.enforce_password_complexity.unwrap_or(true);
-
-    let password_hash: Option<String> = match req.password.as_deref() {
-        Some(pwd) => {
-            let service = state.password_service.as_ref()
-                .ok_or_else(|| PlatformError::internal("Password service not configured"))?;
-            Some(service.hash_password_with_complexity(pwd, enforce_complexity)?)
-        }
-        None => None,
-    };
 
     let domain = req.email.split('@').nth(1)
         .ok_or_else(|| PlatformError::validation("Invalid email format"))?
@@ -459,117 +456,99 @@ pub async fn create_user(
         false
     };
 
-    // Anchor domain: ignore any client_id on the request.
-    if is_anchor_domain {
-        if state.principal_repo.find_by_email(&req.email).await?.is_some() {
-            return Err(PlatformError::duplicate("Principal", "email", &req.email));
-        }
-        let mut principal = Principal::new_user(&req.email, UserScope::Anchor);
-        principal.name = req.name.clone();
-        if let Some(hash) = password_hash.clone() {
-            if let Some(ref mut identity) = principal.user_identity {
-                identity.password_hash = Some(hash);
-            }
-        }
-        let id = principal.id.clone();
-        state.principal_repo.insert(&principal).await?;
-        if let Some(ref audit) = state.audit_service {
-            let _ = audit.log_create(&auth.0, "Principal", &id, format!("Created anchor user {}", req.email)).await;
-        }
-        return Ok(Json(principal.into()));
-    }
-
     let mapping = if let Some(ref edm_repo) = state.email_domain_mapping_repo {
         edm_repo.find_by_email_domain(&domain).await?
     } else {
         None
     };
 
-    // Partner domain: validate client_id, merge onto existing user if present.
-    if let Some(ref m) = mapping {
-        if m.scope_type == crate::email_domain_mapping::entity::ScopeType::Partner {
-            let client_id = req.client_id.as_deref()
-                .ok_or_else(|| PlatformError::validation("clientId is required for partner users"))?;
-
-            let allowed = m.granted_client_ids.iter().any(|c| c == client_id)
-                || m.primary_client_id.as_deref() == Some(client_id);
-            if !allowed {
-                return Err(PlatformError::validation(format!(
-                    "clientId {} is not allowed for partner domain {}", client_id, domain
-                )));
+    // Resolve scope + client association from email domain.
+    let (scope, primary_client_id, granted_client_ids) = if is_anchor_domain {
+        // Anchor: ignore any client_id on the request.
+        (UserScope::Anchor, None, Vec::new())
+    } else if let Some(ref m) = mapping {
+        match m.scope_type {
+            crate::email_domain_mapping::entity::ScopeType::Anchor => {
+                (UserScope::Anchor, None, Vec::new())
             }
-
-            if let Some(mut existing) = state.principal_repo.find_by_email(&req.email).await? {
-                let already_linked = existing.client_id.as_deref() == Some(client_id)
-                    || existing.assigned_clients.iter().any(|c| c == client_id);
-                if already_linked {
-                    return Err(PlatformError::duplicate("Principal", "email", &req.email));
+            crate::email_domain_mapping::entity::ScopeType::Partner => {
+                let client_id = req.client_id.as_deref().ok_or_else(|| {
+                    PlatformError::validation("clientId is required for partner users")
+                })?;
+                let allowed = m.granted_client_ids.iter().any(|c| c == client_id)
+                    || m.primary_client_id.as_deref() == Some(client_id);
+                if !allowed {
+                    return Err(PlatformError::validation(format!(
+                        "clientId {} is not allowed for partner domain {}",
+                        client_id, domain
+                    )));
                 }
-                state.principal_repo.grant_client_access(&existing.id, client_id).await?;
-                if let Some(ref audit) = state.audit_service {
-                    let _ = audit.log_client_access_granted(&auth.0, &existing.id, client_id).await;
-                }
-                existing.assigned_clients.push(client_id.to_string());
-                return Ok(Json(existing.into()));
-            }
 
-            let mut principal = Principal::new_user(&req.email, UserScope::Partner)
-                .with_client_id(client_id);
-            principal.name = req.name.clone();
-            if let Some(hash) = password_hash.clone() {
-                if let Some(ref mut identity) = principal.user_identity {
-                    identity.password_hash = Some(hash);
+                // Partner-merge: if a user already exists for this email, emit
+                // a ClientAccessGranted event via the grant use case rather
+                // than a fresh UserCreated. Keeps events + audit logs accurate.
+                if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
+                    let already_linked = existing.client_id.as_deref() == Some(client_id)
+                        || existing.assigned_clients.iter().any(|c| c == client_id);
+                    if already_linked {
+                        return Err(PlatformError::duplicate(
+                            "Principal", "email", &req.email,
+                        ));
+                    }
+                    let cmd = GrantClientAccessCommand {
+                        user_id: existing.id.clone(),
+                        client_id: client_id.to_string(),
+                    };
+                    let ctx = ExecutionContext::create(&auth.0.principal_id);
+                    state
+                        .grant_client_access_use_case
+                        .run(cmd, ctx)
+                        .await
+                        .into_result()?;
+                    let refreshed = state
+                        .principal_repo
+                        .find_by_id(&existing.id)
+                        .await?
+                        .or_not_found("Principal", &existing.id)?;
+                    return Ok(Json(refreshed.into()));
                 }
+
+                // New partner user — home client + single grant for the
+                // requested client.
+                (
+                    UserScope::Partner,
+                    Some(client_id.to_string()),
+                    vec![client_id.to_string()],
+                )
             }
-            principal.grant_client_access(client_id);
-            let id = principal.id.clone();
-            state.principal_repo.insert(&principal).await?;
-            state.principal_repo.grant_client_access(&id, client_id).await?;
-            if let Some(ref audit) = state.audit_service {
-                let _ = audit.log_create(&auth.0, "Principal", &id, format!("Created partner user {}", req.email)).await;
+            crate::email_domain_mapping::entity::ScopeType::Client => {
+                let primary = req.client_id.clone().or(m.primary_client_id.clone());
+                (UserScope::Client, primary, m.granted_client_ids.clone())
             }
-            return Ok(Json(principal.into()));
         }
-    }
-
-    // Client-scoped (mapped EDM=CLIENT, or no mapping at all).
-    if state.principal_repo.find_by_email(&req.email).await?.is_some() {
-        return Err(PlatformError::duplicate("Principal", "email", &req.email));
-    }
-
-    let (primary_client_id, granted_client_ids): (Option<String>, Vec<String>) = match mapping {
-        Some(m) => {
-            let primary = req.client_id.clone().or(m.primary_client_id.clone());
-            (primary, m.granted_client_ids.clone())
-        }
-        None => (req.client_id.clone(), Vec::new()),
+    } else {
+        // Unmapped domain → client-scoped, use request's client_id verbatim.
+        (UserScope::Client, req.client_id.clone(), Vec::new())
     };
 
-    let mut principal = Principal::new_user(&req.email, UserScope::Client);
-    principal.name = req.name.clone();
-    if let Some(hash) = password_hash {
-        if let Some(ref mut identity) = principal.user_identity {
-            identity.password_hash = Some(hash);
-        }
-    }
-    if let Some(ref cid) = primary_client_id {
-        principal = principal.with_client_id(cid.clone());
-    }
-    for cid in &granted_client_ids {
-        principal.grant_client_access(cid.clone());
-    }
+    let cmd = CreateUserCommand {
+        email: req.email.clone(),
+        name: Some(req.name.clone()),
+        scope,
+        client_id: primary_client_id,
+        granted_client_ids,
+        password: req.password.clone(),
+        enforce_password_complexity: req.enforce_password_complexity,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let event = state.create_user_use_case.run(cmd, ctx).await.into_result()?;
 
-    let id = principal.id.clone();
-    state.principal_repo.insert(&principal).await?;
-    for cid in &granted_client_ids {
-        state.principal_repo.grant_client_access(&id, cid).await?;
-    }
-
-    if let Some(ref audit) = state.audit_service {
-        let _ = audit.log_create(&auth.0, "Principal", &id, format!("Created user {}", req.email)).await;
-    }
-
-    Ok(Json(principal.into()))
+    let created = state
+        .principal_repo
+        .find_by_id(&event.principal_id)
+        .await?
+        .or_not_found("Principal", &event.principal_id)?;
+    Ok(Json(created.into()))
 }
 
 /// Get principal by ID
@@ -1280,49 +1259,20 @@ pub async fn reset_password(
     Path(id): Path<String>,
     Json(req): Json<ResetPasswordRequest>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    use crate::principal::operations::ResetPasswordCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    // Get password service
-    let password_service = state.password_service.as_ref()
-        .ok_or_else(|| PlatformError::internal("Password service not configured"))?;
-
-    let enforce_complexity = req.enforce_password_complexity.unwrap_or(true);
-
-    // Validate password
-    password_service.validate_password_with_complexity(&req.new_password, enforce_complexity)?;
-
-    let mut principal = state.principal_repo.find_by_id(&id).await?
-        .or_not_found("Principal", &id)?;
-
-    // Check that this is a user with internal auth
-    if !principal.is_user() {
-        return Err(PlatformError::validation("Password reset only applies to users"));
-    }
-
-    // Check for OIDC user (cannot reset password)
-    if principal.external_identity.is_some() {
-        return Err(PlatformError::validation(
-            "Cannot reset password for OIDC-authenticated users"
-        ));
-    }
-
-    // Hash the new password
-    let password_hash = password_service.hash_password_with_complexity(&req.new_password, enforce_complexity)?;
-
-    // Update the password hash
-    if let Some(ref mut identity) = principal.user_identity {
-        identity.password_hash = Some(password_hash);
-    }
-
-    principal.updated_at = chrono::Utc::now();
-    state.principal_repo.update(&principal).await?;
+    let cmd = ResetPasswordCommand {
+        principal_id: id.clone(),
+        new_password: req.new_password,
+        enforce_password_complexity: req.enforce_password_complexity,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    state.reset_password_use_case.run(cmd, ctx).await.into_result()?;
 
     tracing::info!(principal_id = %id, admin_id = %auth.0.principal_id, "Password reset");
-
-    // Audit log
-    if let Some(ref audit) = state.audit_service {
-        let _ = audit.log_update(&auth.0, "Principal", &id, "Password reset by admin".to_string()).await;
-    }
 
     Ok(Json(StatusChangeResponse {
         message: "Password reset successfully".to_string(),

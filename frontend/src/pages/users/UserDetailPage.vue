@@ -70,9 +70,20 @@ const deleteLoading = ref(false);
 const showSendResetDialog = ref(false);
 const sendingReset = ref(false);
 
+// Direct password reset (admin sets a new password for the user).
+// Used when the user can't receive the email (e.g. lost inbox access).
+const showResetPasswordDialog = ref(false);
+const resettingPassword = ref(false);
+const resetPasswordNew = ref("");
+const resetPasswordConfirm = ref("");
+const resetPasswordError = ref("");
+
 // Internal-auth users only — OIDC users manage credentials at their IDP.
 const canSendPasswordReset = computed(() =>
 	user.value?.idpType === "INTERNAL" && !!user.value?.email,
+);
+const canResetPassword = computed(() =>
+	user.value?.idpType === "INTERNAL",
 );
 
 const isAnchorUser = computed(() => user.value?.isAnchorUser ?? false);
@@ -375,6 +386,45 @@ async function sendPasswordReset() {
 		});
 	} finally {
 		sendingReset.value = false;
+	}
+}
+
+function openResetPasswordDialog() {
+	resetPasswordNew.value = "";
+	resetPasswordConfirm.value = "";
+	resetPasswordError.value = "";
+	showResetPasswordDialog.value = true;
+}
+
+async function resetPasswordDirect() {
+	if (!user.value) return;
+	resetPasswordError.value = "";
+	if (!resetPasswordNew.value) {
+		resetPasswordError.value = "Password is required";
+		return;
+	}
+	if (resetPasswordNew.value.length < 8) {
+		resetPasswordError.value = "Password must be at least 8 characters";
+		return;
+	}
+	if (resetPasswordNew.value !== resetPasswordConfirm.value) {
+		resetPasswordError.value = "Passwords do not match";
+		return;
+	}
+	resettingPassword.value = true;
+	try {
+		const result = await usersApi.resetPassword(userId, resetPasswordNew.value);
+		showResetPasswordDialog.value = false;
+		toast.add({
+			severity: "success",
+			summary: "Password reset",
+			detail: result.message,
+			life: 4000,
+		});
+	} catch (e: unknown) {
+		resetPasswordError.value = getErrorMessage(e, "Failed to reset password");
+	} finally {
+		resettingPassword.value = false;
 	}
 }
 
@@ -688,6 +738,15 @@ function goBack() {
             outlined
             @click="showSendResetDialog = true"
             v-tooltip.bottom="'Email the user a single-use link to set a new password'"
+          />
+          <Button
+            v-if="canResetPassword"
+            label="Reset Password"
+            icon="pi pi-key"
+            severity="secondary"
+            outlined
+            @click="openResetPasswordDialog"
+            v-tooltip.bottom="'Set a new password directly (use when the user can\'t receive email)'"
           />
           <Button
             :label="user.active ? 'Deactivate' : 'Activate'"
@@ -1134,6 +1193,60 @@ function goBack() {
           icon="pi pi-envelope"
           :loading="sendingReset"
           @click="sendPasswordReset"
+        />
+      </template>
+    </Dialog>
+
+    <!-- Direct Password Reset Dialog -->
+    <Dialog
+      v-model:visible="showResetPasswordDialog"
+      header="Reset Password"
+      modal
+      :style="{ width: '480px' }"
+    >
+      <div class="dialog-content">
+        <p>
+          Set a new password for <strong>{{ user?.name }}</strong><span v-if="user?.email"> (<code>{{ user?.email }}</code>)</span>.
+        </p>
+        <Message severity="warn" :closable="false">
+          The user will need to sign in with this new password immediately. Only use this when the
+          user can't receive the password-reset email (e.g. lost inbox access).
+        </Message>
+        <div class="form-field">
+          <label for="new-password">New password</label>
+          <Password
+            id="new-password"
+            v-model="resetPasswordNew"
+            :feedback="false"
+            toggleMask
+            inputClass="w-full"
+            placeholder="At least 8 characters"
+            :disabled="resettingPassword"
+          />
+        </div>
+        <div class="form-field">
+          <label for="confirm-password">Confirm password</label>
+          <Password
+            id="confirm-password"
+            v-model="resetPasswordConfirm"
+            :feedback="false"
+            toggleMask
+            inputClass="w-full"
+            :disabled="resettingPassword"
+          />
+        </div>
+        <Message v-if="resetPasswordError" severity="error" :closable="false">
+          {{ resetPasswordError }}
+        </Message>
+      </div>
+
+      <template #footer>
+        <Button label="Cancel" text @click="showResetPasswordDialog = false" :disabled="resettingPassword" />
+        <Button
+          label="Set Password"
+          icon="pi pi-key"
+          :loading="resettingPassword"
+          @click="resetPasswordDirect"
         />
       </template>
     </Dialog>

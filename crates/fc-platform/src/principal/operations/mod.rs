@@ -5,6 +5,7 @@
 pub mod events;
 pub mod create;
 pub mod update;
+pub mod reset_password;
 pub mod activate;
 pub mod deactivate;
 pub mod delete;
@@ -17,6 +18,7 @@ pub mod assign_application_access;
 pub use events::*;
 pub use create::{CreateUserCommand, CreateUserUseCase};
 pub use update::{UpdateUserCommand, UpdateUserUseCase};
+pub use reset_password::{ResetPasswordCommand, ResetPasswordUseCase};
 pub use activate::{ActivateUserCommand, ActivateUserUseCase};
 pub use deactivate::{DeactivateUserCommand, DeactivateUserUseCase};
 pub use delete::{DeleteUserCommand, DeleteUserUseCase};

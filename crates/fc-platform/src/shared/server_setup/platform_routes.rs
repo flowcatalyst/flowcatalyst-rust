@@ -112,6 +112,29 @@ pub fn build_platform_routes(
         external_base_url: config.password_reset_external_base_url.clone(),
     });
 
+    let create_user_use_case = Arc::new(
+        crate::principal::operations::CreateUserUseCase::new(
+            repos.principal_repo.clone(),
+            auth.password.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let grant_client_access_use_case = Arc::new(
+        crate::principal::operations::GrantClientAccessUseCase::new(
+            repos.principal_repo.clone(),
+            repos.client_repo.clone(),
+            repos.client_access_grant_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let reset_password_use_case = Arc::new(
+        crate::principal::operations::ResetPasswordUseCase::new(
+            repos.principal_repo.clone(),
+            auth.password.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+
     let principals_state = PrincipalsState {
         principal_repo: repos.principal_repo.clone(),
         audit_service: Some(audit_service),
@@ -123,6 +146,9 @@ pub fn build_platform_routes(
         application_repo: Some(repos.application_repo.clone()),
         app_client_config_repo: Some(repos.application_client_config_repo.clone()),
         password_reset_emailer: Some(password_reset_emailer.clone()),
+        create_user_use_case,
+        grant_client_access_use_case,
+        reset_password_use_case,
     };
     let roles_state = RolesState {
         role_repo: repos.role_repo.clone(),
