@@ -266,14 +266,20 @@ class FlowCatalystClient
             $body = (string) $response->getBody();
             $data = json_decode($body, true) ?? [];
 
-            // Handle different status codes
+            // Handle different status codes.
+            //
+            // Platform error responses look like:
+            //   { "error": "<machine code>", "message": "<human text>" }
+            // Surface the human message (falling back to the code) so callers
+            // get "Cannot reset password for OIDC-authenticated users" instead
+            // of "DUPLICATE".
             if ($statusCode === 401) {
                 throw AuthenticationException::tokenExpired();
             }
 
             if ($statusCode === 403) {
                 throw new FlowCatalystException(
-                    $data['error'] ?? 'Access forbidden',
+                    $data['message'] ?? $data['error'] ?? 'Access forbidden',
                     403,
                     null,
                     $data
@@ -282,7 +288,7 @@ class FlowCatalystClient
 
             if ($statusCode === 404) {
                 throw new FlowCatalystException(
-                    $data['error'] ?? 'Resource not found',
+                    $data['message'] ?? $data['error'] ?? 'Resource not found',
                     404,
                     null,
                     $data
@@ -295,7 +301,7 @@ class FlowCatalystClient
 
             if ($statusCode >= 400 && $statusCode < 500) {
                 throw new FlowCatalystException(
-                    $data['error'] ?? "Client error: {$statusCode}",
+                    $data['message'] ?? $data['error'] ?? "Client error: {$statusCode}",
                     $statusCode,
                     null,
                     $data
@@ -304,7 +310,7 @@ class FlowCatalystClient
 
             if ($statusCode >= 500) {
                 throw new FlowCatalystException(
-                    $data['error'] ?? "Server error: {$statusCode}",
+                    $data['message'] ?? $data['error'] ?? "Server error: {$statusCode}",
                     $statusCode,
                     null,
                     $data
