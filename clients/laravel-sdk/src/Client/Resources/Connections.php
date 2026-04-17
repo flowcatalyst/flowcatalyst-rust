@@ -6,7 +6,9 @@ namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
 use FlowCatalyst\DTOs\Connection;
-use FlowCatalyst\Enums\ConnectionStatus;
+use FlowCatalyst\DTOs\Requests\CreateConnectionRequest;
+use FlowCatalyst\DTOs\Requests\UpdateConnectionRequest;
+use FlowCatalyst\DTOs\Responses\ConnectionList;
 
 class Connections
 {
@@ -15,25 +17,27 @@ class Connections
     ) {}
 
     /**
-     * List all connections with optional filters.
-     *
-     * @param array $filters Optional filters: clientId, status, serviceAccountId
-     * @return array{connections: Connection[], total: int}
+     * List connections with optional filters.
      */
-    public function list(array $filters = []): array
-    {
-        $query = http_build_query($filters);
-        $endpoint = '/api/connections' . ($query ? "?{$query}" : '');
+    public function list(
+        ?string $clientId = null,
+        ?string $status = null,
+        ?string $serviceAccountId = null,
+    ): ConnectionList {
+        $queryParams = [];
+        if ($clientId !== null) {
+            $queryParams['clientId'] = $clientId;
+        }
+        if ($status !== null) {
+            $queryParams['status'] = $status;
+        }
+        if ($serviceAccountId !== null) {
+            $queryParams['serviceAccountId'] = $serviceAccountId;
+        }
+        $query = !empty($queryParams) ? '?' . http_build_query($queryParams) : '';
+        $response = $this->client->request('GET', "/api/connections{$query}");
 
-        $response = $this->client->request('GET', $endpoint);
-
-        return [
-            'connections' => array_map(
-                fn(array $item) => Connection::fromArray($item),
-                $response['connections'] ?? []
-            ),
-            'total' => $response['total'] ?? count($response['connections'] ?? []),
-        ];
+        return ConnectionList::fromArray($response);
     }
 
     /**
@@ -49,45 +53,25 @@ class Connections
     /**
      * Create a new connection.
      *
-     * @param array{
-     *     code: string,
-     *     name: string,
-     *     description?: string,
-     *     endpoint: string,
-     *     externalId?: string,
-     *     serviceAccountId: string,
-     *     clientId?: string
-     * } $data
+     * Returns the created connection's ID. Call `get($id)` if you need
+     * the full record.
      */
-    public function create(array $data): Connection
+    public function create(CreateConnectionRequest $request): string
     {
         $response = $this->client->request('POST', '/api/connections', [
-            'json' => $data,
+            'json' => $request->toArray(),
         ]);
 
-        return Connection::fromArray($response);
+        return (string) $response['id'];
     }
 
     /**
      * Update a connection.
-     *
-     * @param array{
-     *     name?: string,
-     *     description?: string|null,
-     *     endpoint?: string,
-     *     externalId?: string|null,
-     *     status?: ConnectionStatus|string
-     * } $data
      */
-    public function update(string $id, array $data): Connection
+    public function update(string $id, UpdateConnectionRequest $request): Connection
     {
-        // Convert enum to string
-        if (isset($data['status']) && $data['status'] instanceof ConnectionStatus) {
-            $data['status'] = $data['status']->value;
-        }
-
         $response = $this->client->request('PUT', "/api/connections/{$id}", [
-            'json' => $data,
+            'json' => $request->toArray(),
         ]);
 
         return Connection::fromArray($response);

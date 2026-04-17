@@ -6,6 +6,7 @@ namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
 use FlowCatalyst\DTOs\Permission;
+use FlowCatalyst\DTOs\Responses\PermissionList;
 
 class Permissions
 {
@@ -14,25 +15,17 @@ class Permissions
     ) {}
 
     /**
-     * List all permissions.
-     *
-     * @return array{permissions: Permission[], total: int}
+     * List the platform's permission catalogue.
      */
-    public function list(): array
+    public function list(): PermissionList
     {
         $response = $this->client->request('GET', '/api/roles/permissions');
 
-        return [
-            'permissions' => array_map(
-                fn(array $item) => Permission::fromArray($item),
-                $response['permissions'] ?? []
-            ),
-            'total' => $response['total'] ?? count($response['permissions'] ?? []),
-        ];
+        return PermissionList::fromArray($response);
     }
 
     /**
-     * Get a permission by name.
+     * Get a single permission by its full string.
      */
     public function get(string $permission): Permission
     {

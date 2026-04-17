@@ -6,6 +6,11 @@ namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
 use FlowCatalyst\DTOs\Client;
+use FlowCatalyst\DTOs\ClientApplication;
+use FlowCatalyst\DTOs\Requests\CreateClientRequest;
+use FlowCatalyst\DTOs\Requests\UpdateClientApplicationsRequest;
+use FlowCatalyst\DTOs\Requests\UpdateClientRequest;
+use FlowCatalyst\DTOs\Responses\ClientList;
 
 class Clients
 {
@@ -14,21 +19,27 @@ class Clients
     ) {}
 
     /**
-     * List all clients.
-     *
-     * @return array{clients: Client[], total: int}
+     * List clients.
      */
-    public function list(): array
+    public function list(?string $status = null): ClientList
     {
-        $response = $this->client->request('GET', '/api/clients');
+        $query = $status !== null
+            ? '?' . http_build_query(['status' => $status])
+            : '';
+        $response = $this->client->request('GET', "/api/clients{$query}");
 
-        return [
-            'clients' => array_map(
-                fn(array $item) => Client::fromArray($item),
-                $response['clients'] ?? []
-            ),
-            'total' => $response['total'] ?? 0,
-        ];
+        return ClientList::fromArray($response);
+    }
+
+    /**
+     * Search clients by name or identifier.
+     */
+    public function search(string $term): ClientList
+    {
+        $query = '?' . http_build_query(['q' => $term]);
+        $response = $this->client->request('GET', "/api/clients/search{$query}");
+
+        return ClientList::fromArray($response);
     }
 
     /**
@@ -42,33 +53,37 @@ class Clients
     }
 
     /**
-     * Create a new client.
-     *
-     * @param array{
-     *     name: string,
-     *     identifier: string
-     * } $data
+     * Get a client by its identifier (slug).
      */
-    public function create(array $data): Client
+    public function getByIdentifier(string $identifier): Client
     {
-        $response = $this->client->request('POST', '/api/clients', [
-            'json' => $data,
-        ]);
+        $response = $this->client->request('GET', "/api/clients/by-identifier/{$identifier}");
 
         return Client::fromArray($response);
     }
 
     /**
-     * Update a client.
+     * Create a new client.
      *
-     * @param array{
-     *     name?: string
-     * } $data
+     * Returns the created client's ID. The platform's create endpoint
+     * returns `{id}` only — use `get($id)` to fetch the full record.
      */
-    public function update(string $id, array $data): Client
+    public function create(CreateClientRequest $request): string
+    {
+        $response = $this->client->request('POST', '/api/clients', [
+            'json' => $request->toArray(),
+        ]);
+
+        return (string) $response['id'];
+    }
+
+    /**
+     * Update a client.
+     */
+    public function update(string $id, UpdateClientRequest $request): Client
     {
         $response = $this->client->request('PUT', "/api/clients/{$id}", [
-            'json' => $data,
+            'json' => $request->toArray(),
         ]);
 
         return Client::fromArray($response);
@@ -76,61 +91,79 @@ class Clients
 
     /**
      * Activate a client.
+     *
+     * The platform responds with `{message}` only. Call `get($id)` if you
+     * need the refreshed record.
      */
-    public function activate(string $id): Client
+    public function activate(string $id): void
     {
-        $response = $this->client->request('POST', "/api/clients/{$id}/activate");
-
-        return Client::fromArray($response);
+        $this->client->request('POST', "/api/clients/{$id}/activate");
     }
 
     /**
-     * Deactivate a client.
+     * Suspend a client. A reason is required.
      */
-    public function deactivate(string $id): Client
+    public function suspend(string $id, string $reason): void
     {
-        $response = $this->client->request('POST', "/api/clients/{$id}/deactivate");
-
-        return Client::fromArray($response);
-    }
-
-    /**
-     * Suspend a client with a reason.
-     */
-    public function suspend(string $id, string $reason): Client
-    {
-        $response = $this->client->request('POST', "/api/clients/{$id}/suspend", [
+        $this->client->request('POST', "/api/clients/{$id}/suspend", [
             'json' => ['reason' => $reason],
         ]);
-
-        return Client::fromArray($response);
     }
 
     /**
-     * Get applications configured for a client.
+     * Deactivate a client. A reason is required.
+     */
+    public function deactivate(string $id, string $reason): void
+    {
+        $this->client->request('POST', "/api/clients/{$id}/deactivate", [
+            'json' => ['reason' => $reason],
+        ]);
+    }
+
+    /**
+     * Add a note to a client's audit history.
+     */
+    public function addNote(string $id, string $category, string $text): void
+    {
+        $this->client->request('POST', "/api/clients/{$id}/notes", [
+            'json' => [
+                'category' => $category,
+                'text' => $text,
+            ],
+        ]);
+    }
+
+    /**
+     * List applications configured for a client.
      *
-     * @return array{applications: array<array{id: string, code: string, name: string, enabled: bool}>}
+     * @return ClientApplication[]
      */
     public function getApplications(string $id): array
     {
-        return $this->client->request('GET', "/api/clients/{$id}/applications");
+        $response = $this->client->request('GET', "/api/clients/{$id}/applications");
+
+        /** @var array<int, array<string, mixed>> $rows */
+        $rows = $response['applications'] ?? [];
+        return array_map(
+            fn(array $row) => ClientApplication::fromArray($row),
+            $rows,
+        );
     }
 
     /**
-     * Update the applications configured for a client.
-     *
-     * @param array{applicationIds: string[]} $data
-     * @return array{applications: array<array{id: string, code: string, name: string, enabled: bool}>}
+     * Declaratively set the applications enabled for a client.
      */
-    public function updateApplications(string $id, array $data): array
-    {
-        return $this->client->request('PUT', "/api/clients/{$id}/applications", [
-            'json' => $data,
+    public function updateApplications(
+        string $id,
+        UpdateClientApplicationsRequest $request,
+    ): void {
+        $this->client->request('PUT', "/api/clients/{$id}/applications", [
+            'json' => $request->toArray(),
         ]);
     }
 
     /**
-     * Enable an application for a client.
+     * Enable a single application for a client.
      */
     public function enableApplication(string $clientId, string $applicationId): void
     {
@@ -138,7 +171,7 @@ class Clients
     }
 
     /**
-     * Disable an application for a client.
+     * Disable a single application for a client.
      */
     public function disableApplication(string $clientId, string $applicationId): void
     {

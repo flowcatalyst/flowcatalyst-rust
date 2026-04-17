@@ -6,7 +6,12 @@ namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
 use FlowCatalyst\DTOs\EventType;
-use FlowCatalyst\Enums\SchemaType;
+use FlowCatalyst\DTOs\Requests\AddSchemaVersionRequest;
+use FlowCatalyst\DTOs\Requests\CreateEventTypeRequest;
+use FlowCatalyst\DTOs\Requests\SyncEventTypeEntry;
+use FlowCatalyst\DTOs\Requests\UpdateEventTypeRequest;
+use FlowCatalyst\DTOs\Responses\EventTypeList;
+use FlowCatalyst\DTOs\Responses\SyncResult;
 
 class EventTypes
 {
@@ -15,25 +20,27 @@ class EventTypes
     ) {}
 
     /**
-     * List all event types with optional filters.
-     *
-     * @param array $filters Optional filters: status, application, subdomain, aggregate
-     * @return array{eventTypes: EventType[], total: int}
+     * List event types.
      */
-    public function list(array $filters = []): array
-    {
-        $query = http_build_query($filters);
-        $endpoint = '/api/event-types' . ($query ? "?{$query}" : '');
+    public function list(
+        ?string $application = null,
+        ?string $clientId = null,
+        ?string $status = null,
+    ): EventTypeList {
+        $queryParams = [];
+        if ($application !== null) {
+            $queryParams['application'] = $application;
+        }
+        if ($clientId !== null) {
+            $queryParams['clientId'] = $clientId;
+        }
+        if ($status !== null) {
+            $queryParams['status'] = $status;
+        }
+        $query = !empty($queryParams) ? '?' . http_build_query($queryParams) : '';
+        $response = $this->client->request('GET', "/api/event-types{$query}");
 
-        $response = $this->client->request('GET', $endpoint);
-
-        return [
-            'eventTypes' => array_map(
-                fn(array $item) => EventType::fromArray($item),
-                $response['eventTypes'] ?? []
-            ),
-            'total' => $response['total'] ?? count($response['eventTypes'] ?? []),
-        ];
+        return EventTypeList::fromArray($response);
     }
 
     /**
@@ -47,83 +54,55 @@ class EventTypes
     }
 
     /**
+     * Get an event type by its full code.
+     */
+    public function getByCode(string $code): EventType
+    {
+        $response = $this->client->request('GET', "/api/event-types/by-code/{$code}");
+
+        return EventType::fromArray($response);
+    }
+
+    /**
      * Create a new event type.
      *
-     * @param array{code: string, name: string, description?: string} $data
+     * Returns the created event type's ID. Call `get($id)` if you need
+     * the full record.
      */
-    public function create(array $data): EventType
+    public function create(CreateEventTypeRequest $request): string
     {
         $response = $this->client->request('POST', '/api/event-types', [
-            'json' => $data,
+            'json' => $request->toArray(),
+        ]);
+
+        return (string) $response['id'];
+    }
+
+    /**
+     * Update an event type. The platform responds with 204 No Content.
+     */
+    public function update(string $id, UpdateEventTypeRequest $request): void
+    {
+        $this->client->request('PUT', "/api/event-types/{$id}", [
+            'json' => $request->toArray(),
+        ]);
+    }
+
+    /**
+     * Add a new schema version to an event type. The platform
+     * auto-increments the version number.
+     */
+    public function addSchemaVersion(string $id, AddSchemaVersionRequest $request): EventType
+    {
+        $response = $this->client->request('POST', "/api/event-types/{$id}/versions", [
+            'json' => $request->toArray(),
         ]);
 
         return EventType::fromArray($response);
     }
 
     /**
-     * Update an event type.
-     *
-     * @param array{name?: string, description?: string} $data
-     */
-    public function update(string $id, array $data): EventType
-    {
-        $response = $this->client->request('PATCH', "/api/event-types/{$id}", [
-            'json' => $data,
-        ]);
-
-        return EventType::fromArray($response);
-    }
-
-    /**
-     * Add a schema version to an event type.
-     *
-     * @param array{version: string, mimeType: string, schema: string, schemaType: SchemaType|string} $schema
-     */
-    public function addSchema(string $id, array $schema): EventType
-    {
-        if (isset($schema['schemaType']) && $schema['schemaType'] instanceof SchemaType) {
-            $schema['schemaType'] = $schema['schemaType']->value;
-        }
-
-        $response = $this->client->request('POST', "/api/event-types/{$id}/schemas", [
-            'json' => $schema,
-        ]);
-
-        return EventType::fromArray($response);
-    }
-
-    /**
-     * Finalise a schema version (FINALISING -> CURRENT).
-     */
-    public function finaliseSchema(string $id, string $version): EventType
-    {
-        $response = $this->client->request('POST', "/api/event-types/{$id}/schemas/{$version}/finalise");
-
-        return EventType::fromArray($response);
-    }
-
-    /**
-     * Deprecate a schema version (CURRENT -> DEPRECATED).
-     */
-    public function deprecateSchema(string $id, string $version): EventType
-    {
-        $response = $this->client->request('POST', "/api/event-types/{$id}/schemas/{$version}/deprecate");
-
-        return EventType::fromArray($response);
-    }
-
-    /**
-     * Archive an event type.
-     */
-    public function archive(string $id): EventType
-    {
-        $response = $this->client->request('POST', "/api/event-types/{$id}/archive");
-
-        return EventType::fromArray($response);
-    }
-
-    /**
-     * Delete an event type.
+     * Delete (archive) an event type.
      */
     public function delete(string $id): void
     {
@@ -131,99 +110,32 @@ class EventTypes
     }
 
     /**
-     * Get distinct application names for filtering.
-     *
-     * @return string[]
-     */
-    public function filterApplications(): array
-    {
-        $response = $this->client->request('GET', '/api/event-types/filters/applications');
-
-        return $response['applications'] ?? $response ?? [];
-    }
-
-    /**
-     * Get distinct subdomains for filtering.
-     *
-     * @return string[]
-     */
-    public function filterSubdomains(?string $application = null): array
-    {
-        $query = $application ? "?application={$application}" : '';
-        $response = $this->client->request('GET', "/api/event-types/filters/subdomains{$query}");
-
-        return $response['subdomains'] ?? $response ?? [];
-    }
-
-    /**
-     * Get distinct aggregates for filtering.
-     *
-     * @return string[]
-     */
-    public function filterAggregates(?string $application = null, ?string $subdomain = null): array
-    {
-        $params = array_filter([
-            'application' => $application,
-            'subdomain' => $subdomain,
-        ]);
-        $query = $params ? '?' . http_build_query($params) : '';
-        $response = $this->client->request('GET', "/api/event-types/filters/aggregates{$query}");
-
-        return $response['aggregates'] ?? $response ?? [];
-    }
-
-    /**
-     * List event types for an application (by code prefix).
-     *
-     * @param string $appCode The application code
-     * @param string|null $source Filter by source (API or UI)
-     * @return array{eventTypes: EventType[], total: int}
-     */
-    public function listForApplication(string $appCode, ?string $source = null): array
-    {
-        $query = $source ? "?source={$source}" : '';
-        $response = $this->client->request('GET', "/api/applications/{$appCode}/event-types{$query}");
-
-        return [
-            'eventTypes' => array_map(
-                fn(array $item) => EventType::fromArray($item),
-                $response['eventTypes'] ?? []
-            ),
-            'total' => $response['total'] ?? count($response['eventTypes'] ?? []),
-        ];
-    }
-
-    /**
-     * Sync event types for an application.
-     *
-     * This creates/updates event types with source=API and optionally removes
+     * Sync event types for an application. Creates/updates event types
+     * whose source is `API` and, when `$removeUnlisted` is true, archives
      * API-sourced event types not in the sync list.
      *
-     * @param string $appCode The application code
-     * @param array<array{
-     *     code: string,
-     *     name: string,
-     *     description?: string
-     * }> $eventTypes The event types to sync (codes are relative to app, e.g., "order:created")
-     * @param bool $removeUnlisted If true, removes API-sourced event types not in the list
-     * @return array{created: int, updated: int, deleted: int, eventTypes: EventType[]}
+     * @param SyncEventTypeEntry[] $eventTypes
      */
-    public function sync(string $appCode, array $eventTypes, bool $removeUnlisted = false): array
-    {
+    public function sync(
+        string $applicationCode,
+        array $eventTypes,
+        bool $removeUnlisted = false,
+    ): SyncResult {
         $query = $removeUnlisted ? '?removeUnlisted=true' : '';
 
-        $response = $this->client->request('POST', "/api/applications/{$appCode}/event-types/sync{$query}", [
-            'json' => ['eventTypes' => $eventTypes],
-        ]);
+        $response = $this->client->request(
+            'POST',
+            "/api/applications/{$applicationCode}/event-types/sync{$query}",
+            [
+                'json' => [
+                    'eventTypes' => array_map(
+                        fn(SyncEventTypeEntry $entry) => $entry->toArray(),
+                        $eventTypes,
+                    ),
+                ],
+            ],
+        );
 
-        return [
-            'created' => $response['created'] ?? 0,
-            'updated' => $response['updated'] ?? 0,
-            'deleted' => $response['deleted'] ?? 0,
-            'eventTypes' => array_map(
-                fn(array $item) => EventType::fromArray($item),
-                $response['eventTypes'] ?? []
-            ),
-        ];
+        return SyncResult::fromArray($response);
     }
 }

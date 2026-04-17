@@ -6,13 +6,14 @@ namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
 use FlowCatalyst\DTOs\MyClient;
-use FlowCatalyst\DTOs\MyApplication;
+use FlowCatalyst\DTOs\Responses\MyApplicationList;
+use FlowCatalyst\DTOs\Responses\MyClientList;
 
 /**
  * Me Resource
  *
- * User-scoped endpoints for accessing resources the authenticated user has access to.
- * These endpoints do NOT require admin permissions.
+ * User-scoped endpoints for accessing resources the authenticated user
+ * has access to. These endpoints do NOT require admin permissions.
  */
 class Me
 {
@@ -27,20 +28,12 @@ class Me
      * - ANCHOR: All active clients
      * - PARTNER: IDP granted clients + explicit grants
      * - CLIENT: Home client + IDP additional clients + explicit grants
-     *
-     * @return array{clients: MyClient[], total: int}
      */
-    public function getClients(): array
+    public function getClients(): MyClientList
     {
         $response = $this->client->request('GET', '/api/me/clients');
 
-        return [
-            'clients' => array_map(
-                fn(array $item) => MyClient::fromArray($item),
-                $response['clients'] ?? []
-            ),
-            'total' => $response['total'] ?? 0,
-        ];
+        return MyClientList::fromArray($response);
     }
 
     /**
@@ -55,20 +48,11 @@ class Me
 
     /**
      * Get applications enabled for a client the user has access to.
-     *
-     * @return array{applications: MyApplication[], total: int, clientId: string}
      */
-    public function getClientApplications(string $clientId): array
+    public function getClientApplications(string $clientId): MyApplicationList
     {
         $response = $this->client->request('GET', "/api/me/clients/{$clientId}/applications");
 
-        return [
-            'applications' => array_map(
-                fn(array $item) => MyApplication::fromArray($item),
-                $response['applications'] ?? []
-            ),
-            'total' => $response['total'] ?? 0,
-            'clientId' => $response['clientId'] ?? $clientId,
-        ];
+        return MyApplicationList::fromArray($response);
     }
 }

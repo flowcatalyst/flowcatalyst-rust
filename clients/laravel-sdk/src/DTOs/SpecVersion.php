@@ -4,35 +4,49 @@ declare(strict_types=1);
 
 namespace FlowCatalyst\DTOs;
 
-use FlowCatalyst\Enums\SchemaType;
 use FlowCatalyst\Enums\SpecVersionStatus;
 
-class SpecVersion
+/**
+ * A schema version for an event type.
+ *
+ * `schema` is only populated on single-event-type responses
+ * (GET /api/event-types/{id}), not on list responses.
+ */
+final class SpecVersion
 {
+    /**
+     * @param array<string, mixed>|null $schema The JSON Schema document
+     */
     public function __construct(
         public readonly string $version,
-        public readonly string $mimeType,
-        public readonly SchemaType $schemaType,
         public readonly SpecVersionStatus $status,
+        public readonly ?array $schema = null,
     ) {}
 
+    /**
+     * @param array<string, mixed> $data
+     */
     public static function fromArray(array $data): self
     {
+        /** @var array<string, mixed>|null $schema */
+        $schema = $data['schema'] ?? null;
         return new self(
-            version: $data['version'],
-            mimeType: $data['mimeType'] ?? 'application/json',
-            schemaType: SchemaType::tryFrom($data['schemaType'] ?? 'JSON_SCHEMA') ?? SchemaType::JSON_SCHEMA,
-            status: SpecVersionStatus::tryFrom($data['status'] ?? 'CURRENT') ?? SpecVersionStatus::CURRENT,
+            version: (string) $data['version'],
+            status: SpecVersionStatus::tryFrom((string) ($data['status'] ?? 'CURRENT'))
+                ?? SpecVersionStatus::CURRENT,
+            schema: is_array($schema) ? $schema : null,
         );
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function toArray(): array
     {
         return [
             'version' => $this->version,
-            'mimeType' => $this->mimeType,
-            'schemaType' => $this->schemaType->value,
             'status' => $this->status->value,
+            'schema' => $this->schema,
         ];
     }
 

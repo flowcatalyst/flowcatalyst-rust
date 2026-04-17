@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
+use FlowCatalyst\DTOs\Requests\CreateRoleRequest;
+use FlowCatalyst\DTOs\Requests\SyncRoleEntry;
+use FlowCatalyst\DTOs\Requests\UpdateRoleRequest;
+use FlowCatalyst\DTOs\Responses\RoleList;
+use FlowCatalyst\DTOs\Responses\SyncResult;
 use FlowCatalyst\DTOs\Role;
 
 class Roles
@@ -14,25 +19,31 @@ class Roles
     ) {}
 
     /**
-     * List all roles.
-     *
-     * @return array{roles: Role[], total: int}
+     * List roles.
      */
-    public function list(): array
-    {
-        $response = $this->client->request('GET', '/api/roles');
+    public function list(
+        ?string $applicationCode = null,
+        ?string $source = null,
+        ?bool $clientManaged = null,
+    ): RoleList {
+        $queryParams = [];
+        if ($applicationCode !== null) {
+            $queryParams['applicationCode'] = $applicationCode;
+        }
+        if ($source !== null) {
+            $queryParams['source'] = $source;
+        }
+        if ($clientManaged !== null) {
+            $queryParams['clientManaged'] = $clientManaged ? 'true' : 'false';
+        }
+        $query = !empty($queryParams) ? '?' . http_build_query($queryParams) : '';
+        $response = $this->client->request('GET', "/api/roles{$query}");
 
-        return [
-            'roles' => array_map(
-                fn(array $item) => Role::fromArray($item),
-                $response['roles'] ?? []
-            ),
-            'total' => $response['total'] ?? count($response['roles'] ?? []),
-        ];
+        return RoleList::fromArray($response);
     }
 
     /**
-     * Get a role by name.
+     * Get a role by name or ID.
      */
     public function get(string $roleName): Role
     {
@@ -42,40 +53,58 @@ class Roles
     }
 
     /**
+     * Get a role by its full code.
+     */
+    public function getByCode(string $code): Role
+    {
+        $response = $this->client->request('GET', "/api/roles/by-code/{$code}");
+
+        return Role::fromArray($response);
+    }
+
+    /**
      * Create a new role.
      *
-     * @param array{
-     *     applicationCode?: string,
-     *     name: string,
-     *     displayName?: string,
-     *     description?: string,
-     *     permissions?: string[],
-     *     clientManaged?: bool
-     * } $data
+     * Returns the created role's ID. Call `get($id)` if you need the
+     * full record.
      */
-    public function create(array $data): Role
+    public function create(CreateRoleRequest $request): string
     {
         $response = $this->client->request('POST', '/api/roles', [
-            'json' => $data,
+            'json' => $request->toArray(),
+        ]);
+
+        return (string) $response['id'];
+    }
+
+    /**
+     * Update a role. The platform responds with 204 No Content.
+     */
+    public function update(string $roleName, UpdateRoleRequest $request): void
+    {
+        $this->client->request('PUT', "/api/roles/{$roleName}", [
+            'json' => $request->toArray(),
+        ]);
+    }
+
+    /**
+     * Grant a permission to a role.
+     */
+    public function grantPermission(string $roleName, string $permission): Role
+    {
+        $response = $this->client->request('POST', "/api/roles/{$roleName}/permissions", [
+            'json' => ['permission' => $permission],
         ]);
 
         return Role::fromArray($response);
     }
 
     /**
-     * Update a role.
-     *
-     * @param array{
-     *     displayName?: string,
-     *     description?: string,
-     *     permissions?: string[]
-     * } $data
+     * Revoke a permission from a role.
      */
-    public function update(string $roleName, array $data): Role
+    public function revokePermission(string $roleName, string $permission): Role
     {
-        $response = $this->client->request('PUT', "/api/roles/{$roleName}", [
-            'json' => $data,
-        ]);
+        $response = $this->client->request('DELETE', "/api/roles/{$roleName}/permissions/{$permission}");
 
         return Role::fromArray($response);
     }
@@ -89,36 +118,32 @@ class Roles
     }
 
     /**
-     * Sync roles for an application.
+     * Sync roles for an application. Creates/updates roles with
+     * source=`SDK` and, when `$removeUnlisted` is true, removes
+     * SDK-managed roles not in the sync list.
      *
-     * This creates/updates roles with source=SDK and optionally removes
-     * SDK roles not in the sync list.
-     *
-     * @param string $appCode The application code
-     * @param array<array{
-     *     name: string,
-     *     displayName?: string,
-     *     description?: string,
-     *     permissions?: string[],
-     *     clientManaged?: bool
-     * }> $roles The roles to sync
-     * @param bool $removeUnlisted If true, removes SDK roles not in the list
-     * @return array{syncedCount: int, roles: Role[]}
+     * @param SyncRoleEntry[] $roles
      */
-    public function sync(string $appCode, array $roles, bool $removeUnlisted = false): array
-    {
+    public function sync(
+        string $applicationCode,
+        array $roles,
+        bool $removeUnlisted = false,
+    ): SyncResult {
         $query = $removeUnlisted ? '?removeUnlisted=true' : '';
 
-        $response = $this->client->request('POST', "/api/applications/{$appCode}/roles/sync{$query}", [
-            'json' => ['roles' => $roles],
-        ]);
+        $response = $this->client->request(
+            'POST',
+            "/api/applications/{$applicationCode}/roles/sync{$query}",
+            [
+                'json' => [
+                    'roles' => array_map(
+                        fn(SyncRoleEntry $entry) => $entry->toArray(),
+                        $roles,
+                    ),
+                ],
+            ],
+        );
 
-        return [
-            'syncedCount' => $response['syncedCount'] ?? count($response['roles'] ?? []),
-            'roles' => array_map(
-                fn(array $item) => Role::fromArray($item),
-                $response['roles'] ?? []
-            ),
-        ];
+        return SyncResult::fromArray($response);
     }
 }

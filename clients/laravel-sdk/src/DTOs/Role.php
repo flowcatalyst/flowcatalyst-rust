@@ -4,71 +4,70 @@ declare(strict_types=1);
 
 namespace FlowCatalyst\DTOs;
 
-use FlowCatalyst\Generated\Model\RoleDto;
-
-class Role
+/**
+ * A role assignable to principals.
+ *
+ * `name` is the full role code (prefixed with application, e.g. `orders:admin`).
+ * `shortName` is the segment after the colon (e.g. `admin`).
+ */
+final class Role
 {
     /**
      * @param string[] $permissions
      */
     public function __construct(
+        public readonly string $id,
         public readonly string $name,
-        public readonly ?string $applicationCode,
-        public readonly ?string $fullName,
-        public readonly ?string $displayName,
-        public readonly ?string $description,
+        public readonly string $shortName,
+        public readonly string $displayName,
+        public readonly string $applicationCode,
+        public readonly string $source,
         public readonly array $permissions,
-        public readonly ?string $source,
         public readonly bool $clientManaged,
-        public readonly ?string $createdAt,
-        public readonly ?string $updatedAt,
+        public readonly string $createdAt,
+        public readonly string $updatedAt,
+        public readonly ?string $description = null,
     ) {}
 
-    public static function fromGenerated(RoleDto $dto): self
-    {
-        return new self(
-            name: $dto->getName(),
-            applicationCode: $dto->getApplicationCode(),
-            fullName: $dto->getName(),
-            displayName: $dto->getDisplayName(),
-            description: $dto->getDescription(),
-            permissions: $dto->getPermissions() ?? [],
-            source: $dto->getSource(),
-            clientManaged: $dto->getClientManaged() ?? false,
-            createdAt: $dto->getCreatedAt()?->format('c'),
-            updatedAt: $dto->getUpdatedAt()?->format('c'),
-        );
-    }
-
+    /**
+     * @param array<string, mixed> $data
+     */
     public static function fromArray(array $data): self
     {
+        /** @var string[] $permissions */
+        $permissions = $data['permissions'] ?? [];
         return new self(
-            name: $data['name'],
-            applicationCode: $data['applicationCode'] ?? null,
-            fullName: $data['fullName'] ?? null,
-            displayName: $data['displayName'] ?? null,
-            description: $data['description'] ?? null,
-            permissions: $data['permissions'] ?? [],
-            source: $data['source'] ?? null,
-            clientManaged: $data['clientManaged'] ?? false,
-            createdAt: $data['createdAt'] ?? null,
-            updatedAt: $data['updatedAt'] ?? null,
+            id: (string) ($data['id'] ?? ''),
+            name: (string) $data['name'],
+            shortName: (string) ($data['shortName'] ?? ''),
+            displayName: (string) ($data['displayName'] ?? ''),
+            applicationCode: (string) ($data['applicationCode'] ?? ''),
+            source: (string) ($data['source'] ?? ''),
+            permissions: $permissions,
+            clientManaged: (bool) ($data['clientManaged'] ?? false),
+            createdAt: (string) ($data['createdAt'] ?? ''),
+            updatedAt: (string) ($data['updatedAt'] ?? ''),
+            description: isset($data['description']) ? (string) $data['description'] : null,
         );
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     public function toArray(): array
     {
         return [
+            'id' => $this->id,
             'name' => $this->name,
-            'applicationCode' => $this->applicationCode,
-            'fullName' => $this->fullName,
+            'shortName' => $this->shortName,
             'displayName' => $this->displayName,
-            'description' => $this->description,
-            'permissions' => $this->permissions,
+            'applicationCode' => $this->applicationCode,
             'source' => $this->source,
+            'permissions' => $this->permissions,
             'clientManaged' => $this->clientManaged,
             'createdAt' => $this->createdAt,
             'updatedAt' => $this->updatedAt,
+            'description' => $this->description,
         ];
     }
 

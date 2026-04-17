@@ -6,6 +6,9 @@ namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
 use FlowCatalyst\DTOs\Application;
+use FlowCatalyst\DTOs\Requests\CreateApplicationRequest;
+use FlowCatalyst\DTOs\Requests\UpdateApplicationRequest;
+use FlowCatalyst\DTOs\Responses\ApplicationList;
 
 class Applications
 {
@@ -14,21 +17,17 @@ class Applications
     ) {}
 
     /**
-     * List all applications.
-     *
-     * @return array{applications: Application[], total: int}
+     * List applications.
      */
-    public function list(): array
+    public function list(?bool $active = null): ApplicationList
     {
-        $response = $this->client->request('GET', '/api/applications');
+        $query = $active !== null
+            ? '?' . http_build_query(['active' => $active ? 'true' : 'false'])
+            : '';
 
-        return [
-            'applications' => array_map(
-                fn(array $item) => Application::fromArray($item),
-                $response['applications'] ?? []
-            ),
-            'total' => $response['total'] ?? 0,
-        ];
+        $response = $this->client->request('GET', "/api/applications{$query}");
+
+        return ApplicationList::fromArray($response);
     }
 
     /**
@@ -53,19 +52,11 @@ class Applications
 
     /**
      * Create a new application.
-     *
-     * @param array{
-     *     code: string,
-     *     name: string,
-     *     description?: string,
-     *     defaultBaseUrl?: string,
-     *     iconUrl?: string
-     * } $data
      */
-    public function create(array $data): Application
+    public function create(CreateApplicationRequest $request): Application
     {
         $response = $this->client->request('POST', '/api/applications', [
-            'json' => $data,
+            'json' => $request->toArray(),
         ]);
 
         return Application::fromArray($response);
@@ -73,18 +64,11 @@ class Applications
 
     /**
      * Update an application.
-     *
-     * @param array{
-     *     name?: string,
-     *     description?: string,
-     *     defaultBaseUrl?: string,
-     *     iconUrl?: string
-     * } $data
      */
-    public function update(string $id, array $data): Application
+    public function update(string $id, UpdateApplicationRequest $request): Application
     {
         $response = $this->client->request('PUT', "/api/applications/{$id}", [
-            'json' => $data,
+            'json' => $request->toArray(),
         ]);
 
         return Application::fromArray($response);

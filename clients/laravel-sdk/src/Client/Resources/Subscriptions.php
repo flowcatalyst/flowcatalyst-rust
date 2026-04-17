@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
+use FlowCatalyst\DTOs\Requests\CreateSubscriptionRequest;
+use FlowCatalyst\DTOs\Requests\SyncSubscriptionEntry;
+use FlowCatalyst\DTOs\Requests\UpdateSubscriptionRequest;
+use FlowCatalyst\DTOs\Responses\SubscriptionList;
+use FlowCatalyst\DTOs\Responses\SyncResult;
 use FlowCatalyst\DTOs\Subscription;
-use FlowCatalyst\Enums\DispatchMode;
-use FlowCatalyst\Enums\SubscriptionSource;
-use FlowCatalyst\Enums\SubscriptionStatus;
 
 class Subscriptions
 {
@@ -17,25 +19,23 @@ class Subscriptions
     ) {}
 
     /**
-     * List all subscriptions with optional filters.
-     *
-     * @param array $filters Optional filters: clientId, status
-     * @return array{subscriptions: Subscription[], total: int}
+     * List subscriptions.
      */
-    public function list(array $filters = []): array
-    {
-        $query = http_build_query($filters);
-        $endpoint = '/api/subscriptions' . ($query ? "?{$query}" : '');
+    public function list(
+        ?string $clientId = null,
+        ?string $status = null,
+    ): SubscriptionList {
+        $queryParams = [];
+        if ($clientId !== null) {
+            $queryParams['clientId'] = $clientId;
+        }
+        if ($status !== null) {
+            $queryParams['status'] = $status;
+        }
+        $query = !empty($queryParams) ? '?' . http_build_query($queryParams) : '';
+        $response = $this->client->request('GET', "/api/subscriptions{$query}");
 
-        $response = $this->client->request('GET', $endpoint);
-
-        return [
-            'subscriptions' => array_map(
-                fn(array $item) => Subscription::fromArray($item),
-                $response['subscriptions'] ?? []
-            ),
-            'total' => $response['total'] ?? count($response['subscriptions'] ?? []),
-        ];
+        return SubscriptionList::fromArray($response);
     }
 
     /**
@@ -51,80 +51,26 @@ class Subscriptions
     /**
      * Create a new subscription.
      *
-     * @param array{
-     *     code: string,
-     *     name: string,
-     *     description?: string,
-     *     clientId?: string,
-     *     eventTypes: array<array{eventTypeId?: string, eventTypeCode?: string, specVersion?: string}>,
-     *     connectionId: string,
-     *     queue: string,
-     *     dispatchPoolId: string,
-     *     customConfig?: array<array{key: string, value: string}>,
-     *     source?: SubscriptionSource|string,
-     *     maxAgeSeconds?: int,
-     *     delaySeconds?: int,
-     *     sequence?: int,
-     *     mode?: DispatchMode|string,
-     *     timeoutSeconds?: int,
-     *     dataOnly?: bool
-     * } $data
+     * Returns the created subscription's ID. Call `get($id)` if you need
+     * the full record.
      */
-    public function create(array $data): Subscription
+    public function create(CreateSubscriptionRequest $request): string
     {
-        // Convert enums to strings
-        if (isset($data['source']) && $data['source'] instanceof SubscriptionSource) {
-            $data['source'] = $data['source']->value;
-        }
-        if (isset($data['mode']) && $data['mode'] instanceof DispatchMode) {
-            $data['mode'] = $data['mode']->value;
-        }
-
-        // Default source to API when created via SDK
-        $data['source'] ??= SubscriptionSource::API->value;
-
         $response = $this->client->request('POST', '/api/subscriptions', [
-            'json' => $data,
+            'json' => $request->toArray(),
         ]);
 
-        return Subscription::fromArray($response);
+        return (string) $response['id'];
     }
 
     /**
-     * Update a subscription.
-     *
-     * @param array{
-     *     name?: string,
-     *     description?: string,
-     *     eventTypes?: array<array{eventTypeId?: string, eventTypeCode?: string, specVersion?: string}>,
-     *     connectionId?: string,
-     *     queue?: string,
-     *     dispatchPoolId?: string,
-     *     customConfig?: array<array{key: string, value: string}>,
-     *     status?: SubscriptionStatus|string,
-     *     maxAgeSeconds?: int,
-     *     delaySeconds?: int,
-     *     sequence?: int,
-     *     mode?: DispatchMode|string,
-     *     timeoutSeconds?: int,
-     *     dataOnly?: bool
-     * } $data
+     * Update a subscription. The platform responds with 204 No Content.
      */
-    public function update(string $id, array $data): Subscription
+    public function update(string $id, UpdateSubscriptionRequest $request): void
     {
-        // Convert enums to strings
-        if (isset($data['status']) && $data['status'] instanceof SubscriptionStatus) {
-            $data['status'] = $data['status']->value;
-        }
-        if (isset($data['mode']) && $data['mode'] instanceof DispatchMode) {
-            $data['mode'] = $data['mode']->value;
-        }
-
-        $response = $this->client->request('PUT', "/api/subscriptions/{$id}", [
-            'json' => $data,
+        $this->client->request('PUT', "/api/subscriptions/{$id}", [
+            'json' => $request->toArray(),
         ]);
-
-        return Subscription::fromArray($response);
     }
 
     /**
@@ -138,90 +84,50 @@ class Subscriptions
     /**
      * Pause a subscription.
      */
-    public function pause(string $id): array
+    public function pause(string $id): Subscription
     {
-        return $this->client->request('POST', "/api/subscriptions/{$id}/pause");
+        $response = $this->client->request('POST', "/api/subscriptions/{$id}/pause");
+
+        return Subscription::fromArray($response);
     }
 
     /**
      * Resume a subscription.
      */
-    public function resume(string $id): array
+    public function resume(string $id): Subscription
     {
-        return $this->client->request('POST', "/api/subscriptions/{$id}/resume");
+        $response = $this->client->request('POST', "/api/subscriptions/{$id}/resume");
+
+        return Subscription::fromArray($response);
     }
 
     /**
-     * List anchor-level subscriptions for an application.
+     * Sync subscriptions for an application. Creates/updates subscriptions
+     * with source=`API` and, when `$removeUnlisted` is true, removes
+     * API-sourced subscriptions not in the sync list.
      *
-     * @param string $appCode The application code
-     * @param string|null $source Filter by source (API or UI)
-     * @return array{subscriptions: Subscription[], total: int}
+     * @param SyncSubscriptionEntry[] $subscriptions
      */
-    public function listForApplication(string $appCode, ?string $source = null): array
-    {
-        $query = $source ? "?source={$source}" : '';
-        $response = $this->client->request('GET', "/api/applications/{$appCode}/subscriptions{$query}");
-
-        return [
-            'subscriptions' => array_map(
-                fn(array $item) => Subscription::fromArray($item),
-                $response['subscriptions'] ?? []
-            ),
-            'total' => $response['total'] ?? count($response['subscriptions'] ?? []),
-        ];
-    }
-
-    /**
-     * Sync subscriptions for an application.
-     *
-     * This creates/updates anchor-level subscriptions with source=API and optionally
-     * removes API-sourced subscriptions not in the sync list.
-     *
-     * @param string $appCode The application code
-     * @param array<array{
-     *     code: string,
-     *     name: string,
-     *     description?: string,
-     *     eventTypes?: array<array{eventTypeCode: string, specVersion?: string}>,
-     *     connectionId: string,
-     *     queue: string,
-     *     dispatchPoolCode: string,
-     *     customConfig?: array<array{key: string, value: string}>,
-     *     maxAgeSeconds?: int,
-     *     delaySeconds?: int,
-     *     sequence?: int,
-     *     mode?: DispatchMode|string,
-     *     timeoutSeconds?: int,
-     *     maxRetries?: int,
-     *     dataOnly?: bool
-     * }> $subscriptions The subscriptions to sync
-     * @param bool $removeUnlisted If true, removes API-sourced subscriptions not in the list
-     * @return array{created: int, updated: int, deleted: int, subscriptions: Subscription[]}
-     */
-    public function sync(string $appCode, array $subscriptions, bool $removeUnlisted = false): array
-    {
-        // Convert enums to strings in subscription items
-        foreach ($subscriptions as &$sub) {
-            if (isset($sub['mode']) && $sub['mode'] instanceof DispatchMode) {
-                $sub['mode'] = $sub['mode']->value;
-            }
-        }
-
+    public function sync(
+        string $applicationCode,
+        array $subscriptions,
+        bool $removeUnlisted = false,
+    ): SyncResult {
         $query = $removeUnlisted ? '?removeUnlisted=true' : '';
 
-        $response = $this->client->request('POST', "/api/applications/{$appCode}/subscriptions/sync{$query}", [
-            'json' => ['subscriptions' => $subscriptions],
-        ]);
+        $response = $this->client->request(
+            'POST',
+            "/api/applications/{$applicationCode}/subscriptions/sync{$query}",
+            [
+                'json' => [
+                    'subscriptions' => array_map(
+                        fn(SyncSubscriptionEntry $entry) => $entry->toArray(),
+                        $subscriptions,
+                    ),
+                ],
+            ],
+        );
 
-        return [
-            'created' => $response['created'] ?? 0,
-            'updated' => $response['updated'] ?? 0,
-            'deleted' => $response['deleted'] ?? 0,
-            'subscriptions' => array_map(
-                fn(array $item) => Subscription::fromArray($item),
-                $response['subscriptions'] ?? []
-            ),
-        ];
+        return SyncResult::fromArray($response);
     }
 }

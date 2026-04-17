@@ -5,8 +5,15 @@ declare(strict_types=1);
 namespace FlowCatalyst\Client\Resources;
 
 use FlowCatalyst\Client\FlowCatalystClient;
+use FlowCatalyst\DTOs\ClientAccessGrant;
 use FlowCatalyst\DTOs\Principal;
-use FlowCatalyst\Exceptions\FlowCatalystException;
+use FlowCatalyst\DTOs\Requests\CreateUserRequest;
+use FlowCatalyst\DTOs\Requests\SyncPrincipalEntry;
+use FlowCatalyst\DTOs\Requests\UpdatePrincipalRequest;
+use FlowCatalyst\DTOs\Responses\BatchAssignRolesResult;
+use FlowCatalyst\DTOs\Responses\PrincipalList;
+use FlowCatalyst\DTOs\Responses\SyncResult;
+use FlowCatalyst\DTOs\RoleAssignment;
 
 class Principals
 {
@@ -15,16 +22,17 @@ class Principals
     ) {}
 
     /**
-     * List all principals with optional filters.
+     * List principals with optional filters.
      *
-     * @return array{principals: Principal[], total: int}
+     * `email` is an exact (case-insensitive) match. `q` is a name/email
+     * substring search — use `email` when you know the address.
      */
     public function list(
         ?string $clientId = null,
         ?string $type = null,
         ?bool $active = null,
-        ?string $email = null
-    ): array {
+        ?string $email = null,
+    ): PrincipalList {
         $queryParams = [];
 
         if ($clientId !== null) {
@@ -41,16 +49,9 @@ class Principals
         }
 
         $query = !empty($queryParams) ? '?' . http_build_query($queryParams) : '';
-
         $response = $this->client->request('GET', "/api/principals{$query}");
 
-        return [
-            'principals' => array_map(
-                fn(array $item) => Principal::fromArray($item),
-                $response['principals'] ?? []
-            ),
-            'total' => $response['total'] ?? 0,
-        ];
+        return PrincipalList::fromArray($response);
     }
 
     /**
@@ -66,24 +67,17 @@ class Principals
     /**
      * Find a principal by email address.
      *
-     * Returns null if no principal exists with the given email.
-     *
-     * Note: we defensively verify the returned row's email matches the
-     * requested one. Older platform builds silently ignored the `email`
-     * query parameter and returned an unfiltered list — handing back the
-     * wrong principal would cause downstream writes (e.g. password reset)
-     * to hit an unintended user.
+     * Returns null if no principal exists with the given email. We
+     * defensively verify the row we return actually matches the requested
+     * email — older platform builds silently ignored unknown query params
+     * and returned an unfiltered list.
      */
     public function findByEmail(string $email): ?Principal
     {
         $result = $this->list(email: $email);
 
-        if ($result['total'] === 0) {
-            return null;
-        }
-
         $needle = strtolower($email);
-        foreach ($result['principals'] as $principal) {
+        foreach ($result->principals as $principal) {
             if (strtolower($principal->email ?? '') === $needle) {
                 return $principal;
             }
@@ -95,22 +89,14 @@ class Principals
     /**
      * Create a new user principal.
      *
-     * `enforcePasswordComplexity` defaults to true. Pass false when your app
-     * enforces its own password policy and only the platform's 2-character
-     * minimum should apply.
-     *
-     * @param array{
-     *     email: string,
-     *     name: string,
-     *     password?: string,
-     *     clientId?: string,
-     *     enforcePasswordComplexity?: bool
-     * } $data
+     * Pass `enforcePasswordComplexity: false` when your app enforces its
+     * own password policy and only the platform's 2-character minimum
+     * should apply.
      */
-    public function createUser(array $data): Principal
+    public function createUser(CreateUserRequest $request): Principal
     {
         $response = $this->client->request('POST', '/api/principals/users', [
-            'json' => $data,
+            'json' => $request->toArray(),
         ]);
 
         return Principal::fromArray($response);
@@ -119,14 +105,14 @@ class Principals
     /**
      * Reset a user's password (admin operation).
      *
-     * Uses the admin endpoint; requires admin credentials on the underlying
-     * client. Pass `$enforcePasswordComplexity = false` when the caller enforces
-     * its own password policy.
+     * Only valid for internal-auth users. Pass
+     * `enforcePasswordComplexity: false` when the caller enforces its own
+     * password policy.
      */
     public function resetPassword(
         string $id,
         string $newPassword,
-        bool $enforcePasswordComplexity = true
+        bool $enforcePasswordComplexity = true,
     ): void {
         $this->client->request('POST', "/api/principals/{$id}/reset-password", [
             'json' => [
@@ -137,16 +123,12 @@ class Principals
     }
 
     /**
-     * Update a principal's details.
-     *
-     * @param array{
-     *     name?: string
-     * } $data
+     * Update a principal's mutable fields.
      */
-    public function update(string $id, array $data): Principal
+    public function update(string $id, UpdatePrincipalRequest $request): Principal
     {
         $response = $this->client->request('PUT', "/api/principals/{$id}", [
-            'json' => $data,
+            'json' => $request->toArray(),
         ]);
 
         return Principal::fromArray($response);
@@ -171,98 +153,128 @@ class Principals
     /**
      * Get roles assigned to a principal.
      *
-     * @return array{roles: array<array{roleName: string, assignmentSource: string, assignedAt: string}>}
+     * @return RoleAssignment[]
      */
     public function getRoles(string $id): array
     {
-        return $this->client->request('GET', "/api/principals/{$id}/roles");
+        $response = $this->client->request('GET', "/api/principals/{$id}/roles");
+
+        /** @var array<int, array<string, mixed>> $rows */
+        $rows = $response['roles'] ?? [];
+        return array_map(
+            fn(array $row) => RoleAssignment::fromArray($row),
+            $rows,
+        );
     }
 
     /**
-     * Add a single role to a principal.
+     * Assign a single role to a principal (additive — keeps existing roles).
      *
-     * @return array{roleName: string, assignmentSource: string, assignedAt: string}
+     * Returns the principal after the assignment.
      */
-    public function assignRole(string $id, string $roleName): array
+    public function assignRole(string $id, string $roleName): Principal
     {
-        return $this->client->request('POST', "/api/principals/{$id}/roles/{$roleName}");
+        $response = $this->client->request('POST', "/api/principals/{$id}/roles", [
+            'json' => ['role' => $roleName],
+        ]);
+
+        return Principal::fromArray($response);
     }
 
     /**
-     * Remove a role from a principal.
+     * Remove a single role from a principal. Returns the principal after
+     * the removal.
      */
-    public function removeRole(string $id, string $roleName): void
+    public function removeRole(string $id, string $roleName): Principal
     {
-        $this->client->request('DELETE', "/api/principals/{$id}/roles/{$roleName}");
+        $response = $this->client->request('DELETE', "/api/principals/{$id}/roles/{$roleName}");
+
+        return Principal::fromArray($response);
     }
 
     /**
-     * Batch assign roles to a principal (declarative).
+     * Batch-assign roles to a principal (declarative — replaces the full set).
      *
-     * This sets the complete list of roles for the principal.
-     * Roles not in the list will be removed.
+     * Roles not in `$roles` are removed. Returns the full role state plus
+     * the diff that was applied.
      *
      * @param string[] $roles Role names to assign
-     * @return array{roles: array, added: string[], removed: string[]}
      */
-    public function assignRoles(string $id, array $roles): array
+    public function assignRoles(string $id, array $roles): BatchAssignRolesResult
     {
-        return $this->client->request('PUT', "/api/principals/{$id}/roles", [
+        $response = $this->client->request('PUT', "/api/principals/{$id}/roles", [
             'json' => ['roles' => $roles],
         ]);
+
+        return BatchAssignRolesResult::fromArray($response);
     }
 
     /**
-     * Get client access grants for a principal.
+     * List client-access grants for a principal.
      *
-     * @return array{grants: array<array{id: string, clientId: string, grantedAt: string, expiresAt: ?string}>}
+     * @return ClientAccessGrant[]
      */
     public function getClientAccessGrants(string $id): array
     {
-        return $this->client->request('GET', "/api/principals/{$id}/clients");
+        $response = $this->client->request('GET', "/api/principals/{$id}/client-access");
+
+        /** @var array<int, array<string, mixed>> $rows */
+        $rows = $response['grants'] ?? [];
+        return array_map(
+            fn(array $row) => ClientAccessGrant::fromArray($row),
+            $rows,
+        );
     }
 
     /**
-     * Grant client access to a principal.
-     *
-     * @return array{id: string, clientId: string, grantedAt: string, expiresAt: ?string}
+     * Grant a principal access to a client.
      */
-    public function grantClientAccess(string $id, string $clientId): array
+    public function grantClientAccess(string $id, string $clientId): ClientAccessGrant
     {
-        return $this->client->request('POST', "/api/principals/{$id}/clients/{$clientId}");
+        $response = $this->client->request('POST', "/api/principals/{$id}/client-access", [
+            'json' => ['clientId' => $clientId],
+        ]);
+
+        return ClientAccessGrant::fromArray($response);
     }
 
     /**
-     * Revoke client access from a principal.
+     * Revoke a principal's access to a client.
      */
     public function revokeClientAccess(string $id, string $clientId): void
     {
-        $this->client->request('DELETE', "/api/principals/{$id}/clients/{$clientId}");
+        $this->client->request('DELETE', "/api/principals/{$id}/client-access/{$clientId}");
     }
 
     /**
-     * Sync principals for an application.
+     * Sync principals for an application (declarative).
      *
-     * This creates/updates user principals and assigns roles (prefixed with
-     * the application code). If removeUnlisted is true, SDK-synced roles
-     * for unlisted principals will be removed.
+     * Creates/updates user principals and assigns roles (prefixed with the
+     * application code). When `$removeUnlisted` is true, SDK-synced roles
+     * on unlisted principals are removed.
      *
-     * @param string $appCode The application code
-     * @param array<array{
-     *     email: string,
-     *     name: string,
-     *     roles?: string[],
-     *     active?: bool
-     * }> $principals The principals to sync
-     * @param bool $removeUnlisted If true, removes SDK-synced roles for unlisted principals
-     * @return array{applicationCode: string, created: int, updated: int, deleted: int, syncedCodes: string[]}
+     * @param SyncPrincipalEntry[] $principals
      */
-    public function sync(string $appCode, array $principals, bool $removeUnlisted = false): array
-    {
+    public function sync(
+        string $appCode,
+        array $principals,
+        bool $removeUnlisted = false,
+    ): SyncResult {
         $query = $removeUnlisted ? '?removeUnlisted=true' : '';
 
-        return $this->client->request('POST', "/api/applications/{$appCode}/principals/sync{$query}", [
-            'json' => ['principals' => $principals],
-        ]);
+        $response = $this->client->request(
+            'POST',
+            "/api/applications/{$appCode}/principals/sync{$query}",
+            [
+                'json' => [
+                    'principals' => array_map(
+                        fn(SyncPrincipalEntry $entry) => $entry->toArray(),
+                        $principals,
+                    ),
+                ],
+            ],
+        );
+
+        return SyncResult::fromArray($response);
     }
 }
