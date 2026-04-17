@@ -5,7 +5,12 @@ declare(strict_types=1);
 namespace FlowCatalyst\Sync;
 
 use FlowCatalyst\Client\FlowCatalystClient;
-use FlowCatalyst\Sync\RoleDefinition;
+use FlowCatalyst\DTOs\EventTypeBinding;
+use FlowCatalyst\DTOs\Requests\SyncDispatchPoolEntry;
+use FlowCatalyst\DTOs\Requests\SyncEventTypeEntry;
+use FlowCatalyst\DTOs\Requests\SyncPrincipalEntry;
+use FlowCatalyst\DTOs\Requests\SyncRoleEntry;
+use FlowCatalyst\DTOs\Requests\SyncSubscriptionEntry;
 
 /**
  * Service for synchronizing FlowCatalyst definitions to the platform.
@@ -138,12 +143,22 @@ class DefinitionSynchronizer
         }
 
         try {
-            $result = $this->client->roles()->sync($appCode, $roles, $removeUnlisted);
+            $entries = array_map(
+                fn(array $row) => new SyncRoleEntry(
+                    name: (string) ($row['name'] ?? ''),
+                    displayName: isset($row['displayName']) ? (string) $row['displayName'] : null,
+                    description: isset($row['description']) ? (string) $row['description'] : null,
+                    permissions: $row['permissions'] ?? [],
+                    clientManaged: (bool) ($row['clientManaged'] ?? false),
+                ),
+                $roles,
+            );
+            $result = $this->client->roles()->sync($appCode, $entries, $removeUnlisted);
 
             return [
-                'created' => $result['syncedCount'] ?? 0,
-                'updated' => 0,
-                'deleted' => 0,
+                'created' => $result->created,
+                'updated' => $result->updated,
+                'deleted' => $result->deleted,
             ];
         } catch (\Exception $e) {
             return [
@@ -187,12 +202,20 @@ class DefinitionSynchronizer
     private function syncEventTypes(string $appCode, array $eventTypes, bool $removeUnlisted): array
     {
         try {
-            $result = $this->client->eventTypes()->sync($appCode, $eventTypes, $removeUnlisted);
+            $entries = array_map(
+                fn(array $row) => new SyncEventTypeEntry(
+                    code: (string) ($row['code'] ?? ''),
+                    name: (string) ($row['name'] ?? ''),
+                    description: isset($row['description']) ? (string) $row['description'] : null,
+                ),
+                $eventTypes,
+            );
+            $result = $this->client->eventTypes()->sync($appCode, $entries, $removeUnlisted);
 
             return [
-                'created' => $result['created'] ?? 0,
-                'updated' => $result['updated'] ?? 0,
-                'deleted' => $result['deleted'] ?? 0,
+                'created' => $result->created,
+                'updated' => $result->updated,
+                'deleted' => $result->deleted,
             ];
         } catch (\Exception $e) {
             return [
@@ -215,12 +238,40 @@ class DefinitionSynchronizer
     private function syncSubscriptions(string $appCode, array $subscriptions, bool $removeUnlisted): array
     {
         try {
-            $result = $this->client->subscriptions()->sync($appCode, $subscriptions, $removeUnlisted);
+            $entries = array_map(
+                function (array $row) {
+                    $rawBindings = $row['eventTypes'] ?? (
+                        isset($row['eventTypeCode']) ? [['eventTypeCode' => $row['eventTypeCode']]] : []
+                    );
+                    $bindings = array_map(
+                        fn(array $b) => new EventTypeBinding(
+                            eventTypeCode: (string) $b['eventTypeCode'],
+                            filter: isset($b['filter']) ? (string) $b['filter'] : null,
+                        ),
+                        $rawBindings,
+                    );
+                    return new SyncSubscriptionEntry(
+                        code: (string) ($row['code'] ?? ''),
+                        name: (string) ($row['name'] ?? ''),
+                        target: (string) ($row['target'] ?? $row['endpoint'] ?? ''),
+                        eventTypes: $bindings,
+                        description: isset($row['description']) ? (string) $row['description'] : null,
+                        connectionId: isset($row['connectionId']) ? (string) $row['connectionId'] : null,
+                        dispatchPoolCode: isset($row['dispatchPoolCode']) ? (string) $row['dispatchPoolCode'] : null,
+                        mode: $row['mode'] ?? null,
+                        maxRetries: isset($row['maxRetries']) ? (int) $row['maxRetries'] : null,
+                        timeoutSeconds: isset($row['timeoutSeconds']) ? (int) $row['timeoutSeconds'] : null,
+                        dataOnly: (bool) ($row['dataOnly'] ?? false),
+                    );
+                },
+                $subscriptions,
+            );
+            $result = $this->client->subscriptions()->sync($appCode, $entries, $removeUnlisted);
 
             return [
-                'created' => $result['created'] ?? 0,
-                'updated' => $result['updated'] ?? 0,
-                'deleted' => $result['deleted'] ?? 0,
+                'created' => $result->created,
+                'updated' => $result->updated,
+                'deleted' => $result->deleted,
             ];
         } catch (\Exception $e) {
             return [
@@ -254,12 +305,22 @@ class DefinitionSynchronizer
         }
 
         try {
-            $result = $this->client->dispatchPools()->sync($appCode, $dispatchPools, $removeUnlisted);
+            $entries = array_map(
+                fn(array $row) => new SyncDispatchPoolEntry(
+                    code: (string) ($row['code'] ?? ''),
+                    name: (string) ($row['name'] ?? $row['code'] ?? ''),
+                    description: isset($row['description']) ? (string) $row['description'] : null,
+                    rateLimit: isset($row['rateLimit']) ? (int) $row['rateLimit'] : null,
+                    concurrency: isset($row['concurrency']) ? (int) $row['concurrency'] : null,
+                ),
+                $dispatchPools,
+            );
+            $result = $this->client->dispatchPools()->sync($appCode, $entries, $removeUnlisted);
 
             return [
-                'created' => $result['created'] ?? 0,
-                'updated' => $result['updated'] ?? 0,
-                'deleted' => $result['deleted'] ?? 0,
+                'created' => $result->created,
+                'updated' => $result->updated,
+                'deleted' => $result->deleted,
             ];
         } catch (\Exception $e) {
             return [
@@ -303,12 +364,21 @@ class DefinitionSynchronizer
     private function syncPrincipals(string $appCode, array $principals, bool $removeUnlisted): array
     {
         try {
-            $result = $this->client->principals()->sync($appCode, $principals, $removeUnlisted);
+            $entries = array_map(
+                fn(array $row) => new SyncPrincipalEntry(
+                    email: (string) ($row['email'] ?? ''),
+                    name: (string) ($row['name'] ?? ''),
+                    roles: $row['roles'] ?? [],
+                    active: isset($row['active']) ? (bool) $row['active'] : null,
+                ),
+                $principals,
+            );
+            $result = $this->client->principals()->sync($appCode, $entries, $removeUnlisted);
 
             return [
-                'created' => $result['created'] ?? 0,
-                'updated' => $result['updated'] ?? 0,
-                'deleted' => $result['deleted'] ?? 0,
+                'created' => $result->created,
+                'updated' => $result->updated,
+                'deleted' => $result->deleted,
             ];
         } catch (\Exception $e) {
             return [
