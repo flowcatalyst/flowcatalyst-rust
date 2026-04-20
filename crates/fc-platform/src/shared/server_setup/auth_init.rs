@@ -53,7 +53,7 @@ impl AuthInitConfig {
     /// - `FC_JWT_PUBLIC_KEY_PATH_PREVIOUS` (path whose contents become
     ///   the previous public key) or `FLOWCATALYST_JWT_PUBLIC_KEY_PREVIOUS`
     /// - `FC_ACCESS_TOKEN_EXPIRY_SECS` / `OIDC_ACCESS_TOKEN_TTL` (default 3600)
-    /// - `FC_SESSION_TOKEN_EXPIRY_SECS` / `OIDC_SESSION_TTL` (default 28800)
+    /// - `FC_SESSION_TOKEN_EXPIRY_SECS` / `OIDC_SESSION_TTL` (default 86400)
     /// - `FC_REFRESH_TOKEN_EXPIRY_SECS` / `OIDC_REFRESH_TOKEN_TTL` (default 30 days)
     pub fn from_env(default_issuer: &str) -> Self {
         let issuer = std::env::var("FC_JWT_ISSUER")
@@ -76,7 +76,7 @@ impl AuthInitConfig {
         let session_token_expiry_secs = env_or_alias_i64(
             "FC_SESSION_TOKEN_EXPIRY_SECS",
             "OIDC_SESSION_TTL",
-            28800,
+            86400,
         );
         let refresh_token_expiry_secs = env_or_alias_i64(
             "FC_REFRESH_TOKEN_EXPIRY_SECS",

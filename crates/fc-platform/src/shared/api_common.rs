@@ -34,14 +34,23 @@ pub struct ApiError {
     pub details: Option<serde_json::Value>,
 }
 
-/// Pagination parameters (matches Java: page, size)
+/// Pagination parameters.
+///
+/// Accepts any of `size`, `pageSize`, or `limit` on the wire so Rust matches
+/// both the Java-era and TS-era callers. Serializes back as camelCase.
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct PaginationParams {
     #[serde(default, deserialize_with = "string_or_number::deserialize_u32_opt")]
     page: Option<u32>,
-    #[serde(default, alias = "limit", deserialize_with = "string_or_number::deserialize_u32_opt")]
+    #[serde(
+        default,
+        alias = "limit",
+        alias = "pageSize",
+        alias = "page_size",
+        deserialize_with = "string_or_number::deserialize_u32_opt"
+    )]
     size: Option<u32>,
 }
 

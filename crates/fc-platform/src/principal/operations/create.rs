@@ -57,6 +57,15 @@ pub struct CreateUserCommand {
     /// by SDK callers that apply their own policy. Defaults to `true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enforce_password_complexity: Option<bool>,
+
+    /// Identity provider type for this user, as resolved by the handler from
+    /// the email-domain-mapping. `OIDC` means the user authenticates through
+    /// a federated provider and any password on this command is ignored.
+    /// `INTERNAL` (the default when unset) means embedded password auth; if
+    /// no password is supplied, one is generated server-side so the record
+    /// is never created with a null hash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idp_type: Option<String>,
 }
 
 
@@ -156,12 +165,29 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             principal.grant_client_access(cid.clone());
         }
 
-        // Hash + set password if provided (internal-auth users).
-        if let Some(ref password) = command.password {
+        // Password handling keyed off the resolved IdP type:
+        //   - OIDC users authenticate through a federated provider; any
+        //     password on the command is silently ignored so callers don't
+        //     need to know the IdP before sending.
+        //   - Internal users get their supplied password (or, if none was
+        //     supplied, a random strong one) hashed and stored. The record
+        //     is never persisted with a null hash — the user completes
+        //     first-login by going through the password-reset flow.
+        let is_oidc = command
+            .idp_type
+            .as_deref()
+            .map(|t| t.eq_ignore_ascii_case("OIDC"))
+            .unwrap_or(false);
+
+        if !is_oidc {
             let enforce = command.enforce_password_complexity.unwrap_or(true);
+            let (password, enforce_for_hash) = match command.password.as_ref() {
+                Some(p) if !p.is_empty() => (p.clone(), enforce),
+                _ => (self.password_service.generate_password(), true),
+            };
             let hash = match self
                 .password_service
-                .hash_password_with_complexity(password, enforce)
+                .hash_password_with_complexity(&password, enforce_for_hash)
             {
                 Ok(h) => h,
                 Err(e) => {
@@ -173,6 +199,14 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             };
             if let Some(identity) = principal.user_identity.as_mut() {
                 identity.password_hash = Some(hash);
+            }
+        }
+
+        // Tag the identity with its IdP type regardless so downstream code
+        // (login flow, audit queries) doesn't have to re-resolve the mapping.
+        if let Some(idp) = command.idp_type.as_deref() {
+            if let Some(identity) = principal.user_identity.as_mut() {
+                identity.provider = Some(idp.to_uppercase());
             }
         }
 
@@ -211,6 +245,7 @@ mod tests {
             granted_client_ids: vec![],
             password: None,
             enforce_password_complexity: None,
+            idp_type: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

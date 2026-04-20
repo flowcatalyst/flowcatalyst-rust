@@ -478,6 +478,18 @@ pub async fn create_user(
         None
     };
 
+    // Resolve IdP type (INTERNAL / OIDC) so the use case can key its password
+    // handling off it. Unmapped domains default to INTERNAL — they can only
+    // log in through embedded auth anyway.
+    let idp_type = match (&mapping, &state.identity_provider_repo) {
+        (Some(m), Some(idp_repo)) => idp_repo
+            .find_by_id(&m.identity_provider_id)
+            .await?
+            .map(|idp| idp.r#type.as_str().to_string())
+            .unwrap_or_else(|| "INTERNAL".to_string()),
+        _ => "INTERNAL".to_string(),
+    };
+
     // Resolve scope + client association from email domain.
     let (scope, primary_client_id, granted_client_ids) = if is_anchor_domain {
         // Anchor: ignore any client_id on the request.
@@ -555,6 +567,7 @@ pub async fn create_user(
         granted_client_ids,
         password: req.password.clone(),
         enforce_password_complexity: req.enforce_password_complexity,
+        idp_type: Some(idp_type),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     let event = state.create_user_use_case.run(cmd, ctx).await.into_result()?;

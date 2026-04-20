@@ -35,6 +35,14 @@ pub struct OpenIdConfiguration {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_session_endpoint: Option<String>,
 
+    /// URL of the introspection endpoint (RFC 7662)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub introspection_endpoint: Option<String>,
+
+    /// URL of the revocation endpoint (RFC 7009)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revocation_endpoint: Option<String>,
+
     /// URL of the JWKS endpoint
     pub jwks_uri: String,
 
@@ -126,12 +134,19 @@ pub async fn get_openid_configuration(
 ) -> Json<OpenIdConfiguration> {
     let base_url = &state.external_base_url;
 
+    // Paths here MUST match what router.rs actually mounts:
+    //   OAuth handlers live under PATH_OAUTH ("/oauth")
+    //   OIDC login handlers (including session_end) live under PATH_AUTH ("/auth")
+    //   Well-known handlers live under PATH_WELL_KNOWN ("/.well-known")
+    // If any of those mount points change, update this list.
     Json(OpenIdConfiguration {
         issuer: base_url.clone(),
         authorization_endpoint: format!("{}/oauth/authorize", base_url),
         token_endpoint: format!("{}/oauth/token", base_url),
         userinfo_endpoint: Some(format!("{}/oauth/userinfo", base_url)),
-        end_session_endpoint: Some(format!("{}/oidc/session/end", base_url)),
+        end_session_endpoint: Some(format!("{}/auth/oidc/session/end", base_url)),
+        introspection_endpoint: Some(format!("{}/oauth/introspect", base_url)),
+        revocation_endpoint: Some(format!("{}/oauth/revoke", base_url)),
         jwks_uri: format!("{}/.well-known/jwks.json", base_url),
         response_types_supported: vec![
             "code".to_string(),
@@ -240,6 +255,8 @@ mod tests {
             token_endpoint: "https://example.com/oauth/token".to_string(),
             userinfo_endpoint: None,
             end_session_endpoint: None,
+            introspection_endpoint: None,
+            revocation_endpoint: None,
             jwks_uri: "https://example.com/.well-known/jwks.json".to_string(),
             response_types_supported: vec!["code".to_string()],
             subject_types_supported: vec!["public".to_string()],

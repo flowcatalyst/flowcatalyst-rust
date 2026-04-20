@@ -185,6 +185,36 @@ impl PasswordService {
         }
     }
 
+    /// Generate a random password that satisfies the configured strict policy.
+    /// Used when an internal-auth user is created without a password — the user
+    /// will reset it via the password-reset flow before first login.
+    pub fn generate_password(&self) -> String {
+        use rand::seq::IndexedRandom;
+        use rand::Rng;
+
+        const UPPER: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ";
+        const LOWER: &[u8] = b"abcdefghjkmnpqrstuvwxyz";
+        const DIGIT: &[u8] = b"23456789";
+        const SPECIAL: &[u8] = b"!@#$%^&*";
+        const ALL: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*";
+
+        let mut rng = rand::rng();
+        let len = self.policy.min_length.max(16);
+        let mut chars: Vec<u8> = Vec::with_capacity(len);
+        chars.push(*UPPER.choose(&mut rng).unwrap());
+        chars.push(*LOWER.choose(&mut rng).unwrap());
+        chars.push(*DIGIT.choose(&mut rng).unwrap());
+        chars.push(*SPECIAL.choose(&mut rng).unwrap());
+        while chars.len() < len {
+            chars.push(*ALL.choose(&mut rng).unwrap());
+        }
+        for i in (1..chars.len()).rev() {
+            let j = rng.random_range(0..=i);
+            chars.swap(i, j);
+        }
+        String::from_utf8(chars).expect("ascii-only")
+    }
+
     fn hash_with_policy(&self, password: &str, policy: &PasswordPolicy) -> Result<String> {
         if let Err(errors) = policy.validate(password) {
             return Err(PlatformError::Validation {
@@ -365,6 +395,20 @@ mod tests {
 
         // Verify wrong password
         assert!(!service.verify_password("wrongpassword", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_generate_password_satisfies_strict_policy() {
+        let service = PasswordService::new(Argon2Config::testing(), PasswordPolicy::default());
+        for _ in 0..50 {
+            let pw = service.generate_password();
+            assert!(
+                service.policy.validate(&pw).is_ok(),
+                "generated password should satisfy default policy: {pw}"
+            );
+            // And it can actually be hashed without the complexity-bypass path.
+            assert!(service.hash_password(&pw).is_ok());
+        }
     }
 
     #[test]

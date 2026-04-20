@@ -174,7 +174,7 @@ impl AuthState {
             session_cookie_name: "fc_session".to_string(),
             session_cookie_secure: false,
             session_cookie_same_site: "Lax".to_string(),
-            session_token_expiry_secs: 28800, // 8 hours
+            session_token_expiry_secs: 86400, // 24 hours (parity with TS default)
         }
     }
 
