@@ -84,12 +84,14 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
             ));
         }
 
-        // Validate all roles exist
+        // Validate all roles exist. A bad role name is a client-body error
+        // (400), not a 404 — this endpoint's 404 is reserved for "principal
+        // not found".
         for role_name in &command.roles {
             match self.role_repo.exists_by_name(role_name).await {
                 Ok(true) => {}
                 Ok(false) => {
-                    return UseCaseResult::failure(UseCaseError::not_found(
+                    return UseCaseResult::failure(UseCaseError::validation(
                         "ROLE_NOT_FOUND",
                         format!("Role '{}' not found", role_name),
                     ));

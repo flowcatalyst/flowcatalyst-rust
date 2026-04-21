@@ -42,8 +42,10 @@ mime_guess = "2"
 # Gated behind the `embedded-db` feature (on by default for fc-dev only)
 # so fc-server never pulls this dep.
 postgresql_embedded = { version = "0.19", features = ["bundled"], optional = true }
-dirs = { version = "5", optional = true }
+# Used for both the embedded-pg data dir and the JWT key cache dir, so it's
+# unconditional even though the embedded-pg bundle is feature-gated.
+dirs = "5"
 
 [features]
 default = ["embedded-db"]
-embedded-db = ["dep:postgresql_embedded", "dep:dirs"]
+embedded-db = ["dep:postgresql_embedded"]

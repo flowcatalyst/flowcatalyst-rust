@@ -283,9 +283,12 @@ impl AuthConfig {
     }
 
     /// Load or generate RSA keys (like Java JwtKeyService)
-    /// 1. Try loading from configured paths
-    /// 2. Try loading from persisted .jwt-keys directory
-    /// 3. Generate new keys and persist
+    /// 1. Try loading from configured paths / env vars
+    /// 2. If both paths are configured (but the files don't yet exist),
+    ///    generate a keypair and persist to those paths — keeps keys
+    ///    anchored to an absolute location across restarts.
+    /// 3. Try loading from the relative `.jwt-keys/` fallback
+    /// 4. Generate new keys and persist to `.jwt-keys/`
     pub fn load_or_generate_rsa_keys(
         private_key_path: Option<&str>,
         public_key_path: Option<&str>,
@@ -296,7 +299,15 @@ impl AuthConfig {
             return Ok((priv_key, pub_key));
         }
 
-        // 2. Try persisted keys
+        // 2. Both paths configured but files missing → generate into those paths
+        //    so the next launch reads the same keys regardless of CWD.
+        if let (Some(priv_p), Some(pub_p)) = (private_key_path, public_key_path) {
+            if !priv_p.is_empty() && !pub_p.is_empty() {
+                return Self::generate_rsa_keys_at(Path::new(priv_p), Path::new(pub_p));
+            }
+        }
+
+        // 3. Try persisted keys at the legacy relative location
         let keys_dir = Path::new(".jwt-keys");
         let private_path = keys_dir.join("private.key");
         let public_path = keys_dir.join("public.key");
@@ -311,8 +322,61 @@ impl AuthConfig {
             }
         }
 
-        // 3. Generate and persist
+        // 4. Generate and persist to the legacy relative location
         Self::generate_rsa_keys(Some(keys_dir))
+    }
+
+    /// Generate a fresh RSA keypair and write it to the supplied absolute paths.
+    fn generate_rsa_keys_at(
+        private_path: &Path,
+        public_path: &Path,
+    ) -> Result<(String, String)> {
+        use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding}};
+
+        info!(
+            private = %private_path.display(),
+            public = %public_path.display(),
+            "Generating RSA key pair (2048 bit) at configured paths"
+        );
+
+        let mut rng = rsa::rand_core::OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048)
+            .map_err(|e| PlatformError::Internal {
+                message: format!("Failed to generate RSA key: {}", e)
+            })?;
+        let public_key = RsaPublicKey::from(&private_key);
+
+        let private_pem = private_key
+            .to_pkcs8_pem(LineEnding::LF)
+            .map_err(|e| PlatformError::Internal {
+                message: format!("Failed to encode private key: {}", e)
+            })?
+            .to_string();
+        let public_pem = public_key
+            .to_public_key_pem(LineEnding::LF)
+            .map_err(|e| PlatformError::Internal {
+                message: format!("Failed to encode public key: {}", e)
+            })?;
+
+        if let Some(parent) = private_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                warn!("Could not create private key directory {}: {}", parent.display(), e);
+            }
+        }
+        if let Some(parent) = public_path.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                warn!("Could not create public key directory {}: {}", parent.display(), e);
+            }
+        }
+
+        if let Err(e) = fs::write(private_path, &private_pem) {
+            warn!("Could not persist private key to {}: {}", private_path.display(), e);
+        }
+        if let Err(e) = fs::write(public_path, &public_pem) {
+            warn!("Could not persist public key to {}: {}", public_path.display(), e);
+        }
+
+        Ok((private_pem, public_pem))
     }
 }
 

@@ -12,13 +12,13 @@ use sqlx::PgPool;
 use tracing::info;
 
 use crate::{
-    AnchorDomain, Application, Client, ClientAuthConfig, ClientStatus,
-    ClientAccessGrant, EventType, Principal, UserScope, AuthProvider,
+    AnchorDomain, Application, AuthRole, Client, ClientAuthConfig, ClientStatus,
+    ClientAccessGrant, EventType, Principal, RoleSource, UserScope, AuthProvider,
 };
 use crate::{
     AnchorDomainRepository, ApplicationRepository, ClientRepository,
     ClientAuthConfigRepository, ClientAccessGrantRepository, EventTypeRepository,
-    PrincipalRepository,
+    PrincipalRepository, RoleRepository,
 };
 use crate::identity_provider::entity::IdentityProvider;
 use crate::identity_provider::repository::IdentityProviderRepository;
@@ -54,6 +54,8 @@ impl DevDataSeeder {
         let clients = self.seed_clients().await?;
         self.seed_email_domain_mappings(&internal_idp_id, &clients).await?;
         self.seed_auth_configs(&clients).await?;
+        // Application roles must exist before users reference them in role assignments.
+        self.seed_application_roles().await?;
         self.seed_users(&clients).await?;
         self.seed_applications().await?;
         self.seed_event_types().await?;
@@ -198,6 +200,34 @@ impl DevDataSeeder {
         let mut config = ClientAuthConfig::new_partner(domain);
         config.auth_provider = AuthProvider::Internal;
         repo.insert(&config).await?;
+
+        Ok(())
+    }
+
+    /// Seed the application-scoped roles that dev users are assigned.
+    /// Without these, editing a seeded user's roles fails with ROLE_NOT_FOUND
+    /// because `assign_roles` validates every name against `iam_roles`.
+    async fn seed_application_roles(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let repo = RoleRepository::new(&self.pg_pool);
+
+        let roles: &[(&str, &str, &str, &str)] = &[
+            ("acme", "client-admin", "Acme Client Admin", "Client-level administration for Acme"),
+            ("dispatch", "admin",   "Dispatch Admin",   "Full control over dispatch operations"),
+            ("dispatch", "user",    "Dispatch User",    "Create and manage dispatch jobs"),
+            ("dispatch", "viewer",  "Dispatch Viewer",  "Read-only access to dispatch data"),
+        ];
+
+        for (app, name, display, description) in roles {
+            let full_name = format!("{}:{}", app, name);
+            if repo.find_by_name(&full_name).await?.is_some() {
+                continue;
+            }
+            let mut role = AuthRole::new(*app, *name, *display);
+            role.description = Some((*description).to_string());
+            role.source = RoleSource::Sdk;
+            repo.insert(&role).await?;
+            info!("Created dev role: {}", full_name);
+        }
 
         Ok(())
     }

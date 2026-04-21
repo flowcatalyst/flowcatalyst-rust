@@ -234,6 +234,29 @@ async fn main() -> Result<()> {
         std::env::set_var("FC_DEV_MODE", "true");
     }
 
+    // Anchor the JWT keypair to an absolute dev-cache path so sessions
+    // survive across launches regardless of CWD. Without this, the keys
+    // land in `./.jwt-keys/` relative to wherever fc-dev was invoked —
+    // so `cargo run -p fc-dev` vs `./target/release/fc-dev` generate
+    // separate keys, and any existing `fc_session` cookie signed with
+    // the other set fails validation and kicks the user back to login.
+    if std::env::var("FC_JWT_PRIVATE_KEY_PATH").is_err()
+        && std::env::var("FC_JWT_PUBLIC_KEY_PATH").is_err()
+    {
+        let keys_dir = dirs::cache_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("flowcatalyst-dev")
+            .join("jwt-keys");
+        std::env::set_var(
+            "FC_JWT_PRIVATE_KEY_PATH",
+            keys_dir.join("private.key"),
+        );
+        std::env::set_var(
+            "FC_JWT_PUBLIC_KEY_PATH",
+            keys_dir.join("public.key"),
+        );
+    }
+
     // Initialize logging (JSON if LOG_FORMAT=json, text otherwise)
     fc_common::logging::init_logging("fc-dev");
 
