@@ -110,4 +110,68 @@ export class ApplicationsResource {
             path: { id },
         }));
     }
+    /**
+     * Get the service account attached to an application.
+     */
+    getServiceAccount(id) {
+        return this.client.request((httpClient, headers) => httpClient.get({
+            url: "/api/applications/{id}/service-account",
+            headers,
+            path: { id },
+        }));
+    }
+    /**
+     * List roles defined for an application.
+     */
+    listRoles(id) {
+        return this.client.request((httpClient, headers) => httpClient.get({
+            url: "/api/applications/{id}/roles",
+            headers,
+            path: { id },
+        }));
+    }
+    /**
+     * List per-client configs for an application.
+     */
+    listClients(id) {
+        return this.client.request((httpClient, headers) => httpClient.get({
+            url: "/api/applications/{id}/clients",
+            headers,
+            path: { id },
+        }));
+    }
+    /**
+     * Update the per-client config for an application.
+     */
+    updateClientConfig(id, clientId, data) {
+        return this.client.request((httpClient, headers) => httpClient.put({
+            url: "/api/applications/{id}/clients/{clientId}",
+            headers: {
+                ...headers,
+                "Content-Type": "application/json",
+            },
+            path: { id, clientId },
+            body: data,
+        }));
+    }
+    /**
+     * Enable an application for a specific client.
+     */
+    enableForClient(id, clientId) {
+        return this.client.request((httpClient, headers) => httpClient.post({
+            url: "/api/applications/{id}/clients/{clientId}/enable",
+            headers,
+            path: { id, clientId },
+        }));
+    }
+    /**
+     * Disable an application for a specific client.
+     */
+    disableForClient(id, clientId) {
+        return this.client.request((httpClient, headers) => httpClient.post({
+            url: "/api/applications/{id}/clients/{clientId}/disable",
+            headers,
+            path: { id, clientId },
+        }));
+    }
 }

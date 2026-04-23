@@ -36,6 +36,11 @@ export declare class PrincipalsResource {
     get(id: string): ResultAsync<PrincipalDto, SdkError>;
     /**
      * Find a user by email.
+     *
+     * Client-side filters the response to rows whose email matches exactly
+     * (case-insensitive). Older platform builds silently ignored unknown
+     * query parameters and returned an unfiltered list; we defend against
+     * that here so callers don't act on the wrong principal.
      */
     findByEmail(email: string): ResultAsync<PrincipalListResponse, SdkError>;
     /**
@@ -56,6 +61,10 @@ export declare class PrincipalsResource {
     deactivate(id: string): ResultAsync<PrincipalDto, SdkError>;
     /**
      * Reset a user's password.
+     *
+     * Set `enforcePasswordComplexity` on `data` to `false` when the caller
+     * enforces its own password policy; only the platform's 2-character
+     * minimum will apply. Defaults to `true`.
      */
     resetPassword(id: string, data: ResetPasswordRequest): ResultAsync<unknown, SdkError>;
     /**

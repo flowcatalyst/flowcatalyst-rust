@@ -39,6 +39,45 @@ export interface CreateServiceAccountResponse {
     clientId: string;
     clientSecret: string;
 }
+export interface ServiceAccountResponse {
+    id: string;
+    code: string;
+    name: string;
+    description?: string | null;
+    active: boolean;
+    applicationId?: string | null;
+    createdAt: string;
+}
+export interface ApplicationRoleResponse {
+    id: string;
+    code: string;
+    displayName: string;
+    description?: string | null;
+    applicationCode: string;
+    permissions: string[];
+    source: string;
+    clientManaged: boolean;
+}
+export interface ClientConfigRequest {
+    enabled?: boolean;
+    baseUrlOverride?: string | null;
+    config?: Record<string, unknown> | null;
+}
+export interface ClientConfigResponse {
+    id: string;
+    applicationId: string;
+    clientId: string;
+    clientName?: string | null;
+    clientIdentifier?: string | null;
+    enabled: boolean;
+    baseUrlOverride?: string | null;
+    effectiveBaseUrl?: string | null;
+    config?: Record<string, unknown> | null;
+}
+export interface ClientConfigsResponse {
+    clientConfigs: ClientConfigResponse[];
+    total?: number;
+}
 /**
  * Applications resource for managing platform applications.
  */
@@ -81,5 +120,29 @@ export declare class ApplicationsResource {
      * Provision a service account for an application.
      */
     provisionServiceAccount(id: string): ResultAsync<CreateServiceAccountResponse, SdkError>;
+    /**
+     * Get the service account attached to an application.
+     */
+    getServiceAccount(id: string): ResultAsync<ServiceAccountResponse, SdkError>;
+    /**
+     * List roles defined for an application.
+     */
+    listRoles(id: string): ResultAsync<ApplicationRoleResponse[], SdkError>;
+    /**
+     * List per-client configs for an application.
+     */
+    listClients(id: string): ResultAsync<ClientConfigsResponse, SdkError>;
+    /**
+     * Update the per-client config for an application.
+     */
+    updateClientConfig(id: string, clientId: string, data: ClientConfigRequest): ResultAsync<ClientConfigResponse, SdkError>;
+    /**
+     * Enable an application for a specific client.
+     */
+    enableForClient(id: string, clientId: string): ResultAsync<ClientConfigResponse, SdkError>;
+    /**
+     * Disable an application for a specific client.
+     */
+    disableForClient(id: string, clientId: string): ResultAsync<ClientConfigResponse, SdkError>;
 }
 //# sourceMappingURL=applications.d.ts.map

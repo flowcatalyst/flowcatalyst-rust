@@ -18,6 +18,8 @@ use FlowCatalyst\Outbox\Contracts\OutboxDriver;
 use FlowCatalyst\Outbox\Drivers\DatabaseDriver;
 use FlowCatalyst\Outbox\Drivers\MongoDriver;
 use FlowCatalyst\Outbox\OutboxManager;
+use FlowCatalyst\UseCase\OutboxUnitOfWork;
+use FlowCatalyst\UseCase\UnitOfWork;
 use Illuminate\Support\ServiceProvider;
 
 class FlowCatalystServiceProvider extends ServiceProvider
@@ -35,6 +37,7 @@ class FlowCatalystServiceProvider extends ServiceProvider
         $this->registerTokenManager();
         $this->registerClient();
         $this->registerOutbox();
+        $this->registerUnitOfWork();
         $this->registerOidcUserAuth();
         $this->registerDefinitions();
     }
@@ -122,6 +125,30 @@ class FlowCatalystServiceProvider extends ServiceProvider
                 defaultPartition: $config['default_partition'] ?? 'default'
             );
         });
+    }
+
+    /**
+     * Register the UnitOfWork binding.
+     *
+     * Binds the `UnitOfWork` contract to `OutboxUnitOfWork`, wired to the
+     * already-registered `OutboxManager`. Consumers type-hint `UnitOfWork`
+     * in their use case constructors and Laravel injects the outbox-backed
+     * implementation. Audit log emission is toggled by
+     * `flowcatalyst.outbox.audit_enabled`.
+     */
+    protected function registerUnitOfWork(): void
+    {
+        $this->app->singleton(OutboxUnitOfWork::class, function ($app) {
+            $config = $app['config']['flowcatalyst']['outbox'] ?? [];
+            return new OutboxUnitOfWork(
+                outboxManager: $app->make(OutboxManager::class),
+                auditEnabled:  (bool) ($config['audit_enabled'] ?? false),
+                fallbackPrincipalId: $config['fallback_principal_id'] ?? 'system',
+            );
+        });
+
+        // Type-hint the contract to get the outbox-backed implementation.
+        $this->app->bind(UnitOfWork::class, OutboxUnitOfWork::class);
     }
 
     /**

@@ -54,7 +54,8 @@
 			"providers": ["FlowCatalyst\\FlowCatalystServiceProvider"],
 			"aliases": {
 				"FlowCatalyst": "FlowCatalyst\\Facades\\FlowCatalyst",
-				"Postbox": "FlowCatalyst\\Facades\\Postbox"
+				"Postbox": "FlowCatalyst\\Facades\\Postbox",
+				"UnitOfWork": "FlowCatalyst\\Facades\\UnitOfWork"
 			}
 		}
 	},

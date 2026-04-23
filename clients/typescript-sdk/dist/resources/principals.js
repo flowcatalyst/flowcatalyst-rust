@@ -33,9 +33,18 @@ export class PrincipalsResource {
     }
     /**
      * Find a user by email.
+     *
+     * Client-side filters the response to rows whose email matches exactly
+     * (case-insensitive). Older platform builds silently ignored unknown
+     * query parameters and returned an unfiltered list; we defend against
+     * that here so callers don't act on the wrong principal.
      */
     findByEmail(email) {
-        return this.list({ email });
+        const needle = email.toLowerCase();
+        return this.list({ email }).map((response) => {
+            const principals = response.principals.filter((p) => (p.email ?? "").toLowerCase() === needle);
+            return { principals, total: principals.length };
+        });
     }
     /**
      * Create a new user principal.
@@ -80,6 +89,10 @@ export class PrincipalsResource {
     }
     /**
      * Reset a user's password.
+     *
+     * Set `enforcePasswordComplexity` on `data` to `false` when the caller
+     * enforces its own password policy; only the platform's 2-character
+     * minimum will apply. Defaults to `true`.
      */
     resetPassword(id, data) {
         return this.client.request((httpClient, headers) => sdk.postApiAdminPrincipalsByIdResetPassword({

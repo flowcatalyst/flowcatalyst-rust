@@ -54,5 +54,6 @@ export { CreateEventDto } from "./outbox/index.js";
 export { CreateDispatchJobDto } from "./outbox/index.js";
 export { CreateAuditLogDto } from "./outbox/index.js";
 export { generateTsid, isValidTsid } from "./outbox/index.js";
+export * as usecase from "./usecase/index.js";
 export { ok, err, Result, ResultAsync } from "neverthrow";
 //# sourceMappingURL=index.d.ts.map
