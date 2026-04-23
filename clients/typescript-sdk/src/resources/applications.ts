@@ -46,6 +46,50 @@ export interface CreateServiceAccountResponse {
 	clientSecret: string;
 }
 
+export interface ServiceAccountResponse {
+	id: string;
+	code: string;
+	name: string;
+	description?: string | null;
+	active: boolean;
+	applicationId?: string | null;
+	createdAt: string;
+}
+
+export interface ApplicationRoleResponse {
+	id: string;
+	code: string;
+	displayName: string;
+	description?: string | null;
+	applicationCode: string;
+	permissions: string[];
+	source: string;
+	clientManaged: boolean;
+}
+
+export interface ClientConfigRequest {
+	enabled?: boolean;
+	baseUrlOverride?: string | null;
+	config?: Record<string, unknown> | null;
+}
+
+export interface ClientConfigResponse {
+	id: string;
+	applicationId: string;
+	clientId: string;
+	clientName?: string | null;
+	clientIdentifier?: string | null;
+	enabled: boolean;
+	baseUrlOverride?: string | null;
+	effectiveBaseUrl?: string | null;
+	config?: Record<string, unknown> | null;
+}
+
+export interface ClientConfigsResponse {
+	clientConfigs: ClientConfigResponse[];
+	total?: number;
+}
+
 /**
  * Applications resource for managing platform applications.
  */
@@ -184,6 +228,105 @@ export class ApplicationsResource {
 					headers,
 					path: { id },
 				}),
+		);
+	}
+
+	/**
+	 * Get the service account attached to an application.
+	 */
+	getServiceAccount(
+		id: string,
+	): ResultAsync<ServiceAccountResponse, SdkError> {
+		return this.client.request<ServiceAccountResponse>((httpClient, headers) =>
+			httpClient.get({
+				url: "/api/applications/{id}/service-account",
+				headers,
+				path: { id },
+			}),
+		);
+	}
+
+	/**
+	 * List roles defined for an application.
+	 */
+	listRoles(
+		id: string,
+	): ResultAsync<ApplicationRoleResponse[], SdkError> {
+		return this.client.request<ApplicationRoleResponse[]>(
+			(httpClient, headers) =>
+				httpClient.get({
+					url: "/api/applications/{id}/roles",
+					headers,
+					path: { id },
+				}),
+		);
+	}
+
+	/**
+	 * List per-client configs for an application.
+	 */
+	listClients(
+		id: string,
+	): ResultAsync<ClientConfigsResponse, SdkError> {
+		return this.client.request<ClientConfigsResponse>((httpClient, headers) =>
+			httpClient.get({
+				url: "/api/applications/{id}/clients",
+				headers,
+				path: { id },
+			}),
+		);
+	}
+
+	/**
+	 * Update the per-client config for an application.
+	 */
+	updateClientConfig(
+		id: string,
+		clientId: string,
+		data: ClientConfigRequest,
+	): ResultAsync<ClientConfigResponse, SdkError> {
+		return this.client.request<ClientConfigResponse>((httpClient, headers) =>
+			httpClient.put({
+				url: "/api/applications/{id}/clients/{clientId}",
+				headers: {
+					...headers,
+					"Content-Type": "application/json",
+				},
+				path: { id, clientId },
+				body: data,
+			}),
+		);
+	}
+
+	/**
+	 * Enable an application for a specific client.
+	 */
+	enableForClient(
+		id: string,
+		clientId: string,
+	): ResultAsync<ClientConfigResponse, SdkError> {
+		return this.client.request<ClientConfigResponse>((httpClient, headers) =>
+			httpClient.post({
+				url: "/api/applications/{id}/clients/{clientId}/enable",
+				headers,
+				path: { id, clientId },
+			}),
+		);
+	}
+
+	/**
+	 * Disable an application for a specific client.
+	 */
+	disableForClient(
+		id: string,
+		clientId: string,
+	): ResultAsync<ClientConfigResponse, SdkError> {
+		return this.client.request<ClientConfigResponse>((httpClient, headers) =>
+			httpClient.post({
+				url: "/api/applications/{id}/clients/{clientId}/disable",
+				headers,
+				path: { id, clientId },
+			}),
 		);
 	}
 }

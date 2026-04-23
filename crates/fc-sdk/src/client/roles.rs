@@ -55,6 +55,13 @@ pub struct UpdateRoleRequest {
     pub client_managed: Option<bool>,
 }
 
+/// Request body for `grant_permission` — `{ "permission": "..." }`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrantPermissionRequest {
+    pub permission: String,
+}
+
 /// Role response from the platform API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +107,11 @@ impl FlowCatalystClient {
         self.get(&format!("/api/roles/{}", name)).await
     }
 
+    /// Get a role by code (`application:role-name`).
+    pub async fn get_role_by_code(&self, code: &str) -> Result<RoleResponse, ClientError> {
+        self.get(&format!("/api/roles/by-code/{}", code)).await
+    }
+
     /// Create a new role.
     ///
     /// Returns `{ id }` only. Call `get_role(name)` if you need the full record.
@@ -134,6 +146,32 @@ impl FlowCatalystClient {
         self.get(&format!(
             "/api/roles/by-application/{}",
             application_id
+        ))
+        .await
+    }
+
+    /// Grant a permission to a role. Returns the updated role.
+    pub async fn grant_permission(
+        &self,
+        role_name: &str,
+        permission: &str,
+    ) -> Result<RoleResponse, ClientError> {
+        let body = GrantPermissionRequest {
+            permission: permission.to_string(),
+        };
+        self.post(&format!("/api/roles/{}/permissions", role_name), &body)
+            .await
+    }
+
+    /// Revoke a permission from a role. Returns the updated role.
+    pub async fn revoke_permission(
+        &self,
+        role_name: &str,
+        permission: &str,
+    ) -> Result<RoleResponse, ClientError> {
+        self.delete_with_response(&format!(
+            "/api/roles/{}/permissions/{}",
+            role_name, permission
         ))
         .await
     }

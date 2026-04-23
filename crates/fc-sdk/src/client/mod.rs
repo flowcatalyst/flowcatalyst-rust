@@ -188,6 +188,31 @@ impl FlowCatalystClient {
         Ok(())
     }
 
+    /// DELETE that returns a parsed response body (e.g. the updated resource).
+    async fn delete_with_response<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<T, ClientError> {
+        let resp = self
+            .http
+            .delete(&self.url(path))
+            .headers(self.headers())
+            .send()
+            .await
+            .map_err(ClientError::Request)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api {
+                status: status.as_u16(),
+                body,
+            });
+        }
+
+        resp.json().await.map_err(ClientError::Request)
+    }
+
     async fn post_action<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
