@@ -105,5 +105,15 @@ export { CreateDispatchJobDto } from "./outbox/index.js";
 export { CreateAuditLogDto } from "./outbox/index.js";
 export { generateTsid, isValidTsid } from "./outbox/index.js";
 
+// UseCase / UnitOfWork — domain-driven write pattern with outbox dispatch.
+// Exported as a namespace to avoid clashing with neverthrow's `Result` and the
+// HTTP `ValidationError`/`NotFoundError` types. Typical usage:
+//
+//   import { usecase } from "@flowcatalyst/sdk";
+//   class ShipOrderUseCase implements usecase.UseCase<ShipOrderCommand, OrderShipped> { ... }
+//   const uow = new usecase.OutboxUnitOfWork({ outboxManager });
+//
+export * as usecase from "./usecase/index.js";
+
 // Re-export neverthrow utilities for convenience
 export { ok, err, Result, ResultAsync } from "neverthrow";
