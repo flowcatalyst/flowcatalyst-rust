@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use crate::auth::config_entity::{
     AnchorDomain, ClientAuthConfig, IdpRoleMapping,
-    AuthConfigType, AuthProvider,
 };
 use crate::{
     AnchorDomainRepository, ClientAuthConfigRepository, IdpRoleMappingRepository,
@@ -319,25 +318,37 @@ pub struct AuthConfigState {
     pub idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
     /// Optional - needed for counting users by email domain
     pub principal_repo: Option<Arc<crate::PrincipalRepository>>,
-    /// UoW used to emit domain events + audit logs after direct repo writes
-    /// from handlers that manipulate fields not captured by a single use case
-    /// (client_auth_config has many variant update paths).
     pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
-}
 
-fn parse_config_type(s: &str) -> AuthConfigType {
-    match s.to_uppercase().as_str() {
-        "ANCHOR" => AuthConfigType::Anchor,
-        "PARTNER" => AuthConfigType::Partner,
-        _ => AuthConfigType::Client,
-    }
-}
+    // Anchor domain use cases
+    pub create_anchor_domain_use_case: Arc<
+        crate::auth::operations::CreateAnchorDomainUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub update_anchor_domain_use_case: Arc<
+        crate::auth::operations::UpdateAnchorDomainUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub delete_anchor_domain_use_case: Arc<
+        crate::auth::operations::DeleteAnchorDomainUseCase<crate::usecase::PgUnitOfWork>,
+    >,
 
-fn parse_auth_provider(s: &str) -> AuthProvider {
-    match s.to_uppercase().as_str() {
-        "OIDC" => AuthProvider::Oidc,
-        _ => AuthProvider::Internal,
-    }
+    // Auth config use cases
+    pub create_auth_config_use_case: Arc<
+        crate::auth::operations::CreateAuthConfigUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub update_auth_config_use_case: Arc<
+        crate::auth::operations::UpdateAuthConfigUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub delete_auth_config_use_case: Arc<
+        crate::auth::operations::DeleteAuthConfigUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+
+    // IdP role mapping use cases
+    pub create_idp_role_mapping_use_case: Arc<
+        crate::auth::operations::CreateIdpRoleMappingUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub delete_idp_role_mapping_use_case: Arc<
+        crate::auth::operations::DeleteIdpRoleMappingUseCase<crate::usecase::PgUnitOfWork>,
+    >,
 }
 
 // ============================================================================
@@ -363,27 +374,20 @@ pub async fn create_anchor_domain(
     auth: Authenticated,
     Json(req): Json<CreateAnchorDomainRequest>,
 ) -> Result<Json<CreatedResponse>, PlatformError> {
+    use crate::auth::operations::CreateAnchorDomainCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
     let domain = req.domain.to_lowercase();
-
-    // Check for duplicate
-    if state.anchor_domain_repo.is_anchor_domain(&domain).await? {
-        return Err(PlatformError::duplicate("AnchorDomain", "domain", &domain));
-    }
-
-    let anchor_domain = AnchorDomain::new(&domain);
-    let id = anchor_domain.id.clone();
-
-    state.anchor_domain_repo.insert(&anchor_domain).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AnchorDomainCreated;
+    let cmd = CreateAnchorDomainCommand { domain: domain.clone() };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AnchorDomainCreated::new(&ctx, &id, &anchor_domain.domain);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
+    state.create_anchor_domain_use_case.run(cmd, ctx).await.into_result()?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    // Fetch by domain to return the created id (command doesn't echo it).
+    let created = state.anchor_domain_repo.find_by_domain(&domain).await?
+        .ok_or_else(|| PlatformError::internal("Anchor domain commit succeeded but row not found"))?;
+    Ok(Json(CreatedResponse::new(created.id)))
 }
 
 /// List anchor domains
@@ -511,21 +515,14 @@ pub async fn delete_anchor_domain(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::auth::operations::DeleteAnchorDomainCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let existing = state.anchor_domain_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("AnchorDomain", &id))?;
-    let domain_value = existing.domain.clone();
-
-    state.anchor_domain_repo.delete(&id).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AnchorDomainDeleted;
+    let cmd = DeleteAnchorDomainCommand { anchor_domain_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AnchorDomainDeleted::new(&ctx, &id, &domain_value);
-    let cmd = serde_json::json!({ "anchorDomainId": id });
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
-
+    state.delete_anchor_domain_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -559,22 +556,17 @@ pub async fn update_anchor_domain(
     Path(id): Path<String>,
     Json(req): Json<UpdateAnchorDomainRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::auth::operations::UpdateAnchorDomainCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut domain = state.anchor_domain_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("AnchorDomain", &id))?;
-
-    domain.domain = req.domain.to_lowercase();
-    domain.updated_at = chrono::Utc::now();
-
-    state.anchor_domain_repo.update(&domain).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AnchorDomainUpdated;
+    let cmd = UpdateAnchorDomainCommand {
+        anchor_domain_id: id,
+        domain: req.domain,
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AnchorDomainUpdated::new(&ctx, &id, &domain.domain);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
-
+    state.update_anchor_domain_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -601,46 +593,29 @@ pub async fn create_client_auth_config(
     auth: Authenticated,
     Json(req): Json<CreateClientAuthConfigRequest>,
 ) -> Result<Json<CreatedResponse>, PlatformError> {
+    use crate::auth::operations::CreateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
     let email_domain = req.email_domain.to_lowercase();
-
-    // Check for duplicate
-    if state.client_auth_config_repo.find_by_email_domain(&email_domain).await?.is_some() {
-        return Err(PlatformError::duplicate("ClientAuthConfig", "emailDomain", &email_domain));
-    }
-
-    let config_type = req.config_type.as_deref()
-        .map(parse_config_type)
-        .unwrap_or(AuthConfigType::Client);
-
-    let mut config = match config_type {
-        AuthConfigType::Partner => ClientAuthConfig::new_partner(&email_domain),
-        _ => {
-            let client_id = req.primary_client_id.clone().unwrap_or_default();
-            ClientAuthConfig::new_client(&email_domain, &client_id)
-        }
+    let cmd = CreateAuthConfigCommand {
+        email_domain: email_domain.clone(),
+        config_type: req.config_type.clone().unwrap_or_else(|| "CLIENT".to_string()),
+        primary_client_id: req.primary_client_id.clone(),
+        auth_provider: req.auth_provider.clone(),
+        oidc_issuer_url: req.oidc_issuer_url.clone(),
+        oidc_client_id: req.oidc_client_id.clone(),
+        oidc_multi_tenant: false,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
     };
-
-    if let Some(ref provider) = req.auth_provider {
-        config.auth_provider = parse_auth_provider(provider);
-    }
-
-    if let Some(ref issuer) = req.oidc_issuer_url {
-        if let Some(ref client_id) = req.oidc_client_id {
-            config = config.with_oidc(issuer, client_id);
-        }
-    }
-
-    let id = config.id.clone();
-    state.client_auth_config_repo.insert(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigCreated;
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let config_type_str = format!("{:?}", config.config_type);
-    let event = AuthConfigCreated::new(&ctx, &id, &config.email_domain, &config_type_str);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
+    state.create_auth_config_use_case.run(cmd, ctx).await.into_result()?;
+
+    let created = state.client_auth_config_repo.find_by_email_domain(&email_domain).await?
+        .ok_or_else(|| PlatformError::internal("Auth config commit succeeded but row not found"))?;
+    let id = created.id.clone();
 
     Ok(Json(CreatedResponse::new(id)))
 }
@@ -721,36 +696,25 @@ pub async fn update_client_auth_config(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientAuthConfigRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::auth::operations::UpdateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut config = state.client_auth_config_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("ClientAuthConfig", &id))?;
-
-    if let Some(ref client_id) = req.primary_client_id {
-        config.primary_client_id = Some(client_id.clone());
-    }
-    if let Some(ref provider) = req.auth_provider {
-        config.auth_provider = parse_auth_provider(provider);
-    }
-    if let Some(ref issuer) = req.oidc_issuer_url {
-        config.oidc_issuer_url = Some(issuer.clone());
-    }
-    if let Some(ref client_id) = req.oidc_client_id {
-        config.oidc_client_id = Some(client_id.clone());
-    }
-    if let Some(ref additional) = req.additional_client_ids {
-        config.additional_client_ids = additional.clone();
-    }
-
-    config.updated_at = chrono::Utc::now();
-    state.client_auth_config_repo.update(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigUpdated;
+    let cmd = UpdateAuthConfigCommand {
+        auth_config_id: id,
+        primary_client_id: req.primary_client_id.clone(),
+        auth_provider: req.auth_provider.clone(),
+        oidc_issuer_url: req.oidc_issuer_url.clone(),
+        oidc_client_id: req.oidc_client_id.clone(),
+        oidc_multi_tenant: None,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
+        additional_client_ids: req.additional_client_ids.clone(),
+        config_type: None,
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AuthConfigUpdated::new(&ctx, &id, &config.email_domain);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
-
+    state.update_auth_config_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -774,21 +738,14 @@ pub async fn delete_client_auth_config(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::auth::operations::DeleteAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let existing = state.client_auth_config_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("ClientAuthConfig", &id))?;
-    let email_domain = existing.email_domain.clone();
-
-    state.client_auth_config_repo.delete(&id).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigDeleted;
+    let cmd = DeleteAuthConfigCommand { auth_config_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AuthConfigDeleted::new(&ctx, &id, &email_domain);
-    let cmd = serde_json::json!({ "authConfigId": id });
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
-
+    state.delete_auth_config_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -822,22 +779,25 @@ pub async fn update_config_type(
     Path(id): Path<String>,
     Json(req): Json<UpdateConfigTypeRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::auth::operations::UpdateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut config = state.client_auth_config_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("ClientAuthConfig", &id))?;
-
-    config.config_type = parse_config_type(&req.config_type);
-    config.updated_at = chrono::Utc::now();
-
-    state.client_auth_config_repo.update(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigUpdated;
+    let cmd = UpdateAuthConfigCommand {
+        auth_config_id: id,
+        primary_client_id: None,
+        auth_provider: None,
+        oidc_issuer_url: None,
+        oidc_client_id: None,
+        oidc_multi_tenant: None,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
+        additional_client_ids: None,
+        config_type: Some(req.config_type),
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AuthConfigUpdated::new(&ctx, &id, &config.email_domain);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
-
+    state.update_auth_config_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -890,32 +850,27 @@ pub async fn create_internal_auth_config(
 ) -> Result<Json<CreatedResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
+    use crate::auth::operations::CreateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     let email_domain = req.email_domain.to_lowercase();
-
-    if state.client_auth_config_repo.find_by_email_domain(&email_domain).await?.is_some() {
-        return Err(PlatformError::duplicate("ClientAuthConfig", "emailDomain", &email_domain));
-    }
-
-    let config_type = parse_config_type(&req.config_type);
-    let config = match config_type {
-        AuthConfigType::Partner => ClientAuthConfig::new_partner(&email_domain),
-        _ => {
-            let client_id = req.primary_client_id.clone().unwrap_or_default();
-            ClientAuthConfig::new_client(&email_domain, &client_id)
-        }
+    let cmd = CreateAuthConfigCommand {
+        email_domain: email_domain.clone(),
+        config_type: req.config_type.clone(),
+        primary_client_id: req.primary_client_id.clone(),
+        auth_provider: Some("INTERNAL".to_string()),
+        oidc_issuer_url: None,
+        oidc_client_id: None,
+        oidc_multi_tenant: false,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
     };
-
-    let id = config.id.clone();
-    state.client_auth_config_repo.insert(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigCreated;
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let config_type_str = format!("{:?}", config.config_type);
-    let event = AuthConfigCreated::new(&ctx, &id, &config.email_domain, &config_type_str);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
+    state.create_auth_config_use_case.run(cmd, ctx).await.into_result()?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    let created = state.client_auth_config_repo.find_by_email_domain(&email_domain).await?
+        .ok_or_else(|| PlatformError::internal("Auth config commit succeeded but row not found"))?;
+    Ok(Json(CreatedResponse::new(created.id)))
 }
 
 /// Create OIDC auth config
@@ -937,36 +892,29 @@ pub async fn create_oidc_auth_config(
     auth: Authenticated,
     Json(req): Json<CreateOidcAuthConfigRequest>,
 ) -> Result<Json<CreatedResponse>, PlatformError> {
+    use crate::auth::operations::CreateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
     let email_domain = req.email_domain.to_lowercase();
-
-    if state.client_auth_config_repo.find_by_email_domain(&email_domain).await?.is_some() {
-        return Err(PlatformError::duplicate("ClientAuthConfig", "emailDomain", &email_domain));
-    }
-
-    let config_type = parse_config_type(&req.config_type);
-    let mut config = match config_type {
-        AuthConfigType::Partner => ClientAuthConfig::new_partner(&email_domain),
-        _ => {
-            let client_id = req.primary_client_id.clone().unwrap_or_default();
-            ClientAuthConfig::new_client(&email_domain, &client_id)
-        }
+    let cmd = CreateAuthConfigCommand {
+        email_domain: email_domain.clone(),
+        config_type: req.config_type.clone(),
+        primary_client_id: req.primary_client_id.clone(),
+        auth_provider: Some("OIDC".to_string()),
+        oidc_issuer_url: Some(req.oidc_issuer_url.clone()),
+        oidc_client_id: Some(req.oidc_client_id.clone()),
+        oidc_multi_tenant: false,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
     };
-
-    config = config.with_oidc(&req.oidc_issuer_url, &req.oidc_client_id);
-
-    let id = config.id.clone();
-    state.client_auth_config_repo.insert(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigCreated;
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let config_type_str = format!("{:?}", config.config_type);
-    let event = AuthConfigCreated::new(&ctx, &id, &config.email_domain, &config_type_str);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
+    state.create_auth_config_use_case.run(cmd, ctx).await.into_result()?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    let created = state.client_auth_config_repo.find_by_email_domain(&email_domain).await?
+        .ok_or_else(|| PlatformError::internal("Auth config commit succeeded but row not found"))?;
+    Ok(Json(CreatedResponse::new(created.id)))
 }
 
 /// Update OIDC config
@@ -993,26 +941,23 @@ pub async fn update_oidc_config(
 ) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut config = state.client_auth_config_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("ClientAuthConfig", &id))?;
+    use crate::auth::operations::UpdateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
 
-    if let Some(ref issuer) = req.oidc_issuer_url {
-        config.oidc_issuer_url = Some(issuer.clone());
-    }
-    if let Some(ref client_id) = req.oidc_client_id {
-        config.oidc_client_id = Some(client_id.clone());
-    }
-    config.auth_provider = AuthProvider::Oidc;
-    config.updated_at = chrono::Utc::now();
-
-    state.client_auth_config_repo.update(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigUpdated;
+    let cmd = UpdateAuthConfigCommand {
+        auth_config_id: id,
+        primary_client_id: None,
+        auth_provider: Some("OIDC".to_string()),
+        oidc_issuer_url: req.oidc_issuer_url.clone(),
+        oidc_client_id: req.oidc_client_id.clone(),
+        oidc_multi_tenant: None,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
+        additional_client_ids: None,
+        config_type: None,
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AuthConfigUpdated::new(&ctx, &id, &config.email_domain);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
-
+    state.update_auth_config_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1040,20 +985,23 @@ pub async fn update_client_binding(
 ) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut config = state.client_auth_config_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("ClientAuthConfig", &id))?;
+    use crate::auth::operations::UpdateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
 
-    config.primary_client_id = Some(req.primary_client_id.clone());
-    config.updated_at = chrono::Utc::now();
-
-    state.client_auth_config_repo.update(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigUpdated;
+    let cmd = UpdateAuthConfigCommand {
+        auth_config_id: id,
+        primary_client_id: Some(req.primary_client_id),
+        auth_provider: None,
+        oidc_issuer_url: None,
+        oidc_client_id: None,
+        oidc_multi_tenant: None,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
+        additional_client_ids: None,
+        config_type: None,
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AuthConfigUpdated::new(&ctx, &id, &config.email_domain);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
-
+    state.update_auth_config_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1081,20 +1029,23 @@ pub async fn update_additional_clients(
 ) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut config = state.client_auth_config_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("ClientAuthConfig", &id))?;
+    use crate::auth::operations::UpdateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
 
-    config.additional_client_ids = req.additional_client_ids.clone();
-    config.updated_at = chrono::Utc::now();
-
-    state.client_auth_config_repo.update(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigUpdated;
+    let cmd = UpdateAuthConfigCommand {
+        auth_config_id: id,
+        primary_client_id: None,
+        auth_provider: None,
+        oidc_issuer_url: None,
+        oidc_client_id: None,
+        oidc_multi_tenant: None,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
+        additional_client_ids: Some(req.additional_client_ids),
+        config_type: None,
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AuthConfigUpdated::new(&ctx, &id, &config.email_domain);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
-
+    state.update_auth_config_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1122,20 +1073,23 @@ pub async fn update_granted_clients(
 ) -> Result<StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut config = state.client_auth_config_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("ClientAuthConfig", &id))?;
+    use crate::auth::operations::UpdateAuthConfigCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
 
-    config.additional_client_ids = req.granted_client_ids.clone();
-    config.updated_at = chrono::Utc::now();
-
-    state.client_auth_config_repo.update(&config).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::AuthConfigUpdated;
+    let cmd = UpdateAuthConfigCommand {
+        auth_config_id: id,
+        primary_client_id: None,
+        auth_provider: None,
+        oidc_issuer_url: None,
+        oidc_client_id: None,
+        oidc_multi_tenant: None,
+        oidc_issuer_pattern: None,
+        oidc_client_secret_ref: None,
+        additional_client_ids: Some(req.granted_client_ids),
+        config_type: None,
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = AuthConfigUpdated::new(&ctx, &id, &config.email_domain);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
-
+    state.update_auth_config_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1191,26 +1145,23 @@ pub async fn create_idp_role_mapping(
     auth: Authenticated,
     Json(req): Json<CreateIdpRoleMappingRequest>,
 ) -> Result<Json<CreatedResponse>, PlatformError> {
+    use crate::auth::operations::CreateIdpRoleMappingCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    // Check for duplicate
-    if state.idp_role_mapping_repo.find_by_idp_role(&req.idp_type, &req.idp_role_name).await?.is_some() {
-        return Err(PlatformError::duplicate("IdpRoleMapping", "idpRole", &format!("{}:{}", req.idp_type, req.idp_role_name)));
-    }
-
-    let mapping = IdpRoleMapping::new(&req.idp_type, &req.idp_role_name, &req.platform_role_name);
-    let id = mapping.id.clone();
-
-    state.idp_role_mapping_repo.insert(&mapping).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::IdpRoleMappingCreated;
+    let cmd = CreateIdpRoleMappingCommand {
+        idp_type: req.idp_type.clone(),
+        idp_role_name: req.idp_role_name.clone(),
+        platform_role_name: req.platform_role_name,
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let idp_role = format!("{}:{}", mapping.idp_type, mapping.idp_role_name);
-    let event = IdpRoleMappingCreated::new(&ctx, &id, &idp_role, &mapping.platform_role_name);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
+    state.create_idp_role_mapping_use_case.run(cmd, ctx).await.into_result()?;
 
-    Ok(Json(CreatedResponse::new(id)))
+    let created = state.idp_role_mapping_repo
+        .find_by_idp_role(&req.idp_type, &req.idp_role_name).await?
+        .ok_or_else(|| PlatformError::internal("IdP role mapping commit succeeded but row not found"))?;
+    Ok(Json(CreatedResponse::new(created.id)))
 }
 
 /// Query parameters for IDP role mappings
@@ -1274,22 +1225,14 @@ pub async fn delete_idp_role_mapping(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::auth::operations::DeleteIdpRoleMappingCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let exists = state.idp_role_mapping_repo.find_by_id(&id).await?.is_some();
-    if !exists {
-        return Err(PlatformError::not_found("IdpRoleMapping", &id));
-    }
-
-    state.idp_role_mapping_repo.delete(&id).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::IdpRoleMappingDeleted;
+    let cmd = DeleteIdpRoleMappingCommand { mapping_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = IdpRoleMappingDeleted::new(&ctx, &id);
-    let cmd = serde_json::json!({ "idpRoleMappingId": id });
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
-
+    state.delete_idp_role_mapping_use_case.run(cmd, ctx).await.into_result()?;
     Ok(StatusCode::NO_CONTENT)
 }
 

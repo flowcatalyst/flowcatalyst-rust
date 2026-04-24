@@ -1,5 +1,6 @@
 //! PlatformConfig Repository — PostgreSQL via SQLx
 
+use async_trait::async_trait;
 use sqlx::PgPool;
 use chrono::{DateTime, Utc};
 
@@ -245,5 +246,51 @@ impl PlatformConfigRepository {
             .await?
         };
         Ok(result.rows_affected() > 0)
+    }
+}
+
+impl crate::usecase::HasId for PlatformConfig {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl crate::usecase::Persist<PlatformConfig> for PlatformConfigRepository {
+    async fn persist(&self, c: &PlatformConfig, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO app_platform_configs
+                (id, application_code, section, property, scope, client_id,
+                 value_type, value, description, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                application_code = EXCLUDED.application_code,
+                section = EXCLUDED.section,
+                property = EXCLUDED.property,
+                scope = EXCLUDED.scope,
+                client_id = EXCLUDED.client_id,
+                value_type = EXCLUDED.value_type,
+                value = EXCLUDED.value,
+                description = EXCLUDED.description,
+                updated_at = NOW()"#,
+        )
+        .bind(&c.id)
+        .bind(&c.application_code)
+        .bind(&c.section)
+        .bind(&c.property)
+        .bind(c.scope.as_str())
+        .bind(&c.client_id)
+        .bind(c.value_type.as_str())
+        .bind(&c.value)
+        .bind(&c.description)
+        .execute(&mut **tx.inner)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete(&self, c: &PlatformConfig, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        sqlx::query("DELETE FROM app_platform_configs WHERE id = $1")
+            .bind(&c.id)
+            .execute(&mut **tx.inner)
+            .await?;
+        Ok(())
     }
 }

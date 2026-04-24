@@ -13,8 +13,7 @@ use utoipa::{ToSchema, IntoParams};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{Application, ServiceAccount, AuthRole, ApplicationClientConfig};
-use crate::service_account::RoleAssignment;
+use crate::{Application, ServiceAccount, AuthRole};
 use crate::{ApplicationRepository, ServiceAccountRepository, RoleRepository, ApplicationClientConfigRepository, ClientRepository};
 use crate::shared::error::PlatformError;
 use crate::shared::api_common::PaginationParams;
@@ -185,6 +184,13 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
     pub update_use_case: Arc<UpdateApplicationUseCase<U>>,
     pub activate_use_case: Arc<ActivateApplicationUseCase<U>>,
     pub deactivate_use_case: Arc<DeactivateApplicationUseCase<U>>,
+    pub enable_for_client_use_case: Arc<crate::application::operations::EnableApplicationForClientUseCase<U>>,
+    pub disable_for_client_use_case: Arc<crate::application::operations::DisableApplicationForClientUseCase<U>>,
+    pub update_client_config_use_case: Arc<crate::application::operations::UpdateApplicationClientConfigUseCase<U>>,
+    /// Concrete `PgUnitOfWork` for orchestrated operations (provision-service-account)
+    /// that span two aggregates. Routed via `run(closure)` — handler owns the
+    /// tx boundary. Trait-backed use cases still go through `U`.
+    pub pg_unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
 }
 
 /// Create a new application
@@ -461,8 +467,12 @@ pub async fn get_application_by_code<U: UnitOfWork>(
     Ok(Json(app.into()))
 }
 
-/// Provision a service account for an application
-/// NOTE: This endpoint still bypasses UnitOfWork - needs ProvisionServiceAccountUseCase
+/// Provision a service account for an application.
+///
+/// Two-aggregate operation: creates a ServiceAccount + updates Application.
+/// Both commits happen inside a single DB transaction via
+/// `PgUnitOfWork::run(…)` — either both land or both roll back. The
+/// handler owns the tx boundary; the use cases stay tx-agnostic.
 #[utoipa::path(
     post,
     path = "/{id}/provision-service-account",
@@ -483,40 +493,74 @@ pub async fn provision_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
+    use crate::application::operations::{
+        AttachServiceAccountToApplicationCommand,
+        AttachServiceAccountToApplicationUseCase,
+    };
+    use crate::service_account::operations::{
+        CreateServiceAccountCommand,
+        CreateServiceAccountUseCase,
+    };
+
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
-    // Get the application
-    let mut app = state.application_repo.find_by_id(&id).await?
+    // Pre-validate: fail early before opening a tx. Mirrors the business
+    // rule inside AttachServiceAccountToApplicationUseCase.
+    let app = state.application_repo.find_by_id(&id).await?
         .ok_or_else(|| PlatformError::not_found("Application", &id))?;
-
-    // Check if already has a service account
     if app.service_account_id.is_some() {
         return Err(PlatformError::conflict(
-            "Application already has a service account provisioned"
+            "Application already has a service account provisioned",
         ));
     }
 
-    // Create the service account
     let sa_code = format!("app:{}", app.code);
     let sa_name = format!("{} Service Account", app.name);
+    let sa_description = format!("Service account for application: {}", app.name);
 
-    let mut service_account = ServiceAccount::new(&sa_code, &sa_name)
-        .with_application_id(&app.id)
-        .with_description(format!("Service account for application: {}", app.name));
+    let app_id = app.id.clone();
+    let principal_id = auth.0.principal_id.clone();
+    let sa_repo = state.service_account_repo.clone();
+    let app_repo = state.application_repo.clone();
 
-    // Assign the application-service role
-    service_account.roles.push(RoleAssignment::with_source(
-        "platform:application-service",
-        "SYSTEM",
-    ));
+    // One DB tx for both use cases. If the attach fails for any reason
+    // (rare — we pre-checked), the ServiceAccount insert rolls back too.
+    let result = state.pg_unit_of_work.run(|session| async move {
+        let create_sa_uc = CreateServiceAccountUseCase::new(sa_repo, session.clone());
+        let attach_uc = AttachServiceAccountToApplicationUseCase::new(app_repo, session);
 
-    // Save the service account
-    state.service_account_repo.insert(&service_account).await?;
+        let create_cmd = CreateServiceAccountCommand {
+            code: sa_code.clone(),
+            name: sa_name,
+            description: Some(sa_description),
+            client_ids: Vec::new(),
+            application_id: Some(app_id.clone()),
+        };
+        let ctx = crate::usecase::ExecutionContext::create(&principal_id);
+        let created = match create_sa_uc.run(create_cmd, ctx.clone()).await.into_result() {
+            Ok(c) => c,
+            Err(err) => return crate::usecase::UseCaseResult::failure(err),
+        };
+        let sa_id = created.event.service_account_id.clone();
 
-    // Update the application with the service account ID
-    app.service_account_id = Some(service_account.id.clone());
-    app.updated_at = chrono::Utc::now();
-    state.application_repo.update(&app).await?;
+        let attach_cmd = AttachServiceAccountToApplicationCommand {
+            application_id: app_id,
+            service_account_id: sa_id.clone(),
+            service_account_code: sa_code,
+        };
+        // `.map()` transforms the attach event into the SA id without
+        // bypassing the Result seal — success can only come from a UoW
+        // commit, then we re-shape the success payload.
+        attach_uc.run(attach_cmd, ctx).await.map(move |_| sa_id)
+    }).await;
+
+    let sa_id = result.into_result()?;
+
+    // Fetch the committed service account for the response. This is a read
+    // after the tx closed — safe, the SA row is guaranteed to exist on the
+    // success path.
+    let service_account = state.service_account_repo.find_by_id(&sa_id).await?
+        .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
 
     Ok(Json(service_account.into()))
 }
@@ -676,8 +720,9 @@ pub async fn list_client_configs<U: UnitOfWork>(
     }))
 }
 
-/// Update client config for an application
-/// NOTE: This endpoint still bypasses UnitOfWork - needs ApplicationClientConfig use cases
+/// Update client config for an application.
+/// Routes through UpdateApplicationClientConfigUseCase so the change is
+/// atomic with an `ApplicationClientConfigUpdated` event + audit log.
 #[utoipa::path(
     put,
     path = "/{id}/clients/{client_id}",
@@ -702,41 +747,26 @@ pub async fn update_client_config<U: UnitOfWork>(
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
-    // Verify application exists
+    let cmd = crate::application::operations::UpdateApplicationClientConfigCommand {
+        application_id: id.clone(),
+        client_id: client_id.clone(),
+        enabled: req.enabled,
+        base_url_override: req.base_url_override,
+        config: req.config,
+    };
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    state.update_client_config_use_case.run(cmd, ctx).await.into_result()?;
+
+    // Refetch to build the response — the use case returns an event, not the
+    // hydrated config, and the response carries the application's effective
+    // base URL + client name/identifier alongside the updated config.
     let app = state.application_repo.find_by_id(&id).await?
         .ok_or_else(|| PlatformError::not_found("Application", &id))?;
-
-    // Verify client exists
     let client = state.client_repo.find_by_id(&client_id).await?
         .ok_or_else(|| PlatformError::not_found("Client", &client_id))?;
-
-    // Get or create config
-    let mut config = if let Some(existing) = state.client_config_repo
+    let config = state.client_config_repo
         .find_by_application_and_client(&id, &client_id).await?
-    {
-        existing
-    } else {
-        ApplicationClientConfig::new(&id, &client_id)
-    };
-
-    // Apply updates
-    if let Some(enabled) = req.enabled {
-        config.enabled = enabled;
-    }
-    if let Some(url) = req.base_url_override {
-        config.base_url_override = if url.is_empty() { None } else { Some(url) };
-    }
-    if let Some(cfg) = req.config {
-        config.config_json = Some(cfg);
-    }
-    config.updated_at = chrono::Utc::now();
-
-    // Save
-    if state.client_config_repo.find_by_id(&config.id).await?.is_some() {
-        state.client_config_repo.update(&config).await?;
-    } else {
-        state.client_config_repo.insert(&config).await?;
-    }
+        .ok_or_else(|| PlatformError::not_found("ApplicationClientConfig", "for (app, client)"))?;
 
     Ok(Json(ClientConfigResponse {
         id: config.id,
@@ -751,8 +781,8 @@ pub async fn update_client_config<U: UnitOfWork>(
     }))
 }
 
-/// Enable application for a client
-/// NOTE: This endpoint still bypasses UnitOfWork - needs ApplicationClientConfig use cases
+/// Enable application for a client.
+/// Routes through EnableApplicationForClientUseCase (UoW-backed).
 #[utoipa::path(
     post,
     path = "/{id}/clients/{client_id}/enable",
@@ -775,47 +805,18 @@ pub async fn enable_for_client<U: UnitOfWork>(
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
-    // Verify application exists
-    let app = state.application_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
-
-    // Verify client exists
-    let client = state.client_repo.find_by_id(&client_id).await?
-        .ok_or_else(|| PlatformError::not_found("Client", &client_id))?;
-
-    // Get or create config
-    let mut config = if let Some(existing) = state.client_config_repo
-        .find_by_application_and_client(&id, &client_id).await?
-    {
-        existing
-    } else {
-        ApplicationClientConfig::new(&id, &client_id)
+    let cmd = crate::application::operations::EnableApplicationForClientCommand {
+        application_id: id.clone(),
+        client_id: client_id.clone(),
     };
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    state.enable_for_client_use_case.run(cmd, ctx).await.into_result()?;
 
-    config.enable();
-
-    // Save
-    if state.client_config_repo.find_by_id(&config.id).await?.is_some() {
-        state.client_config_repo.update(&config).await?;
-    } else {
-        state.client_config_repo.insert(&config).await?;
-    }
-
-    Ok(Json(ClientConfigResponse {
-        id: config.id,
-        application_id: config.application_id,
-        client_id: config.client_id,
-        client_name: client.name,
-        client_identifier: client.identifier,
-        enabled: config.enabled,
-        base_url_override: config.base_url_override.clone(),
-        effective_base_url: config.base_url_override.or(app.default_base_url),
-        config: config.config_json,
-    }))
+    build_client_config_response(&state, &id, &client_id).await
 }
 
-/// Disable application for a client
-/// NOTE: This endpoint still bypasses UnitOfWork - needs ApplicationClientConfig use cases
+/// Disable application for a client.
+/// Routes through DisableApplicationForClientUseCase (UoW-backed).
 #[utoipa::path(
     post,
     path = "/{id}/clients/{client_id}/disable",
@@ -838,31 +839,31 @@ pub async fn disable_for_client<U: UnitOfWork>(
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
-    // Verify application exists
-    let app = state.application_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
-
-    // Verify client exists
-    let client = state.client_repo.find_by_id(&client_id).await?
-        .ok_or_else(|| PlatformError::not_found("Client", &client_id))?;
-
-    // Get or create config
-    let mut config = if let Some(existing) = state.client_config_repo
-        .find_by_application_and_client(&id, &client_id).await?
-    {
-        existing
-    } else {
-        ApplicationClientConfig::new(&id, &client_id)
+    let cmd = crate::application::operations::DisableApplicationForClientCommand {
+        application_id: id.clone(),
+        client_id: client_id.clone(),
     };
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    state.disable_for_client_use_case.run(cmd, ctx).await.into_result()?;
 
-    config.disable();
+    build_client_config_response(&state, &id, &client_id).await
+}
 
-    // Save
-    if state.client_config_repo.find_by_id(&config.id).await?.is_some() {
-        state.client_config_repo.update(&config).await?;
-    } else {
-        state.client_config_repo.insert(&config).await?;
-    }
+/// Build the `ClientConfigResponse` by re-loading the app, client, and
+/// config after a use case has mutated the config. Shared by
+/// `enable_for_client` / `disable_for_client` / `update_client_config`.
+async fn build_client_config_response<U: UnitOfWork>(
+    state: &ApplicationsState<U>,
+    app_id: &str,
+    client_id: &str,
+) -> Result<Json<ClientConfigResponse>, PlatformError> {
+    let app = state.application_repo.find_by_id(app_id).await?
+        .ok_or_else(|| PlatformError::not_found("Application", app_id))?;
+    let client = state.client_repo.find_by_id(client_id).await?
+        .ok_or_else(|| PlatformError::not_found("Client", client_id))?;
+    let config = state.client_config_repo
+        .find_by_application_and_client(app_id, client_id).await?
+        .ok_or_else(|| PlatformError::not_found("ApplicationClientConfig", "for (app, client)"))?;
 
     Ok(Json(ClientConfigResponse {
         id: config.id,

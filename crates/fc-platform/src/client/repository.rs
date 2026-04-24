@@ -191,12 +191,60 @@ impl ClientRepository {
         Ok(())
     }
 
+    /// Delete a client and cascade the non-FK junction —
+    /// `iam_client_access_grants` references clients by id with no DB-level
+    /// FK. Integrity is code-managed; this path must cascade atomically or
+    /// we leak orphaned grants. `iam_principals.client_id` is NOT touched
+    /// here — the delete use case is expected to refuse when principals
+    /// still have this client as home.
     pub async fn delete(&self, id: &str) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM iam_client_access_grants WHERE client_id = $1")
+            .bind(id)
+            .execute(&mut *tx).await?;
+
         let result = sqlx::query("DELETE FROM tnt_clients WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
-            .await?;
+            .execute(&mut *tx).await?;
+
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Count access grants targeting this client.
+    pub async fn count_access_grants(&self, client_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM iam_client_access_grants WHERE client_id = $1",
+        )
+        .bind(client_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Count principals whose home client is this one. Deletion must refuse
+    /// while any exist — home-client is meaningful domain state; silently
+    /// orphaning it would change a user's scope without explicit action.
+    pub async fn count_home_principals(&self, client_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM iam_principals WHERE client_id = $1",
+        )
+        .bind(client_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Count per-application config entries scoped to this client.
+    pub async fn count_client_configs(&self, client_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM app_client_configs WHERE client_id = $1",
+        )
+        .bind(client_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
     }
 }
 
@@ -238,6 +286,17 @@ impl crate::usecase::Persist<Client> for ClientRepository {
     }
 
     async fn delete(&self, c: &Client, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        // iam_client_access_grants has no DB-level FK on client_id
+        // (integrity lives in code). Cascade in the same tx as the client
+        // delete so this path holds the invariant even if someone bypasses
+        // the use case. iam_principals.client_id is left alone — the delete
+        // use case refuses when principals still hold this as home, and
+        // silently un-homing them here would be a worse data-loss mode.
+        sqlx::query("DELETE FROM iam_client_access_grants WHERE client_id = $1")
+            .bind(&c.id)
+            .execute(&mut **tx.inner)
+            .await?;
+
         sqlx::query("DELETE FROM tnt_clients WHERE id = $1")
             .bind(&c.id)
             .execute(&mut **tx.inner)

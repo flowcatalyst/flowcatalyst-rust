@@ -290,6 +290,10 @@ async fn main() -> Result<()> {
     fc_platform::shared::database::run_migrations(&pg_pool).await
         .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
 
+    // Referential-integrity scan — warns when any aggregate delete path has
+    // left orphan junction rows behind. Non-fatal; operator-visible.
+    fc_platform::shared::integrity_scan::run(&pg_pool).await;
+
     // 2. Initialise the embedded queue on the same Postgres pool. Queue
     //    tables live alongside the control-plane tables — one DB to back
     //    up, one dialect to reason about.

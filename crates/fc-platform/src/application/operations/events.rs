@@ -359,6 +359,61 @@ impl ApplicationDisabledForClient {
     }
 }
 
+/// Event emitted when a client's per-application config is updated
+/// (base URL override / arbitrary config json / enabled flag).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationClientConfigUpdated {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub application_id: String,
+    pub client_id: String,
+    pub config_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url_override: Option<String>,
+    pub config_changed: bool,
+}
+
+impl_domain_event!(ApplicationClientConfigUpdated);
+
+impl ApplicationClientConfigUpdated {
+    const EVENT_TYPE: &'static str = "platform:iam:application:client-config-updated";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:application";
+
+    pub fn new(
+        ctx: &ExecutionContext,
+        application_id: &str,
+        client_id: &str,
+        config_id: &str,
+        enabled: Option<bool>,
+        base_url_override: Option<String>,
+        config_changed: bool,
+    ) -> Self {
+        let event_id = TsidGenerator::generate_untyped();
+        let subject = format!("platform.application.{}", application_id);
+        let message_group = format!("platform:application:{}", application_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id, Self::EVENT_TYPE, Self::SPEC_VERSION, Self::SOURCE,
+                subject, message_group,
+                ctx.execution_id.clone(), ctx.correlation_id.clone(),
+                ctx.causation_id.clone(), ctx.principal_id.clone(),
+            ),
+            application_id: application_id.to_string(),
+            client_id: client_id.to_string(),
+            config_id: config_id.to_string(),
+            enabled,
+            base_url_override,
+            config_changed,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

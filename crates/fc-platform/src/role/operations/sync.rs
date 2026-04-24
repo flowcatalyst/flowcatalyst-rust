@@ -164,10 +164,32 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
             }
         }
 
-        // Remove unlisted SDK-sourced roles for this application
+        // Remove unlisted SDK-sourced roles for this application.
+        // Refuse if a role still has principal assignments — the junction
+        // has no DB-level FK, so silently dropping it would orphan user
+        // role assignments. The caller (SDK sync command) must strip the
+        // assignments first.
         if command.remove_unlisted {
             for role in &existing {
                 if role.source == RoleSource::Sdk && !synced_names.contains(&role.name) {
+                    let assignments = match self.role_repo.count_assignments(&role.name).await {
+                        Ok(n) => n,
+                        Err(e) => {
+                            return UseCaseResult::failure(UseCaseError::commit(format!(
+                                "Failed to count assignments for role '{}': {}", role.name, e,
+                            )));
+                        }
+                    };
+                    if assignments > 0 {
+                        return UseCaseResult::failure(UseCaseError::business_rule(
+                            "ROLE_HAS_ASSIGNMENTS",
+                            format!(
+                                "Cannot remove role '{}' — {} principal(s) still hold it. \
+                                 Strip the assignments before syncing.",
+                                role.name, assignments,
+                            ),
+                        ));
+                    }
                     if let Err(e) = self.role_repo.delete(&role.id).await {
                         return UseCaseResult::failure(UseCaseError::commit(format!(
                             "Failed to delete role '{}': {}", role.name, e

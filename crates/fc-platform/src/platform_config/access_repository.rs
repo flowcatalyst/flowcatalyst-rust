@@ -1,5 +1,6 @@
 //! PlatformConfigAccess Repository — PostgreSQL via SQLx
 
+use async_trait::async_trait;
 use sqlx::PgPool;
 use chrono::{DateTime, Utc};
 
@@ -111,5 +112,42 @@ impl PlatformConfigAccessRepository {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
+    }
+}
+
+impl crate::usecase::HasId for PlatformConfigAccess {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl crate::usecase::Persist<PlatformConfigAccess> for PlatformConfigAccessRepository {
+    async fn persist(&self, a: &PlatformConfigAccess, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO app_platform_config_access
+                (id, application_code, role_code, can_read, can_write, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (id) DO UPDATE SET
+                application_code = EXCLUDED.application_code,
+                role_code = EXCLUDED.role_code,
+                can_read = EXCLUDED.can_read,
+                can_write = EXCLUDED.can_write"#
+        )
+        .bind(&a.id)
+        .bind(&a.application_code)
+        .bind(&a.role_code)
+        .bind(a.can_read)
+        .bind(a.can_write)
+        .bind(a.created_at)
+        .execute(&mut **tx.inner)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete(&self, a: &PlatformConfigAccess, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        sqlx::query("DELETE FROM app_platform_config_access WHERE id = $1")
+            .bind(&a.id)
+            .execute(&mut **tx.inner)
+            .await?;
+        Ok(())
     }
 }

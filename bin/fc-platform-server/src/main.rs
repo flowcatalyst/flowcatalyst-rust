@@ -69,6 +69,9 @@ async fn main() -> Result<()> {
     fc_platform::shared::database::run_migrations(&pg_pool).await
         .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
 
+    // Referential-integrity scan — warns about orphaned junction rows.
+    fc_platform::shared::integrity_scan::run(&pg_pool).await;
+
     // Seed development data if in dev mode
     let dev_mode = std::env::var("FC_DEV_MODE")
         .map(|v| v == "true" || v == "1")

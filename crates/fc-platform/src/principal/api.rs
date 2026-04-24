@@ -734,108 +734,48 @@ pub async fn update_principal(
     Path(id): Path<String>,
     Json(req): Json<UpdatePrincipalRequest>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
-    let mut principal = state.principal_repo.find_by_id(&id).await?
+    use crate::principal::operations::UpdateUserCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
+    // Handler-level auth: target-resource access + high-trust gates on
+    // scope/client_id changes. Field-level mutations happen inside the
+    // use case so the write commits atomically with the UserUpdated event.
+    let existing = state.principal_repo.find_by_id(&id).await?
         .or_not_found("Principal", &id)?;
 
-    // Check access on the current principal
     if !auth.0.is_anchor() {
-        if let Some(ref cid) = principal.client_id {
+        if let Some(ref cid) = existing.client_id {
             if !auth.0.can_access_client(cid) {
                 return Err(PlatformError::forbidden("No access to this principal"));
             }
         } else {
-            return Err(PlatformError::forbidden("Only anchor users can modify anchor-level principals"));
-        }
-    }
-
-    // Update fields
-    if let Some(name) = req.name {
-        principal.name = name;
-    }
-    if let Some(active) = req.active {
-        if active {
-            principal.activate();
-        } else {
-            principal.deactivate();
-        }
-    }
-
-    // Scope / client_id changes are high-trust: require anchor.
-    if req.scope.is_some() || req.client_id.is_some() {
-        if !auth.0.is_anchor() {
             return Err(PlatformError::forbidden(
-                "Only anchor users can change a principal's scope or client",
+                "Only anchor users can modify anchor-level principals",
             ));
         }
     }
 
-    if let Some(scope_str) = req.scope.as_deref() {
-        principal.scope = match scope_str.to_uppercase().as_str() {
-            "ANCHOR" => crate::principal::entity::UserScope::Anchor,
-            "PARTNER" => crate::principal::entity::UserScope::Partner,
-            "CLIENT" => crate::principal::entity::UserScope::Client,
-            other => return Err(PlatformError::validation(format!(
-                "Invalid scope '{}'. Must be ANCHOR, PARTNER, or CLIENT.", other,
-            ))),
-        };
+    if (req.scope.is_some() || req.client_id.is_some()) && !auth.0.is_anchor() {
+        return Err(PlatformError::forbidden(
+            "Only anchor users can change a principal's scope or client",
+        ));
     }
 
-    // Apply client_id according to the (possibly updated) scope.
-    if req.client_id.is_some() || req.scope.is_some() {
-        match principal.scope {
-            crate::principal::entity::UserScope::Client => {
-                let cid = req.client_id.clone()
-                    .or_else(|| principal.client_id.clone())
-                    .ok_or_else(|| PlatformError::validation(
-                        "client_id is required when scope is CLIENT",
-                    ))?;
-                if cid.trim().is_empty() {
-                    return Err(PlatformError::validation(
-                        "client_id cannot be empty when scope is CLIENT",
-                    ));
-                }
-                principal.client_id = Some(cid);
-            }
-            // Anchor / Partner principals don't have a home client.
-            _ => {
-                principal.client_id = None;
-            }
-        }
-    }
+    let cmd = UpdateUserCommand {
+        principal_id: id.clone(),
+        name: req.name,
+        first_name: req.first_name,
+        last_name: req.last_name,
+        active: req.active,
+        scope: req.scope,
+        client_id: req.client_id,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    state.update_use_case.run(cmd, ctx).await.into_result()?;
 
-    // Update user identity if applicable
-    if principal.is_user() {
-        if let Some(ref mut identity) = principal.user_identity {
-            if let Some(first) = req.first_name {
-                identity.first_name = Some(first);
-            }
-            if let Some(last) = req.last_name {
-                identity.last_name = Some(last);
-            }
-        }
-    }
-
-    principal.updated_at = chrono::Utc::now();
-    state.principal_repo.update(&principal).await?;
-
-    // Emit event + audit log atomically via UoW. The write itself happens
-    // above (update_principal mutates a mix of fields not captured by any
-    // single existing use case); a follow-up refactor could migrate this to
-    // a fully-fledged UpdatePrincipalUseCase with an extended command.
-    let event = crate::principal::operations::UserUpdated::new(
-        &crate::usecase::ExecutionContext::create(&auth.0.principal_id),
-        &principal.id,
-        Some(&principal.name),
-        None,
-    );
-    let cmd = serde_json::json!({
-        "principalId": id,
-        "name": principal.name,
-    });
-    use crate::usecase::UnitOfWork;
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
-
-    Ok(Json(PrincipalResponse::from(principal)))
+    let refreshed = state.principal_repo.find_by_id(&id).await?
+        .or_not_found("Principal", &id)?;
+    Ok(Json(refreshed.into()))
 }
 
 /// Get roles assigned to a principal

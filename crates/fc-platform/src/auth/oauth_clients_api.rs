@@ -15,7 +15,7 @@ use std::sync::Arc;
 // SHA-256 removed — secrets now use encrypted: format via EncryptionService
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
-use crate::auth::oauth_entity::{OAuthClient, OAuthClientType, GrantType};
+use crate::auth::oauth_entity::{OAuthClient, OAuthClientType};
 use crate::OAuthClientRepository;
 use crate::shared::error::PlatformError;
 use crate::shared::api_common::{PaginationParams, SuccessResponse};
@@ -142,26 +142,30 @@ pub struct OAuthClientsQuery {
 #[derive(Clone)]
 pub struct OAuthClientsState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
-    /// UoW used to emit domain events + audit logs after direct repo writes.
-    /// These handlers touch many small fields (active flag, secret rotation,
-    /// many-valued lists) that don't fit a single narrow use case.
-    pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
+    pub create_oauth_client_use_case: Arc<
+        crate::auth::operations::CreateOAuthClientUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub update_oauth_client_use_case: Arc<
+        crate::auth::operations::UpdateOAuthClientUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub delete_oauth_client_use_case: Arc<
+        crate::auth::operations::DeleteOAuthClientUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub activate_oauth_client_use_case: Arc<
+        crate::auth::operations::ActivateOAuthClientUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub deactivate_oauth_client_use_case: Arc<
+        crate::auth::operations::DeactivateOAuthClientUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub rotate_oauth_client_secret_use_case: Arc<
+        crate::auth::operations::RotateOAuthClientSecretUseCase<crate::usecase::PgUnitOfWork>,
+    >,
 }
 
 fn parse_client_type(s: &str) -> OAuthClientType {
     match s.to_uppercase().as_str() {
         "CONFIDENTIAL" => OAuthClientType::Confidential,
         _ => OAuthClientType::Public,
-    }
-}
-
-fn parse_grant_type(s: &str) -> Option<GrantType> {
-    match s.to_lowercase().as_str() {
-        "authorization_code" => Some(GrantType::AuthorizationCode),
-        "client_credentials" => Some(GrantType::ClientCredentials),
-        "refresh_token" => Some(GrantType::RefreshToken),
-        "password" => Some(GrantType::Password),
-        _ => None,
     }
 }
 
@@ -184,45 +188,21 @@ pub async fn create_oauth_client(
     auth: Authenticated,
     Json(req): Json<CreateOAuthClientRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), PlatformError> {
+    use crate::auth::operations::CreateOAuthClientCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
     // Auto-generate client_id if not provided
     let client_id = req.client_id
         .unwrap_or_else(|| crate::TsidGenerator::generate(crate::EntityType::OAuthClient));
+    let client_type = req.client_type.clone().unwrap_or_else(|| "PUBLIC".to_string());
+    let parsed_client_type = parse_client_type(&client_type);
 
-    // Check for duplicate client_id
-    if state.oauth_client_repo.exists_by_client_id(&client_id).await? {
-        return Err(PlatformError::duplicate("OAuthClient", "clientId", &client_id));
-    }
-
-    let mut client = OAuthClient::new(&client_id, &req.client_name);
-
-    if let Some(ref ct) = req.client_type {
-        client.client_type = parse_client_type(ct);
-    }
-
-    for uri in req.redirect_uris {
-        client = client.with_redirect_uri(uri);
-    }
-
-    if !req.grant_types.is_empty() {
-        client.grant_types.clear();
-        for gt in req.grant_types {
-            if let Some(grant) = parse_grant_type(&gt) {
-                client = client.with_grant_type(grant);
-            }
-        }
-    }
-
-    if let Some(pkce) = req.pkce_required {
-        client.pkce_required = pkce;
-    }
-
-    client.application_ids = req.application_ids;
-
-    // For CONFIDENTIAL clients, auto-generate a secret.
-    // The plaintext is returned once; the encrypted ref is stored.
-    let generated_secret = if client.client_type == crate::auth::oauth_entity::OAuthClientType::Confidential {
+    // For CONFIDENTIAL clients, generate a secret at the edge. The plaintext
+    // is returned once; the encrypted ref is passed into the use case which
+    // persists it atomically with the domain event.
+    let (client_secret_ref, generated_secret) = if parsed_client_type == OAuthClientType::Confidential {
         use base64::Engine;
 
         let mut secret_bytes = [0u8; 32];
@@ -233,27 +213,42 @@ pub async fn create_oauth_client(
             .ok_or_else(|| PlatformError::internal("FLOWCATALYST_APP_KEY not configured — cannot encrypt client secret"))?;
         let encrypted = enc.encrypt(&plaintext)
             .map_err(|e| PlatformError::internal(format!("Failed to encrypt client secret: {}", e)))?;
-        client.client_secret_ref = Some(format!("encrypted:{}", encrypted));
-
-        Some(plaintext)
+        (Some(format!("encrypted:{}", encrypted)), Some(plaintext))
     } else {
-        None
+        (None, None)
     };
 
-    state.oauth_client_repo.insert(&client).await?;
+    // Default grant_types = ["authorization_code"] when not specified, matching the
+    // OAuthClient::new default.
+    let grant_types = if req.grant_types.is_empty() {
+        vec!["authorization_code".to_string()]
+    } else {
+        req.grant_types
+    };
 
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::OAuthClientCreated;
+    let oauth_client_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+
+    let cmd = CreateOAuthClientCommand {
+        oauth_client_id: oauth_client_id.clone(),
+        client_id: client_id.clone(),
+        client_name: req.client_name,
+        client_type,
+        client_secret_ref,
+        redirect_uris: req.redirect_uris,
+        grant_types,
+        default_scopes: vec![],
+        pkce_required: req.pkce_required.unwrap_or(parsed_client_type == OAuthClientType::Public),
+        application_ids: req.application_ids,
+        allowed_origins: vec![],
+        service_account_principal_id: None,
+        created_by: Some(auth.0.principal_id.clone()),
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = OAuthClientCreated::new(&ctx, &client.id, &client.client_id);
-    let cmd = serde_json::json!({
-        "oauthClientId": client.id,
-        "clientId": client.client_id,
-        "clientName": client.client_name,
-    });
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
+    state.create_oauth_client_use_case.run(cmd, ctx).await.into_result()?;
 
-    // Return wrapped response matching frontend expectations: { client: {...}, clientSecret?: "..." }
+    let client = state.oauth_client_repo.find_by_id(&oauth_client_id).await?
+        .ok_or_else(|| PlatformError::internal("OAuth client created but row not found"))?;
+
     let mut response = serde_json::json!({
         "client": OAuthClientResponse::from(client),
     });
@@ -346,43 +341,23 @@ pub async fn update_oauth_client(
     Path(id): Path<String>,
     Json(req): Json<UpdateOAuthClientRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::auth::operations::UpdateOAuthClientCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut client = state.oauth_client_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
-
-    if let Some(ref name) = req.client_name {
-        client.client_name = name.clone();
-    }
-    if let Some(ref uris) = req.redirect_uris {
-        client.redirect_uris = uris.clone();
-    }
-    if let Some(ref grants) = req.grant_types {
-        client.grant_types = grants.iter()
-            .filter_map(|g| parse_grant_type(g))
-            .collect();
-    }
-    if let Some(pkce) = req.pkce_required {
-        client.pkce_required = pkce;
-    }
-    if let Some(ref apps) = req.application_ids {
-        client.application_ids = apps.clone();
-    }
-    if let Some(ref origins) = req.allowed_origins {
-        client.allowed_origins = origins.clone();
-    }
-    if let Some(active) = req.active {
-        client.active = active;
-    }
-
-    client.updated_at = chrono::Utc::now();
-    state.oauth_client_repo.update(&client).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::OAuthClientUpdated;
+    let cmd = UpdateOAuthClientCommand {
+        oauth_client_id: id,
+        client_name: req.client_name,
+        redirect_uris: req.redirect_uris,
+        grant_types: req.grant_types,
+        pkce_required: req.pkce_required,
+        application_ids: req.application_ids,
+        allowed_origins: req.allowed_origins,
+        active: req.active,
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = OAuthClientUpdated::new(&ctx, &client.id, &client.client_id);
-    let _ = state.unit_of_work.emit_event(event, &req).await;
+    state.update_oauth_client_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -407,20 +382,14 @@ pub async fn delete_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::auth::operations::DeleteOAuthClientCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let existing = state.oauth_client_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
-    let client_id = existing.client_id.clone();
-
-    state.oauth_client_repo.delete(&id).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::OAuthClientDeleted;
+    let cmd = DeleteOAuthClientCommand { oauth_client_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = OAuthClientDeleted::new(&ctx, &id, &client_id);
-    let cmd = serde_json::json!({ "oauthClientId": id });
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
+    state.delete_oauth_client_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -481,21 +450,14 @@ pub async fn activate_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse>, PlatformError> {
+    use crate::auth::operations::ActivateOAuthClientCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut client = state.oauth_client_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
-
-    client.active = true;
-    client.updated_at = chrono::Utc::now();
-    state.oauth_client_repo.update(&client).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::OAuthClientActivated;
+    let cmd = ActivateOAuthClientCommand { oauth_client_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = OAuthClientActivated::new(&ctx, &client.id, &client.client_id);
-    let cmd = serde_json::json!({ "oauthClientId": client.id });
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
+    state.activate_oauth_client_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(Json(SuccessResponse::with_message("OAuth client activated")))
 }
@@ -520,21 +482,14 @@ pub async fn deactivate_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse>, PlatformError> {
+    use crate::auth::operations::DeactivateOAuthClientCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut client = state.oauth_client_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
-
-    client.active = false;
-    client.updated_at = chrono::Utc::now();
-    state.oauth_client_repo.update(&client).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::OAuthClientDeactivated;
+    let cmd = DeactivateOAuthClientCommand { oauth_client_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = OAuthClientDeactivated::new(&ctx, &client.id, &client.client_id);
-    let cmd = serde_json::json!({ "oauthClientId": client.id });
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
+    state.deactivate_oauth_client_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(Json(SuccessResponse::with_message("OAuth client deactivated")))
 }
@@ -559,32 +514,28 @@ pub async fn regenerate_oauth_client_secret(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
+    use crate::auth::operations::RotateOAuthClientSecretCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
 
-    let mut client = state.oauth_client_repo.find_by_id(&id).await?
-        .ok_or_else(|| PlatformError::not_found("OAuthClient", &id))?;
-
-    // Generate a random 32-byte secret and encode as URL-safe base64
+    // Generate + encrypt the secret at the edge; the use case gets only the
+    // encrypted ref so plaintext never crosses the domain boundary.
     let mut secret_bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
     let plaintext_secret = URL_SAFE_NO_PAD.encode(secret_bytes);
 
-    // Encrypt and store as encrypted: ref
     let enc = crate::shared::encryption_service::EncryptionService::from_env()
         .ok_or_else(|| PlatformError::internal("FLOWCATALYST_APP_KEY not configured"))?;
     let encrypted = enc.encrypt(&plaintext_secret)
         .map_err(|e| PlatformError::internal(format!("Failed to encrypt secret: {}", e)))?;
 
-    client.client_secret_ref = Some(format!("encrypted:{}", encrypted));
-    client.updated_at = chrono::Utc::now();
-    state.oauth_client_repo.update(&client).await?;
-
-    use crate::usecase::{UnitOfWork, ExecutionContext};
-    use crate::auth::operations::OAuthClientSecretRotated;
+    let cmd = RotateOAuthClientSecretCommand {
+        oauth_client_id: id,
+        new_client_secret_ref: format!("encrypted:{}", encrypted),
+    };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = OAuthClientSecretRotated::new(&ctx, &client.id, &client.client_id);
-    let cmd = serde_json::json!({ "oauthClientId": client.id });
-    let _ = state.unit_of_work.emit_event(event, &cmd).await;
+    state.rotate_oauth_client_secret_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(Json(RegenerateSecretResponse {
         client_secret: plaintext_secret,

@@ -471,6 +471,12 @@ pub struct EventTypesSynced {
     pub updated: u32,
     pub deleted: u32,
     pub synced_codes: Vec<String>,
+    #[serde(default)]
+    pub schemas_created: u32,
+    #[serde(default)]
+    pub schemas_updated: u32,
+    #[serde(default)]
+    pub schemas_unchanged: u32,
 }
 
 impl_domain_event!(EventTypesSynced);
@@ -487,6 +493,9 @@ impl EventTypesSynced {
         updated: u32,
         deleted: u32,
         synced_codes: Vec<String>,
+        schemas_created: u32,
+        schemas_updated: u32,
+        schemas_unchanged: u32,
     ) -> Self {
         let event_id = TsidGenerator::generate_untyped();
         let subject = format!("platform.application.{}", application_code);
@@ -504,6 +513,9 @@ impl EventTypesSynced {
             updated,
             deleted,
             synced_codes,
+            schemas_created,
+            schemas_updated,
+            schemas_unchanged,
         }
     }
 }

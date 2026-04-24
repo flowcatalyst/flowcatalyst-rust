@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::collections::HashMap;
 
-use super::entity::{PlatformConfig, ConfigScope, ConfigValueType};
+use super::entity::PlatformConfig;
 use super::repository::PlatformConfigRepository;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -95,6 +95,9 @@ pub struct ConfigValueResponse {
 #[derive(Clone)]
 pub struct PlatformConfigState {
     pub config_repo: Arc<PlatformConfigRepository>,
+    pub set_property_use_case: Arc<
+        super::operations::SetPlatformConfigPropertyUseCase<crate::usecase::PgUnitOfWork>,
+    >,
 }
 
 /// List all configs for an application
@@ -241,28 +244,36 @@ pub async fn set_property(
     Query(query): Query<ConfigQuery>,
     Json(req): Json<SetConfigRequest>,
 ) -> Result<(axum::http::StatusCode, Json<ConfigResponse>), PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
-    let scope_str = query.scope.as_deref().unwrap_or("GLOBAL");
-    let existing = state.config_repo.find_by_key(
-        &app_code, &section, &property, scope_str, query.client_id.as_deref(),
-    ).await?;
+    use crate::platform_config::operations::SetPlatformConfigPropertyCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
 
-    if let Some(mut config) = existing {
-        config.value = req.value;
-        if let Some(vt) = req.value_type { config.value_type = ConfigValueType::from_str(&vt); }
-        if let Some(desc) = req.description { config.description = Some(desc); }
-        config.updated_at = chrono::Utc::now();
-        state.config_repo.update(&config).await?;
-        Ok((axum::http::StatusCode::OK, Json(ConfigResponse::from_config(config))))
+    crate::checks::require_anchor(&auth.0)?;
+    let scope_str = query.scope.as_deref().unwrap_or("GLOBAL").to_string();
+
+    let cmd = SetPlatformConfigPropertyCommand {
+        application_code: app_code.clone(),
+        section: section.clone(),
+        property: property.clone(),
+        value: req.value,
+        scope: scope_str.clone(),
+        client_id: query.client_id.clone(),
+        value_type: req.value_type,
+        description: req.description,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    let event = state.set_property_use_case.run(cmd, ctx).await.into_result()?;
+
+    let config = state.config_repo.find_by_key(
+        &app_code, &section, &property, &scope_str, query.client_id.as_deref(),
+    ).await?
+        .ok_or_else(|| PlatformError::internal("Config set committed but row not found"))?;
+
+    let status = if event.was_created {
+        axum::http::StatusCode::CREATED
     } else {
-        let mut config = PlatformConfig::new(&app_code, &section, &property, &req.value);
-        config.scope = ConfigScope::from_str(scope_str);
-        config.client_id = query.client_id;
-        if let Some(vt) = req.value_type { config.value_type = ConfigValueType::from_str(&vt); }
-        config.description = req.description;
-        state.config_repo.insert(&config).await?;
-        Ok((axum::http::StatusCode::CREATED, Json(ConfigResponse::from_config(config))))
-    }
+        axum::http::StatusCode::OK
+    };
+    Ok((status, Json(ConfigResponse::from_config(config))))
 }
 
 /// Delete a config property

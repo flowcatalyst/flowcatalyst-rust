@@ -67,6 +67,62 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
             }
         };
 
+        // Business rule: refuse when principals still have this as home client.
+        // `iam_principals.client_id` is a code-enforced reference (no DB-level FK).
+        // Silently orphaning a user's home client would change their scope
+        // without explicit action — force the admin to migrate them first.
+        let home_principals = match self.client_repo.count_home_principals(&client.id).await {
+            Ok(n) => n,
+            Err(e) => {
+                return UseCaseResult::failure(UseCaseError::commit(format!(
+                    "Failed to count home principals: {}", e,
+                )));
+            }
+        };
+        if home_principals > 0 {
+            return UseCaseResult::failure(UseCaseError::business_rule(
+                "CLIENT_HAS_PRINCIPALS",
+                format!(
+                    "Cannot delete client '{}' — {} principal(s) have it as their home client. \
+                     Migrate those principals before deleting.",
+                    client.identifier, home_principals,
+                ),
+            ));
+        }
+
+        // Business rules: refuse when any code-enforced reference still
+        // points at this client. None of these have DB-level FKs — each
+        // must be explicitly unwired before deletion.
+        let grants = self.client_repo.count_access_grants(&client.id).await
+            .map_err(|e| UseCaseError::commit(format!("count access grants: {}", e)));
+        let configs = self.client_repo.count_client_configs(&client.id).await
+            .map_err(|e| UseCaseError::commit(format!("count client configs: {}", e)));
+
+        let (grants, configs) = match (grants, configs) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(e), _) | (_, Err(e)) => return UseCaseResult::failure(e),
+        };
+
+        let refs = [
+            ("access grants",        grants),
+            ("application configs",  configs),
+        ];
+        let blockers: Vec<String> = refs.iter()
+            .filter(|(_, n)| *n > 0)
+            .map(|(label, n)| format!("{n} {label}"))
+            .collect();
+        if !blockers.is_empty() {
+            return UseCaseResult::failure(UseCaseError::business_rule(
+                "CLIENT_HAS_REFERENCES",
+                format!(
+                    "Cannot delete client '{}' — {} still reference it. \
+                     Remove those before deleting.",
+                    client.identifier,
+                    blockers.join(", "),
+                ),
+            ));
+        }
+
         let event = ClientDeleted::new(&ctx, &client.id, &client.name, &client.identifier);
 
         self.unit_of_work

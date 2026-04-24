@@ -798,85 +798,37 @@ pub async fn sync_platform(
     auth: Authenticated,
     body: Option<Json<BffSyncPlatformRequest>>,
 ) -> Result<Json<BffSyncPlatformResponse>, PlatformError> {
+    use crate::event_type::operations::{SyncEventTypesCommand, SyncEventTypeInput};
+
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
-    let _application_code = body.map(|b| b.0.application_code).unwrap_or_else(|| "platform".to_string());
+    let application_code = body.map(|b| b.0.application_code).unwrap_or_else(|| "platform".to_string());
 
     let definitions = crate::seed::platform_event_types::definitions();
-    let mut created = 0u32;
-    let mut updated = 0u32;
-    let mut synced_codes = Vec::new();
-    let mut schemas_created = 0u32;
-    let mut schemas_updated = 0u32;
-    let mut schemas_unchanged = 0u32;
+    let inputs: Vec<SyncEventTypeInput> = definitions.iter().map(|def| SyncEventTypeInput {
+        code: def.code.clone(),
+        name: def.name.clone(),
+        description: def.description.clone(),
+        schema: def.schema.clone(),
+    }).collect();
 
-    for def in &definitions {
-        synced_codes.push(def.code.clone());
-
-        let event_type = match state.event_type_repo.find_by_code(&def.code).await? {
-            Some(existing) => {
-                // Update if name or description changed
-                if existing.name != def.name || existing.description != def.description {
-                    let mut et = existing;
-                    et.name = def.name.clone();
-                    et.description = def.description.clone();
-                    et.updated_at = chrono::Utc::now();
-                    state.event_type_repo.update(&et).await?;
-                    updated += 1;
-                    // Re-fetch to get spec_versions
-                    state.event_type_repo.find_by_code(&def.code).await?.unwrap()
-                } else {
-                    existing
-                }
-            }
-            None => {
-                let mut et = EventType::new(&def.code, &def.name)
-                    .map_err(|e| PlatformError::validation(e))?;
-                et.description = def.description.clone();
-                state.event_type_repo.insert(&et).await?;
-                created += 1;
-                state.event_type_repo.find_by_code(&def.code).await?.unwrap()
-            }
-        };
-
-        // Sync schema as SpecVersion "1.0" if a schema is provided
-        if let Some(ref schema) = def.schema {
-            let has_v1 = event_type.spec_versions.iter().any(|sv| sv.version == "1.0");
-            if has_v1 {
-                // Check if schema content differs
-                let existing_sv = event_type.spec_versions.iter().find(|sv| sv.version == "1.0").unwrap();
-                if existing_sv.schema_content.as_ref() != Some(schema) {
-                    // Update existing spec version with new schema content
-                    let mut updated_sv = existing_sv.clone();
-                    updated_sv.schema_content = Some(schema.clone());
-                    updated_sv.updated_at = chrono::Utc::now();
-                    state.event_type_repo.update_spec_version(&updated_sv).await?;
-                    schemas_updated += 1;
-                } else {
-                    schemas_unchanged += 1;
-                }
-            } else {
-                // Create new SpecVersion 1.0 with the schema
-                let sv = SpecVersion::new(&event_type.id, "1.0", Some(schema.clone()));
-                state.event_type_repo.insert_spec_version(&sv).await?;
-                schemas_created += 1;
-            }
-        } else {
-            schemas_unchanged += 1;
-        }
-    }
-
-    let total = synced_codes.len() as u32;
+    let cmd = SyncEventTypesCommand {
+        application_code,
+        event_types: inputs,
+        remove_unlisted: false,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    let event = state.sync_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(Json(BffSyncPlatformResponse {
-        created,
-        updated,
-        deleted: 0,
-        total,
+        created: event.created,
+        updated: event.updated,
+        deleted: event.deleted,
+        total: event.synced_codes.len() as u32,
         schemas: BffSyncSchemasResponse {
-            created: schemas_created,
-            updated: schemas_updated,
-            unchanged: schemas_unchanged,
+            created: event.schemas_created,
+            updated: event.schemas_updated,
+            unchanged: event.schemas_unchanged,
         },
     }))
 }

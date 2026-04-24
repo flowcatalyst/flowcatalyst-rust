@@ -35,6 +35,7 @@ pub mod encryption_service;
 pub mod authorization_service;
 pub mod projections_service;
 pub mod role_sync_service;
+pub mod integrity_scan;
 
 // Re-export commonly used items
 pub use error::{PlatformError, Result, NotFoundExt};

@@ -629,3 +629,36 @@ impl IdpRoleMappingRepository {
         Ok(result.rows_affected() > 0)
     }
 }
+
+impl crate::usecase::HasId for IdpRoleMapping {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl crate::usecase::Persist<IdpRoleMapping> for IdpRoleMappingRepository {
+    async fn persist(&self, m: &IdpRoleMapping, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        let now = Utc::now();
+        sqlx::query(
+            "INSERT INTO oauth_idp_role_mappings (id, idp_role_name, internal_role_name, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (id) DO UPDATE SET
+                idp_role_name = EXCLUDED.idp_role_name,
+                internal_role_name = EXCLUDED.internal_role_name,
+                updated_at = EXCLUDED.updated_at"
+        )
+        .bind(&m.id)
+        .bind(&m.idp_role_name)
+        .bind(&m.platform_role_name)
+        .bind(now)
+        .bind(now)
+        .execute(&mut **tx.inner).await?;
+        Ok(())
+    }
+
+    async fn delete(&self, m: &IdpRoleMapping, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        sqlx::query("DELETE FROM oauth_idp_role_mappings WHERE id = $1")
+            .bind(&m.id)
+            .execute(&mut **tx.inner).await?;
+        Ok(())
+    }
+}

@@ -318,12 +318,24 @@ pub async fn sync_roles(
         synced_count += 1;
     }
 
-    // Remove unlisted SDK roles if requested
+    // Remove unlisted SDK roles if requested. Refuse if any still have
+    // principal assignments — the junction has no DB-level FK, so silently
+    // dropping it would orphan user role assignments. Caller must strip the
+    // assignments first.
     if query.remove_unlisted {
         for existing in existing_sdk_roles {
-            if !synced_codes.contains(&existing.name) {
-                state.role_repo.delete(&existing.id).await?;
+            if synced_codes.contains(&existing.name) {
+                continue;
             }
+            let assignments = state.role_repo.count_assignments(&existing.name).await?;
+            if assignments > 0 {
+                return Err(PlatformError::validation(format!(
+                    "Cannot remove role '{}' — {} principal(s) still hold it. \
+                     Strip the assignments before syncing with remove_unlisted=true.",
+                    existing.name, assignments,
+                )));
+            }
+            state.role_repo.delete(&existing.id).await?;
         }
     }
 
@@ -372,6 +384,17 @@ pub async fn delete_role(
         return Err(PlatformError::validation(
             "Cannot delete non-SDK role. Only SDK-sourced roles can be deleted via API."
         ));
+    }
+
+    // Refuse if principals still hold this role — enforced in code because
+    // the junction (iam_principal_roles) has no DB-level FK.
+    let assignments = state.role_repo.count_assignments(&role.name).await?;
+    if assignments > 0 {
+        return Err(PlatformError::validation(format!(
+            "Cannot delete role '{}' — {} principal(s) still hold it. \
+             Strip the assignments before deleting.",
+            role.name, assignments,
+        )));
     }
 
     state.role_repo.delete(&role.id).await?;

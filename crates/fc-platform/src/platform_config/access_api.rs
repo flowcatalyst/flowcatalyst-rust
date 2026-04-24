@@ -62,6 +62,12 @@ pub struct AccessListResponse {
 #[derive(Clone)]
 pub struct ConfigAccessState {
     pub access_repo: Arc<PlatformConfigAccessRepository>,
+    pub grant_access_use_case: Arc<
+        super::operations::GrantPlatformConfigAccessUseCase<crate::usecase::PgUnitOfWork>,
+    >,
+    pub revoke_access_use_case: Arc<
+        super::operations::RevokePlatformConfigAccessUseCase<crate::usecase::PgUnitOfWork>,
+    >,
 }
 
 /// List config access grants for an application
@@ -111,16 +117,25 @@ pub async fn create_access(
     Path(app_code): Path<String>,
     Json(req): Json<CreateAccessRequest>,
 ) -> Result<(axum::http::StatusCode, Json<AccessResponse>), PlatformError> {
+    use crate::platform_config::operations::GrantPlatformConfigAccessCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
     if state.access_repo.find_by_application_and_role(&app_code, &req.role_code).await?.is_some() {
         return Err(PlatformError::conflict(format!("Access grant already exists for {}/{}", app_code, req.role_code)));
     }
 
-    let mut access = PlatformConfigAccess::new(&app_code, &req.role_code);
-    if let Some(cr) = req.can_read { access.can_read = cr; }
-    if let Some(cw) = req.can_write { access.can_write = cw; }
+    let cmd = GrantPlatformConfigAccessCommand {
+        application_code: app_code.clone(),
+        role_code: req.role_code.clone(),
+        can_read: req.can_read,
+        can_write: req.can_write,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    state.grant_access_use_case.run(cmd, ctx).await.into_result()?;
 
-    state.access_repo.insert(&access).await?;
+    let access = state.access_repo.find_by_application_and_role(&app_code, &req.role_code).await?
+        .ok_or_else(|| PlatformError::internal("Access grant committed but row not found"))?;
     Ok((axum::http::StatusCode::CREATED, Json(access.into())))
 }
 
@@ -147,14 +162,25 @@ pub async fn update_access(
     Path((app_code, role_code)): Path<(String, String)>,
     Json(req): Json<UpdateAccessRequest>,
 ) -> Result<Json<AccessResponse>, PlatformError> {
+    use crate::platform_config::operations::GrantPlatformConfigAccessCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
-    let mut access = state.access_repo.find_by_application_and_role(&app_code, &role_code).await?
-        .ok_or_else(|| PlatformError::not_found("PlatformConfigAccess", &format!("{}/{}", app_code, role_code)))?;
+    if state.access_repo.find_by_application_and_role(&app_code, &role_code).await?.is_none() {
+        return Err(PlatformError::not_found("PlatformConfigAccess", &format!("{}/{}", app_code, role_code)));
+    }
 
-    if let Some(cr) = req.can_read { access.can_read = cr; }
-    if let Some(cw) = req.can_write { access.can_write = cw; }
+    let cmd = GrantPlatformConfigAccessCommand {
+        application_code: app_code.clone(),
+        role_code: role_code.clone(),
+        can_read: req.can_read,
+        can_write: req.can_write,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    state.grant_access_use_case.run(cmd, ctx).await.into_result()?;
 
-    state.access_repo.update(&access).await?;
+    let access = state.access_repo.find_by_application_and_role(&app_code, &role_code).await?
+        .ok_or_else(|| PlatformError::internal("Access grant committed but row not found"))?;
     Ok(Json(access.into()))
 }
 
@@ -179,13 +205,18 @@ pub async fn delete_access(
     auth: Authenticated,
     Path((app_code, role_code)): Path<(String, String)>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
+    use crate::platform_config::operations::RevokePlatformConfigAccessCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
     crate::checks::require_anchor(&auth.0)?;
-    let deleted = state.access_repo.delete_by_application_and_role(&app_code, &role_code).await?;
-    if deleted {
-        Ok(axum::http::StatusCode::NO_CONTENT)
-    } else {
-        Err(PlatformError::not_found("PlatformConfigAccess", &format!("{}/{}", app_code, role_code)))
-    }
+
+    let cmd = RevokePlatformConfigAccessCommand {
+        application_code: app_code,
+        role_code,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    state.revoke_access_use_case.run(cmd, ctx).await.into_result()?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 pub fn config_access_router(state: ConfigAccessState) -> OpenApiRouter {

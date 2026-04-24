@@ -435,11 +435,26 @@ impl PrincipalRepository {
         Ok(())
     }
 
+    /// Delete a principal and cascade the non-FK junctions. Mirrors the
+    /// tx-aware `Persist<Principal>::delete` — both paths MUST cascade or
+    /// we leak orphaned role assignments / client access / app access rows.
     pub async fn delete(&self, id: &str) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
+            .bind(id)
+            .execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM iam_client_access_grants WHERE principal_id = $1")
+            .bind(id)
+            .execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
+            .bind(id)
+            .execute(&mut *tx).await?;
         let result = sqlx::query("DELETE FROM iam_principals WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
-            .await?;
+            .execute(&mut *tx).await?;
+
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 

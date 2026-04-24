@@ -11,6 +11,8 @@ pub mod deactivate;
 pub mod delete;
 pub mod enable_for_client;
 pub mod disable_for_client;
+pub mod update_client_config;
+pub mod attach_service_account;
 
 // Re-export events
 pub use events::{
@@ -21,6 +23,7 @@ pub use events::{
     ApplicationDeleted,
     ApplicationEnabledForClient,
     ApplicationDisabledForClient,
+    ApplicationClientConfigUpdated,
     ApplicationServiceAccountProvisioned,
 };
 
@@ -32,3 +35,5 @@ pub use deactivate::{DeactivateApplicationCommand, DeactivateApplicationUseCase}
 pub use delete::{DeleteApplicationCommand, DeleteApplicationUseCase};
 pub use enable_for_client::{EnableApplicationForClientCommand, EnableApplicationForClientUseCase};
 pub use disable_for_client::{DisableApplicationForClientCommand, DisableApplicationForClientUseCase};
+pub use update_client_config::{UpdateApplicationClientConfigCommand, UpdateApplicationClientConfigUseCase};
+pub use attach_service_account::{AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase};

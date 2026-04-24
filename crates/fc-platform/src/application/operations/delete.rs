@@ -67,6 +67,50 @@ impl<U: UnitOfWork> UseCase for DeleteApplicationUseCase<U> {
             }
         };
 
+        // Business rules: refuse deletion while any code-enforced reference
+        // still points at this application. None of these columns have
+        // DB-level FKs — each one is a place where the app must be
+        // explicitly unwired before deletion.
+        let grants = self.application_repo.count_access_grants(&application.id).await
+            .map_err(|e| UseCaseError::commit(format!("count access grants: {}", e)));
+        let configs = self.application_repo.count_client_configs(&application.id).await
+            .map_err(|e| UseCaseError::commit(format!("count client configs: {}", e)));
+        let sas = self.application_repo.count_service_accounts(&application.id).await
+            .map_err(|e| UseCaseError::commit(format!("count service accounts: {}", e)));
+        let roles = self.application_repo.count_roles(&application.id).await
+            .map_err(|e| UseCaseError::commit(format!("count roles: {}", e)));
+        let principal_refs = self.application_repo.count_principal_refs(&application.id).await
+            .map_err(|e| UseCaseError::commit(format!("count principal refs: {}", e)));
+
+        let (grants, configs, sas, roles, principal_refs) = match (grants, configs, sas, roles, principal_refs) {
+            (Ok(a), Ok(b), Ok(c), Ok(d), Ok(e)) => (a, b, c, d, e),
+            (Err(e), _, _, _, _) | (_, Err(e), _, _, _) | (_, _, Err(e), _, _)
+            | (_, _, _, Err(e), _) | (_, _, _, _, Err(e)) => return UseCaseResult::failure(e),
+        };
+
+        let refs = [
+            ("access grants",       grants),
+            ("client configs",      configs),
+            ("service accounts",    sas),
+            ("application roles",   roles),
+            ("principal refs",      principal_refs),
+        ];
+        let blockers: Vec<String> = refs.iter()
+            .filter(|(_, n)| *n > 0)
+            .map(|(label, n)| format!("{n} {label}"))
+            .collect();
+        if !blockers.is_empty() {
+            return UseCaseResult::failure(UseCaseError::business_rule(
+                "APPLICATION_HAS_REFERENCES",
+                format!(
+                    "Cannot delete application '{}' — {} still reference it. \
+                     Remove those before deleting.",
+                    application.code,
+                    blockers.join(", "),
+                ),
+            ));
+        }
+
         let event = ApplicationDeleted::new(
             &ctx,
             &application.id,

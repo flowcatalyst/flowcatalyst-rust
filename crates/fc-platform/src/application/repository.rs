@@ -224,12 +224,81 @@ impl ApplicationRepository {
         })
     }
 
+    /// Delete an application and cascade the non-FK junction —
+    /// `iam_principal_application_access` references applications by id
+    /// with no DB-level FK. Integrity is code-managed; this path must
+    /// cascade atomically or we leak orphaned access grants.
     pub async fn delete(&self, id: &str) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM iam_principal_application_access WHERE application_id = $1")
+            .bind(id)
+            .execute(&mut *tx).await?;
+
         let result = sqlx::query("DELETE FROM app_applications WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
-            .await?;
+            .execute(&mut *tx).await?;
+
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Count principals currently granted access to this application.
+    /// Used by the delete use case to refuse deletion when user-level
+    /// grants still exist — integrity is enforced in code, not the DB.
+    pub async fn count_access_grants(&self, application_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM iam_principal_application_access WHERE application_id = $1",
+        )
+        .bind(application_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Count per-client config entries pointing at this application.
+    pub async fn count_client_configs(&self, application_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM app_client_configs WHERE application_id = $1",
+        )
+        .bind(application_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Count service accounts attached to this application.
+    pub async fn count_service_accounts(&self, application_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM iam_service_accounts WHERE application_id = $1",
+        )
+        .bind(application_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Count roles scoped to this application.
+    pub async fn count_roles(&self, application_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM iam_roles WHERE application_id = $1",
+        )
+        .bind(application_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Count principals whose application ref points at this application
+    /// (service-account principals, typically).
+    pub async fn count_principal_refs(&self, application_id: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM iam_principals WHERE application_id = $1",
+        )
+        .bind(application_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
     }
 }
 
@@ -280,6 +349,14 @@ impl crate::usecase::Persist<Application> for ApplicationRepository {
     }
 
     async fn delete(&self, a: &Application, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        // iam_principal_application_access has no DB-level FK on application_id
+        // (integrity lives in code). Cascade in the same tx as the app delete
+        // so this path holds the invariant even if someone bypasses the use case.
+        sqlx::query("DELETE FROM iam_principal_application_access WHERE application_id = $1")
+            .bind(&a.id)
+            .execute(&mut **tx.inner)
+            .await?;
+
         sqlx::query("DELETE FROM app_applications WHERE id = $1")
             .bind(&a.id)
             .execute(&mut **tx.inner)

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::auth::config_entity::AuthProvider;
+use crate::auth::config_entity::{AuthConfigType, AuthProvider};
 use crate::auth::config_repository::ClientAuthConfigRepository;
 use crate::usecase::{
     ExecutionContext, UseCase, UnitOfWork, UseCaseError, UseCaseResult,
@@ -29,6 +29,12 @@ pub struct UpdateAuthConfigCommand {
     pub oidc_issuer_pattern: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_client_secret_ref: Option<String>,
+    /// Replaces the full list when `Some`; None leaves existing IDs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additional_client_ids: Option<Vec<String>>,
+    /// `ANCHOR` / `PARTNER` / `CLIENT`. Used by the /config-type endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_type: Option<String>,
 }
 
 pub struct UpdateAuthConfigUseCase<U: UnitOfWork> {
@@ -101,6 +107,12 @@ impl<U: UnitOfWork> UseCase for UpdateAuthConfigUseCase<U> {
         }
         if let Some(ref secret_ref) = command.oidc_client_secret_ref {
             config.oidc_client_secret_ref = Some(secret_ref.clone());
+        }
+        if let Some(ref ids) = command.additional_client_ids {
+            config.additional_client_ids = ids.clone();
+        }
+        if let Some(ref ct) = command.config_type {
+            config.config_type = AuthConfigType::from_str(ct);
         }
 
         config.updated_at = chrono::Utc::now();

@@ -83,6 +83,29 @@ impl<U: UnitOfWork> UseCase for DeleteRoleUseCase<U> {
             ));
         }
 
+        // Business rule: refuse when principals still hold this role.
+        // iam_principal_roles has no DB-level FK on role_name (integrity is
+        // enforced in code), so dropping the role here would orphan the
+        // assignments. Force the admin to strip assignments first.
+        let assignments = match self.role_repo.count_assignments(&role.name).await {
+            Ok(n) => n,
+            Err(e) => {
+                return UseCaseResult::failure(UseCaseError::commit(format!(
+                    "Failed to count assignments: {}", e,
+                )));
+            }
+        };
+        if assignments > 0 {
+            return UseCaseResult::failure(UseCaseError::business_rule(
+                "ROLE_HAS_ASSIGNMENTS",
+                format!(
+                    "Cannot delete role '{}' — {} principal(s) still hold it. \
+                     Strip the assignments before deleting.",
+                    role.name, assignments,
+                ),
+            ));
+        }
+
         // Create domain event
         let event = RoleDeleted::new(&ctx, &role.id, &role.name);
 

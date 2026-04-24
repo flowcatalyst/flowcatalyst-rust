@@ -215,13 +215,13 @@ pub struct AssignRolesResponse {
 #[derive(Clone)]
 pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     pub repo: Arc<ServiceAccountRepository>,
-    pub oauth_client_repo: Arc<crate::OAuthClientRepository>,
     pub create_use_case: Arc<CreateServiceAccountUseCase<U>>,
     pub update_use_case: Arc<UpdateServiceAccountUseCase<U>>,
     pub delete_use_case: Arc<DeleteServiceAccountUseCase<U>>,
     pub assign_roles_use_case: Arc<AssignRolesUseCase<U>>,
     pub regenerate_token_use_case: Arc<RegenerateAuthTokenUseCase<U>>,
     pub regenerate_secret_use_case: Arc<RegenerateSigningSecretUseCase<U>>,
+    pub create_oauth_client_use_case: Arc<crate::auth::operations::CreateOAuthClientUseCase<U>>,
 }
 
 // ============================================================================
@@ -358,11 +358,12 @@ pub async fn create_service_account<U: UnitOfWork>(
 
     match state.create_use_case.run(command, ctx).await {
         UseCaseResult::Success(result) => {
-            // Fetch the created service account to return
             let account = state.repo.find_by_id(&result.event.service_account_id).await?
                 .ok_or_else(|| PlatformError::internal("Created service account not found"))?;
 
-            // Auto-create a CONFIDENTIAL OAuth client for this service account
+            // Auto-provision a CONFIDENTIAL OAuth client for this service account.
+            // Plaintext secret stays in this handler — only the encrypted ref
+            // crosses into the use case.
             use base64::Engine;
 
             let oauth_client_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
@@ -370,40 +371,31 @@ pub async fn create_service_account<U: UnitOfWork>(
             rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
             let plaintext_secret = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
-            // Encrypt and store as encrypted: ref
             let enc = crate::shared::encryption_service::EncryptionService::from_env()
                 .ok_or_else(|| PlatformError::internal("FLOWCATALYST_APP_KEY not configured — cannot encrypt client secret"))?;
             let encrypted = enc.encrypt(&plaintext_secret)
                 .map_err(|e| PlatformError::internal(format!("Failed to encrypt client secret: {}", e)))?;
 
-            let now = chrono::Utc::now();
-            let oauth_client = crate::auth::oauth_entity::OAuthClient {
-                id: oauth_client_id.clone(),
+            let oauth_cmd = crate::auth::operations::CreateOAuthClientCommand {
+                oauth_client_id: oauth_client_id.clone(),
                 client_id: oauth_client_id.clone(),
                 client_name: account.name.clone(),
-                client_type: crate::auth::oauth_entity::OAuthClientType::Confidential,
+                client_type: "CONFIDENTIAL".to_string(),
                 client_secret_ref: Some(format!("encrypted:{}", encrypted)),
                 redirect_uris: vec![],
                 grant_types: vec![
-                    crate::auth::oauth_entity::GrantType::ClientCredentials,
-                    crate::auth::oauth_entity::GrantType::AuthorizationCode,
+                    "client_credentials".to_string(),
+                    "authorization_code".to_string(),
                 ],
                 default_scopes: vec!["openid".to_string(), "profile".to_string(), "email".to_string()],
                 pkce_required: false,
                 application_ids: vec![],
                 allowed_origins: vec![],
                 service_account_principal_id: Some(result.event.service_account_id.clone()),
-                active: true,
-                created_at: now,
-                updated_at: now,
                 created_by: Some(auth.0.principal_id.clone()),
             };
-
-            state.oauth_client_repo.insert(&oauth_client).await
-                .map_err(|e| {
-                    tracing::error!(error = %e, "Failed to auto-create OAuth client for service account");
-                    PlatformError::internal(format!("Failed to create OAuth client: {}", e))
-                })?;
+            let oauth_ctx = ExecutionContext::create(auth.0.principal_id.clone());
+            state.create_oauth_client_use_case.run(oauth_cmd, oauth_ctx).await.into_result()?;
 
             Ok(Json(CreateServiceAccountResponse {
                 service_account: ServiceAccountResponse::from(account),

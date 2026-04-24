@@ -350,16 +350,113 @@ pub fn build_platform_routes(
         resume_use_case: resume_sub_use_case,
     };
 
+    let create_oauth_client_use_case = Arc::new(
+        crate::auth::operations::CreateOAuthClientUseCase::new(
+            repos.oauth_client_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let update_oauth_client_use_case = Arc::new(
+        crate::auth::operations::UpdateOAuthClientUseCase::new(
+            repos.oauth_client_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let delete_oauth_client_use_case = Arc::new(
+        crate::auth::operations::DeleteOAuthClientUseCase::new(
+            repos.oauth_client_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let activate_oauth_client_use_case = Arc::new(
+        crate::auth::operations::ActivateOAuthClientUseCase::new(
+            repos.oauth_client_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let deactivate_oauth_client_use_case = Arc::new(
+        crate::auth::operations::DeactivateOAuthClientUseCase::new(
+            repos.oauth_client_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let rotate_oauth_client_secret_use_case = Arc::new(
+        crate::auth::operations::RotateOAuthClientSecretUseCase::new(
+            repos.oauth_client_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
     let oauth_clients_state = OAuthClientsState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
-        unit_of_work: unit_of_work.clone(),
+        create_oauth_client_use_case,
+        update_oauth_client_use_case,
+        delete_oauth_client_use_case,
+        activate_oauth_client_use_case,
+        deactivate_oauth_client_use_case,
+        rotate_oauth_client_secret_use_case,
     };
+    let create_anchor_domain_use_case = Arc::new(
+        crate::auth::operations::CreateAnchorDomainUseCase::new(
+            repos.anchor_domain_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let update_anchor_domain_use_case = Arc::new(
+        crate::auth::operations::UpdateAnchorDomainUseCase::new(
+            repos.anchor_domain_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let delete_anchor_domain_use_case = Arc::new(
+        crate::auth::operations::DeleteAnchorDomainUseCase::new(
+            repos.anchor_domain_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let create_auth_config_use_case = Arc::new(
+        crate::auth::operations::CreateAuthConfigUseCase::new(
+            repos.client_auth_config_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let update_auth_config_use_case = Arc::new(
+        crate::auth::operations::UpdateAuthConfigUseCase::new(
+            repos.client_auth_config_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let delete_auth_config_use_case = Arc::new(
+        crate::auth::operations::DeleteAuthConfigUseCase::new(
+            repos.client_auth_config_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let create_idp_role_mapping_use_case = Arc::new(
+        crate::auth::operations::CreateIdpRoleMappingUseCase::new(
+            repos.idp_role_mapping_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let delete_idp_role_mapping_use_case = Arc::new(
+        crate::auth::operations::DeleteIdpRoleMappingUseCase::new(
+            repos.idp_role_mapping_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
     let auth_config_state = AuthConfigState {
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
         client_auth_config_repo: repos.client_auth_config_repo.clone(),
         idp_role_mapping_repo: repos.idp_role_mapping_repo.clone(),
         principal_repo: Some(repos.principal_repo.clone()),
         unit_of_work: unit_of_work.clone(),
+        create_anchor_domain_use_case,
+        update_anchor_domain_use_case,
+        delete_anchor_domain_use_case,
+        create_auth_config_use_case,
+        update_auth_config_use_case,
+        delete_auth_config_use_case,
+        create_idp_role_mapping_use_case,
+        delete_idp_role_mapping_use_case,
     };
 
     // ── OIDC login, OAuth, Auth states ────────────────────────────────────
@@ -425,6 +522,28 @@ pub fn build_platform_routes(
     let update_app_use_case = Arc::new(UpdateApplicationUseCase::new(repos.application_repo.clone(), unit_of_work.clone()));
     let activate_app_use_case = Arc::new(ActivateApplicationUseCase::new(repos.application_repo.clone(), unit_of_work.clone()));
     let deactivate_app_use_case = Arc::new(DeactivateApplicationUseCase::new(repos.application_repo.clone(), unit_of_work.clone()));
+    let enable_for_client_use_case = Arc::new(
+        crate::application::operations::EnableApplicationForClientUseCase::new(
+            repos.application_repo.clone(),
+            repos.client_repo.clone(),
+            repos.application_client_config_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let disable_for_client_use_case = Arc::new(
+        crate::application::operations::DisableApplicationForClientUseCase::new(
+            repos.application_client_config_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let update_client_config_use_case = Arc::new(
+        crate::application::operations::UpdateApplicationClientConfigUseCase::new(
+            repos.application_repo.clone(),
+            repos.client_repo.clone(),
+            repos.application_client_config_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
 
     // ── Dispatch Pool use cases ───────────────────────────────────────────
     let create_pool_use_case = Arc::new(CreateDispatchPoolUseCase::new(repos.dispatch_pool_repo.clone(), unit_of_work.clone()));
@@ -527,8 +646,33 @@ pub fn build_platform_routes(
         delete_use_case: delete_edm_use_case,
     };
     let public_api_state = PublicApiState { config_repo: repos.platform_config_repo.clone() };
-    let platform_config_state = PlatformConfigState { config_repo: repos.platform_config_repo.clone() };
-    let config_access_state = ConfigAccessState { access_repo: repos.platform_config_access_repo.clone() };
+    let set_platform_config_property_use_case = Arc::new(
+        crate::platform_config::operations::SetPlatformConfigPropertyUseCase::new(
+            repos.platform_config_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let grant_platform_config_access_use_case = Arc::new(
+        crate::platform_config::operations::GrantPlatformConfigAccessUseCase::new(
+            repos.platform_config_access_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let revoke_platform_config_access_use_case = Arc::new(
+        crate::platform_config::operations::RevokePlatformConfigAccessUseCase::new(
+            repos.platform_config_access_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let platform_config_state = PlatformConfigState {
+        config_repo: repos.platform_config_repo.clone(),
+        set_property_use_case: set_platform_config_property_use_case,
+    };
+    let config_access_state = ConfigAccessState {
+        access_repo: repos.platform_config_access_repo.clone(),
+        grant_access_use_case: grant_platform_config_access_use_case,
+        revoke_access_use_case: revoke_platform_config_access_use_case,
+    };
     let login_attempts_state = LoginAttemptsState { login_attempt_repo: repos.login_attempt_repo.clone() };
     let me_state = MeState {
         client_repo: repos.client_repo.clone(),
@@ -569,16 +713,20 @@ pub fn build_platform_routes(
         update_use_case: update_app_use_case,
         activate_use_case: activate_app_use_case,
         deactivate_use_case: deactivate_app_use_case,
+        enable_for_client_use_case,
+        disable_for_client_use_case,
+        update_client_config_use_case,
+        pg_unit_of_work: unit_of_work.clone(),
     };
     let service_accounts_state = ServiceAccountsState {
         repo: repos.service_account_repo.clone(),
-        oauth_client_repo: repos.oauth_client_repo.clone(),
         create_use_case: create_sa_use_case,
         update_use_case: update_sa_use_case,
         delete_use_case: delete_sa_use_case,
         assign_roles_use_case,
         regenerate_token_use_case,
         regenerate_secret_use_case,
+        create_oauth_client_use_case: oauth_clients_state.create_oauth_client_use_case.clone(),
     };
 
     let sync_dispatch_pools_use_case = Arc::new(

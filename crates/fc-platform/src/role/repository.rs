@@ -312,13 +312,61 @@ impl RoleRepository {
         Ok(())
     }
 
+    /// Delete a role and cascade the non-FK junction — `iam_principal_roles`
+    /// references roles by **name** (no DB-level FK), so deletion must remove
+    /// those rows atomically or we leak orphaned role assignments. Role
+    /// permissions have a real FK and cascade at the DB level.
     pub async fn delete(&self, id: &str) -> Result<bool> {
-        // Permissions cascade due to ON DELETE CASCADE
+        let mut tx = self.pool.begin().await?;
+
+        // Look up the name so we can cascade the text-keyed junction.
+        let role_name: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM iam_roles WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(name) = role_name {
+            sqlx::query("DELETE FROM iam_principal_roles WHERE role_name = $1")
+                .bind(&name)
+                .execute(&mut *tx)
+                .await?;
+        }
+
         let result = sqlx::query("DELETE FROM iam_roles WHERE id = $1")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+
+        tx.commit().await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Count principals currently holding this role — callers that want to
+    /// refuse to delete when assignments exist (e.g. code role sync) can gate
+    /// on this instead of silently dropping user assignments.
+    pub async fn count_assignments(&self, role_name: &str) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM iam_principal_roles WHERE role_name = $1",
+        )
+        .bind(role_name)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// Count orphaned role assignments — junction rows whose `role_name`
+    /// has no matching `iam_roles.name`. Startup scans use this to detect
+    /// integrity drift.
+    pub async fn count_orphaned_assignments(&self) -> Result<i64> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM iam_principal_roles pr \
+             WHERE NOT EXISTS (SELECT 1 FROM iam_roles r WHERE r.name = pr.role_name)",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
     }
 
     // ── Helpers ──────────────────────────────────────────────
@@ -451,7 +499,14 @@ impl crate::usecase::Persist<AuthRole> for RoleRepository {
     }
 
     async fn delete(&self, r: &AuthRole, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
-        // Permissions cascade via ON DELETE CASCADE
+        // iam_principal_roles has no DB-level FK on role_name (by design —
+        // integrity lives in code). Cascade inline inside the same tx as the
+        // role row delete so the invariant holds on every write path.
+        sqlx::query("DELETE FROM iam_principal_roles WHERE role_name = $1")
+            .bind(&r.name)
+            .execute(&mut **tx.inner).await?;
+
+        // iam_role_permissions has a real FK + ON DELETE CASCADE — no manual cleanup needed.
         sqlx::query("DELETE FROM iam_roles WHERE id = $1")
             .bind(&r.id)
             .execute(&mut **tx.inner).await?;

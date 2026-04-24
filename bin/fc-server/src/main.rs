@@ -170,6 +170,9 @@ async fn main() -> Result<()> {
     fc_platform::shared::database::run_migrations(&pg_pool).await
         .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
 
+    // Referential-integrity scan — warns about orphaned junction rows.
+    fc_platform::shared::integrity_scan::run(&pg_pool).await;
+
     // Dev mode seeding
     if env_bool("FC_DEV_MODE", false) {
         let seeder = DevDataSeeder::new(pg_pool.clone());

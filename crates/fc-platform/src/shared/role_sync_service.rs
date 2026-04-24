@@ -244,23 +244,41 @@ impl RoleSyncService {
     }
 
     /// Remove CODE-sourced roles from the database that no longer exist in code.
+    ///
+    /// Refuses to remove a role that is still assigned to principals. The
+    /// operator is expected to re-assign or strip those users before the
+    /// role can be deleted — silently dropping assignments was the source of
+    /// a referential-integrity bug (`iam_principal_roles.role_name` has no
+    /// DB-level FK; integrity is enforced in code via this guard + the
+    /// `RoleRepository` delete cascade).
     async fn remove_stale_code_roles(&self) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        // Collect all current code-defined role names
         let code_role_names: HashSet<String> = CODE_DEFINED_ROLES
             .iter()
             .map(|r| r.full_name())
             .collect();
 
-        // Find CODE roles in DB that aren't in the current code definitions
         let code_roles_in_db = self.role_repo.find_by_source(RoleSource::Code).await?;
         let mut removed = 0;
 
         for db_role in code_roles_in_db {
-            if !code_role_names.contains(&db_role.name) {
-                info!("Removing stale CODE role: {}", db_role.name);
-                self.role_repo.delete(&db_role.id).await?;
-                removed += 1;
+            if code_role_names.contains(&db_role.name) {
+                continue;
             }
+
+            let assignments = self.role_repo.count_assignments(&db_role.name).await?;
+            if assignments > 0 {
+                warn!(
+                    role = %db_role.name,
+                    assignments,
+                    "Skipping removal of stale CODE role — principals still hold it. \
+                     Remove the assignments via the admin UI before the role can be deleted.",
+                );
+                continue;
+            }
+
+            info!("Removing stale CODE role: {}", db_role.name);
+            self.role_repo.delete(&db_role.id).await?;
+            removed += 1;
         }
 
         Ok(removed)

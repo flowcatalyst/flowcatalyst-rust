@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use async_trait::async_trait;
 use sqlx::PgPool;
 use chrono::{DateTime, Utc};
 use tokio::sync::RwLock;
@@ -463,5 +464,108 @@ impl OAuthClientRepository {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+}
+
+// ── Persist<OAuthClient> ────────────────────────────────────────────────────
+
+impl crate::usecase::HasId for OAuthClient {
+    fn id(&self) -> &str { &self.id }
+}
+
+#[async_trait]
+impl crate::usecase::Persist<OAuthClient> for OAuthClientRepository {
+    async fn persist(&self, c: &OAuthClient, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        let scopes = if c.default_scopes.is_empty() {
+            None
+        } else {
+            Some(c.default_scopes.join(","))
+        };
+
+        sqlx::query(
+            r#"INSERT INTO oauth_clients
+                (id, client_id, client_name, client_type, client_secret_ref,
+                 default_scopes, pkce_required, service_account_principal_id, active,
+                 created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             ON CONFLICT (id) DO UPDATE SET
+                client_id = EXCLUDED.client_id,
+                client_name = EXCLUDED.client_name,
+                client_type = EXCLUDED.client_type,
+                client_secret_ref = EXCLUDED.client_secret_ref,
+                default_scopes = EXCLUDED.default_scopes,
+                pkce_required = EXCLUDED.pkce_required,
+                service_account_principal_id = EXCLUDED.service_account_principal_id,
+                active = EXCLUDED.active,
+                updated_at = EXCLUDED.updated_at"#
+        )
+        .bind(&c.id)
+        .bind(&c.client_id)
+        .bind(&c.client_name)
+        .bind(c.client_type.as_str())
+        .bind(&c.client_secret_ref)
+        .bind(&scopes)
+        .bind(c.pkce_required)
+        .bind(&c.service_account_principal_id)
+        .bind(c.active)
+        .bind(c.created_at)
+        .bind(c.updated_at)
+        .execute(&mut **tx.inner)
+        .await?;
+
+        // Sync junction tables: delete-then-reinsert all in the same tx
+        sqlx::query("DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        for uri in &c.redirect_uris {
+            sqlx::query(
+                "INSERT INTO oauth_client_redirect_uris (oauth_client_id, redirect_uri) VALUES ($1, $2)"
+            )
+            .bind(&c.id).bind(uri).execute(&mut **tx.inner).await?;
+        }
+
+        sqlx::query("DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        for gt in &c.grant_types {
+            sqlx::query(
+                "INSERT INTO oauth_client_grant_types (oauth_client_id, grant_type) VALUES ($1, $2)"
+            )
+            .bind(&c.id).bind(gt.as_str()).execute(&mut **tx.inner).await?;
+        }
+
+        sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        for app_id in &c.application_ids {
+            sqlx::query(
+                "INSERT INTO oauth_client_application_ids (oauth_client_id, application_id) VALUES ($1, $2)"
+            )
+            .bind(&c.id).bind(app_id).execute(&mut **tx.inner).await?;
+        }
+
+        sqlx::query("DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        for origin in &c.allowed_origins {
+            sqlx::query(
+                "INSERT INTO oauth_client_allowed_origins (oauth_client_id, allowed_origin) VALUES ($1, $2)"
+            )
+            .bind(&c.id).bind(origin).execute(&mut **tx.inner).await?;
+        }
+
+        self.invalidate_cache(c).await;
+        Ok(())
+    }
+
+    async fn delete(&self, c: &OAuthClient, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        sqlx::query("DELETE FROM oauth_client_redirect_uris WHERE oauth_client_id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        sqlx::query("DELETE FROM oauth_client_grant_types WHERE oauth_client_id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        sqlx::query("DELETE FROM oauth_client_application_ids WHERE oauth_client_id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        sqlx::query("DELETE FROM oauth_client_allowed_origins WHERE oauth_client_id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        sqlx::query("DELETE FROM oauth_clients WHERE id = $1")
+            .bind(&c.id).execute(&mut **tx.inner).await?;
+        self.invalidate_cache(c).await;
+        Ok(())
     }
 }

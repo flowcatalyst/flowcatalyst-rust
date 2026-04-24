@@ -2,11 +2,25 @@
 //!
 //! Atomic commit of entity state changes, domain events, and audit logs
 //! within a single PostgreSQL transaction.
+//!
+//! Two impls:
+//!
+//! - `PgUnitOfWork` — each `commit(…)` opens and closes its own tx. This is
+//!   the common case: one HTTP request, one use case, one tx.
+//!
+//! - `TxScopedUnitOfWork` — shares an existing tx across multiple use cases
+//!   so a handler can orchestrate two-aggregate operations atomically.
+//!   Produced by `PgUnitOfWork::run(closure)`; the handler owns the tx
+//!   boundary. Use cases see only the `UnitOfWork` trait either way.
+
+use std::future::Future;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Serialize;
 use sqlx::{PgPool, Postgres, Transaction};
+use tokio::sync::Mutex;
 use tracing::{debug, error};
 
 use super::domain_event::DomainEvent;
@@ -382,6 +396,208 @@ impl UnitOfWork for PgUnitOfWork {
         );
 
         UseCaseResult::success(event)
+    }
+}
+
+// ─── Shared-tx orchestration ─────────────────────────────────────────────────
+//
+// For operations that mutate multiple aggregates atomically, the handler
+// calls `pg_uow.run(|session| async move { ... })`. Inside the closure the
+// `session` implements `UnitOfWork`, so existing use cases can be constructed
+// against it and called one after another; they all write into the same tx.
+// The closure's outer `UseCaseResult` decides commit vs rollback.
+//
+// The handler owns the tx boundary. Use cases remain tx-unaware — they see
+// only the trait.
+
+/// UnitOfWork implementation that writes into an already-open transaction
+/// owned by `PgUnitOfWork::run`. `commit()` / `commit_delete()` / `emit_event()`
+/// write their rows but do NOT close the tx — the outer `run` does.
+pub struct TxScopedUnitOfWork {
+    // tokio Mutex because the guard is held across `.await`. `Option` so
+    // `run` can `.take()` the tx back out after the closure completes.
+    tx: Mutex<Option<Transaction<'static, Postgres>>>,
+}
+
+impl TxScopedUnitOfWork {
+    fn new(tx: Transaction<'static, Postgres>) -> Self {
+        Self { tx: Mutex::new(Some(tx)) }
+    }
+
+    async fn take_tx(&self) -> Option<Transaction<'static, Postgres>> {
+        self.tx.lock().await.take()
+    }
+}
+
+#[async_trait]
+impl UnitOfWork for TxScopedUnitOfWork {
+    async fn commit<A, R, E, C>(
+        &self,
+        aggregate: &A,
+        repository: &R,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Serialize + Send + 'static,
+        C: Serialize + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => return UseCaseResult::failure(UseCaseError::commit(
+                "TxScopedUnitOfWork: transaction already finalized",
+            )),
+        };
+
+        let persist_result = {
+            let mut tx = DbTx { inner: txn };
+            repository.persist(aggregate, &mut tx).await
+        };
+        if let Err(e) = persist_result {
+            error!("Failed to persist aggregate in scoped tx: {}", e);
+            return UseCaseResult::failure(UseCaseError::commit(
+                format!("Failed to persist aggregate: {}", e),
+            ));
+        }
+
+        if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(event)
+    }
+
+    async fn commit_delete<A, R, E, C>(
+        &self,
+        aggregate: &A,
+        repository: &R,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        A: HasId + Send + Sync,
+        R: Persist<A>,
+        E: DomainEvent + Serialize + Send + 'static,
+        C: Serialize + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => return UseCaseResult::failure(UseCaseError::commit(
+                "TxScopedUnitOfWork: transaction already finalized",
+            )),
+        };
+
+        let delete_result = {
+            let mut tx = DbTx { inner: txn };
+            repository.delete(aggregate, &mut tx).await
+        };
+        if let Err(e) = delete_result {
+            error!("Failed to delete aggregate in scoped tx: {}", e);
+            return UseCaseResult::failure(UseCaseError::commit(
+                format!("Failed to delete aggregate: {}", e),
+            ));
+        }
+
+        if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(event)
+    }
+
+    async fn emit_event<E, C>(
+        &self,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Serialize + Send + 'static,
+        C: Serialize + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => return UseCaseResult::failure(UseCaseError::commit(
+                "TxScopedUnitOfWork: transaction already finalized",
+            )),
+        };
+
+        if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(event)
+    }
+}
+
+impl PgUnitOfWork {
+    /// Run a closure inside a single transaction.
+    ///
+    /// The closure receives an `Arc<TxScopedUnitOfWork>` that implements
+    /// `UnitOfWork`. Use cases constructed against it all share the tx.
+    /// The closure's outer `UseCaseResult` drives commit vs rollback.
+    ///
+    /// Handlers use this for cross-aggregate orchestration:
+    ///
+    /// ```ignore
+    /// state.unit_of_work.run(|session| async move {
+    ///     let sa_uc = CreateServiceAccountUseCase::new(sa_repo, session.clone());
+    ///     let attach_uc = AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
+    ///
+    ///     sa_uc.run(create_cmd, ctx.clone()).await.into_result()?;
+    ///     attach_uc.run(attach_cmd, ctx).await.into_result()?;
+    ///     UseCaseResult::success(())
+    /// }).await
+    /// ```
+    ///
+    /// The tx boundary lives in the handler; use cases stay tx-agnostic.
+    pub async fn run<F, Fut, T>(&self, f: F) -> UseCaseResult<T>
+    where
+        F: FnOnce(Arc<TxScopedUnitOfWork>) -> Fut + Send,
+        Fut: Future<Output = UseCaseResult<T>> + Send,
+        T: Send + 'static,
+    {
+        let tx = match self.pool.begin().await {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to start orchestration transaction: {}", e);
+                return UseCaseResult::failure(UseCaseError::commit(
+                    format!("Failed to start transaction: {}", e),
+                ));
+            }
+        };
+
+        let scoped = Arc::new(TxScopedUnitOfWork::new(tx));
+        let result = f(Arc::clone(&scoped)).await;
+
+        // Reclaim the tx. If the scoped UoW has outstanding references
+        // (e.g. a use case leaked it into a spawned task) we can't reclaim
+        // — drop without explicit commit, which rolls back.
+        let tx_opt = scoped.take_tx().await;
+
+        if let Some(tx) = tx_opt {
+            match &result {
+                UseCaseResult::Success(_) => {
+                    if let Err(e) = tx.commit().await {
+                        error!("Failed to commit orchestration tx: {}", e);
+                        return UseCaseResult::failure(UseCaseError::commit(
+                            format!("Failed to commit transaction: {}", e),
+                        ));
+                    }
+                    debug!("Orchestration tx committed");
+                }
+                UseCaseResult::Failure(err) => {
+                    let _ = tx.rollback().await;
+                    debug!(error = %err.code(), "Orchestration tx rolled back");
+                }
+            }
+        }
+
+        result
     }
 }
 

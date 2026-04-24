@@ -4,6 +4,7 @@
 
 pub mod entity;
 pub mod repository;
+pub mod operations;
 pub mod api;
 pub mod access_entity;
 pub mod access_repository;
