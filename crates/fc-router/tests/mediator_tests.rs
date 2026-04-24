@@ -13,7 +13,7 @@ use wiremock::{MockServer, Mock, ResponseTemplate};
 use wiremock::matchers::{method, path, header, body_json};
 
 use fc_common::{Message, MediationType, MediationResult};
-use fc_router::{HttpMediator, HttpMediatorConfig, Mediator, CircuitState};
+use fc_router::{HttpMediator, HttpMediatorConfig, Mediator};
 use chrono::Utc;
 
 fn create_test_message(target: &str) -> Message {
@@ -314,76 +314,9 @@ async fn test_connection_error() {
     assert!(outcome.error_message.is_some());
 }
 
-#[tokio::test]
-async fn test_circuit_breaker_trips_on_failures() {
-    let mock_server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/webhook"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&mock_server)
-        .await;
-
-    let config = HttpMediatorConfig {
-        max_retries: 1,
-        circuit_breaker_failure_rate: 0.5,
-        circuit_breaker_min_calls: 5,
-        // Short window so EWMA evaluates quickly in tests
-        circuit_breaker_window: Duration::from_millis(10),
-        circuit_breaker_reset_timeout: Duration::from_secs(60),
-        ..Default::default()
-    };
-    let mediator = HttpMediator::with_config(config);
-    let message = create_test_message(&format!("{}/webhook", mock_server.uri()));
-
-    // Make some failed requests, then sleep past the EWMA window
-    for _ in 0..3 {
-        mediator.mediate(&message).await;
-    }
-    tokio::time::sleep(Duration::from_millis(15)).await;
-
-    // Continue failures — EWMA now has enough history to evaluate
-    for _ in 0..10 {
-        mediator.mediate(&message).await;
-    }
-
-    assert_eq!(mediator.circuit_state(), CircuitState::Open);
-
-    // Next request should be rejected immediately
-    let outcome = mediator.mediate(&message).await;
-    assert_eq!(outcome.result, MediationResult::ErrorConnection);
-    assert!(outcome.error_message.as_ref().unwrap().contains("Circuit breaker"));
-}
-
-#[tokio::test]
-async fn test_circuit_breaker_resets_on_success() {
-    let mock_server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/webhook"))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(&mock_server)
-        .await;
-
-    let config = HttpMediatorConfig {
-        max_retries: 1,
-        circuit_breaker_failure_rate: 0.5,
-        circuit_breaker_min_calls: 5,
-        circuit_breaker_window: Duration::from_secs(60),
-        circuit_breaker_reset_timeout: Duration::from_secs(60),
-        ..Default::default()
-    };
-    let mediator = HttpMediator::with_config(config);
-    let message = create_test_message(&format!("{}/webhook", mock_server.uri()));
-
-    // Successful requests should keep circuit closed
-    for _ in 0..5 {
-        let outcome = mediator.mediate(&message).await;
-        assert_eq!(outcome.result, MediationResult::Success);
-    }
-
-    assert_eq!(mediator.circuit_state(), CircuitState::Closed);
-}
+// Circuit breaker tests live in `src/circuit_breaker_registry.rs` now that
+// breaker state is owned by `CircuitBreakerRegistry` (per-endpoint, shared
+// across pools) rather than by `HttpMediator`.
 
 #[tokio::test]
 async fn test_timeout_handling() {
@@ -505,6 +438,8 @@ async fn test_503_service_unavailable() {
 
 #[tokio::test]
 async fn test_mediator_default_config() {
+    // Smoke test: default config builds and mediates without panic.
     let mediator = HttpMediator::new();
-    assert_eq!(mediator.circuit_state(), CircuitState::Closed);
+    let message = create_test_message("http://127.0.0.1:59999/webhook");
+    let _ = mediator.mediate(&message).await;
 }

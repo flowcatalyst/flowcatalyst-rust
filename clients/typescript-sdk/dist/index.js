@@ -64,5 +64,14 @@ export { generateTsid, isValidTsid } from "./outbox/index.js";
 //   const uow = new usecase.OutboxUnitOfWork({ outboxManager });
 //
 export * as usecase from "./usecase/index.js";
+// Sync — declarative definitions (roles, event types, subscriptions,
+// dispatch pools, principals) pushed to the platform per application.
+// See `docs/syncing-definitions.md` for structure conventions.
+//
+//   import { sync, FlowCatalystClient } from "@flowcatalyst/sdk";
+//   const set = sync.defineApplication("orders").withRoles([...]).build();
+//   await client.definitions().sync(set);
+//
+export * as sync from "./sync/index.js";
 // Re-export neverthrow utilities for convenience
 export { ok, err, Result, ResultAsync } from "neverthrow";

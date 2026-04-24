@@ -19,6 +19,7 @@ import { ClientsResource } from "./resources/clients";
 import { PrincipalsResource } from "./resources/principals";
 import { MeResource } from "./resources/me";
 import { ConnectionsResource } from "./resources/connections";
+import { DefinitionSynchronizer } from "./sync/definition-synchronizer";
 function isUserTokenConfig(config) {
     return "accessToken" in config;
 }
@@ -118,6 +119,15 @@ export class FlowCatalystClient {
     /** Connections resource */
     connections() {
         return (this._connections ?? (this._connections = new ConnectionsResource(this)));
+    }
+    /**
+     * Definition synchronizer — bulk-sync roles, event types, subscriptions,
+     * dispatch pools, and principals per application.
+     *
+     * See `docs/syncing-definitions.md` for structure and conventions.
+     */
+    definitions() {
+        return (this._definitions ?? (this._definitions = new DefinitionSynchronizer(this)));
     }
     // ============ Internal Methods ============
     /**

@@ -18,6 +18,7 @@ import { ClientsResource } from "./resources/clients";
 import { PrincipalsResource } from "./resources/principals";
 import { MeResource } from "./resources/me";
 import { ConnectionsResource } from "./resources/connections";
+import { DefinitionSynchronizer } from "./sync/definition-synchronizer";
 /**
  * Configuration for client credentials authentication.
  */
@@ -85,6 +86,7 @@ export declare class FlowCatalystClient {
     private _principals?;
     private _me?;
     private _connections?;
+    private _definitions?;
     constructor(config: FlowCatalystConfig);
     /** Event Types resource */
     eventTypes(): EventTypesResource;
@@ -106,6 +108,13 @@ export declare class FlowCatalystClient {
     me(): MeResource;
     /** Connections resource */
     connections(): ConnectionsResource;
+    /**
+     * Definition synchronizer — bulk-sync roles, event types, subscriptions,
+     * dispatch pools, and principals per application.
+     *
+     * See `docs/syncing-definitions.md` for structure and conventions.
+     */
+    definitions(): DefinitionSynchronizer;
     /**
      * Get the underlying HTTP client (for advanced usage).
      */

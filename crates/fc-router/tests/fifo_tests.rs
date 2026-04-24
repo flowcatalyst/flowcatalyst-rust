@@ -140,7 +140,7 @@ fn create_queued_message_with_group(id: &str, pool_code: &str, group_id: Option<
 async fn test_fifo_single_group_ordering() {
     // Messages in the same group should be processed in order
     let mediator = Arc::new(OrderTrackingMediator::new(20));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -183,7 +183,7 @@ async fn test_fifo_single_group_ordering() {
 async fn test_fifo_different_groups_parallel() {
     // Different groups should be processed in parallel
     let mediator = Arc::new(OrderTrackingMediator::new(50));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -233,7 +233,7 @@ async fn test_fifo_different_groups_parallel() {
 async fn test_fifo_mixed_groups() {
     // Mix of grouped and ungrouped messages
     let mediator = Arc::new(OrderTrackingMediator::new(10));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -307,7 +307,7 @@ async fn test_fifo_mixed_groups() {
 async fn test_fifo_multiple_pools_same_group() {
     // Same group ID across different pools should still be independent
     let mediator = Arc::new(OrderTrackingMediator::new(10));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![
@@ -365,7 +365,7 @@ async fn test_fifo_multiple_pools_same_group() {
 async fn test_fifo_large_group() {
     // Large group should still maintain order
     let mediator = Arc::new(OrderTrackingMediator::new(5));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -409,7 +409,7 @@ async fn test_fifo_unique_groups_parallel() {
     // sequentially (correct FIFO behavior matching Java). To get parallel processing,
     // messages must have different group IDs.
     let mediator = Arc::new(OrderTrackingMediator::new(50));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -458,7 +458,7 @@ async fn test_fifo_group_throughput() {
     // Verify that groups don't completely serialize all processing
     // i.e., different groups can interleave
     let mediator = Arc::new(OrderTrackingMediator::new(20));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {

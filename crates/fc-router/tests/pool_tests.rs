@@ -129,7 +129,7 @@ fn create_batch_message(id: &str, group_id: Option<&str>) -> (BatchMessage, ones
         receipt_handle: format!("receipt-{}", id),
         broker_message_id: Some(format!("broker-{}", id)),
         queue_identifier: "test-queue".to_string(),
-        batch_id: Some("batch-1".to_string()),
+        batch_id: Some(std::sync::Arc::from("batch-1")),
         callback: Box::new(TestCallback { tx: parking_lot::Mutex::new(Some(tx)) }),
     };
     (msg, rx)

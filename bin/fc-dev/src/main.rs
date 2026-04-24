@@ -37,7 +37,7 @@ use fc_common::{RouterConfig, PoolConfig, QueueConfig};
 #[prefix = ""]
 struct FrontendAssets;
 use fc_router::{
-    QueueManager, HttpMediator, LifecycleManager, LifecycleConfig,
+    QueueManager, HttpMediatorConfig, LifecycleManager, LifecycleConfig,
     WarningService, WarningServiceConfig, HealthService, HealthServiceConfig,
     CircuitBreakerRegistry as RouterCircuitBreakerRegistry,
     api::create_router as create_api_router,
@@ -308,19 +308,20 @@ async fn main() -> Result<()> {
     queue.init_schema().await?;
     info!("Embedded Postgres queue initialized");
 
-    // 3. Initialize HTTP Mediator (dev mode: HTTP/1.1, shorter timeout)
-    let mediator = Arc::new(HttpMediator::dev());
-
-    // 4. Create QueueManager (central orchestrator)
-    let queue_manager = Arc::new(QueueManager::new(mediator.clone()));
-    queue_manager.add_consumer(queue.clone()).await;
-
-    // 4b. Create Warning and Health services
+    // 3. Warning + Health services (constructed first so the QueueManager
+    //    can thread warning_service into each per-pool HttpMediator).
     let warning_service = Arc::new(WarningService::new(WarningServiceConfig::default()));
     let health_service = Arc::new(HealthService::new(
         HealthServiceConfig::default(),
         warning_service.clone(),
     ));
+
+    // 4. Create QueueManager. Mediator *config* is passed (not a singleton);
+    //    each pool gets its own HttpMediator + connection pool.
+    let mut queue_manager_inner = QueueManager::new(HttpMediatorConfig::dev());
+    queue_manager_inner.set_warning_service(warning_service.clone());
+    let queue_manager = Arc::new(queue_manager_inner);
+    queue_manager.add_consumer(queue.clone()).await;
 
     // 5. Apply router configuration
     let router_config = RouterConfig {

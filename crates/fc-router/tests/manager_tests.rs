@@ -151,7 +151,7 @@ fn create_queued_message(id: &str, pool_code: &str, queue_id: &str) -> QueuedMes
 #[tokio::test]
 async fn test_queue_manager_creation() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = QueueManager::new(mediator);
+    let manager = QueueManager::with_shared_mediator_for_testing(mediator);
 
     // Should have no pools initially
     let stats = manager.get_pool_stats();
@@ -161,7 +161,7 @@ async fn test_queue_manager_creation() {
 #[tokio::test]
 async fn test_apply_config() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
 
     let config = RouterConfig {
         processing_pools: vec![
@@ -195,7 +195,7 @@ async fn test_apply_config() {
 #[tokio::test]
 async fn test_route_single_message() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     // Apply config
     let config = RouterConfig {
@@ -227,7 +227,7 @@ async fn test_route_single_message() {
 #[tokio::test]
 async fn test_route_batch_multiple_messages() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -256,7 +256,7 @@ async fn test_route_batch_multiple_messages() {
 #[tokio::test]
 async fn test_route_to_different_pools() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![
@@ -293,7 +293,7 @@ async fn test_route_to_different_pools() {
 #[tokio::test]
 async fn test_default_pool_for_empty_pool_code() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -319,7 +319,7 @@ async fn test_default_pool_for_empty_pool_code() {
 #[tokio::test]
 async fn test_add_consumer() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = QueueManager::new(mediator);
+    let manager = QueueManager::with_shared_mediator_for_testing(mediator);
 
     let consumer = Arc::new(MockQueueConsumer::new("test-consumer"));
     manager.add_consumer(consumer).await;
@@ -331,7 +331,7 @@ async fn test_add_consumer() {
 #[tokio::test]
 async fn test_memory_health_check() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = QueueManager::new(mediator);
+    let manager = QueueManager::with_shared_mediator_for_testing(mediator);
 
     // Initially should be healthy (no messages in pipeline)
     assert!(manager.check_memory_health());
@@ -340,7 +340,7 @@ async fn test_memory_health_check() {
 #[tokio::test]
 async fn test_pool_hot_reload() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     // Initial config
     let config = RouterConfig {
@@ -370,7 +370,7 @@ async fn test_pool_hot_reload() {
 #[tokio::test]
 async fn test_shutdown() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -389,7 +389,7 @@ async fn test_shutdown() {
 #[tokio::test]
 async fn test_consumer_health_check() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = QueueManager::new(mediator);
+    let manager = QueueManager::with_shared_mediator_for_testing(mediator);
 
     let consumer = Arc::new(MockQueueConsumer::new("healthy-consumer"));
     manager.add_consumer(consumer).await;
@@ -401,7 +401,7 @@ async fn test_consumer_health_check() {
 #[tokio::test]
 async fn test_pool_codes() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
 
     let config = RouterConfig {
         processing_pools: vec![

@@ -26,10 +26,18 @@ use chrono::Utc;
 use utoipa::ToSchema;
 
 use crate::pool::ProcessPool;
-use crate::mediator::Mediator;
+use crate::mediator::{HttpMediator, HttpMediatorConfig, Mediator};
 use crate::warning::WarningService;
 use crate::error::RouterError;
 use crate::Result;
+
+/// How `QueueManager` obtains a mediator for each new pool.
+enum MediatorSource {
+    /// Build a fresh `HttpMediator` per pool (production path).
+    PerPool(HttpMediatorConfig),
+    /// All pools share this mediator instance (test seam for mocks).
+    Shared(Arc<dyn Mediator + 'static>),
+}
 
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
@@ -150,8 +158,17 @@ pub struct QueueManager {
     /// If None, new queues in config will be logged but not auto-created
     consumer_factory: Option<Arc<dyn ConsumerFactory + Send + Sync>>,
 
-    /// Mediator for message delivery
-    mediator: Arc<dyn Mediator + 'static>,
+    /// How to build a mediator for each new pool.
+    ///
+    /// Production path: `MediatorSource::PerPool(config)` — each pool gets
+    /// its own `HttpMediator` with its own reqwest `Client` / connection
+    /// pool. Transport isolation between pools avoids the AWS 128-stream
+    /// cap on a single HTTP/2 connection.
+    ///
+    /// Test path: `MediatorSource::Shared(mediator)` — all pools share
+    /// one mediator instance, used by tests that inject mocks via
+    /// `QueueManager::with_shared_mediator_for_testing`.
+    mediator_source: MediatorSource,
 
     /// Default pool code for messages without explicit pool
     default_pool_code: String,
@@ -196,17 +213,17 @@ pub struct QueueManager {
 }
 
 impl QueueManager {
-    pub fn new(mediator: Arc<dyn Mediator + 'static>) -> Self {
+    pub fn new(mediator_config: HttpMediatorConfig) -> Self {
         // Java defaults: max-pools = 10000, pool-warning-threshold = 5000
-        Self::with_limits(mediator, 10000, 5000)
+        Self::with_limits(mediator_config, 10000, 5000)
     }
 
-    pub fn with_limits(mediator: Arc<dyn Mediator + 'static>, max_pools: usize, pool_warning_threshold: usize) -> Self {
-        Self::with_config(mediator, max_pools, pool_warning_threshold, StallConfig::default())
+    pub fn with_limits(mediator_config: HttpMediatorConfig, max_pools: usize, pool_warning_threshold: usize) -> Self {
+        Self::with_config(mediator_config, max_pools, pool_warning_threshold, StallConfig::default())
     }
 
     pub fn with_config(
-        mediator: Arc<dyn Mediator + 'static>,
+        mediator_config: HttpMediatorConfig,
         max_pools: usize,
         pool_warning_threshold: usize,
         stall_config: StallConfig,
@@ -223,7 +240,7 @@ impl QueueManager {
             pool_configs: RwLock::new(HashMap::new()),
             queue_configs: RwLock::new(HashMap::new()),
             consumer_factory: None,
-            mediator,
+            mediator_source: MediatorSource::PerPool(mediator_config),
             default_pool_code: "DEFAULT-POOL".to_string(),  // Java: DEFAULT_POOL_CODE
             running: AtomicBool::new(true),
             shutdown_tx,
@@ -262,6 +279,51 @@ impl QueueManager {
     /// Get warning service reference
     pub fn warning_service(&self) -> &Arc<WarningService> {
         &self.warning_service
+    }
+
+    /// Build a mediator instance for a pool. Production path builds a fresh
+    /// `HttpMediator` per pool (its own reqwest `Client` / connection pool).
+    /// Test path returns a shared mock.
+    fn build_mediator(&self) -> Arc<dyn Mediator + 'static> {
+        match &self.mediator_source {
+            MediatorSource::PerPool(config) => Arc::new(
+                HttpMediator::with_config(config.clone())
+                    .with_warning_service(self.warning_service.clone())
+            ),
+            MediatorSource::Shared(m) => m.clone(),
+        }
+    }
+
+    /// Test-only constructor: every pool shares the supplied mediator. Use
+    /// this when you need to inject a mock or instrument mediator calls.
+    /// Production code should use [`QueueManager::new`] and let the manager
+    /// build a mediator per pool.
+    #[doc(hidden)]
+    pub fn with_shared_mediator_for_testing(mediator: Arc<dyn Mediator + 'static>) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
+        Self {
+            in_pipeline: Arc::new(DashMap::new()),
+            app_message_to_pipeline_key: Arc::new(DashMap::new()),
+            pools: DashMap::new(),
+            draining_pools: DashMap::new(),
+            consumers: RwLock::new(HashMap::new()),
+            draining_consumers: RwLock::new(HashMap::new()),
+            pool_configs: RwLock::new(HashMap::new()),
+            queue_configs: RwLock::new(HashMap::new()),
+            consumer_factory: None,
+            mediator_source: MediatorSource::Shared(mediator),
+            default_pool_code: "DEFAULT-POOL".to_string(),
+            running: AtomicBool::new(true),
+            shutdown_tx,
+            batch_counter: std::sync::atomic::AtomicU64::new(0),
+            pending_delete_broker_ids: Arc::new(Mutex::new(HashMap::new())),
+            max_pools: 10000,
+            pool_warning_threshold: 5000,
+            stall_config: StallConfig::default(),
+            warning_service: Arc::new(WarningService::noop()),
+            health_service: None,
+            self_ref: parking_lot::RwLock::new(None),
+        }
     }
 
     /// Add a queue consumer
@@ -561,7 +623,7 @@ impl QueueManager {
 
         let pool = ProcessPool::new(
             pool_config.clone(),
-            self.mediator.clone(),
+            self.build_mediator(),
         );
 
         let pool_arc = Arc::new(pool);
@@ -1411,7 +1473,7 @@ impl QueueManager {
         if pool_exists {
             // For now, we recreate the pool with new config
             // In production, you might want to drain first
-            let new_pool = ProcessPool::new(config.clone(), self.mediator.clone());
+            let new_pool = ProcessPool::new(config.clone(), self.build_mediator());
             let pool_arc = Arc::new(new_pool);
             pool_arc.start().await;
 

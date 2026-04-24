@@ -89,6 +89,31 @@ new FlowCatalystClient(config: FlowCatalystConfig)
 - `getDispatchJobs()`: Get all dispatch jobs
 - `getDispatchJob(id)`: Get a specific dispatch job
 
+## Syncing Definitions
+
+Declare your application's roles, permissions, event types, subscriptions,
+dispatch pools, and principals in code, then push them to the platform with
+a single call:
+
+```typescript
+import { FlowCatalystClient, sync } from "@flowcatalyst/sdk";
+
+const definitions = sync
+  .defineApplication("orders")
+  .withRoles([{ name: "admin", displayName: "Administrator" }])
+  .withEventTypes([
+    { code: "orders:fulfillment:shipment:shipped", name: "Shipment Shipped" },
+  ])
+  .build();
+
+await client.definitions().sync(definitions);
+```
+
+See **[docs/syncing-definitions.md](./docs/syncing-definitions.md)** for the
+full structure guide — how to name roles, the 4-part permission format,
+event-type code conventions, subscription modes, dispatch pool sizing, and
+principal management.
+
 ## TypeScript Support
 
 This SDK is written in TypeScript and provides full type definitions. All API responses are properly typed.

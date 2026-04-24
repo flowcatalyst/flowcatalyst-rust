@@ -134,7 +134,7 @@ fn create_queued_message(id: &str, pool_code: &str) -> QueuedMessage {
 #[tokio::test]
 async fn test_pool_without_rate_limit() {
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -175,7 +175,7 @@ async fn test_pool_without_rate_limit() {
 #[tokio::test]
 async fn test_pool_with_rate_limit() {
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     // Use a low rate limit (60/minute = 1/second) to test rate limiting behavior
     // Note: governor uses token bucket with burst capacity equal to quota,
@@ -216,7 +216,7 @@ async fn test_pool_with_rate_limit() {
 #[tokio::test]
 async fn test_multiple_pools_different_rates() {
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![
@@ -255,7 +255,7 @@ async fn test_multiple_pools_different_rates() {
 #[tokio::test]
 async fn test_rate_limit_hot_reload() {
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     // Start with no rate limit
     let config = RouterConfig {
@@ -290,7 +290,7 @@ async fn test_rate_limit_hot_reload() {
 #[tokio::test]
 async fn test_rate_limit_stats() {
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -313,7 +313,7 @@ async fn test_rate_limit_stats() {
 async fn test_high_rate_limit() {
     // Very high rate limit should not noticeably slow down processing
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -354,7 +354,7 @@ async fn test_high_rate_limit() {
 #[tokio::test]
 async fn test_rate_limit_combined_with_concurrency() {
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     // Low concurrency + rate limit
     let config = RouterConfig {
@@ -385,7 +385,7 @@ async fn test_rate_limit_combined_with_concurrency() {
 #[tokio::test]
 async fn test_pool_codes_with_rate_limits() {
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let config = RouterConfig {
         processing_pools: vec![
@@ -407,7 +407,7 @@ async fn test_pool_codes_with_rate_limits() {
 #[tokio::test]
 async fn test_remove_rate_limit() {
     let mediator = Arc::new(TimingMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     // Start with rate limit
     let config = RouterConfig {

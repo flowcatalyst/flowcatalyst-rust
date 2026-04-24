@@ -23,6 +23,7 @@ import { ClientsResource } from "./resources/clients";
 import { PrincipalsResource } from "./resources/principals";
 import { MeResource } from "./resources/me";
 import { ConnectionsResource } from "./resources/connections";
+import { DefinitionSynchronizer } from "./sync/definition-synchronizer";
 
 /**
  * Configuration for client credentials authentication.
@@ -111,6 +112,7 @@ export class FlowCatalystClient {
 	private _principals?: PrincipalsResource;
 	private _me?: MeResource;
 	private _connections?: ConnectionsResource;
+	private _definitions?: DefinitionSynchronizer;
 
 	constructor(config: FlowCatalystConfig) {
 		this.config = {
@@ -199,6 +201,16 @@ export class FlowCatalystClient {
 	/** Connections resource */
 	connections(): ConnectionsResource {
 		return (this._connections ??= new ConnectionsResource(this));
+	}
+
+	/**
+	 * Definition synchronizer — bulk-sync roles, event types, subscriptions,
+	 * dispatch pools, and principals per application.
+	 *
+	 * See `docs/syncing-definitions.md` for structure and conventions.
+	 */
+	definitions(): DefinitionSynchronizer {
+		return (this._definitions ??= new DefinitionSynchronizer(this));
 	}
 
 	// ============ Internal Methods ============

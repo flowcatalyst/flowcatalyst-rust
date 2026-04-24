@@ -133,7 +133,7 @@ async fn test_end_to_end_successful_delivery() {
         ..Default::default()
     };
     let mediator = Arc::new(HttpMediator::with_config(config));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     // Configure pool
     let router_config = RouterConfig {
@@ -183,7 +183,7 @@ async fn test_end_to_end_failed_delivery() {
         ..Default::default()
     };
     let mediator = Arc::new(HttpMediator::with_config(config));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let router_config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -230,7 +230,7 @@ async fn test_end_to_end_config_error_no_retry() {
         ..Default::default()
     };
     let mediator = Arc::new(HttpMediator::with_config(config));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let router_config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -278,7 +278,7 @@ async fn test_end_to_end_multiple_pools() {
         .await;
 
     let mediator = Arc::new(HttpMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let router_config = RouterConfig {
         processing_pools: vec![
@@ -327,7 +327,7 @@ async fn test_end_to_end_custom_delay_response() {
         ..Default::default()
     };
     let mediator = Arc::new(HttpMediator::with_config(config));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let router_config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -372,7 +372,7 @@ async fn test_end_to_end_batch_processing() {
         .await;
 
     let mediator = Arc::new(HttpMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let router_config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -419,7 +419,7 @@ async fn test_end_to_end_connection_error() {
         ..Default::default()
     };
     let mediator = Arc::new(HttpMediator::with_config(config));
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let router_config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -455,7 +455,7 @@ async fn test_end_to_end_shutdown() {
         .await;
 
     let mediator = Arc::new(HttpMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let router_config = RouterConfig {
         processing_pools: vec![PoolConfig {
@@ -484,7 +484,7 @@ async fn test_end_to_end_auth_token() {
         .await;
 
     let mediator = Arc::new(HttpMediator::new());
-    let manager = Arc::new(QueueManager::new(mediator.clone()));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator.clone()));
 
     let router_config = RouterConfig {
         processing_pools: vec![PoolConfig {

@@ -21,7 +21,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use fc_router::{
-    QueueManager, HttpMediator, LifecycleManager, LifecycleConfig,
+    QueueManager, HttpMediatorConfig, LifecycleManager, LifecycleConfig,
     WarningService, WarningServiceConfig,
     HealthService, HealthServiceConfig,
     CircuitBreakerRegistry, ConsumerFactory,
@@ -92,11 +92,10 @@ async fn main() -> Result<()> {
         info!("Notification service disabled - no channels configured");
     }
 
-    // 3. Initialize Mediator (production mode: HTTP/2, 15 minute timeout)
-    let mediator = Arc::new(HttpMediator::production());
-
-    // 4. Create QueueManager
-    let mut queue_manager_inner = QueueManager::new(mediator.clone());
+    // 3. Create QueueManager. Mediator *config* is passed (not a singleton);
+    //    each pool gets its own HttpMediator + connection pool.
+    let mut queue_manager_inner = QueueManager::new(HttpMediatorConfig::production());
+    queue_manager_inner.set_warning_service(warning_service.clone());
     queue_manager_inner.set_health_service(health_service.clone());
     queue_manager_inner.set_consumer_factory(Arc::new(SqsConsumerFactory {
         sqs_client: sqs_client.clone(),

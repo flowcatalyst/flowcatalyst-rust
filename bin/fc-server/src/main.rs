@@ -532,7 +532,7 @@ async fn spawn_router(
     mut active_rx: watch::Receiver<bool>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     use fc_router::{
-        QueueManager, HttpMediator,
+        QueueManager, HttpMediatorConfig,
         WarningService, WarningServiceConfig,
         HealthService, HealthServiceConfig,
     };
@@ -563,8 +563,11 @@ async fn spawn_router(
         HealthServiceConfig::default(),
         warning_service.clone(),
     ));
-    let mediator = Arc::new(HttpMediator::production());
-    let mut queue_manager_inner = QueueManager::new(mediator);
+    // Pass mediator *config* (not a singleton instance) — QueueManager builds
+    // a fresh HttpMediator per pool so each pool has its own HTTP connection
+    // pool, sidestepping AWS's 128-stream cap per H/2 connection.
+    let mut queue_manager_inner = QueueManager::new(HttpMediatorConfig::production());
+    queue_manager_inner.set_warning_service(warning_service.clone());
     queue_manager_inner.set_health_service(health_service.clone());
     let queue_manager = Arc::new(queue_manager_inner);
 
