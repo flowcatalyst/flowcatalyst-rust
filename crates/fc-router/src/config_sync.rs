@@ -179,33 +179,59 @@ impl ConfigSyncService {
         }
     }
 
-    /// Fetch configuration from all configured URLs and merge results.
-    /// Each URL is fetched with retry logic. Pools with the same code are
-    /// deduplicated (last wins). Queues from all sources are included.
+    /// Fetch configuration from all configured URLs in parallel and merge.
+    ///
+    /// Per-URL failures are tolerated — the merge proceeds with whatever
+    /// sources succeeded. Only fails if **all** sources fail (matches TS
+    /// `MultiConfigFetcher`).
+    ///
+    /// Merge strategy (union, first-wins; matches `multi-config-client.ts`):
+    /// - Pools deduped by `code`; warn on conflicting duplicates.
+    /// - Queues deduped by `uri`; warn on conflicting duplicates.
     pub async fn fetch_config(&self) -> Result<RouterConfig, String> {
-        let mut merged = RouterConfig {
-            processing_pools: Vec::new(),
-            queues: Vec::new(),
-        };
-
-        for url in &self.config.config_urls {
-            let config = self.fetch_config_from_url(url).await?;
-
-            // Merge pools — deduplicate by code (last wins)
-            for pool in config.processing_pools {
-                if let Some(existing) = merged.processing_pools.iter_mut().find(|p| p.code == pool.code) {
-                    *existing = pool;
-                } else {
-                    merged.processing_pools.push(pool);
-                }
-            }
-
-            // Merge queues — include all (different platforms have different queues)
-            merged.queues.extend(config.queues);
+        if self.config.config_urls.is_empty() {
+            return Err("No config URLs configured".to_string());
         }
 
+        // Fetch all sources in parallel.
+        let tasks: Vec<_> = self.config.config_urls.iter()
+            .map(|url| {
+                let url = url.clone();
+                let svc = self;
+                async move {
+                    let result = svc.fetch_config_from_url(&url).await;
+                    (url, result)
+                }
+            })
+            .collect();
+        let results = futures::future::join_all(tasks).await;
+
+        let mut successes: Vec<(String, RouterConfig)> = Vec::new();
+        let mut failures: Vec<(String, String)> = Vec::new();
+        for (url, result) in results {
+            match result {
+                Ok(cfg) => successes.push((url, cfg)),
+                Err(e) => {
+                    warn!(source_url = %url, error = %e, "Config source failed; continuing with remaining sources");
+                    failures.push((url, e));
+                }
+            }
+        }
+
+        if successes.is_empty() {
+            let summary = failures.iter()
+                .map(|(u, e)| format!("{}: {}", u, e))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(format!("All {} config source(s) failed — {}", failures.len(), summary));
+        }
+
+        let merged = merge_configs(&successes);
+
         info!(
-            urls = self.config.config_urls.len(),
+            sources_attempted = self.config.config_urls.len(),
+            sources_succeeded = successes.len(),
+            sources_failed = failures.len(),
             pools = merged.processing_pools.len(),
             queues = merged.queues.len(),
             "Merged configuration from all sources"
@@ -472,6 +498,83 @@ impl ConfigSyncService {
     }
 }
 
+/// Union-merge multiple `RouterConfig`s with first-wins semantics.
+/// Mirrors the TS `mergeConfigs` in `multi-config-client.ts`.
+///
+/// - Pools deduped by `code`; conflicting duplicates (different
+///   `concurrency` or `rate_limit_per_minute`) log a warning and the
+///   first-seen value wins.
+/// - Queues deduped by `uri`; conflicting duplicates (different `name`,
+///   `connections`, or `visibility_timeout`) log a warning and the
+///   first-seen value wins.
+///
+/// `sources` is `(source_url, config)` pairs so warnings can name the
+/// kept-vs-dropped source.
+pub fn merge_configs(sources: &[(String, RouterConfig)]) -> RouterConfig {
+    if sources.len() == 1 {
+        return sources[0].1.clone();
+    }
+
+    use std::collections::HashMap;
+
+    let mut pools: Vec<PoolConfig> = Vec::new();
+    let mut pool_origin: HashMap<String, String> = HashMap::new();
+    let mut queues: Vec<QueueConfig> = Vec::new();
+    let mut queue_origin: HashMap<String, String> = HashMap::new();
+
+    for (source_url, cfg) in sources {
+        for pool in &cfg.processing_pools {
+            if let Some(existing) = pools.iter().find(|p| p.code == pool.code) {
+                if existing.concurrency != pool.concurrency
+                    || existing.rate_limit_per_minute != pool.rate_limit_per_minute
+                {
+                    let kept_source = pool_origin
+                        .get(&pool.code)
+                        .map(|s| s.as_str())
+                        .unwrap_or("(unknown)");
+                    warn!(
+                        pool_code = %pool.code,
+                        kept_source = %kept_source,
+                        dropped_source = %source_url,
+                        "Duplicate pool with conflicting values — keeping first"
+                    );
+                }
+                continue;
+            }
+            pool_origin.insert(pool.code.clone(), source_url.clone());
+            pools.push(pool.clone());
+        }
+
+        for queue in &cfg.queues {
+            if let Some(existing) = queues.iter().find(|q| q.uri == queue.uri) {
+                if existing.name != queue.name
+                    || existing.connections != queue.connections
+                    || existing.visibility_timeout != queue.visibility_timeout
+                {
+                    let kept_source = queue_origin
+                        .get(&queue.uri)
+                        .map(|s| s.as_str())
+                        .unwrap_or("(unknown)");
+                    warn!(
+                        queue_uri = %queue.uri,
+                        kept_source = %kept_source,
+                        dropped_source = %source_url,
+                        "Duplicate queue with conflicting values — keeping first"
+                    );
+                }
+                continue;
+            }
+            queue_origin.insert(queue.uri.clone(), source_url.clone());
+            queues.push(queue.clone());
+        }
+    }
+
+    RouterConfig {
+        processing_pools: pools,
+        queues,
+    }
+}
+
 /// Spawn the config sync background task
 pub fn spawn_config_sync_task(
     config_sync: Arc<ConfigSyncService>,
@@ -543,6 +646,86 @@ mod tests {
         let hash2 = ConfigSyncService::compute_config_hash(&config2);
 
         assert_ne!(hash1, hash2);
+    }
+
+    fn pool(code: &str, concurrency: u32) -> PoolConfig {
+        PoolConfig {
+            code: code.to_string(),
+            concurrency,
+            rate_limit_per_minute: None,
+        }
+    }
+
+    fn queue(uri: &str, name: &str, connections: u32) -> QueueConfig {
+        QueueConfig {
+            name: name.to_string(),
+            uri: uri.to_string(),
+            connections,
+            visibility_timeout: 120,
+        }
+    }
+
+    #[test]
+    fn merge_configs_first_wins_on_pool_conflict() {
+        let sources = vec![
+            (
+                "src-a".to_string(),
+                RouterConfig {
+                    processing_pools: vec![pool("P1", 10), pool("P2", 5)],
+                    queues: vec![],
+                },
+            ),
+            (
+                "src-b".to_string(),
+                RouterConfig {
+                    processing_pools: vec![pool("P1", 99), pool("P3", 7)],
+                    queues: vec![],
+                },
+            ),
+        ];
+
+        let merged = merge_configs(&sources);
+        let p1 = merged.processing_pools.iter().find(|p| p.code == "P1").unwrap();
+        // First-wins: src-a's concurrency (10) survives, src-b's (99) is dropped.
+        assert_eq!(p1.concurrency, 10);
+        assert_eq!(merged.processing_pools.len(), 3);
+    }
+
+    #[test]
+    fn merge_configs_dedups_queues_by_uri() {
+        let sources = vec![
+            (
+                "src-a".to_string(),
+                RouterConfig {
+                    processing_pools: vec![],
+                    queues: vec![queue("sqs://q1", "q1", 1), queue("sqs://q2", "q2", 1)],
+                },
+            ),
+            (
+                "src-b".to_string(),
+                RouterConfig {
+                    processing_pools: vec![],
+                    // Same uri as src-a's q1, different connections — first wins.
+                    queues: vec![queue("sqs://q1", "q1", 5), queue("sqs://q3", "q3", 1)],
+                },
+            ),
+        ];
+
+        let merged = merge_configs(&sources);
+        assert_eq!(merged.queues.len(), 3);
+        let q1 = merged.queues.iter().find(|q| q.uri == "sqs://q1").unwrap();
+        assert_eq!(q1.connections, 1, "first-source connections should win");
+    }
+
+    #[test]
+    fn merge_configs_single_source_passthrough() {
+        let cfg = RouterConfig {
+            processing_pools: vec![pool("P1", 10)],
+            queues: vec![queue("sqs://q1", "q1", 1)],
+        };
+        let merged = merge_configs(&[("only".to_string(), cfg.clone())]);
+        assert_eq!(merged.processing_pools.len(), 1);
+        assert_eq!(merged.queues.len(), 1);
     }
 
     #[test]
