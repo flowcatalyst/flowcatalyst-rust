@@ -341,15 +341,8 @@ impl ProcessPool {
         let batch_group_message_count = self.batch_group_message_count.clone();
 
         tokio::spawn(async move {
-            // Wait for rate limit
-            if !Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await {
-                queue_size.fetch_sub(1, Ordering::Relaxed);
-                if let Some(ref key) = task.batch_group_key {
-                    Self::decrement_and_cleanup_batch_group_static(key, &batch_group_message_count, &failed_batch_groups);
-                }
-                task.callback.nack(Some(10)).await;
-                return;
-            }
+            // Wait for rate limit permit (no timeout — see fn doc).
+            Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
 
             // Acquire semaphore
             let permit = match semaphore.acquire().await {
@@ -566,19 +559,8 @@ impl ProcessPool {
                 // Decrement queue size
                 queue_size.fetch_sub(1, Ordering::Relaxed);
 
-                // Wait for rate limit permit (with timeout to prevent stall)
-                let got_permit = Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
-                if !got_permit {
-                    if let Some(ref key) = task.batch_group_key {
-                        Self::decrement_and_cleanup_batch_group_static(
-                            key,
-                            &batch_group_message_count,
-                            &failed_batch_groups,
-                        );
-                    }
-                    task.callback.nack(Some(10)).await;
-                    continue;
-                }
+                // Wait for rate limit permit (no timeout — see fn doc).
+                Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
 
                 // Acquire semaphore permit
                 let permit = match semaphore.acquire().await {
@@ -787,38 +769,37 @@ impl ProcessPool {
     }
 
     /// Maximum time to wait for a rate limit permit before giving up.
-    const RATE_LIMIT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
-
-    /// Waits for a rate limit permit using governor's async API (zero CPU while waiting).
-    /// Returns true if permit was acquired, false if timed out (caller should NACK).
+    /// Wait for a rate-limit permit using governor's async API (zero CPU
+    /// while waiting). No timeout: the rate limiter is internal pacing and
+    /// NACKing on timeout was strictly worse than waiting — bouncing a
+    /// message back to SQS only to re-arrive at the same wait creates
+    /// churn without changing the achievable throughput. Capacity backpressure
+    /// is enforced upstream at `submit()` (bounded queue, NACK on overflow).
+    ///
+    /// Within an ordered message group, messages drain serially anyway, so
+    /// waiting here doesn't block anything that wasn't already going to
+    /// wait. Across groups, each drain task has its own future, so one
+    /// waiter doesn't block other groups.
     async fn wait_for_rate_limit_permit(
         rate_limiter: &Arc<parking_lot::RwLock<Option<Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>>,
         metrics_collector: &Arc<PoolMetricsCollector>,
-    ) -> bool {
+    ) {
         let limiter = rate_limiter.read().clone();
 
         let rl = match limiter {
-            None => return true,
+            None => return,
             Some(rl) => rl,
         };
 
-        // Fast path: permit available immediately
+        // Fast path: permit available immediately.
         if rl.check().is_ok() {
-            return true;
+            return;
         }
 
-        // Slow path: wait for permit with timeout
+        // Slow path: wait for permit (no timeout).
         metrics_collector.record_rate_limited();
-        debug!("Rate limited - waiting for permit");
-
-        match tokio::time::timeout(Self::RATE_LIMIT_WAIT_TIMEOUT, rl.until_ready()).await {
-            Ok(_) => true,
-            Err(_) => {
-                warn!("Rate limit wait timeout after {}s — NACKing message",
-                    Self::RATE_LIMIT_WAIT_TIMEOUT.as_secs());
-                false
-            }
-        }
+        debug!("Rate limited — waiting for permit");
+        rl.until_ready().await;
     }
 
     /// Drain the pool (stop accepting new work)

@@ -1,13 +1,22 @@
 //! Lifecycle Manager - Background tasks for the message router
 //!
 //! Handles:
-//! - Visibility timeout extension for long-running messages
 //! - Memory health monitoring
 //! - Consumer health monitoring
 //! - Warning service cleanup
 //! - Graceful shutdown coordination
 //! - Configuration sync (when enabled)
 //! - Standby/HA coordination (when enabled)
+//!
+//! **No visibility-timeout extension.** When SQS visibility expires while a
+//! message is still being processed, SQS redelivers and the manager's
+//! `filter_duplicates` Phase 1 (Check 1) catches the duplicate, swaps in the
+//! new receipt handle, and the original processing continues. When it
+//! finishes, ack/nack uses the latest handle. Extending visibility was the
+//! source of "Failed to extend visibility … AWS SQS error" log spam — the
+//! handle had often expired already by the time the extender fired. Set the
+//! queue's SQS visibility timeout (queue-side, AWS console / IaC) to fit
+//! your longest realistic mediation if redelivery noise is undesirable.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,8 +36,6 @@ use crate::api::oidc_flow::{SessionStore, PendingOidcStateStore};
 /// Configuration for the lifecycle manager
 #[derive(Debug, Clone)]
 pub struct LifecycleConfig {
-    /// Interval for visibility extension checks
-    pub visibility_extension_interval: Duration,
     /// Interval for memory health checks
     pub memory_health_interval: Duration,
     /// Interval for consumer health checks
@@ -52,7 +59,6 @@ pub struct LifecycleConfig {
 impl Default for LifecycleConfig {
     fn default() -> Self {
         Self {
-            visibility_extension_interval: Duration::from_secs(55),
             memory_health_interval: Duration::from_secs(60),
             consumer_health_interval: Duration::from_secs(30),
             warning_cleanup_interval: Duration::from_secs(300),  // 5 minutes
@@ -114,31 +120,6 @@ impl LifecycleManager {
         config: LifecycleConfig,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-
-        // Visibility timeout extender
-        {
-            let manager = manager.clone();
-            let _warning_service = warning_service.clone();
-            let mut shutdown_rx = shutdown_tx.subscribe();
-            let interval = config.visibility_extension_interval;
-
-            tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
-
-                loop {
-                    tokio::select! {
-                        _ = ticker.tick() => {
-                            debug!("Running visibility extension check");
-                            manager.extend_visibility_for_long_running().await;
-                        }
-                        _ = shutdown_rx.recv() => {
-                            info!("Visibility extender shutting down");
-                            break;
-                        }
-                    }
-                }
-            });
-        }
 
         // Memory health monitor
         {
@@ -522,7 +503,6 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = LifecycleConfig::default();
-        assert_eq!(config.visibility_extension_interval, Duration::from_secs(55));
         assert_eq!(config.memory_health_interval, Duration::from_secs(60));
     }
 }

@@ -1340,60 +1340,6 @@ impl QueueManager {
         self.pools.iter().map(|entry| entry.value().get_stats()).collect()
     }
 
-    /// Extend visibility for long-running messages
-    /// Called periodically by LifecycleManager to prevent visibility timeout
-    /// for messages that are still being processed.
-    pub async fn extend_visibility_for_long_running(&self) {
-        // Extend visibility when message has been processing for 50+ seconds
-        // This matches SQS visibility timeout minus a safety buffer
-        let threshold_seconds = 50;
-        let extension_seconds = 120; // Extend by 120 seconds (matches Java)
-
-        // Collect messages that need visibility extension
-        let mut extensions = Vec::new();
-        for entry in self.in_pipeline.iter() {
-            let value = entry.value();
-            if value.elapsed_seconds() >= threshold_seconds {
-                extensions.push((
-                    value.queue_identifier.clone(),
-                    value.receipt_handle.clone(),
-                    value.message_id.clone(),
-                    value.elapsed_seconds(),
-                ));
-            }
-        }
-
-        if extensions.is_empty() {
-            return;
-        }
-
-        // Get consumers and extend visibility
-        let consumers = self.consumers.read().await;
-        for (queue_id, receipt_handle, message_id, elapsed) in extensions {
-            if let Some(consumer) = consumers.get(&queue_id) {
-                match consumer.extend_visibility(&receipt_handle, extension_seconds).await {
-                    Ok(()) => {
-                        debug!(
-                            message_id = %message_id,
-                            queue = %queue_id,
-                            elapsed = elapsed,
-                            extension = extension_seconds,
-                            "Extended visibility for long-running message"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            message_id = %message_id,
-                            queue = %queue_id,
-                            error = %e,
-                            "Failed to extend visibility for long-running message"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
     /// Check for potential memory leaks (large in-pipeline maps)
     pub fn check_memory_health(&self) -> bool {
         let in_pipeline_size = self.in_pipeline.len();
