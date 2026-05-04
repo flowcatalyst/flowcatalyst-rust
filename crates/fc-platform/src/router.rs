@@ -213,13 +213,54 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_AUTH, auth_router(self.auth))
             .split_for_parts();
 
-        // 2. Add PaginationParams schema (referenced via #[serde(flatten)], not auto-collected)
+        // 2. Hand-curated schemas for types referenced via #[serde(flatten)] or
+        //    via raw JSON responses — utoipa can't auto-collect these.
+        //    Keep these in sync with the actual structs in
+        //    `shared/api_common.rs` and `shared/error.rs`.
         if let Some(components) = openapi.components.as_mut() {
+            // Mirrors `PaginationParams` in shared/api_common.rs. The struct's
+            // canonical wire field is `size` (camelCase of `size`); `limit`,
+            // `pageSize`, and `page_size` are accepted as deserialise aliases
+            // but the canonical/documented form is `size`.
             components.schemas.insert(
                 "PaginationParams".to_string(),
                 ObjectBuilder::new()
-                    .property("page", ObjectBuilder::new().schema_type(Type::Integer))
-                    .property("limit", ObjectBuilder::new().schema_type(Type::Integer))
+                    .property(
+                        "page",
+                        ObjectBuilder::new()
+                            .schema_type(Type::Integer)
+                            .description(Some("Page number (1-based)")),
+                    )
+                    .property(
+                        "size",
+                        ObjectBuilder::new()
+                            .schema_type(Type::Integer)
+                            .description(Some(
+                                "Page size. Aliases: limit, pageSize, page_size.",
+                            )),
+                    )
+                    .into(),
+            );
+
+            // Standard error envelope used by `PlatformError::IntoResponse`.
+            // Every non-2xx response body conforms to this shape.
+            components.schemas.insert(
+                "ErrorResponse".to_string(),
+                ObjectBuilder::new()
+                    .property(
+                        "error",
+                        ObjectBuilder::new()
+                            .schema_type(Type::String)
+                            .description(Some("Machine-readable error code (e.g. ROLE_HAS_ASSIGNMENTS)")),
+                    )
+                    .property(
+                        "message",
+                        ObjectBuilder::new()
+                            .schema_type(Type::String)
+                            .description(Some("Human-readable error message suitable for display")),
+                    )
+                    .required("error")
+                    .required("message")
                     .into(),
             );
         }

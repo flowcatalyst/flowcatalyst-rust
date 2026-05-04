@@ -440,10 +440,19 @@ impl ProcessPool {
         tokio::spawn(async move {
             debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task started");
 
-            // Safety guard: if this task panics, reset processing flag so the group isn't stuck,
-            // and decrement active_workers if a permit was held.
-            // Remaining messages in the VecDeque will be NACKed by SQS visibility timeout
-            // and retried on the next poll.
+            // Safety guard: if this task panics or exits via an early break,
+            // (a) reset the `processing` flag so a future submit() can spawn
+            //     a fresh drain task,
+            // (b) drain remaining tasks from the VecDeque — dropping them is
+            //     the trigger for `QueueMessageCallback::drop` to clear
+            //     `in_pipeline` and fire fallback nacks, releasing SQS
+            //     redelivery for those messages,
+            // (c) decrement active_workers if a permit was held.
+            //
+            // Without (b), abandoned tasks would sit in the VecDeque
+            // indefinitely (the handler is only freed when its queue is
+            // empty AND `processing == false`), and SQS redeliveries would
+            // be silently swallowed by the manager's duplicate filter.
             struct PanicGuard {
                 group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
                 group_id: Arc<str>,
@@ -455,18 +464,35 @@ impl ProcessPool {
             }
             impl Drop for PanicGuard {
                 fn drop(&mut self) {
-                    if self.active {
-                        if let Some(entry) = self.group_handlers.get(&self.group_id) {
-                            let mut handler = entry.lock();
-                            if handler.processing {
-                                handler.processing = false;
-                                error!(group_id = %self.group_id, "Drain task exited abnormally — reset processing flag");
-                            }
+                    if !self.active {
+                        return;
+                    }
+                    let mut abandoned = 0usize;
+                    if let Some(entry) = self.group_handlers.get(&self.group_id) {
+                        let mut handler = entry.lock();
+                        // Drain queued tasks; their callbacks' Drop impl
+                        // does the cleanup. We can't await here so we just
+                        // drop them and let the callback's Drop spawn the
+                        // fallback nack on the runtime.
+                        while handler.dequeue().is_some() {
+                            abandoned += 1;
                         }
-                        if self.holding_permit {
-                            self.in_flight_groups.remove(&self.group_id);
-                            self.active_workers.fetch_sub(1, Ordering::Relaxed);
+                        if handler.processing {
+                            handler.processing = false;
                         }
+                    }
+                    if abandoned > 0 {
+                        error!(
+                            group_id = %self.group_id,
+                            abandoned = abandoned,
+                            "Drain task exited abnormally — drained queued tasks; their callbacks' Drop will release SQS redelivery"
+                        );
+                    } else {
+                        error!(group_id = %self.group_id, "Drain task exited abnormally — reset processing flag");
+                    }
+                    if self.holding_permit {
+                        self.in_flight_groups.remove(&self.group_id);
+                        self.active_workers.fetch_sub(1, Ordering::Relaxed);
                     }
                 }
             }
@@ -567,7 +593,11 @@ impl ProcessPool {
                             );
                         }
                         task.callback.nack(Some(10)).await;
-                        panic_guard.active = false;
+                        // Leave panic_guard.active = true: the queue may
+                        // still hold tasks, and the guard will drain them
+                        // (their callbacks' Drop fires the fallback nack)
+                        // and reset the processing flag so a future submit
+                        // can spawn a new drain task.
                         break;
                     }
                 };

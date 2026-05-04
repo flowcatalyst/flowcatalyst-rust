@@ -126,6 +126,27 @@ impl From<OAuthClient> for OAuthClientResponse {
     }
 }
 
+/// Wrapper response from `POST /api/oauth-clients`. Includes the freshly
+/// generated `client_secret` exactly once for confidential clients — it is
+/// never retrievable afterwards.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateOAuthClientResponse {
+    pub client: OAuthClientResponse,
+    /// Plaintext client secret. Only present on creation of CONFIDENTIAL
+    /// clients. Capture this on the first response — the platform stores
+    /// only the encrypted form and cannot return it again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+}
+
+/// List response wrapper for `GET /api/oauth-clients`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthClientListResponse {
+    pub clients: Vec<OAuthClientResponse>,
+}
+
 /// Query parameters for OAuth clients list
 #[derive(Debug, Default, Deserialize, IntoParams)]
 #[serde(rename_all = "camelCase")]
@@ -177,7 +198,7 @@ fn parse_client_type(s: &str) -> OAuthClientType {
     operation_id = "postApiAdminOauthClients",
     request_body = CreateOAuthClientRequest,
     responses(
-        (status = 201, description = "OAuth client created", body = OAuthClientResponse),
+        (status = 201, description = "OAuth client created", body = CreateOAuthClientResponse),
         (status = 400, description = "Validation error"),
         (status = 409, description = "Duplicate client_id")
     ),
@@ -187,7 +208,7 @@ pub async fn create_oauth_client(
     State(state): State<OAuthClientsState>,
     auth: Authenticated,
     Json(req): Json<CreateOAuthClientRequest>,
-) -> Result<(StatusCode, Json<serde_json::Value>), PlatformError> {
+) -> Result<(StatusCode, Json<CreateOAuthClientResponse>), PlatformError> {
     use crate::auth::operations::CreateOAuthClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
@@ -249,12 +270,10 @@ pub async fn create_oauth_client(
     let client = state.oauth_client_repo.find_by_id(&oauth_client_id).await?
         .ok_or_else(|| PlatformError::internal("OAuth client created but row not found"))?;
 
-    let mut response = serde_json::json!({
-        "client": OAuthClientResponse::from(client),
-    });
-    if let Some(secret) = generated_secret {
-        response["clientSecret"] = serde_json::json!(secret);
-    }
+    let response = CreateOAuthClientResponse {
+        client: OAuthClientResponse::from(client),
+        client_secret: generated_secret,
+    };
 
     Ok((StatusCode::CREATED, Json(response)))
 }
@@ -295,7 +314,7 @@ pub async fn get_oauth_client(
     operation_id = "getApiAdminOauthClients",
     params(OAuthClientsQuery),
     responses(
-        (status = 200, description = "List of OAuth clients", body = Vec<OAuthClientResponse>)
+        (status = 200, description = "List of OAuth clients", body = OAuthClientListResponse)
     ),
     security(("bearer_auth" = []))
 )]
@@ -303,7 +322,7 @@ pub async fn list_oauth_clients(
     State(state): State<OAuthClientsState>,
     auth: Authenticated,
     Query(query): Query<OAuthClientsQuery>,
-) -> Result<Json<serde_json::Value>, PlatformError> {
+) -> Result<Json<OAuthClientListResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
     let clients = if query.active.unwrap_or(true) {
@@ -312,11 +331,9 @@ pub async fn list_oauth_clients(
         state.oauth_client_repo.find_all().await?
     };
 
-    let response: Vec<OAuthClientResponse> = clients.into_iter()
-        .map(|c| c.into())
-        .collect();
-
-    Ok(Json(serde_json::json!({ "clients": response })))
+    Ok(Json(OAuthClientListResponse {
+        clients: clients.into_iter().map(|c| c.into()).collect(),
+    }))
 }
 
 /// Update OAuth client

@@ -43,6 +43,20 @@ enum MediatorSource {
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
 /// redelivery), performs the SQS operation, then cleans up tracking.
 /// No spawned task, no channel — mirrors the TS closure pattern.
+///
+/// **Drop safety.** If this callback is dropped without `ack()` or `nack()`
+/// being called (panic during mediation, runtime cancellation, abandoned
+/// queue task on early drain-task exit, …) the `Drop` impl guarantees:
+///
+/// 1. The entry is removed from `in_pipeline` and
+///    `app_message_to_pipeline_key`. Without this cleanup, SQS redeliveries
+///    of the same `broker_message_id` would be silently swallowed by
+///    `filter_duplicates` Phase 1 (Check 1) and the message would stick
+///    until the SQS message retention period expires — observed in
+///    production as "thousands of messages stuck".
+/// 2. A best-effort `nack` is fired via `tokio::spawn` so SQS releases the
+///    visibility timeout sooner than its default. Failures here are
+///    swallowed; the natural visibility timeout is the eventual safety net.
 struct QueueMessageCallback {
     pipeline_key: String,
     app_message_id: String,
@@ -50,11 +64,30 @@ struct QueueMessageCallback {
     in_pipeline: Arc<DashMap<String, InFlightMessage>>,
     app_message_to_pipeline_key: Arc<DashMap<String, String>>,
     pending_delete: Arc<Mutex<HashMap<String, Instant>>>,
+    /// Set to true the moment `ack()` or `nack()` is entered. The `Drop`
+    /// impl checks this and only fires fallback cleanup if no resolution
+    /// happened. AcqRel ordering: the load in Drop must observe stores from
+    /// any thread that called ack/nack.
+    completed: std::sync::atomic::AtomicBool,
+}
+
+impl QueueMessageCallback {
+    /// Common cleanup: drop the in-memory tracking entries so future
+    /// redeliveries of this `broker_message_id` flow through Phase 2 again
+    /// instead of being silently swallowed as duplicates.
+    fn cleanup_tracking(&self) {
+        self.in_pipeline.remove(&self.pipeline_key);
+        self.app_message_to_pipeline_key.remove(&self.app_message_id);
+    }
 }
 
 #[async_trait::async_trait]
 impl MessageCallback for QueueMessageCallback {
     async fn ack(&self) {
+        // Mark resolved BEFORE doing any await so the Drop impl knows we
+        // owned the resolution even if a panic happens mid-await.
+        self.completed.store(true, std::sync::atomic::Ordering::Release);
+
         // Read latest receipt handle (may have been updated by redelivery)
         let (handle, broker_id) = self.in_pipeline
             .get(&self.pipeline_key)
@@ -89,11 +122,13 @@ impl MessageCallback for QueueMessageCallback {
         }
 
         // Clean up tracking AFTER SQS operation
-        self.in_pipeline.remove(&self.pipeline_key);
-        self.app_message_to_pipeline_key.remove(&self.app_message_id);
+        self.cleanup_tracking();
     }
 
     async fn nack(&self, delay_seconds: Option<u32>) {
+        // Mark resolved BEFORE doing any await; see ack() above.
+        self.completed.store(true, std::sync::atomic::Ordering::Release);
+
         let handle = self.in_pipeline
             .get(&self.pipeline_key)
             .map(|e| e.receipt_handle.clone())
@@ -110,8 +145,55 @@ impl MessageCallback for QueueMessageCallback {
         }
 
         // Clean up tracking AFTER SQS operation
-        self.in_pipeline.remove(&self.pipeline_key);
-        self.app_message_to_pipeline_key.remove(&self.app_message_id);
+        self.cleanup_tracking();
+    }
+}
+
+impl Drop for QueueMessageCallback {
+    fn drop(&mut self) {
+        // Fast path: ack() or nack() ran, no fallback needed.
+        if self.completed.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+
+        // The callback was dropped without resolution. Most likely causes:
+        //   • mediator panicked mid-mediation
+        //   • tokio task was cancelled
+        //   • drain task exited early leaving queued PoolTasks abandoned
+        //
+        // Always clear the in-memory tracking so SQS redeliveries are not
+        // silently swallowed. Fire a best-effort nack so the message
+        // returns to the queue sooner than its full visibility timeout.
+
+        let pipeline_key = self.pipeline_key.clone();
+        let app_message_id = self.app_message_id.clone();
+
+        // Snapshot the current receipt handle before we yank the entry.
+        let handle = self.in_pipeline
+            .get(&pipeline_key)
+            .map(|e| e.receipt_handle.clone())
+            .unwrap_or_default();
+
+        // Synchronous cleanup of tracking — never deferred.
+        self.cleanup_tracking();
+
+        warn!(
+            pipeline_key = %pipeline_key,
+            app_message_id = %app_message_id,
+            "Callback dropped without ack/nack — fallback cleanup ran (likely mediator panic or task cancel)"
+        );
+
+        if !handle.is_empty() {
+            // Best-effort nack on a detached task. If we can't get a tokio
+            // handle (e.g. shutting down), the SQS visibility timeout will
+            // eventually redeliver and processing will retry.
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                let consumer = self.consumer.clone();
+                rt.spawn(async move {
+                    let _ = consumer.nack(&handle, Some(10)).await;
+                });
+            }
+        }
     }
 }
 
@@ -824,6 +906,7 @@ impl QueueManager {
                         in_pipeline: self.in_pipeline.clone(),
                         app_message_to_pipeline_key: self.app_message_to_pipeline_key.clone(),
                         pending_delete: self.pending_delete_broker_ids.clone(),
+                        completed: std::sync::atomic::AtomicBool::new(false),
                     };
 
                     let batch_msg = BatchMessage {
@@ -1095,12 +1178,106 @@ impl QueueManager {
             handles.push(self.spawn_consumer_poll_task(consumer));
         }
 
+        // Defence-in-depth: reaper for stuck `in_pipeline` entries.
+        handles.push(self.clone().spawn_in_pipeline_reaper());
+
         // Wait for all consumer tasks
         for handle in handles {
             let _ = handle.await;
         }
 
         Ok(())
+    }
+
+    /// TTL of an `in_pipeline` entry before the reaper considers it stuck.
+    /// Production processing should never take this long; legitimate
+    /// long-running work should have its visibility timeout extended.
+    const IN_PIPELINE_TTL: Duration = Duration::from_secs(15 * 60);
+    const IN_PIPELINE_REAPER_INTERVAL: Duration = Duration::from_secs(60);
+
+    /// Spawn a periodic task that scans `in_pipeline` and removes any entry
+    /// older than `IN_PIPELINE_TTL`. This is a safety net for cases where a
+    /// callback is dropped without firing AND its `Drop` impl somehow
+    /// doesn't run (e.g. forgotten ownership in a future map). Without this,
+    /// SQS would keep redelivering and `filter_duplicates` would silently
+    /// swallow each redelivery as a duplicate, leaving thousands of
+    /// messages stuck on the queue.
+    fn spawn_in_pipeline_reaper(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let in_pipeline = self.in_pipeline.clone();
+        let app_index = self.app_message_to_pipeline_key.clone();
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Self::IN_PIPELINE_REAPER_INTERVAL);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // Skip the immediate first tick so we don't reap during startup.
+            ticker.tick().await;
+
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        let now = Instant::now();
+
+                        // Snapshot candidates first (don't mutate while iterating).
+                        // Each candidate captures the full context we need to log
+                        // — once we yank the entry from the map, this is gone.
+                        struct Candidate {
+                            pipeline_key: String,
+                            app_message_id: String,
+                            broker_message_id: Option<String>,
+                            queue_identifier: String,
+                            pool_code: String,
+                            message_group_id: Option<String>,
+                            age_secs: u64,
+                        }
+                        let mut candidates: Vec<Candidate> = Vec::new();
+                        for entry in in_pipeline.iter() {
+                            let age = now.duration_since(entry.value().started_at);
+                            if age > Self::IN_PIPELINE_TTL {
+                                candidates.push(Candidate {
+                                    pipeline_key: entry.key().clone(),
+                                    app_message_id: entry.value().message_id.clone(),
+                                    broker_message_id: entry.value().broker_message_id.clone(),
+                                    queue_identifier: entry.value().queue_identifier.clone(),
+                                    pool_code: entry.value().pool_code.clone(),
+                                    message_group_id: entry.value().message_group_id.clone(),
+                                    age_secs: age.as_secs(),
+                                });
+                            }
+                        }
+
+                        for c in &candidates {
+                            in_pipeline.remove(&c.pipeline_key);
+                            app_index.remove(&c.app_message_id);
+                            warn!(
+                                pipeline_key = %c.pipeline_key,
+                                app_message_id = %c.app_message_id,
+                                broker_message_id = ?c.broker_message_id,
+                                queue = %c.queue_identifier,
+                                pool_code = %c.pool_code,
+                                message_group_id = ?c.message_group_id,
+                                age_secs = c.age_secs,
+                                ttl_secs = Self::IN_PIPELINE_TTL.as_secs(),
+                                "Reaped stuck in_pipeline entry — SQS redelivery will retry"
+                            );
+                        }
+
+                        if !candidates.is_empty() {
+                            warn!(
+                                count = candidates.len(),
+                                ttl_secs = Self::IN_PIPELINE_TTL.as_secs(),
+                                "in_pipeline reaper cycle: {} entries expired",
+                                candidates.len()
+                            );
+                        }
+                    }
+                    _ = shutdown_rx.recv() => {
+                        info!("In-pipeline reaper shutting down");
+                        break;
+                    }
+                }
+            }
+        })
     }
 
     /// Graceful shutdown
@@ -1668,4 +1845,134 @@ pub struct InFlightMessageInfo {
     pub elapsed_time_ms: u64,
     #[serde(rename = "addedToInPipelineAt")]
     pub added_to_in_pipeline_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[cfg(test)]
+mod callback_drop_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use fc_common::{Message, QueuedMessage};
+    use fc_queue::Result as QueueResult;
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+
+    /// Records ack/nack calls for assertions in unit tests.
+    #[derive(Default)]
+    struct RecordingConsumer {
+        acks: AtomicU32,
+        nacks: AtomicU32,
+    }
+
+    #[async_trait]
+    impl QueueConsumer for RecordingConsumer {
+        fn identifier(&self) -> &str { "recording" }
+        async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> { Ok(vec![]) }
+        async fn ack(&self, _: &str) -> QueueResult<()> {
+            self.acks.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+            self.nacks.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> { Ok(()) }
+        fn is_healthy(&self) -> bool { true }
+        async fn stop(&self) {}
+    }
+
+    fn build_callback(
+        consumer: Arc<RecordingConsumer>,
+    ) -> (
+        QueueMessageCallback,
+        Arc<DashMap<String, InFlightMessage>>,
+        Arc<DashMap<String, String>>,
+    ) {
+        let in_pipeline: Arc<DashMap<String, InFlightMessage>> = Arc::new(DashMap::new());
+        let app_index: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
+        let pending_delete = Arc::new(Mutex::new(HashMap::new()));
+
+        let pipeline_key = "broker-msg-1".to_string();
+        let app_message_id = "app-msg-1".to_string();
+
+        // Simulate the manager pre-populating tracking maps before submit().
+        let msg = Message {
+            id: app_message_id.clone(),
+            pool_code: String::new(),
+            auth_token: None,
+            signing_secret: None,
+            mediation_type: fc_common::MediationType::HTTP,
+            mediation_target: "http://localhost".to_string(),
+            message_group_id: None,
+            high_priority: false,
+            dispatch_mode: fc_common::DispatchMode::Immediate,
+        };
+        let in_flight = InFlightMessage::new(
+            &msg,
+            Some(pipeline_key.clone()),
+            "queue-id".to_string(),
+            None,
+            "receipt-handle-xyz".to_string(),
+        );
+        in_pipeline.insert(pipeline_key.clone(), in_flight);
+        app_index.insert(app_message_id.clone(), pipeline_key.clone());
+
+        let cb = QueueMessageCallback {
+            pipeline_key,
+            app_message_id,
+            consumer: consumer as Arc<dyn QueueConsumer + Send + Sync>,
+            in_pipeline: in_pipeline.clone(),
+            app_message_to_pipeline_key: app_index.clone(),
+            pending_delete,
+            completed: std::sync::atomic::AtomicBool::new(false),
+        };
+        (cb, in_pipeline, app_index)
+    }
+
+    #[tokio::test]
+    async fn drop_without_resolution_clears_tracking_and_nacks() {
+        let consumer = Arc::new(RecordingConsumer::default());
+        let (cb, in_pipeline, app_index) = build_callback(consumer.clone());
+        assert_eq!(in_pipeline.len(), 1);
+        assert_eq!(app_index.len(), 1);
+
+        // Drop without ack/nack — simulates panic / cancellation /
+        // abandoned PoolTask.
+        drop(cb);
+
+        // Tracking maps cleared synchronously inside Drop.
+        assert_eq!(in_pipeline.len(), 0, "in_pipeline should be cleared on drop");
+        assert_eq!(app_index.len(), 0, "app index should be cleared on drop");
+
+        // Fallback nack is fired via tokio::spawn — yield to let it run.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(consumer.nacks.load(AtomicOrdering::SeqCst), 1, "fallback nack should have fired");
+        assert_eq!(consumer.acks.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn ack_then_drop_does_not_fire_fallback_nack() {
+        let consumer = Arc::new(RecordingConsumer::default());
+        let (cb, in_pipeline, _app_index) = build_callback(consumer.clone());
+
+        cb.ack().await;
+        assert_eq!(in_pipeline.len(), 0);
+        assert_eq!(consumer.acks.load(AtomicOrdering::SeqCst), 1);
+
+        // Drop happens implicitly here — should NOT fire a nack.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(consumer.nacks.load(AtomicOrdering::SeqCst), 0, "no fallback nack after explicit ack");
+    }
+
+    #[tokio::test]
+    async fn nack_then_drop_does_not_fire_fallback_nack() {
+        let consumer = Arc::new(RecordingConsumer::default());
+        let (cb, in_pipeline, _app_index) = build_callback(consumer.clone());
+
+        cb.nack(Some(15)).await;
+        assert_eq!(in_pipeline.len(), 0);
+        assert_eq!(consumer.nacks.load(AtomicOrdering::SeqCst), 1);
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Total should still be 1 — Drop did not add a second nack.
+        assert_eq!(consumer.nacks.load(AtomicOrdering::SeqCst), 1, "no double-nack on drop after explicit nack");
+    }
 }
