@@ -13,31 +13,9 @@ class SyncProcessesRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * @var string|null
-     */
-    protected $applicationCode;
-    /**
      * @var list<SyncProcessInputRequest>|null
      */
     protected $processes;
-    /**
-     * @return string|null
-     */
-    public function getApplicationCode(): ?string
-    {
-        return $this->applicationCode;
-    }
-    /**
-     * @param string|null $applicationCode
-     *
-     * @return self
-     */
-    public function setApplicationCode(?string $applicationCode): self
-    {
-        $this->initialized['applicationCode'] = true;
-        $this->applicationCode = $applicationCode;
-        return $this;
-    }
     /**
      * @return list<SyncProcessInputRequest>|null
      */

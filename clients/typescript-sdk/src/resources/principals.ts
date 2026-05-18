@@ -9,29 +9,33 @@ import type { SdkError } from "../errors";
 import type { FlowCatalystClient } from "../client";
 import * as sdk from "../generated/sdk.gen";
 import type {
-	GetApiAdminPrincipalsData,
-	GetApiAdminPrincipalsResponse,
-	GetApiAdminPrincipalsByIdResponse,
-	PostApiAdminPrincipalsUsersData,
-	PutApiAdminPrincipalsByIdData,
-	PostApiAdminPrincipalsByIdResetPasswordData,
-	GetApiAdminPrincipalsByIdRolesResponse,
-	GetApiAdminPrincipalsByIdClientAccessResponse,
+	GetApiPrincipalsData,
+	GetApiPrincipalsResponse,
+	GetApiPrincipalsByIdResponse,
+	PostApiPrincipalsUsersData,
+	PutApiPrincipalsByIdData,
+	PostApiPrincipalsByIdResetPasswordData,
+	GetApiPrincipalsByIdRolesResponse,
+	GetApiPrincipalsByIdClientAccessResponse,
+	PostApiApplicationsByAppCodePrincipalsSyncData,
+	PostApiApplicationsByAppCodePrincipalsSyncResponse,
 } from "../generated/types.gen";
 
-export type PrincipalListResponse = GetApiAdminPrincipalsResponse;
-export type PrincipalDto = GetApiAdminPrincipalsByIdResponse;
-export type CreateUserRequest = PostApiAdminPrincipalsUsersData["body"];
-export type UpdatePrincipalRequest = PutApiAdminPrincipalsByIdData["body"];
+export type PrincipalListResponse = GetApiPrincipalsResponse;
+export type PrincipalDto = GetApiPrincipalsByIdResponse;
+export type CreateUserRequest = PostApiPrincipalsUsersData["body"];
+export type UpdatePrincipalRequest = PutApiPrincipalsByIdData["body"];
 export type ResetPasswordRequest =
-	PostApiAdminPrincipalsByIdResetPasswordData["body"];
-export type RoleListResponse = GetApiAdminPrincipalsByIdRolesResponse;
+	PostApiPrincipalsByIdResetPasswordData["body"];
+export type RoleListResponse = GetApiPrincipalsByIdRolesResponse;
 export type ClientAccessListResponse =
-	GetApiAdminPrincipalsByIdClientAccessResponse;
+	GetApiPrincipalsByIdClientAccessResponse;
+export type SyncPrincipalsResponse =
+	PostApiApplicationsByAppCodePrincipalsSyncResponse;
 
 // Derived from the generated query type so it stays in sync with the platform
 // spec automatically — adding a query param upstream surfaces here on regen.
-export type PrincipalFilters = GetApiAdminPrincipalsData["query"];
+export type PrincipalFilters = GetApiPrincipalsData["query"];
 
 /**
  * Principals resource for managing users and service accounts.
@@ -50,7 +54,7 @@ export class PrincipalsResource {
 		filters?: PrincipalFilters,
 	): ResultAsync<PrincipalListResponse, SdkError> {
 		return this.client.request<PrincipalListResponse>((httpClient, headers) =>
-			sdk.getApiAdminPrincipals({
+			sdk.getApiPrincipals({
 				client: httpClient,
 				headers,
 				query: filters,
@@ -63,7 +67,7 @@ export class PrincipalsResource {
 	 */
 	get(id: string): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.getApiAdminPrincipalsById({
+			sdk.getApiPrincipalsById({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -94,7 +98,7 @@ export class PrincipalsResource {
 	 */
 	createUser(data: CreateUserRequest): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.postApiAdminPrincipalsUsers({
+			sdk.postApiPrincipalsUsers({
 				client: httpClient,
 				headers,
 				body: data,
@@ -110,7 +114,7 @@ export class PrincipalsResource {
 		data: UpdatePrincipalRequest,
 	): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.putApiAdminPrincipalsById({
+			sdk.putApiPrincipalsById({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -124,7 +128,7 @@ export class PrincipalsResource {
 	 */
 	activate(id: string): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.postApiAdminPrincipalsByIdActivate({
+			sdk.postApiPrincipalsByIdActivate({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -137,7 +141,7 @@ export class PrincipalsResource {
 	 */
 	deactivate(id: string): ResultAsync<PrincipalDto, SdkError> {
 		return this.client.request<PrincipalDto>((httpClient, headers) =>
-			sdk.postApiAdminPrincipalsByIdDeactivate({
+			sdk.postApiPrincipalsByIdDeactivate({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -157,7 +161,7 @@ export class PrincipalsResource {
 		data: ResetPasswordRequest,
 	): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.postApiAdminPrincipalsByIdResetPassword({
+			sdk.postApiPrincipalsByIdResetPassword({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -171,7 +175,7 @@ export class PrincipalsResource {
 	 */
 	getRoles(id: string): ResultAsync<RoleListResponse, SdkError> {
 		return this.client.request<RoleListResponse>((httpClient, headers) =>
-			sdk.getApiAdminPrincipalsByIdRoles({
+			sdk.getApiPrincipalsByIdRoles({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -180,11 +184,14 @@ export class PrincipalsResource {
 	}
 
 	/**
-	 * Assign a single role to a principal.
+	 * Add a single role to a principal (additive — keeps existing roles).
+	 *
+	 * Renamed from `assignRole` to make the additive-vs-replace distinction
+	 * visible at the call site (paired with `setRoles` for replace-all).
 	 */
-	assignRole(id: string, roleName: string): ResultAsync<unknown, SdkError> {
+	addRole(id: string, roleName: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.postApiAdminPrincipalsByIdRoles({
+			sdk.postApiPrincipalsByIdRoles({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -198,7 +205,7 @@ export class PrincipalsResource {
 	 */
 	removeRole(id: string, roleName: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiAdminPrincipalsByIdRolesByRoleName({
+			sdk.deleteApiPrincipalsByIdRolesByRoleName({
 				client: httpClient,
 				headers,
 				path: { id, role: roleName },
@@ -207,11 +214,14 @@ export class PrincipalsResource {
 	}
 
 	/**
-	 * Assign roles to a principal (declarative - replaces all roles).
+	 * Replace all roles on a principal with the given set (declarative).
+	 *
+	 * Renamed from `assignRoles` so the replace semantics are obvious
+	 * (paired with `addRole` for additive).
 	 */
-	assignRoles(id: string, roles: string[]): ResultAsync<unknown, SdkError> {
+	setRoles(id: string, roles: string[]): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.putApiAdminPrincipalsByIdRoles({
+			sdk.putApiPrincipalsByIdRoles({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -228,7 +238,7 @@ export class PrincipalsResource {
 	): ResultAsync<ClientAccessListResponse, SdkError> {
 		return this.client.request<ClientAccessListResponse>(
 			(httpClient, headers) =>
-				sdk.getApiAdminPrincipalsByIdClientAccess({
+				sdk.getApiPrincipalsByIdClientAccess({
 					client: httpClient,
 					headers,
 					path: { id },
@@ -244,7 +254,7 @@ export class PrincipalsResource {
 		clientId: string,
 	): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.postApiAdminPrincipalsByIdClientAccess({
+			sdk.postApiPrincipalsByIdClientAccess({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -261,11 +271,36 @@ export class PrincipalsResource {
 		clientId: string,
 	): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiAdminPrincipalsByIdClientAccessByClientId({
+			sdk.deleteApiPrincipalsByIdClientAccessByClientId({
 				client: httpClient,
 				headers,
 				path: { id, client_id: clientId },
 			}),
+		);
+	}
+
+	/**
+	 * Sync principals for an application — declarative reconciliation
+	 * against `POST /api/applications/{applicationCode}/principals/sync`.
+	 *
+	 * When `removeUnlisted` is true the platform strips SDK-sourced role
+	 * assignments from principals not in the list; principals themselves
+	 * are never deleted by sync.
+	 */
+	sync(
+		applicationCode: string,
+		principals: PostApiApplicationsByAppCodePrincipalsSyncData["body"]["principals"],
+		removeUnlisted = false,
+	): ResultAsync<SyncPrincipalsResponse, SdkError> {
+		return this.client.request<SyncPrincipalsResponse>(
+			(httpClient, headers) =>
+				sdk.postApiApplicationsByAppCodePrincipalsSync({
+					client: httpClient,
+					headers,
+					path: { app_code: applicationCode },
+					body: { principals },
+					query: { removeUnlisted },
+				}),
 		);
 	}
 }

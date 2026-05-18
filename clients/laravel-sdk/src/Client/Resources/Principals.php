@@ -168,11 +168,13 @@ class Principals
     }
 
     /**
-     * Assign a single role to a principal (additive — keeps existing roles).
+     * Add a single role to a principal (additive — keeps existing roles).
      *
+     * Renamed from `assignRole` to make the additive-vs-replace distinction
+     * visible at the call site (paired with `setRoles` for replace-all).
      * Returns the principal after the assignment.
      */
-    public function assignRole(string $id, string $roleName): Principal
+    public function addRole(string $id, string $roleName): Principal
     {
         $response = $this->client->request('POST', "/api/principals/{$id}/roles", [
             'json' => ['role' => $roleName],
@@ -193,14 +195,15 @@ class Principals
     }
 
     /**
-     * Batch-assign roles to a principal (declarative — replaces the full set).
+     * Replace all roles on a principal with the given set (declarative).
      *
-     * Roles not in `$roles` are removed. Returns the full role state plus
-     * the diff that was applied.
+     * Renamed from `assignRoles` so the replace semantics are obvious
+     * (paired with `addRole` for additive). Roles not in `$roles` are
+     * removed. Returns the full role state plus the diff that was applied.
      *
      * @param string[] $roles Role names to assign
      */
-    public function assignRoles(string $id, array $roles): BatchAssignRolesResult
+    public function setRoles(string $id, array $roles): BatchAssignRolesResult
     {
         $response = $this->client->request('PUT', "/api/principals/{$id}/roles", [
             'json' => ['roles' => $roles],

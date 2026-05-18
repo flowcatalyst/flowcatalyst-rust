@@ -123,9 +123,6 @@ class Processes
      * CODE/API-sourced processes not in the sync list. UI-sourced rows are
      * left untouched.
      *
-     * The processes endpoint is not app-scoped in the URL — the
-     * application code travels in the body.
-     *
      * @param SyncProcessEntry[] $processes
      */
     public function sync(
@@ -134,13 +131,13 @@ class Processes
         bool $removeUnlisted = false,
     ): SyncResult {
         $query = $removeUnlisted ? '?removeUnlisted=true' : '';
+        $appCode = rawurlencode($applicationCode);
 
         $response = $this->client->request(
             'POST',
-            "/api/processes/sync{$query}",
+            "/api/applications/{$appCode}/processes/sync{$query}",
             [
                 'json' => [
-                    'applicationCode' => $applicationCode,
                     'processes' => array_map(
                         fn(SyncProcessEntry $entry) => $entry->toArray(),
                         $processes,
@@ -149,8 +146,6 @@ class Processes
             ],
         );
 
-        // The processes sync endpoint returns just {created, updated, deleted};
-        // SyncResult tolerates missing applicationCode/syncedCodes.
         return SyncResult::fromArray($response);
     }
 }

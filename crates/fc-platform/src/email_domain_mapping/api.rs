@@ -119,7 +119,7 @@ pub struct EmailDomainMappingsState {
     post,
     path = "",
     tag = "email-domain-mappings",
-    operation_id = "postApiAdminEmailDomainMappings",
+    operation_id = "postApiEmailDomainMappings",
     request_body = CreateEmailDomainMappingRequest,
     responses(
         (status = 201, description = "Email domain mapping created", body = crate::shared::api_common::CreatedResponse),
@@ -169,7 +169,7 @@ pub async fn create_email_domain_mapping(
     get,
     path = "",
     tag = "email-domain-mappings",
-    operation_id = "getApiAdminEmailDomainMappings",
+    operation_id = "getApiEmailDomainMappings",
     responses(
         (status = 200, description = "List of email domain mappings", body = EmailDomainMappingsListResponse)
     ),
@@ -215,7 +215,7 @@ pub async fn list_email_domain_mappings(
     get,
     path = "/{id}",
     tag = "email-domain-mappings",
-    operation_id = "getApiAdminEmailDomainMappingsById",
+    operation_id = "getApiEmailDomainMappingsById",
     params(
         ("id" = String, Path, description = "Email domain mapping ID")
     ),
@@ -248,7 +248,7 @@ pub async fn get_email_domain_mapping(
     get,
     path = "/lookup/{domain}",
     tag = "email-domain-mappings",
-    operation_id = "getApiAdminEmailDomainMappingsLookupByDomain",
+    operation_id = "getApiEmailDomainMappingsLookupByDomain",
     params(
         ("domain" = String, Path, description = "Email domain to look up")
     ),
@@ -281,7 +281,7 @@ pub async fn lookup_email_domain_mapping(
     put,
     path = "/{id}",
     tag = "email-domain-mappings",
-    operation_id = "putApiAdminEmailDomainMappingsById",
+    operation_id = "putApiEmailDomainMappingsById",
     params(
         ("id" = String, Path, description = "Email domain mapping ID")
     ),
@@ -324,7 +324,7 @@ pub async fn update_email_domain_mapping(
     delete,
     path = "/{id}",
     tag = "email-domain-mappings",
-    operation_id = "deleteApiAdminEmailDomainMappingsById",
+    operation_id = "deleteApiEmailDomainMappingsById",
     params(
         ("id" = String, Path, description = "Email domain mapping ID")
     ),

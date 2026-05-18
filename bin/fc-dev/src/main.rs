@@ -406,6 +406,10 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
+    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
+
     // Referential-integrity scan — warns when any aggregate delete path has
     // left orphan junction rows behind. Non-fatal; operator-visible.
     fc_platform::shared::integrity_scan::run(&pg_pool).await;

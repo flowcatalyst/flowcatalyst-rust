@@ -201,6 +201,10 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
+    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
+
     // Create the initial platform admin if no anchor user exists yet. No-op
     // on subsequent boots; gated on FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL +
     // _PASSWORD env vars when first run.

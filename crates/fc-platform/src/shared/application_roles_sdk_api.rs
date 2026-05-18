@@ -13,8 +13,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::role::operations::{
-    CreateRoleCommand, CreateRoleUseCase, DeleteRoleCommand, DeleteRoleUseCase, SyncRoleInput,
-    SyncRolesCommand, SyncRolesUseCase,
+    CreateRoleCommand, CreateRoleUseCase, DeleteRoleCommand, DeleteRoleUseCase,
 };
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -90,24 +89,6 @@ pub struct CreateRoleRequest {
     pub client_managed: bool,
 }
 
-/// Sync roles request
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncRolesRequest {
-    /// Roles to sync
-    pub roles: Vec<CreateRoleRequest>,
-}
-
-/// Sync roles response
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncRolesResponse {
-    /// Number of roles synced
-    pub synced_count: usize,
-    /// Updated SDK role list
-    pub roles: Vec<RoleDto>,
-}
-
 /// Query parameters for listing roles
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,22 +97,12 @@ pub struct ListRolesQuery {
     pub source: Option<String>,
 }
 
-/// Query parameters for sync
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncRolesQuery {
-    /// Remove SDK roles not in the sync list
-    #[serde(default)]
-    pub remove_unlisted: bool,
-}
-
 /// Application Roles SDK state
 #[derive(Clone)]
 pub struct ApplicationRolesSdkState {
     pub application_repo: Arc<ApplicationRepository>,
     pub role_repo: Arc<RoleRepository>,
     pub create_use_case: Arc<CreateRoleUseCase<PgUnitOfWork>>,
-    pub sync_use_case: Arc<SyncRolesUseCase<PgUnitOfWork>>,
     pub delete_use_case: Arc<DeleteRoleUseCase<PgUnitOfWork>>,
 }
 
@@ -242,65 +213,6 @@ pub async fn create_role(
         .await?
         .ok_or_else(|| PlatformError::internal("Role disappeared after create"))?;
     Ok(Json(RoleDto::from_role(role)))
-}
-
-/// Bulk sync roles
-#[utoipa::path(
-    post,
-    path = "/{app_code}/roles/sync",
-    tag = "application-roles-sdk",
-    params(
-        ("app_code" = String, Path, description = "Application code"),
-        ("remove_unlisted" = Option<bool>, Query, description = "Remove SDK roles not in list")
-    ),
-    request_body = SyncRolesRequest,
-    responses(
-        (status = 200, description = "Roles synced", body = SyncRolesResponse),
-        (status = 400, description = "Bad request"),
-        (status = 404, description = "Application not found")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn sync_roles(
-    State(state): State<ApplicationRolesSdkState>,
-    auth: Authenticated,
-    Path(app_code): Path<String>,
-    Query(query): Query<SyncRolesQuery>,
-    Json(req): Json<SyncRolesRequest>,
-) -> Result<Json<SyncRolesResponse>, PlatformError> {
-    let synced_count = req.roles.iter().filter(|r| !r.name.is_empty()).count();
-
-    let cmd = SyncRolesCommand {
-        application_code: app_code.clone(),
-        roles: req
-            .roles
-            .into_iter()
-            .filter(|r| !r.name.is_empty())
-            .map(|r| SyncRoleInput {
-                name: r.name,
-                display_name: r.display_name,
-                description: r.description,
-                permissions: r.permissions,
-                client_managed: r.client_managed,
-            })
-            .collect(),
-        remove_unlisted: query.remove_unlisted,
-    };
-    let ctx = ExecutionContext::from_auth(&auth.0);
-    state.sync_use_case.run(cmd, ctx).await.into_result()?;
-
-    // Re-read SDK-sourced roles for the response payload.
-    let updated_roles = state.role_repo.find_by_application(&app_code).await?;
-    let sdk_roles: Vec<RoleDto> = updated_roles
-        .into_iter()
-        .filter(|r| r.source == RoleSource::Sdk)
-        .map(RoleDto::from_role)
-        .collect();
-
-    Ok(Json(SyncRolesResponse {
-        synced_count,
-        roles: sdk_roles,
-    }))
 }
 
 /// Delete a role (SDK-sourced only)

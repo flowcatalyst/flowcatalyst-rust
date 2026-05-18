@@ -37,13 +37,6 @@ class SyncSubscriptionsRequestNormalizer implements DenormalizerInterface, Norma
         if (null === $data || false === \is_array($data)) {
             return $object;
         }
-        if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
-            $object->setApplicationCode($data['applicationCode']);
-            unset($data['applicationCode']);
-        }
-        elseif (\array_key_exists('applicationCode', $data) && $data['applicationCode'] === null) {
-            $object->setApplicationCode(null);
-        }
         if (\array_key_exists('subscriptions', $data) && $data['subscriptions'] !== null) {
             $values = [];
             foreach ($data['subscriptions'] as $value) {
@@ -65,7 +58,6 @@ class SyncSubscriptionsRequestNormalizer implements DenormalizerInterface, Norma
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        $dataArray['applicationCode'] = $data->getApplicationCode();
         $values = [];
         foreach ($data->getSubscriptions() as $value) {
             $values[] = $this->normalizer->normalize($value, 'json', $context);

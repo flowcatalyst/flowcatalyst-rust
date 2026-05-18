@@ -255,7 +255,7 @@ export class ApplicationsResource {
 		return this.client.request<ApplicationRoleResponse[]>(
 			(httpClient, headers) =>
 				httpClient.get({
-					url: "/api/applications/{id}/roles",
+					url: "/api/applications/by-id/{id}/roles",
 					headers,
 					path: { id },
 				}),

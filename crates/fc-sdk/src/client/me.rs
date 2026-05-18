@@ -1,4 +1,4 @@
-//! User-scoped resource operations (current user context).
+//! Current-user context (`/api/me/*`).
 
 use super::{ClientError, FlowCatalystClient};
 use serde::{Deserialize, Serialize};
@@ -56,28 +56,36 @@ pub struct MyApplicationsResponse {
     pub client_id: Option<String>,
 }
 
-impl FlowCatalystClient {
-    /// Get all clients accessible to the current user.
+/// Current-user accessor — created via [`FlowCatalystClient::me`].
+pub struct Me<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
+
+impl Me<'_> {
+    /// All clients accessible to the current user.
     ///
     /// Access is determined by user scope:
     /// - ANCHOR: all active clients
     /// - PARTNER: IDP-granted + explicit grants
     /// - CLIENT: home client + IDP + explicit grants
-    pub async fn me_get_clients(&self) -> Result<MyClientsResponse, ClientError> {
-        self.get("/api/me/clients").await
+    pub async fn clients(&self) -> Result<MyClientsResponse, ClientError> {
+        self.client.get("/api/me/clients").await
     }
 
-    /// Get a specific client accessible to the current user.
-    pub async fn me_get_client(&self, client_id: &str) -> Result<MyClient, ClientError> {
-        self.get(&format!("/api/me/clients/{}", client_id)).await
+    /// A specific accessible client by ID.
+    pub async fn client(&self, client_id: &str) -> Result<MyClient, ClientError> {
+        self.client
+            .get(&format!("/api/me/clients/{}", client_id))
+            .await
     }
 
-    /// Get applications available to the current user within a client.
-    pub async fn me_get_client_applications(
+    /// Applications available to the current user within a client.
+    pub async fn client_applications(
         &self,
         client_id: &str,
     ) -> Result<MyApplicationsResponse, ClientError> {
-        self.get(&format!("/api/me/clients/{}/applications", client_id))
+        self.client
+            .get(&format!("/api/me/clients/{}/applications", client_id))
             .await
     }
 }

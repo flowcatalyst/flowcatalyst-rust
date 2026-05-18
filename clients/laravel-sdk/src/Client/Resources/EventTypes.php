@@ -102,9 +102,10 @@ class EventTypes
     }
 
     /**
-     * Delete (archive) an event type.
+     * Archive (soft-delete) an event type. The server's DELETE is a soft
+     * archive — the row is retained with status flipped to ARCHIVED.
      */
-    public function delete(string $id): void
+    public function archive(string $id): void
     {
         $this->client->request('DELETE', "/api/event-types/{$id}");
     }

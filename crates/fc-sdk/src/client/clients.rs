@@ -113,19 +113,22 @@ pub struct ClientApplicationsResponse {
     pub total: Option<u64>,
 }
 
-impl FlowCatalystClient {
-    // ── Clients ──────────────────────────────────────────────────
+/// Clients resource accessor — created via [`FlowCatalystClient::clients`].
+pub struct Clients<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
 
+impl Clients<'_> {
     /// Create a new client (tenant).
-    pub async fn create_client(
+    pub async fn create(
         &self,
         req: &CreateClientRequest,
     ) -> Result<CreatedResponse, ClientError> {
-        self.post("/api/clients", req).await
+        self.client.post("/api/clients", req).await
     }
 
     /// List clients with optional pagination and status filter.
-    pub async fn list_clients(
+    pub async fn list(
         &self,
         status: Option<&str>,
         page: Option<u32>,
@@ -148,119 +151,131 @@ impl FlowCatalystClient {
             format!("?{}", params.join("&"))
         };
 
-        self.get(&format!("/api/clients{}", query)).await
+        self.client.get(&format!("/api/clients{}", query)).await
     }
 
     /// Get a client by ID.
-    pub async fn get_client(&self, id: &str) -> Result<ClientResponse, ClientError> {
-        self.get(&format!("/api/clients/{}", id)).await
+    pub async fn get(&self, id: &str) -> Result<ClientResponse, ClientError> {
+        self.client.get(&format!("/api/clients/{}", id)).await
     }
 
     /// Get a client by identifier (slug/domain).
-    pub async fn get_client_by_identifier(
+    pub async fn get_by_identifier(
         &self,
         identifier: &str,
     ) -> Result<ClientResponse, ClientError> {
-        self.get(&format!("/api/clients/by-identifier/{}", identifier))
+        self.client
+            .get(&format!("/api/clients/by-identifier/{}", identifier))
             .await
     }
 
     /// Search clients by name or identifier.
-    pub async fn search_clients(&self, query: &str) -> Result<ClientListResponse, ClientError> {
-        self.get(&format!("/api/clients/search?q={}", query)).await
+    pub async fn search(&self, query: &str) -> Result<ClientListResponse, ClientError> {
+        self.client
+            .get(&format!("/api/clients/search?q={}", query))
+            .await
     }
 
     /// Update a client.
-    pub async fn update_client(
+    pub async fn update(
         &self,
         id: &str,
         req: &UpdateClientRequest,
     ) -> Result<ClientResponse, ClientError> {
-        self.put(&format!("/api/clients/{}", id), req).await
+        self.client.put(&format!("/api/clients/{}", id), req).await
     }
 
     /// Delete (deactivate) a client.
-    pub async fn delete_client(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/clients/{}", id)).await
+    pub async fn delete(&self, id: &str) -> Result<(), ClientError> {
+        self.client.delete_req(&format!("/api/clients/{}", id)).await
     }
 
     /// Activate a client.
-    pub async fn activate_client(&self, id: &str) -> Result<StatusChangeResponse, ClientError> {
-        self.post_action(&format!("/api/clients/{}/activate", id))
+    pub async fn activate(&self, id: &str) -> Result<StatusChangeResponse, ClientError> {
+        self.client
+            .post_action(&format!("/api/clients/{}/activate", id))
             .await
     }
 
     /// Suspend a client.
-    pub async fn suspend_client(
+    pub async fn suspend(
         &self,
         id: &str,
         req: &StatusChangeRequest,
     ) -> Result<StatusChangeResponse, ClientError> {
-        self.post(&format!("/api/clients/{}/suspend", id), req)
+        self.client
+            .post(&format!("/api/clients/{}/suspend", id), req)
             .await
     }
 
     /// Deactivate a client.
-    pub async fn deactivate_client(
+    pub async fn deactivate(
         &self,
         id: &str,
         req: &StatusChangeRequest,
     ) -> Result<StatusChangeResponse, ClientError> {
-        self.post(&format!("/api/clients/{}/deactivate", id), req)
+        self.client
+            .post(&format!("/api/clients/{}/deactivate", id), req)
             .await
     }
 
     /// Add a note to a client.
-    pub async fn add_client_note(
+    pub async fn add_note(
         &self,
         id: &str,
         req: &AddNoteRequest,
     ) -> Result<AddNoteResponse, ClientError> {
-        self.post(&format!("/api/clients/{}/notes", id), req).await
+        self.client
+            .post(&format!("/api/clients/{}/notes", id), req)
+            .await
     }
 
     /// List applications for a client (with enabled status).
-    pub async fn list_client_applications(
+    pub async fn list_applications(
         &self,
         client_id: &str,
     ) -> Result<ClientApplicationsResponse, ClientError> {
-        self.get(&format!("/api/clients/{}/applications", client_id))
+        self.client
+            .get(&format!("/api/clients/{}/applications", client_id))
             .await
     }
 
     /// Enable an application for a client.
-    pub async fn enable_client_application(
+    pub async fn enable_application(
         &self,
         client_id: &str,
         application_id: &str,
     ) -> Result<SuccessResponse, ClientError> {
-        self.post_action(&format!(
-            "/api/clients/{}/applications/{}/enable",
-            client_id, application_id
-        ))
-        .await
+        self.client
+            .post_action(&format!(
+                "/api/clients/{}/applications/{}/enable",
+                client_id, application_id
+            ))
+            .await
     }
 
     /// Disable an application for a client.
-    pub async fn disable_client_application(
+    pub async fn disable_application(
         &self,
         client_id: &str,
         application_id: &str,
     ) -> Result<SuccessResponse, ClientError> {
-        self.post_action(&format!(
-            "/api/clients/{}/applications/{}/disable",
-            client_id, application_id
-        ))
-        .await
+        self.client
+            .post_action(&format!(
+                "/api/clients/{}/applications/{}/disable",
+                client_id, application_id
+            ))
+            .await
     }
 
     /// Bulk update which applications are enabled for a client.
-    pub async fn update_client_applications(
+    pub async fn update_applications(
         &self,
         client_id: &str,
         req: &UpdateClientApplicationsRequest,
     ) -> Result<SuccessResponse, ClientError> {
-        self.put(&format!("/api/clients/{}/applications", client_id), req)
+        self.client
+            .put(&format!("/api/clients/{}/applications", client_id), req)
             .await
     }
 }

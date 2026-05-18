@@ -37,13 +37,6 @@ class SyncProcessesRequestNormalizer implements DenormalizerInterface, Normalize
         if (null === $data || false === \is_array($data)) {
             return $object;
         }
-        if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
-            $object->setApplicationCode($data['applicationCode']);
-            unset($data['applicationCode']);
-        }
-        elseif (\array_key_exists('applicationCode', $data) && $data['applicationCode'] === null) {
-            $object->setApplicationCode(null);
-        }
         if (\array_key_exists('processes', $data) && $data['processes'] !== null) {
             $values = [];
             foreach ($data['processes'] as $value) {
@@ -65,7 +58,6 @@ class SyncProcessesRequestNormalizer implements DenormalizerInterface, Normalize
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        $dataArray['applicationCode'] = $data->getApplicationCode();
         $values = [];
         foreach ($data->getProcesses() as $value) {
             $values[] = $this->normalizer->normalize($value, 'json', $context);

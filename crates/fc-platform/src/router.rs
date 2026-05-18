@@ -350,6 +350,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(PATH_API_AUDIT_LOGS, audit_logs_router(self.audit_logs))
             .nest(PATH_MONITORING, monitoring_router(self.monitoring))
+            // SDK-facing app-scoped sync routes — exposed in the OpenAPI spec
+            // so the SDK code generators produce typed bindings for them.
+            .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
             .nest(PATH_AUTH, auth_router(self.auth).layer(auth_layer.clone()))
             .nest(
                 PATH_AUTH,
@@ -546,7 +549,8 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_API_APPLICATIONS,
                 application_roles_sdk_router(self.application_roles_sdk),
             )
-            .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
+            // sdk_sync_router moved up into the OpenAPI chain so its routes
+            // appear in /q/openapi and SDK generators pick them up.
             .nest(
                 PATH_API_AUDIT_LOGS,
                 sdk_audit_batch_router(self.sdk_audit_batch),

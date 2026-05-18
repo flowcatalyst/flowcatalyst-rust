@@ -50,9 +50,14 @@ pub struct AuditLogResponse {
     pub performed_at: String,
 }
 
-impl FlowCatalystClient {
+/// Audit logs resource accessor — created via [`FlowCatalystClient::audit_logs`].
+pub struct AuditLogs<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
+
+impl AuditLogs<'_> {
     /// List audit logs with optional filters.
-    pub async fn list_audit_logs(
+    pub async fn list(
         &self,
         filters: &AuditLogFilters,
     ) -> Result<AuditLogListResponse, ClientError> {
@@ -89,11 +94,13 @@ impl FlowCatalystClient {
         } else {
             format!("?{}", params.join("&"))
         };
-        self.get(&format!("/api/audit-logs{}", query)).await
+        self.client
+            .get(&format!("/api/audit-logs{}", query))
+            .await
     }
 
     /// Get a single audit log entry by ID.
-    pub async fn get_audit_log(&self, id: &str) -> Result<AuditLogResponse, ClientError> {
-        self.get(&format!("/api/audit-logs/{}", id)).await
+    pub async fn get(&self, id: &str) -> Result<AuditLogResponse, ClientError> {
+        self.client.get(&format!("/api/audit-logs/{}", id)).await
     }
 }

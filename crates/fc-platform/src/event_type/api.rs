@@ -12,13 +12,9 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::event_type::operations::{
-    SyncEventTypeInput, SyncEventTypesCommand, SyncEventTypesUseCase,
-};
 use crate::shared::api_common::PaginationParams;
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseResult};
 use crate::EventTypeRepository;
 use crate::{EventType, SpecVersion};
 
@@ -156,51 +152,10 @@ pub struct EventTypesQuery {
     pub aggregate: Option<String>,
 }
 
-/// Sync event types request (admin)
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncEventTypesRequest {
-    /// Application code
-    pub application_code: String,
-    /// Event types to sync
-    pub event_types: Vec<SyncEventTypeInputRequest>,
-}
-
-/// A single event type input for sync
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncEventTypeInputRequest {
-    /// Full code (application:subdomain:aggregate:event)
-    pub code: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-/// Sync query parameters
-#[derive(Debug, Default, Deserialize, IntoParams)]
-#[serde(rename_all = "camelCase")]
-#[into_params(parameter_in = Query)]
-pub struct SyncQuery {
-    /// Remove items not in the sync list
-    #[serde(default)]
-    pub remove_unlisted: bool,
-}
-
-/// Sync result response
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncResultResponse {
-    pub created: u32,
-    pub updated: u32,
-    pub deleted: u32,
-}
-
 /// Event types service state
 #[derive(Clone)]
 pub struct EventTypesState {
     pub event_type_repo: Arc<EventTypeRepository>,
-    pub sync_use_case: Arc<SyncEventTypesUseCase<crate::usecase::PgUnitOfWork>>,
     pub create_use_case:
         Arc<crate::event_type::operations::CreateEventTypeUseCase<crate::usecase::PgUnitOfWork>>,
     pub update_use_case:
@@ -216,7 +171,7 @@ pub struct EventTypesState {
     post,
     path = "",
     tag = "event-types",
-    operation_id = "postApiAdminEventTypes",
+    operation_id = "postApiEventTypes",
     request_body = CreateEventTypeRequest,
     responses(
         (status = 201, description = "Event type created", body = crate::shared::api_common::CreatedResponse),
@@ -274,7 +229,7 @@ pub async fn create_event_type(
     get,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "getApiAdminEventTypesById",
+    operation_id = "getApiEventTypesById",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -312,7 +267,7 @@ pub async fn get_event_type(
     get,
     path = "/by-code/{code}",
     tag = "event-types",
-    operation_id = "getApiAdminEventTypesByCodeByCode",
+    operation_id = "getApiEventTypesByCodeByCode",
     params(
         ("code" = String, Path, description = "Event type code")
     ),
@@ -350,7 +305,7 @@ pub async fn get_event_type_by_code(
     get,
     path = "",
     tag = "event-types",
-    operation_id = "getApiAdminEventTypes",
+    operation_id = "getApiEventTypes",
     params(EventTypesQuery),
     responses(
         (status = 200, description = "List of event types", body = EventTypeListResponse)
@@ -407,7 +362,7 @@ pub async fn list_event_types(
     put,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "putApiAdminEventTypesById",
+    operation_id = "putApiEventTypesById",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -461,7 +416,7 @@ pub async fn update_event_type(
     post,
     path = "/{id}/versions",
     tag = "event-types",
-    operation_id = "postApiAdminEventTypesByIdSchemas",
+    operation_id = "postApiEventTypesByIdSchemas",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -522,7 +477,7 @@ pub async fn add_schema_version(
     delete,
     path = "/{id}",
     tag = "event-types",
-    operation_id = "deleteApiAdminEventTypesById",
+    operation_id = "deleteApiEventTypesById",
     params(
         ("id" = String, Path, description = "Event type ID")
     ),
@@ -564,56 +519,6 @@ pub async fn delete_event_type(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Sync event types
-#[utoipa::path(
-    post,
-    path = "/sync",
-    tag = "event-types",
-    operation_id = "postApiAdminEventTypesSync",
-    params(SyncQuery),
-    request_body = SyncEventTypesRequest,
-    responses(
-        (status = 200, description = "Event types synced", body = SyncResultResponse),
-        (status = 400, description = "Validation error"),
-        (status = 404, description = "Application not found")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn sync_event_types(
-    State(state): State<EventTypesState>,
-    auth: Authenticated,
-    Query(query): Query<SyncQuery>,
-    Json(req): Json<SyncEventTypesRequest>,
-) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
-
-    let command = SyncEventTypesCommand {
-        application_code: req.application_code,
-        event_types: req
-            .event_types
-            .into_iter()
-            .map(|et| SyncEventTypeInput {
-                code: et.code,
-                name: et.name,
-                description: et.description,
-                schema: None,
-            })
-            .collect(),
-        remove_unlisted: query.remove_unlisted,
-    };
-
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
-
-    match state.sync_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
-            created: event.created,
-            updated: event.updated,
-            deleted: event.deleted,
-        })),
-        UseCaseResult::Failure(err) => Err(err.into()),
-    }
-}
-
 /// Create event types router
 pub fn event_types_router(state: EventTypesState) -> OpenApiRouter {
     OpenApiRouter::new()
@@ -625,6 +530,5 @@ pub fn event_types_router(state: EventTypesState) -> OpenApiRouter {
         ))
         .routes(routes!(get_event_type_by_code))
         .routes(routes!(add_schema_version))
-        .routes(routes!(sync_event_types))
         .with_state(state)
 }

@@ -16,11 +16,6 @@ use crate::shared::api_common::PaginationParams;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::subscription::entity::DispatchMode;
-use crate::subscription::operations::{
-    EventTypeBindingInput, SyncSubscriptionInput, SyncSubscriptionsCommand,
-    SyncSubscriptionsUseCase,
-};
-use crate::usecase::{ExecutionContext, UseCase, UseCaseResult};
 use crate::SubscriptionRepository;
 use crate::{EventTypeBinding, Subscription};
 
@@ -237,73 +232,10 @@ pub struct SubscriptionsQuery {
     pub status: Option<String>,
 }
 
-/// Sync subscriptions request (admin)
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncSubscriptionsRequest {
-    /// Application code
-    pub application_code: String,
-    /// Subscriptions to sync
-    pub subscriptions: Vec<SyncSubscriptionInputRequest>,
-}
-
-/// A single subscription input for sync
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncSubscriptionInputRequest {
-    pub code: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub target: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub connection_id: Option<String>,
-    pub event_types: Vec<SyncSubscriptionEventTypeRequest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dispatch_pool_code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_retries: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_seconds: Option<u32>,
-    #[serde(default)]
-    pub data_only: bool,
-}
-
-/// Event type binding for sync subscription input
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncSubscriptionEventTypeRequest {
-    pub event_type_code: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filter: Option<String>,
-}
-
-/// Sync query parameters
-#[derive(Debug, Default, Deserialize, IntoParams)]
-#[serde(rename_all = "camelCase")]
-#[into_params(parameter_in = Query)]
-pub struct SyncSubscriptionsQuery {
-    /// Remove items not in the sync list
-    #[serde(default)]
-    pub remove_unlisted: bool,
-}
-
-/// Sync result response
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncResultResponse {
-    pub created: u32,
-    pub updated: u32,
-    pub deleted: u32,
-}
-
 /// Subscriptions service state
 #[derive(Clone)]
 pub struct SubscriptionsState {
     pub subscription_repo: Arc<SubscriptionRepository>,
-    pub sync_use_case: Arc<SyncSubscriptionsUseCase<crate::usecase::PgUnitOfWork>>,
     pub create_use_case: Arc<
         crate::subscription::operations::CreateSubscriptionUseCase<crate::usecase::PgUnitOfWork>,
     >,
@@ -337,7 +269,7 @@ fn parse_mode(s: &str) -> Result<DispatchMode, PlatformError> {
     post,
     path = "",
     tag = "subscriptions",
-    operation_id = "postApiAdminSubscriptions",
+    operation_id = "postApiSubscriptions",
     request_body = CreateSubscriptionRequest,
     responses(
         (status = 201, description = "Subscription created", body = crate::shared::api_common::CreatedResponse),
@@ -412,7 +344,7 @@ pub async fn create_subscription(
     get,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "getApiAdminSubscriptionsById",
+    operation_id = "getApiSubscriptionsById",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -450,7 +382,7 @@ pub async fn get_subscription(
     get,
     path = "",
     tag = "subscriptions",
-    operation_id = "getApiAdminSubscriptions",
+    operation_id = "getApiSubscriptions",
     params(SubscriptionsQuery),
     responses(
         (status = 200, description = "List of subscriptions", body = SubscriptionListResponse)
@@ -501,7 +433,7 @@ pub async fn list_subscriptions(
     put,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "putApiAdminSubscriptionsById",
+    operation_id = "putApiSubscriptionsById",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -563,7 +495,7 @@ pub async fn update_subscription(
     post,
     path = "/{id}/pause",
     tag = "subscriptions",
-    operation_id = "postApiAdminSubscriptionsByIdPause",
+    operation_id = "postApiSubscriptionsByIdPause",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -613,7 +545,7 @@ pub async fn pause_subscription(
     post,
     path = "/{id}/resume",
     tag = "subscriptions",
-    operation_id = "postApiAdminSubscriptionsByIdResume",
+    operation_id = "postApiSubscriptionsByIdResume",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -663,7 +595,7 @@ pub async fn resume_subscription(
     delete,
     path = "/{id}",
     tag = "subscriptions",
-    operation_id = "deleteApiAdminSubscriptionsById",
+    operation_id = "deleteApiSubscriptionsById",
     params(
         ("id" = String, Path, description = "Subscription ID")
     ),
@@ -707,70 +639,6 @@ pub async fn delete_subscription(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Sync subscriptions
-#[utoipa::path(
-    post,
-    path = "/sync",
-    tag = "subscriptions",
-    operation_id = "postApiAdminSubscriptionsSync",
-    params(SyncSubscriptionsQuery),
-    request_body = SyncSubscriptionsRequest,
-    responses(
-        (status = 200, description = "Subscriptions synced", body = SyncResultResponse),
-        (status = 400, description = "Validation error"),
-        (status = 404, description = "Application or connection not found")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn sync_subscriptions(
-    State(state): State<SubscriptionsState>,
-    auth: Authenticated,
-    Query(query): Query<SyncSubscriptionsQuery>,
-    Json(req): Json<SyncSubscriptionsRequest>,
-) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_write_subscriptions(&auth.0)?;
-
-    let command = SyncSubscriptionsCommand {
-        application_code: req.application_code,
-        subscriptions: req
-            .subscriptions
-            .into_iter()
-            .map(|s| SyncSubscriptionInput {
-                code: s.code,
-                name: s.name,
-                description: s.description,
-                target: s.target,
-                connection_id: s.connection_id,
-                event_types: s
-                    .event_types
-                    .into_iter()
-                    .map(|et| EventTypeBindingInput {
-                        event_type_code: et.event_type_code,
-                        filter: et.filter,
-                    })
-                    .collect(),
-                dispatch_pool_code: s.dispatch_pool_code,
-                mode: s.mode,
-                max_retries: s.max_retries,
-                timeout_seconds: s.timeout_seconds,
-                data_only: s.data_only,
-            })
-            .collect(),
-        remove_unlisted: query.remove_unlisted,
-    };
-
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
-
-    match state.sync_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
-            created: event.created,
-            updated: event.updated,
-            deleted: event.deleted,
-        })),
-        UseCaseResult::Failure(err) => Err(err.into()),
-    }
-}
-
 /// Create subscriptions router
 pub fn subscriptions_router(state: SubscriptionsState) -> OpenApiRouter {
     OpenApiRouter::new()
@@ -782,6 +650,5 @@ pub fn subscriptions_router(state: SubscriptionsState) -> OpenApiRouter {
         ))
         .routes(routes!(pause_subscription))
         .routes(routes!(resume_subscription))
-        .routes(routes!(sync_subscriptions))
         .with_state(state)
 }

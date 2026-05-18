@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { DeleteApiAdminClientsByIdData, DeleteApiAdminClientsByIdErrors, DeleteApiAdminClientsByIdResponses, DeleteApiAdminEventTypesByIdData, DeleteApiAdminEventTypesByIdErrors, DeleteApiAdminEventTypesByIdResponses, DeleteApiAdminOauthClientsByIdData, DeleteApiAdminOauthClientsByIdErrors, DeleteApiAdminOauthClientsByIdResponses, DeleteApiAdminPrincipalsByIdClientAccessByClientIdData, DeleteApiAdminPrincipalsByIdClientAccessByClientIdErrors, DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponses, DeleteApiAdminPrincipalsByIdData, DeleteApiAdminPrincipalsByIdErrors, DeleteApiAdminPrincipalsByIdResponses, DeleteApiAdminPrincipalsByIdRolesByRoleNameData, DeleteApiAdminPrincipalsByIdRolesByRoleNameErrors, DeleteApiAdminPrincipalsByIdRolesByRoleNameResponses, DeleteApiAdminRolesByNameData, DeleteApiAdminRolesByNameErrors, DeleteApiAdminRolesByNamePermissionsByPermissionData, DeleteApiAdminRolesByNamePermissionsByPermissionErrors, DeleteApiAdminRolesByNamePermissionsByPermissionResponses, DeleteApiAdminRolesByNameResponses, DeleteApiAdminSubscriptionsByIdData, DeleteApiAdminSubscriptionsByIdErrors, DeleteApiAdminSubscriptionsByIdResponses, DeleteApiProcessesByIdData, DeleteApiProcessesByIdErrors, DeleteApiProcessesByIdResponses, DeleteApiScheduledJobsByIdData, DeleteApiScheduledJobsByIdErrors, DeleteApiScheduledJobsByIdResponses, DeleteWebauthnCredentialData, DeleteWebauthnCredentialErrors, DeleteWebauthnCredentialResponses, GetApiAdminAuditLogsApplicationIdsData, GetApiAdminAuditLogsApplicationIdsResponses, GetApiAdminAuditLogsByIdData, GetApiAdminAuditLogsByIdErrors, GetApiAdminAuditLogsByIdResponses, GetApiAdminAuditLogsClientIdsData, GetApiAdminAuditLogsClientIdsResponses, GetApiAdminAuditLogsData, GetApiAdminAuditLogsEntityByEntityTypeByEntityIdData, GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses, GetApiAdminAuditLogsEntityTypesData, GetApiAdminAuditLogsEntityTypesResponses, GetApiAdminAuditLogsOperationsData, GetApiAdminAuditLogsOperationsResponses, GetApiAdminAuditLogsPrincipalByPrincipalIdData, GetApiAdminAuditLogsPrincipalByPrincipalIdResponses, GetApiAdminAuditLogsRecentData, GetApiAdminAuditLogsRecentResponses, GetApiAdminAuditLogsResponses, GetApiAdminClientsByIdApplicationsData, GetApiAdminClientsByIdApplicationsErrors, GetApiAdminClientsByIdApplicationsResponses, GetApiAdminClientsByIdData, GetApiAdminClientsByIdentifierByIdentifierData, GetApiAdminClientsByIdentifierByIdentifierErrors, GetApiAdminClientsByIdentifierByIdentifierResponses, GetApiAdminClientsByIdErrors, GetApiAdminClientsByIdResponses, GetApiAdminClientsData, GetApiAdminClientsResponses, GetApiAdminClientsSearchData, GetApiAdminClientsSearchResponses, GetApiAdminDispatchJobsByEventByEventIdData, GetApiAdminDispatchJobsByEventByEventIdResponses, GetApiAdminDispatchJobsByIdAttemptsData, GetApiAdminDispatchJobsByIdAttemptsErrors, GetApiAdminDispatchJobsByIdAttemptsResponses, GetApiAdminDispatchJobsByIdData, GetApiAdminDispatchJobsByIdErrors, GetApiAdminDispatchJobsByIdRawData, GetApiAdminDispatchJobsByIdRawErrors, GetApiAdminDispatchJobsByIdRawResponses, GetApiAdminDispatchJobsByIdResponses, GetApiAdminDispatchJobsData, GetApiAdminDispatchJobsFilterOptionsData, GetApiAdminDispatchJobsFilterOptionsResponses, GetApiAdminDispatchJobsRawData, GetApiAdminDispatchJobsRawResponses, GetApiAdminDispatchJobsResponses, GetApiAdminEventsByIdData, GetApiAdminEventsByIdErrors, GetApiAdminEventsByIdResponses, GetApiAdminEventsData, GetApiAdminEventsFilterOptionsData, GetApiAdminEventsFilterOptionsResponses, GetApiAdminEventsRawData, GetApiAdminEventsRawResponses, GetApiAdminEventsResponses, GetApiAdminEventTypesByCodeByCodeData, GetApiAdminEventTypesByCodeByCodeErrors, GetApiAdminEventTypesByCodeByCodeResponses, GetApiAdminEventTypesByIdData, GetApiAdminEventTypesByIdErrors, GetApiAdminEventTypesByIdResponses, GetApiAdminEventTypesData, GetApiAdminEventTypesResponses, GetApiAdminMonitoringCircuitBreakersData, GetApiAdminMonitoringCircuitBreakersResponses, GetApiAdminMonitoringDashboardData, GetApiAdminMonitoringDashboardResponses, GetApiAdminMonitoringInFlightMessagesData, GetApiAdminMonitoringInFlightMessagesResponses, GetApiAdminMonitoringPoolStatsData, GetApiAdminMonitoringPoolStatsResponses, GetApiAdminMonitoringStandbyStatusData, GetApiAdminMonitoringStandbyStatusResponses, GetApiAdminOauthClientsByClientIdData, GetApiAdminOauthClientsByClientIdErrors, GetApiAdminOauthClientsByClientIdResponses, GetApiAdminOauthClientsByIdData, GetApiAdminOauthClientsByIdErrors, GetApiAdminOauthClientsByIdResponses, GetApiAdminOauthClientsData, GetApiAdminOauthClientsResponses, GetApiAdminPrincipalsByIdApplicationAccessData, GetApiAdminPrincipalsByIdApplicationAccessErrors, GetApiAdminPrincipalsByIdApplicationAccessResponses, GetApiAdminPrincipalsByIdAvailableApplicationsData, GetApiAdminPrincipalsByIdAvailableApplicationsErrors, GetApiAdminPrincipalsByIdAvailableApplicationsResponses, GetApiAdminPrincipalsByIdClientAccessData, GetApiAdminPrincipalsByIdClientAccessErrors, GetApiAdminPrincipalsByIdClientAccessResponses, GetApiAdminPrincipalsByIdData, GetApiAdminPrincipalsByIdErrors, GetApiAdminPrincipalsByIdResponses, GetApiAdminPrincipalsByIdRolesData, GetApiAdminPrincipalsByIdRolesErrors, GetApiAdminPrincipalsByIdRolesResponses, GetApiAdminPrincipalsCheckEmailDomainData, GetApiAdminPrincipalsCheckEmailDomainResponses, GetApiAdminPrincipalsData, GetApiAdminPrincipalsResponses, GetApiAdminRolesByApplicationByApplicationIdData, GetApiAdminRolesByApplicationByApplicationIdResponses, GetApiAdminRolesByCodeByCodeData, GetApiAdminRolesByCodeByCodeErrors, GetApiAdminRolesByCodeByCodeResponses, GetApiAdminRolesByNameData, GetApiAdminRolesByNameErrors, GetApiAdminRolesByNameResponses, GetApiAdminRolesBySourceBySourceData, GetApiAdminRolesBySourceBySourceErrors, GetApiAdminRolesBySourceBySourceResponses, GetApiAdminRolesData, GetApiAdminRolesFiltersApplicationsData, GetApiAdminRolesFiltersApplicationsResponses, GetApiAdminRolesPermissionsByPermissionData, GetApiAdminRolesPermissionsByPermissionErrors, GetApiAdminRolesPermissionsByPermissionResponses, GetApiAdminRolesPermissionsData, GetApiAdminRolesPermissionsResponses, GetApiAdminRolesResponses, GetApiAdminSubscriptionsByIdData, GetApiAdminSubscriptionsByIdErrors, GetApiAdminSubscriptionsByIdResponses, GetApiAdminSubscriptionsData, GetApiAdminSubscriptionsResponses, GetApiProcessesByCodeData, GetApiProcessesByCodeErrors, GetApiProcessesByCodeResponses, GetApiProcessesByIdData, GetApiProcessesByIdErrors, GetApiProcessesByIdResponses, GetApiProcessesData, GetApiProcessesResponses, GetApiScheduledJobsByCodeData, GetApiScheduledJobsByCodeErrors, GetApiScheduledJobsByCodeResponses, GetApiScheduledJobsByIdData, GetApiScheduledJobsByIdErrors, GetApiScheduledJobsByIdInstancesData, GetApiScheduledJobsByIdInstancesResponses, GetApiScheduledJobsByIdResponses, GetApiScheduledJobsData, GetApiScheduledJobsInstancesByIdData, GetApiScheduledJobsInstancesByIdErrors, GetApiScheduledJobsInstancesByIdLogsData, GetApiScheduledJobsInstancesByIdLogsErrors, GetApiScheduledJobsInstancesByIdLogsResponses, GetApiScheduledJobsInstancesByIdResponses, GetApiScheduledJobsResponses, GetAuthCheckDomainData, GetAuthCheckDomainResponses, GetAuthMeData, GetAuthMeErrors, GetAuthMeResponses, GetWebauthnCredentialsData, GetWebauthnCredentialsErrors, GetWebauthnCredentialsResponses, PostApiAdminClientsByIdActivateData, PostApiAdminClientsByIdActivateErrors, PostApiAdminClientsByIdActivateResponses, PostApiAdminClientsByIdApplicationsByAppIdDisableData, PostApiAdminClientsByIdApplicationsByAppIdDisableErrors, PostApiAdminClientsByIdApplicationsByAppIdDisableResponses, PostApiAdminClientsByIdApplicationsByAppIdEnableData, PostApiAdminClientsByIdApplicationsByAppIdEnableErrors, PostApiAdminClientsByIdApplicationsByAppIdEnableResponses, PostApiAdminClientsByIdDeactivateData, PostApiAdminClientsByIdDeactivateErrors, PostApiAdminClientsByIdDeactivateResponses, PostApiAdminClientsByIdNotesData, PostApiAdminClientsByIdNotesErrors, PostApiAdminClientsByIdNotesResponses, PostApiAdminClientsByIdSuspendData, PostApiAdminClientsByIdSuspendErrors, PostApiAdminClientsByIdSuspendResponses, PostApiAdminClientsData, PostApiAdminClientsErrors, PostApiAdminClientsResponses, PostApiAdminDispatchJobsData, PostApiAdminDispatchJobsErrors, PostApiAdminDispatchJobsResponses, PostApiAdminEventsData, PostApiAdminEventsErrors, PostApiAdminEventsResponses, PostApiAdminEventTypesByIdSchemasData, PostApiAdminEventTypesByIdSchemasErrors, PostApiAdminEventTypesByIdSchemasResponses, PostApiAdminEventTypesData, PostApiAdminEventTypesErrors, PostApiAdminEventTypesResponses, PostApiAdminEventTypesSyncData, PostApiAdminEventTypesSyncErrors, PostApiAdminEventTypesSyncResponses, PostApiAdminOauthClientsActivateData, PostApiAdminOauthClientsActivateErrors, PostApiAdminOauthClientsActivateResponses, PostApiAdminOauthClientsData, PostApiAdminOauthClientsDeactivateData, PostApiAdminOauthClientsDeactivateErrors, PostApiAdminOauthClientsDeactivateResponses, PostApiAdminOauthClientsErrors, PostApiAdminOauthClientsRegenerateSecretData, PostApiAdminOauthClientsRegenerateSecretErrors, PostApiAdminOauthClientsRegenerateSecretResponses, PostApiAdminOauthClientsResponses, PostApiAdminOauthClientsRotateSecretData, PostApiAdminOauthClientsRotateSecretErrors, PostApiAdminOauthClientsRotateSecretResponses, PostApiAdminPrincipalsByIdActivateData, PostApiAdminPrincipalsByIdActivateErrors, PostApiAdminPrincipalsByIdActivateResponses, PostApiAdminPrincipalsByIdClientAccessData, PostApiAdminPrincipalsByIdClientAccessErrors, PostApiAdminPrincipalsByIdClientAccessResponses, PostApiAdminPrincipalsByIdDeactivateData, PostApiAdminPrincipalsByIdDeactivateErrors, PostApiAdminPrincipalsByIdDeactivateResponses, PostApiAdminPrincipalsByIdResetPasswordData, PostApiAdminPrincipalsByIdResetPasswordErrors, PostApiAdminPrincipalsByIdResetPasswordResponses, PostApiAdminPrincipalsByIdRolesData, PostApiAdminPrincipalsByIdRolesErrors, PostApiAdminPrincipalsByIdRolesResponses, PostApiAdminPrincipalsByIdSendPasswordResetData, PostApiAdminPrincipalsByIdSendPasswordResetErrors, PostApiAdminPrincipalsByIdSendPasswordResetResponses, PostApiAdminPrincipalsUsersData, PostApiAdminPrincipalsUsersErrors, PostApiAdminPrincipalsUsersResponses, PostApiAdminRolesByNamePermissionsData, PostApiAdminRolesByNamePermissionsErrors, PostApiAdminRolesByNamePermissionsResponses, PostApiAdminRolesData, PostApiAdminRolesErrors, PostApiAdminRolesResponses, PostApiAdminSubscriptionsByIdPauseData, PostApiAdminSubscriptionsByIdPauseErrors, PostApiAdminSubscriptionsByIdPauseResponses, PostApiAdminSubscriptionsByIdResumeData, PostApiAdminSubscriptionsByIdResumeErrors, PostApiAdminSubscriptionsByIdResumeResponses, PostApiAdminSubscriptionsData, PostApiAdminSubscriptionsErrors, PostApiAdminSubscriptionsResponses, PostApiAdminSubscriptionsSyncData, PostApiAdminSubscriptionsSyncErrors, PostApiAdminSubscriptionsSyncResponses, PostApiProcessesByIdArchiveData, PostApiProcessesByIdArchiveErrors, PostApiProcessesByIdArchiveResponses, PostApiProcessesData, PostApiProcessesErrors, PostApiProcessesResponses, PostApiProcessesSyncData, PostApiProcessesSyncErrors, PostApiProcessesSyncResponses, PostApiScheduledJobsByIdArchiveData, PostApiScheduledJobsByIdArchiveErrors, PostApiScheduledJobsByIdArchiveResponses, PostApiScheduledJobsByIdFireData, PostApiScheduledJobsByIdFireErrors, PostApiScheduledJobsByIdFireResponses, PostApiScheduledJobsByIdPauseData, PostApiScheduledJobsByIdPauseErrors, PostApiScheduledJobsByIdPauseResponses, PostApiScheduledJobsByIdResumeData, PostApiScheduledJobsByIdResumeErrors, PostApiScheduledJobsByIdResumeResponses, PostApiScheduledJobsData, PostApiScheduledJobsErrors, PostApiScheduledJobsInstancesByIdCompleteData, PostApiScheduledJobsInstancesByIdCompleteErrors, PostApiScheduledJobsInstancesByIdCompleteResponses, PostApiScheduledJobsInstancesByIdLogData, PostApiScheduledJobsInstancesByIdLogErrors, PostApiScheduledJobsInstancesByIdLogResponses, PostApiScheduledJobsResponses, PostAuthLoginData, PostAuthLoginErrors, PostAuthLoginResponses, PostAuthLogoutData, PostAuthLogoutResponses, PostAuthRefreshData, PostAuthRefreshErrors, PostAuthRefreshResponses, PostWebauthnAuthenticateBeginData, PostWebauthnAuthenticateBeginResponses, PostWebauthnAuthenticateCompleteData, PostWebauthnAuthenticateCompleteErrors, PostWebauthnAuthenticateCompleteResponses, PostWebauthnRegisterBeginData, PostWebauthnRegisterBeginErrors, PostWebauthnRegisterBeginResponses, PostWebauthnRegisterCompleteData, PostWebauthnRegisterCompleteErrors, PostWebauthnRegisterCompleteResponses, PutApiAdminClientsByIdApplicationsData, PutApiAdminClientsByIdApplicationsErrors, PutApiAdminClientsByIdApplicationsResponses, PutApiAdminClientsByIdData, PutApiAdminClientsByIdErrors, PutApiAdminClientsByIdResponses, PutApiAdminEventTypesByIdData, PutApiAdminEventTypesByIdErrors, PutApiAdminEventTypesByIdResponses, PutApiAdminOauthClientsByIdData, PutApiAdminOauthClientsByIdErrors, PutApiAdminOauthClientsByIdResponses, PutApiAdminPrincipalsByIdApplicationAccessData, PutApiAdminPrincipalsByIdApplicationAccessErrors, PutApiAdminPrincipalsByIdApplicationAccessResponses, PutApiAdminPrincipalsByIdData, PutApiAdminPrincipalsByIdErrors, PutApiAdminPrincipalsByIdResponses, PutApiAdminPrincipalsByIdRolesData, PutApiAdminPrincipalsByIdRolesErrors, PutApiAdminPrincipalsByIdRolesResponses, PutApiAdminRolesByNameData, PutApiAdminRolesByNameErrors, PutApiAdminRolesByNameResponses, PutApiAdminSubscriptionsByIdData, PutApiAdminSubscriptionsByIdErrors, PutApiAdminSubscriptionsByIdResponses, PutApiProcessesByIdData, PutApiProcessesByIdErrors, PutApiProcessesByIdResponses, PutApiScheduledJobsByIdData, PutApiScheduledJobsByIdErrors, PutApiScheduledJobsByIdResponses } from './types.gen';
+import type { DeleteApiClientsByIdData, DeleteApiClientsByIdErrors, DeleteApiClientsByIdResponses, DeleteApiEventTypesByIdData, DeleteApiEventTypesByIdErrors, DeleteApiEventTypesByIdResponses, DeleteApiOauthClientsByIdData, DeleteApiOauthClientsByIdErrors, DeleteApiOauthClientsByIdResponses, DeleteApiPrincipalsByIdClientAccessByClientIdData, DeleteApiPrincipalsByIdClientAccessByClientIdErrors, DeleteApiPrincipalsByIdClientAccessByClientIdResponses, DeleteApiPrincipalsByIdData, DeleteApiPrincipalsByIdErrors, DeleteApiPrincipalsByIdResponses, DeleteApiPrincipalsByIdRolesByRoleNameData, DeleteApiPrincipalsByIdRolesByRoleNameErrors, DeleteApiPrincipalsByIdRolesByRoleNameResponses, DeleteApiProcessesByIdData, DeleteApiProcessesByIdErrors, DeleteApiProcessesByIdResponses, DeleteApiRolesByNameData, DeleteApiRolesByNameErrors, DeleteApiRolesByNamePermissionsByPermissionData, DeleteApiRolesByNamePermissionsByPermissionErrors, DeleteApiRolesByNamePermissionsByPermissionResponses, DeleteApiRolesByNameResponses, DeleteApiScheduledJobsByIdData, DeleteApiScheduledJobsByIdErrors, DeleteApiScheduledJobsByIdResponses, DeleteApiSubscriptionsByIdData, DeleteApiSubscriptionsByIdErrors, DeleteApiSubscriptionsByIdResponses, DeleteWebauthnCredentialData, DeleteWebauthnCredentialErrors, DeleteWebauthnCredentialResponses, GetApiAuditLogsApplicationIdsData, GetApiAuditLogsApplicationIdsResponses, GetApiAuditLogsByIdData, GetApiAuditLogsByIdErrors, GetApiAuditLogsByIdResponses, GetApiAuditLogsClientIdsData, GetApiAuditLogsClientIdsResponses, GetApiAuditLogsData, GetApiAuditLogsEntityByEntityTypeByEntityIdData, GetApiAuditLogsEntityByEntityTypeByEntityIdResponses, GetApiAuditLogsEntityTypesData, GetApiAuditLogsEntityTypesResponses, GetApiAuditLogsOperationsData, GetApiAuditLogsOperationsResponses, GetApiAuditLogsPrincipalByPrincipalIdData, GetApiAuditLogsPrincipalByPrincipalIdResponses, GetApiAuditLogsRecentData, GetApiAuditLogsRecentResponses, GetApiAuditLogsResponses, GetApiClientsByIdApplicationsData, GetApiClientsByIdApplicationsErrors, GetApiClientsByIdApplicationsResponses, GetApiClientsByIdData, GetApiClientsByIdentifierByIdentifierData, GetApiClientsByIdentifierByIdentifierErrors, GetApiClientsByIdentifierByIdentifierResponses, GetApiClientsByIdErrors, GetApiClientsByIdResponses, GetApiClientsData, GetApiClientsResponses, GetApiClientsSearchData, GetApiClientsSearchResponses, GetApiDispatchJobsByEventByEventIdData, GetApiDispatchJobsByEventByEventIdResponses, GetApiDispatchJobsByIdAttemptsData, GetApiDispatchJobsByIdAttemptsErrors, GetApiDispatchJobsByIdAttemptsResponses, GetApiDispatchJobsByIdData, GetApiDispatchJobsByIdErrors, GetApiDispatchJobsByIdRawData, GetApiDispatchJobsByIdRawErrors, GetApiDispatchJobsByIdRawResponses, GetApiDispatchJobsByIdResponses, GetApiDispatchJobsData, GetApiDispatchJobsFilterOptionsData, GetApiDispatchJobsFilterOptionsResponses, GetApiDispatchJobsRawData, GetApiDispatchJobsRawResponses, GetApiDispatchJobsResponses, GetApiEventsByIdData, GetApiEventsByIdErrors, GetApiEventsByIdResponses, GetApiEventsData, GetApiEventsFilterOptionsData, GetApiEventsFilterOptionsResponses, GetApiEventsRawData, GetApiEventsRawResponses, GetApiEventsResponses, GetApiEventTypesByCodeByCodeData, GetApiEventTypesByCodeByCodeErrors, GetApiEventTypesByCodeByCodeResponses, GetApiEventTypesByIdData, GetApiEventTypesByIdErrors, GetApiEventTypesByIdResponses, GetApiEventTypesData, GetApiEventTypesResponses, GetApiMonitoringCircuitBreakersData, GetApiMonitoringCircuitBreakersResponses, GetApiMonitoringDashboardData, GetApiMonitoringDashboardResponses, GetApiMonitoringInFlightMessagesData, GetApiMonitoringInFlightMessagesResponses, GetApiMonitoringPoolStatsData, GetApiMonitoringPoolStatsResponses, GetApiMonitoringStandbyStatusData, GetApiMonitoringStandbyStatusResponses, GetApiOauthClientsByClientIdData, GetApiOauthClientsByClientIdErrors, GetApiOauthClientsByClientIdResponses, GetApiOauthClientsByIdData, GetApiOauthClientsByIdErrors, GetApiOauthClientsByIdResponses, GetApiOauthClientsData, GetApiOauthClientsResponses, GetApiPrincipalsByIdApplicationAccessData, GetApiPrincipalsByIdApplicationAccessErrors, GetApiPrincipalsByIdApplicationAccessResponses, GetApiPrincipalsByIdAvailableApplicationsData, GetApiPrincipalsByIdAvailableApplicationsErrors, GetApiPrincipalsByIdAvailableApplicationsResponses, GetApiPrincipalsByIdClientAccessData, GetApiPrincipalsByIdClientAccessErrors, GetApiPrincipalsByIdClientAccessResponses, GetApiPrincipalsByIdData, GetApiPrincipalsByIdErrors, GetApiPrincipalsByIdResponses, GetApiPrincipalsByIdRolesData, GetApiPrincipalsByIdRolesErrors, GetApiPrincipalsByIdRolesResponses, GetApiPrincipalsCheckEmailDomainData, GetApiPrincipalsCheckEmailDomainResponses, GetApiPrincipalsData, GetApiPrincipalsResponses, GetApiProcessesByCodeData, GetApiProcessesByCodeErrors, GetApiProcessesByCodeResponses, GetApiProcessesByIdData, GetApiProcessesByIdErrors, GetApiProcessesByIdResponses, GetApiProcessesData, GetApiProcessesResponses, GetApiRolesByApplicationByApplicationIdData, GetApiRolesByApplicationByApplicationIdResponses, GetApiRolesByCodeByCodeData, GetApiRolesByCodeByCodeErrors, GetApiRolesByCodeByCodeResponses, GetApiRolesByNameData, GetApiRolesByNameErrors, GetApiRolesByNameResponses, GetApiRolesBySourceBySourceData, GetApiRolesBySourceBySourceErrors, GetApiRolesBySourceBySourceResponses, GetApiRolesData, GetApiRolesFiltersApplicationsData, GetApiRolesFiltersApplicationsResponses, GetApiRolesPermissionsByPermissionData, GetApiRolesPermissionsByPermissionErrors, GetApiRolesPermissionsByPermissionResponses, GetApiRolesPermissionsData, GetApiRolesPermissionsResponses, GetApiRolesResponses, GetApiScheduledJobsByCodeData, GetApiScheduledJobsByCodeErrors, GetApiScheduledJobsByCodeResponses, GetApiScheduledJobsByIdData, GetApiScheduledJobsByIdErrors, GetApiScheduledJobsByIdInstancesData, GetApiScheduledJobsByIdInstancesResponses, GetApiScheduledJobsByIdResponses, GetApiScheduledJobsData, GetApiScheduledJobsInstancesByIdData, GetApiScheduledJobsInstancesByIdErrors, GetApiScheduledJobsInstancesByIdLogsData, GetApiScheduledJobsInstancesByIdLogsErrors, GetApiScheduledJobsInstancesByIdLogsResponses, GetApiScheduledJobsInstancesByIdResponses, GetApiScheduledJobsResponses, GetApiSubscriptionsByIdData, GetApiSubscriptionsByIdErrors, GetApiSubscriptionsByIdResponses, GetApiSubscriptionsData, GetApiSubscriptionsResponses, GetAuthCheckDomainData, GetAuthCheckDomainResponses, GetAuthMeData, GetAuthMeErrors, GetAuthMeResponses, GetWebauthnCredentialsData, GetWebauthnCredentialsErrors, GetWebauthnCredentialsResponses, PostApiApplicationsByAppCodeDispatchPoolsSyncData, PostApiApplicationsByAppCodeDispatchPoolsSyncErrors, PostApiApplicationsByAppCodeDispatchPoolsSyncResponses, PostApiApplicationsByAppCodeEventTypesSyncData, PostApiApplicationsByAppCodeEventTypesSyncErrors, PostApiApplicationsByAppCodeEventTypesSyncResponses, PostApiApplicationsByAppCodeOpenapiSyncData, PostApiApplicationsByAppCodeOpenapiSyncErrors, PostApiApplicationsByAppCodeOpenapiSyncResponses, PostApiApplicationsByAppCodePrincipalsSyncData, PostApiApplicationsByAppCodePrincipalsSyncErrors, PostApiApplicationsByAppCodePrincipalsSyncResponses, PostApiApplicationsByAppCodeProcessesSyncData, PostApiApplicationsByAppCodeProcessesSyncErrors, PostApiApplicationsByAppCodeProcessesSyncResponses, PostApiApplicationsByAppCodeRolesSyncData, PostApiApplicationsByAppCodeRolesSyncErrors, PostApiApplicationsByAppCodeRolesSyncResponses, PostApiApplicationsByAppCodeScheduledJobsSyncData, PostApiApplicationsByAppCodeScheduledJobsSyncErrors, PostApiApplicationsByAppCodeScheduledJobsSyncResponses, PostApiApplicationsByAppCodeSubscriptionsSyncData, PostApiApplicationsByAppCodeSubscriptionsSyncErrors, PostApiApplicationsByAppCodeSubscriptionsSyncResponses, PostApiClientsByIdActivateData, PostApiClientsByIdActivateErrors, PostApiClientsByIdActivateResponses, PostApiClientsByIdApplicationsByAppIdDisableData, PostApiClientsByIdApplicationsByAppIdDisableErrors, PostApiClientsByIdApplicationsByAppIdDisableResponses, PostApiClientsByIdApplicationsByAppIdEnableData, PostApiClientsByIdApplicationsByAppIdEnableErrors, PostApiClientsByIdApplicationsByAppIdEnableResponses, PostApiClientsByIdDeactivateData, PostApiClientsByIdDeactivateErrors, PostApiClientsByIdDeactivateResponses, PostApiClientsByIdNotesData, PostApiClientsByIdNotesErrors, PostApiClientsByIdNotesResponses, PostApiClientsByIdSuspendData, PostApiClientsByIdSuspendErrors, PostApiClientsByIdSuspendResponses, PostApiClientsData, PostApiClientsErrors, PostApiClientsResponses, PostApiDispatchJobsData, PostApiDispatchJobsErrors, PostApiDispatchJobsResponses, PostApiEventsData, PostApiEventsErrors, PostApiEventsResponses, PostApiEventTypesByIdSchemasData, PostApiEventTypesByIdSchemasErrors, PostApiEventTypesByIdSchemasResponses, PostApiEventTypesData, PostApiEventTypesErrors, PostApiEventTypesResponses, PostApiOauthClientsActivateData, PostApiOauthClientsActivateErrors, PostApiOauthClientsActivateResponses, PostApiOauthClientsData, PostApiOauthClientsDeactivateData, PostApiOauthClientsDeactivateErrors, PostApiOauthClientsDeactivateResponses, PostApiOauthClientsErrors, PostApiOauthClientsRegenerateSecretData, PostApiOauthClientsRegenerateSecretErrors, PostApiOauthClientsRegenerateSecretResponses, PostApiOauthClientsResponses, PostApiOauthClientsRotateSecretData, PostApiOauthClientsRotateSecretErrors, PostApiOauthClientsRotateSecretResponses, PostApiPrincipalsByIdActivateData, PostApiPrincipalsByIdActivateErrors, PostApiPrincipalsByIdActivateResponses, PostApiPrincipalsByIdClientAccessData, PostApiPrincipalsByIdClientAccessErrors, PostApiPrincipalsByIdClientAccessResponses, PostApiPrincipalsByIdDeactivateData, PostApiPrincipalsByIdDeactivateErrors, PostApiPrincipalsByIdDeactivateResponses, PostApiPrincipalsByIdResetPasswordData, PostApiPrincipalsByIdResetPasswordErrors, PostApiPrincipalsByIdResetPasswordResponses, PostApiPrincipalsByIdRolesData, PostApiPrincipalsByIdRolesErrors, PostApiPrincipalsByIdRolesResponses, PostApiPrincipalsByIdSendPasswordResetData, PostApiPrincipalsByIdSendPasswordResetErrors, PostApiPrincipalsByIdSendPasswordResetResponses, PostApiPrincipalsUsersData, PostApiPrincipalsUsersErrors, PostApiPrincipalsUsersResponses, PostApiProcessesByIdArchiveData, PostApiProcessesByIdArchiveErrors, PostApiProcessesByIdArchiveResponses, PostApiProcessesData, PostApiProcessesErrors, PostApiProcessesResponses, PostApiRolesByNamePermissionsData, PostApiRolesByNamePermissionsErrors, PostApiRolesByNamePermissionsResponses, PostApiRolesData, PostApiRolesErrors, PostApiRolesResponses, PostApiScheduledJobsByIdArchiveData, PostApiScheduledJobsByIdArchiveErrors, PostApiScheduledJobsByIdArchiveResponses, PostApiScheduledJobsByIdFireData, PostApiScheduledJobsByIdFireErrors, PostApiScheduledJobsByIdFireResponses, PostApiScheduledJobsByIdPauseData, PostApiScheduledJobsByIdPauseErrors, PostApiScheduledJobsByIdPauseResponses, PostApiScheduledJobsByIdResumeData, PostApiScheduledJobsByIdResumeErrors, PostApiScheduledJobsByIdResumeResponses, PostApiScheduledJobsData, PostApiScheduledJobsErrors, PostApiScheduledJobsInstancesByIdCompleteData, PostApiScheduledJobsInstancesByIdCompleteErrors, PostApiScheduledJobsInstancesByIdCompleteResponses, PostApiScheduledJobsInstancesByIdLogData, PostApiScheduledJobsInstancesByIdLogErrors, PostApiScheduledJobsInstancesByIdLogResponses, PostApiScheduledJobsResponses, PostApiSubscriptionsByIdPauseData, PostApiSubscriptionsByIdPauseErrors, PostApiSubscriptionsByIdPauseResponses, PostApiSubscriptionsByIdResumeData, PostApiSubscriptionsByIdResumeErrors, PostApiSubscriptionsByIdResumeResponses, PostApiSubscriptionsData, PostApiSubscriptionsErrors, PostApiSubscriptionsResponses, PostAuthLoginData, PostAuthLoginErrors, PostAuthLoginResponses, PostAuthLogoutData, PostAuthLogoutResponses, PostAuthRefreshData, PostAuthRefreshErrors, PostAuthRefreshResponses, PostWebauthnAuthenticateBeginData, PostWebauthnAuthenticateBeginResponses, PostWebauthnAuthenticateCompleteData, PostWebauthnAuthenticateCompleteErrors, PostWebauthnAuthenticateCompleteResponses, PostWebauthnRegisterBeginData, PostWebauthnRegisterBeginErrors, PostWebauthnRegisterBeginResponses, PostWebauthnRegisterCompleteData, PostWebauthnRegisterCompleteErrors, PostWebauthnRegisterCompleteResponses, PutApiClientsByIdApplicationsData, PutApiClientsByIdApplicationsErrors, PutApiClientsByIdApplicationsResponses, PutApiClientsByIdData, PutApiClientsByIdErrors, PutApiClientsByIdResponses, PutApiEventTypesByIdData, PutApiEventTypesByIdErrors, PutApiEventTypesByIdResponses, PutApiOauthClientsByIdData, PutApiOauthClientsByIdErrors, PutApiOauthClientsByIdResponses, PutApiPrincipalsByIdApplicationAccessData, PutApiPrincipalsByIdApplicationAccessErrors, PutApiPrincipalsByIdApplicationAccessResponses, PutApiPrincipalsByIdData, PutApiPrincipalsByIdErrors, PutApiPrincipalsByIdResponses, PutApiPrincipalsByIdRolesData, PutApiPrincipalsByIdRolesErrors, PutApiPrincipalsByIdRolesResponses, PutApiProcessesByIdData, PutApiProcessesByIdErrors, PutApiProcessesByIdResponses, PutApiRolesByNameData, PutApiRolesByNameErrors, PutApiRolesByNameResponses, PutApiScheduledJobsByIdData, PutApiScheduledJobsByIdErrors, PutApiScheduledJobsByIdResponses, PutApiSubscriptionsByIdData, PutApiSubscriptionsByIdErrors, PutApiSubscriptionsByIdResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -19,59 +19,162 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 };
 
 /**
+ * Sync dispatch pools for an application
+ */
+export const postApiApplicationsByAppCodeDispatchPoolsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeDispatchPoolsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeDispatchPoolsSyncResponses, PostApiApplicationsByAppCodeDispatchPoolsSyncErrors, ThrowOnError>({
+    url: '/api/applications/{app_code}/dispatch-pools/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Sync event types for an application
+ */
+export const postApiApplicationsByAppCodeEventTypesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeEventTypesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeEventTypesSyncResponses, PostApiApplicationsByAppCodeEventTypesSyncErrors, ThrowOnError>({
+    url: '/api/applications/{app_code}/event-types/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Sync the OpenAPI document for an application.
+ *
+ * Versioned: the prior CURRENT (if any) is flipped to ARCHIVED with computed
+ * change-notes; the incoming document becomes the new CURRENT. Re-sending an
+ * unchanged spec is a no-op (returns `unchanged: true`).
+ */
+export const postApiApplicationsByAppCodeOpenapiSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeOpenapiSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeOpenapiSyncResponses, PostApiApplicationsByAppCodeOpenapiSyncErrors, ThrowOnError>({
+    url: '/api/applications/{app_code}/openapi/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Sync principals for an application
+ */
+export const postApiApplicationsByAppCodePrincipalsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodePrincipalsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodePrincipalsSyncResponses, PostApiApplicationsByAppCodePrincipalsSyncErrors, ThrowOnError>({
+    url: '/api/applications/{app_code}/principals/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Sync processes for an application
+ */
+export const postApiApplicationsByAppCodeProcessesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeProcessesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeProcessesSyncResponses, PostApiApplicationsByAppCodeProcessesSyncErrors, ThrowOnError>({
+    url: '/api/applications/{app_code}/processes/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Sync roles for an application
+ */
+export const postApiApplicationsByAppCodeRolesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeRolesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeRolesSyncResponses, PostApiApplicationsByAppCodeRolesSyncErrors, ThrowOnError>({
+    url: '/api/applications/{app_code}/roles/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Sync scheduled jobs for an application.
+ *
+ * Body specifies the target client (or null for platform-scoped). Caller
+ * must have access to that client (or be anchor for platform-scoped).
+ */
+export const postApiApplicationsByAppCodeScheduledJobsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeScheduledJobsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeScheduledJobsSyncResponses, PostApiApplicationsByAppCodeScheduledJobsSyncErrors, ThrowOnError>({
+    url: '/api/applications/{app_code}/scheduled-jobs/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Sync subscriptions for an application
+ */
+export const postApiApplicationsByAppCodeSubscriptionsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeSubscriptionsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeSubscriptionsSyncResponses, PostApiApplicationsByAppCodeSubscriptionsSyncErrors, ThrowOnError>({
+    url: '/api/applications/{app_code}/subscriptions/sync',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * List audit logs with filters (matches Java AuditLogAdminResource)
  */
-export const getApiAdminAuditLogs = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs', ...options });
+export const getApiAuditLogs = <ThrowOnError extends boolean = false>(options?: Options<GetApiAuditLogsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAuditLogsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs', ...options });
 
 /**
  * Get distinct application IDs
  */
-export const getApiAdminAuditLogsApplicationIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsApplicationIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsApplicationIdsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/application-ids', ...options });
+export const getApiAuditLogsApplicationIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAuditLogsApplicationIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAuditLogsApplicationIdsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/application-ids', ...options });
 
 /**
  * Get distinct client IDs
  */
-export const getApiAdminAuditLogsClientIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsClientIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsClientIdsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/client-ids', ...options });
+export const getApiAuditLogsClientIds = <ThrowOnError extends boolean = false>(options?: Options<GetApiAuditLogsClientIdsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAuditLogsClientIdsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/client-ids', ...options });
 
 /**
  * Get distinct entity types
  */
-export const getApiAdminAuditLogsEntityTypes = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsEntityTypesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsEntityTypesResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/entity-types', ...options });
+export const getApiAuditLogsEntityTypes = <ThrowOnError extends boolean = false>(options?: Options<GetApiAuditLogsEntityTypesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAuditLogsEntityTypesResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/entity-types', ...options });
 
 /**
  * Get audit logs for a specific entity
  */
-export const getApiAdminAuditLogsEntityByEntityTypeByEntityId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsEntityByEntityTypeByEntityIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/entity/{entity_type}/{entity_id}', ...options });
+export const getApiAuditLogsEntityByEntityTypeByEntityId = <ThrowOnError extends boolean = false>(options: Options<GetApiAuditLogsEntityByEntityTypeByEntityIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAuditLogsEntityByEntityTypeByEntityIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/entity/{entity_type}/{entity_id}', ...options });
 
 /**
  * Get distinct operations
  */
-export const getApiAdminAuditLogsOperations = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsOperationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsOperationsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/operations', ...options });
+export const getApiAuditLogsOperations = <ThrowOnError extends boolean = false>(options?: Options<GetApiAuditLogsOperationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAuditLogsOperationsResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/operations', ...options });
 
 /**
  * Get audit logs for a principal
  */
-export const getApiAdminAuditLogsPrincipalByPrincipalId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsPrincipalByPrincipalIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsPrincipalByPrincipalIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/principal/{principal_id}', ...options });
+export const getApiAuditLogsPrincipalByPrincipalId = <ThrowOnError extends boolean = false>(options: Options<GetApiAuditLogsPrincipalByPrincipalIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAuditLogsPrincipalByPrincipalIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/principal/{principal_id}', ...options });
 
 /**
  * Get recent audit logs
  */
-export const getApiAdminAuditLogsRecent = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminAuditLogsRecentData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminAuditLogsRecentResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/recent', ...options });
+export const getApiAuditLogsRecent = <ThrowOnError extends boolean = false>(options?: Options<GetApiAuditLogsRecentData, ThrowOnError>) => (options?.client ?? client).get<GetApiAuditLogsRecentResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/recent', ...options });
 
 /**
  * Get audit log by ID
  */
-export const getApiAdminAuditLogsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminAuditLogsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminAuditLogsByIdResponses, GetApiAdminAuditLogsByIdErrors, ThrowOnError>({ url: '/api/audit-logs/{id}', ...options });
+export const getApiAuditLogsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAuditLogsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAuditLogsByIdResponses, GetApiAuditLogsByIdErrors, ThrowOnError>({ url: '/api/audit-logs/{id}', ...options });
 
 /**
  * List clients
  */
-export const getApiAdminClients = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminClientsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminClientsResponses, unknown, ThrowOnError>({ url: '/api/clients', ...options });
+export const getApiClients = <ThrowOnError extends boolean = false>(options?: Options<GetApiClientsData, ThrowOnError>) => (options?.client ?? client).get<GetApiClientsResponses, unknown, ThrowOnError>({ url: '/api/clients', ...options });
 
 /**
  * Create a new client
  */
-export const postApiAdminClients = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsResponses, PostApiAdminClientsErrors, ThrowOnError>({
+export const postApiClients = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsResponses, PostApiClientsErrors, ThrowOnError>({
     url: '/api/clients',
     ...options,
     headers: {
@@ -83,27 +186,27 @@ export const postApiAdminClients = <ThrowOnError extends boolean = false>(option
 /**
  * Get client by identifier
  */
-export const getApiAdminClientsByIdentifierByIdentifier = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdentifierByIdentifierData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdentifierByIdentifierResponses, GetApiAdminClientsByIdentifierByIdentifierErrors, ThrowOnError>({ url: '/api/clients/by-identifier/{identifier}', ...options });
+export const getApiClientsByIdentifierByIdentifier = <ThrowOnError extends boolean = false>(options: Options<GetApiClientsByIdentifierByIdentifierData, ThrowOnError>) => (options.client ?? client).get<GetApiClientsByIdentifierByIdentifierResponses, GetApiClientsByIdentifierByIdentifierErrors, ThrowOnError>({ url: '/api/clients/by-identifier/{identifier}', ...options });
 
 /**
  * Search clients
  */
-export const getApiAdminClientsSearch = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminClientsSearchData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminClientsSearchResponses, unknown, ThrowOnError>({ url: '/api/clients/search', ...options });
+export const getApiClientsSearch = <ThrowOnError extends boolean = false>(options?: Options<GetApiClientsSearchData, ThrowOnError>) => (options?.client ?? client).get<GetApiClientsSearchResponses, unknown, ThrowOnError>({ url: '/api/clients/search', ...options });
 
 /**
  * Delete client (soft delete)
  */
-export const deleteApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminClientsByIdResponses, DeleteApiAdminClientsByIdErrors, ThrowOnError>({ url: '/api/clients/{id}', ...options });
+export const deleteApiClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiClientsByIdResponses, DeleteApiClientsByIdErrors, ThrowOnError>({ url: '/api/clients/{id}', ...options });
 
 /**
  * Get client by ID
  */
-export const getApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdResponses, GetApiAdminClientsByIdErrors, ThrowOnError>({ url: '/api/clients/{id}', ...options });
+export const getApiClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiClientsByIdResponses, GetApiClientsByIdErrors, ThrowOnError>({ url: '/api/clients/{id}', ...options });
 
 /**
  * Update client
  */
-export const putApiAdminClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminClientsByIdResponses, PutApiAdminClientsByIdErrors, ThrowOnError>({
+export const putApiClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiClientsByIdResponses, PutApiClientsByIdErrors, ThrowOnError>({
     url: '/api/clients/{id}',
     ...options,
     headers: {
@@ -117,17 +220,17 @@ export const putApiAdminClientsById = <ThrowOnError extends boolean = false>(opt
  *
  * Transitions a suspended or pending client to active status.
  */
-export const postApiAdminClientsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdActivateResponses, PostApiAdminClientsByIdActivateErrors, ThrowOnError>({ url: '/api/clients/{id}/activate', ...options });
+export const postApiClientsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdActivateResponses, PostApiClientsByIdActivateErrors, ThrowOnError>({ url: '/api/clients/{id}/activate', ...options });
 
 /**
  * Get client applications
  */
-export const getApiAdminClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminClientsByIdApplicationsResponses, GetApiAdminClientsByIdApplicationsErrors, ThrowOnError>({ url: '/api/clients/{id}/applications', ...options });
+export const getApiClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiClientsByIdApplicationsResponses, GetApiClientsByIdApplicationsErrors, ThrowOnError>({ url: '/api/clients/{id}/applications', ...options });
 
 /**
  * Update client applications (bulk)
  */
-export const putApiAdminClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminClientsByIdApplicationsResponses, PutApiAdminClientsByIdApplicationsErrors, ThrowOnError>({
+export const putApiClientsByIdApplications = <ThrowOnError extends boolean = false>(options: Options<PutApiClientsByIdApplicationsData, ThrowOnError>) => (options.client ?? client).put<PutApiClientsByIdApplicationsResponses, PutApiClientsByIdApplicationsErrors, ThrowOnError>({
     url: '/api/clients/{id}/applications',
     ...options,
     headers: {
@@ -139,19 +242,19 @@ export const putApiAdminClientsByIdApplications = <ThrowOnError extends boolean 
 /**
  * Disable application for client
  */
-export const postApiAdminClientsByIdApplicationsByAppIdDisable = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdApplicationsByAppIdDisableData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdApplicationsByAppIdDisableResponses, PostApiAdminClientsByIdApplicationsByAppIdDisableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{application_id}/disable', ...options });
+export const postApiClientsByIdApplicationsByAppIdDisable = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdApplicationsByAppIdDisableData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdApplicationsByAppIdDisableResponses, PostApiClientsByIdApplicationsByAppIdDisableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{application_id}/disable', ...options });
 
 /**
  * Enable application for client
  */
-export const postApiAdminClientsByIdApplicationsByAppIdEnable = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdApplicationsByAppIdEnableData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdApplicationsByAppIdEnableResponses, PostApiAdminClientsByIdApplicationsByAppIdEnableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{application_id}/enable', ...options });
+export const postApiClientsByIdApplicationsByAppIdEnable = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdApplicationsByAppIdEnableData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdApplicationsByAppIdEnableResponses, PostApiClientsByIdApplicationsByAppIdEnableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{application_id}/enable', ...options });
 
 /**
  * Deactivate a client (soft delete)
  *
  * Deactivates/soft-deletes a client. Requires a reason.
  */
-export const postApiAdminClientsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdDeactivateResponses, PostApiAdminClientsByIdDeactivateErrors, ThrowOnError>({
+export const postApiClientsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdDeactivateResponses, PostApiClientsByIdDeactivateErrors, ThrowOnError>({
     url: '/api/clients/{id}/deactivate',
     ...options,
     headers: {
@@ -163,7 +266,7 @@ export const postApiAdminClientsByIdDeactivate = <ThrowOnError extends boolean =
 /**
  * Add note to client
  */
-export const postApiAdminClientsByIdNotes = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdNotesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdNotesResponses, PostApiAdminClientsByIdNotesErrors, ThrowOnError>({
+export const postApiClientsByIdNotes = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdNotesData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdNotesResponses, PostApiClientsByIdNotesErrors, ThrowOnError>({
     url: '/api/clients/{id}/notes',
     ...options,
     headers: {
@@ -177,7 +280,7 @@ export const postApiAdminClientsByIdNotes = <ThrowOnError extends boolean = fals
  *
  * Suspends a client (e.g., for billing issues). Requires a reason.
  */
-export const postApiAdminClientsByIdSuspend = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminClientsByIdSuspendData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminClientsByIdSuspendResponses, PostApiAdminClientsByIdSuspendErrors, ThrowOnError>({
+export const postApiClientsByIdSuspend = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdSuspendData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdSuspendResponses, PostApiClientsByIdSuspendErrors, ThrowOnError>({
     url: '/api/clients/{id}/suspend',
     ...options,
     headers: {
@@ -190,14 +293,14 @@ export const postApiAdminClientsByIdSuspend = <ThrowOnError extends boolean = fa
  * List dispatch jobs. Returns the most recent rows matching the filters;
  * no pagination — see `DispatchJobsQuery` for the rationale.
  */
-export const getApiAdminDispatchJobs = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminDispatchJobsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminDispatchJobsResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs', ...options });
+export const getApiDispatchJobs = <ThrowOnError extends boolean = false>(options?: Options<GetApiDispatchJobsData, ThrowOnError>) => (options?.client ?? client).get<GetApiDispatchJobsResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs', ...options });
 
 /**
  * Create a new dispatch job
  *
  * Creates and queues a new dispatch job for webhook delivery.
  */
-export const postApiAdminDispatchJobs = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminDispatchJobsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminDispatchJobsResponses, PostApiAdminDispatchJobsErrors, ThrowOnError>({
+export const postApiDispatchJobs = <ThrowOnError extends boolean = false>(options: Options<PostApiDispatchJobsData, ThrowOnError>) => (options.client ?? client).post<PostApiDispatchJobsResponses, PostApiDispatchJobsErrors, ThrowOnError>({
     url: '/api/dispatch-jobs',
     ...options,
     headers: {
@@ -209,50 +312,50 @@ export const postApiAdminDispatchJobs = <ThrowOnError extends boolean = false>(o
 /**
  * Get dispatch jobs for an event
  */
-export const getApiAdminDispatchJobsByEventByEventId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminDispatchJobsByEventByEventIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminDispatchJobsByEventByEventIdResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs/by-event/{event_id}', ...options });
+export const getApiDispatchJobsByEventByEventId = <ThrowOnError extends boolean = false>(options: Options<GetApiDispatchJobsByEventByEventIdData, ThrowOnError>) => (options.client ?? client).get<GetApiDispatchJobsByEventByEventIdResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs/by-event/{event_id}', ...options });
 
 /**
  * Get filter options for dispatch jobs
  *
  * Returns distinct values from the read projection for cascading filter dropdowns.
  */
-export const getApiAdminDispatchJobsFilterOptions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminDispatchJobsFilterOptionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminDispatchJobsFilterOptionsResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs/filter-options', ...options });
+export const getApiDispatchJobsFilterOptions = <ThrowOnError extends boolean = false>(options?: Options<GetApiDispatchJobsFilterOptionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiDispatchJobsFilterOptionsResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs/filter-options', ...options });
 
 /**
  * List raw dispatch jobs (from msg_dispatch_jobs, not the read projection).
  * Returns the most recent rows; no pagination — msg_dispatch_jobs ingests
  * at high rates and page navigation is meaningless.
  */
-export const getApiAdminDispatchJobsRaw = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminDispatchJobsRawData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminDispatchJobsRawResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs/raw', ...options });
+export const getApiDispatchJobsRaw = <ThrowOnError extends boolean = false>(options?: Options<GetApiDispatchJobsRawData, ThrowOnError>) => (options?.client ?? client).get<GetApiDispatchJobsRawResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs/raw', ...options });
 
 /**
  * Get dispatch job by ID
  */
-export const getApiAdminDispatchJobsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminDispatchJobsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminDispatchJobsByIdResponses, GetApiAdminDispatchJobsByIdErrors, ThrowOnError>({ url: '/api/dispatch-jobs/{id}', ...options });
+export const getApiDispatchJobsById = <ThrowOnError extends boolean = false>(options: Options<GetApiDispatchJobsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiDispatchJobsByIdResponses, GetApiDispatchJobsByIdErrors, ThrowOnError>({ url: '/api/dispatch-jobs/{id}', ...options });
 
 /**
  * Get all attempts for a dispatch job
  *
  * Retrieves the full history of webhook delivery attempts for a job.
  */
-export const getApiAdminDispatchJobsByIdAttempts = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminDispatchJobsByIdAttemptsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminDispatchJobsByIdAttemptsResponses, GetApiAdminDispatchJobsByIdAttemptsErrors, ThrowOnError>({ url: '/api/dispatch-jobs/{id}/attempts', ...options });
+export const getApiDispatchJobsByIdAttempts = <ThrowOnError extends boolean = false>(options: Options<GetApiDispatchJobsByIdAttemptsData, ThrowOnError>) => (options.client ?? client).get<GetApiDispatchJobsByIdAttemptsResponses, GetApiDispatchJobsByIdAttemptsErrors, ThrowOnError>({ url: '/api/dispatch-jobs/{id}/attempts', ...options });
 
 /**
  * Get raw dispatch job data by ID
  *
  * Returns the full DispatchJob entity serialized directly as JSON (not the DTO).
  */
-export const getApiAdminDispatchJobsByIdRaw = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminDispatchJobsByIdRawData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminDispatchJobsByIdRawResponses, GetApiAdminDispatchJobsByIdRawErrors, ThrowOnError>({ url: '/api/dispatch-jobs/{id}/raw', ...options });
+export const getApiDispatchJobsByIdRaw = <ThrowOnError extends boolean = false>(options: Options<GetApiDispatchJobsByIdRawData, ThrowOnError>) => (options.client ?? client).get<GetApiDispatchJobsByIdRawResponses, GetApiDispatchJobsByIdRawErrors, ThrowOnError>({ url: '/api/dispatch-jobs/{id}/raw', ...options });
 
 /**
  * List event types
  */
-export const getApiAdminEventTypes = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesResponses, unknown, ThrowOnError>({ url: '/api/event-types', ...options });
+export const getApiEventTypes = <ThrowOnError extends boolean = false>(options: Options<GetApiEventTypesData, ThrowOnError>) => (options.client ?? client).get<GetApiEventTypesResponses, unknown, ThrowOnError>({ url: '/api/event-types', ...options });
 
 /**
  * Create a new event type
  */
-export const postApiAdminEventTypes = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesResponses, PostApiAdminEventTypesErrors, ThrowOnError>({
+export const postApiEventTypes = <ThrowOnError extends boolean = false>(options: Options<PostApiEventTypesData, ThrowOnError>) => (options.client ?? client).post<PostApiEventTypesResponses, PostApiEventTypesErrors, ThrowOnError>({
     url: '/api/event-types',
     ...options,
     headers: {
@@ -264,34 +367,22 @@ export const postApiAdminEventTypes = <ThrowOnError extends boolean = false>(opt
 /**
  * Get event type by code
  */
-export const getApiAdminEventTypesByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesByCodeByCodeResponses, GetApiAdminEventTypesByCodeByCodeErrors, ThrowOnError>({ url: '/api/event-types/by-code/{code}', ...options });
-
-/**
- * Sync event types
- */
-export const postApiAdminEventTypesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesSyncResponses, PostApiAdminEventTypesSyncErrors, ThrowOnError>({
-    url: '/api/event-types/sync',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
+export const getApiEventTypesByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiEventTypesByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiEventTypesByCodeByCodeResponses, GetApiEventTypesByCodeByCodeErrors, ThrowOnError>({ url: '/api/event-types/by-code/{code}', ...options });
 
 /**
  * Delete event type (archive)
  */
-export const deleteApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminEventTypesByIdResponses, DeleteApiAdminEventTypesByIdErrors, ThrowOnError>({ url: '/api/event-types/{id}', ...options });
+export const deleteApiEventTypesById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiEventTypesByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiEventTypesByIdResponses, DeleteApiEventTypesByIdErrors, ThrowOnError>({ url: '/api/event-types/{id}', ...options });
 
 /**
  * Get event type by ID
  */
-export const getApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventTypesByIdResponses, GetApiAdminEventTypesByIdErrors, ThrowOnError>({ url: '/api/event-types/{id}', ...options });
+export const getApiEventTypesById = <ThrowOnError extends boolean = false>(options: Options<GetApiEventTypesByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiEventTypesByIdResponses, GetApiEventTypesByIdErrors, ThrowOnError>({ url: '/api/event-types/{id}', ...options });
 
 /**
  * Update event type
  */
-export const putApiAdminEventTypesById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminEventTypesByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminEventTypesByIdResponses, PutApiAdminEventTypesByIdErrors, ThrowOnError>({
+export const putApiEventTypesById = <ThrowOnError extends boolean = false>(options: Options<PutApiEventTypesByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiEventTypesByIdResponses, PutApiEventTypesByIdErrors, ThrowOnError>({
     url: '/api/event-types/{id}',
     ...options,
     headers: {
@@ -303,7 +394,7 @@ export const putApiAdminEventTypesById = <ThrowOnError extends boolean = false>(
 /**
  * Add schema version to event type
  */
-export const postApiAdminEventTypesByIdSchemas = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventTypesByIdSchemasData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventTypesByIdSchemasResponses, PostApiAdminEventTypesByIdSchemasErrors, ThrowOnError>({
+export const postApiEventTypesByIdSchemas = <ThrowOnError extends boolean = false>(options: Options<PostApiEventTypesByIdSchemasData, ThrowOnError>) => (options.client ?? client).post<PostApiEventTypesByIdSchemasResponses, PostApiEventTypesByIdSchemasErrors, ThrowOnError>({
     url: '/api/event-types/{id}/versions',
     ...options,
     headers: {
@@ -316,7 +407,7 @@ export const postApiAdminEventTypesByIdSchemas = <ThrowOnError extends boolean =
  * List events. Returns the most recent rows matching the filters; no
  * pagination — see `EventsQuery` for the rationale.
  */
-export const getApiAdminEvents = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventsResponses, unknown, ThrowOnError>({ url: '/api/events', ...options });
+export const getApiEvents = <ThrowOnError extends boolean = false>(options?: Options<GetApiEventsData, ThrowOnError>) => (options?.client ?? client).get<GetApiEventsResponses, unknown, ThrowOnError>({ url: '/api/events', ...options });
 
 /**
  * Create a new event
@@ -325,7 +416,7 @@ export const getApiAdminEvents = <ThrowOnError extends boolean = false>(options?
  * an event with that ID already exists, the existing event is returned (idempotent operation).
  * Dispatch jobs are automatically created for matching subscriptions.
  */
-export const postApiAdminEvents = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminEventsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminEventsResponses, PostApiAdminEventsErrors, ThrowOnError>({
+export const postApiEvents = <ThrowOnError extends boolean = false>(options: Options<PostApiEventsData, ThrowOnError>) => (options.client ?? client).post<PostApiEventsResponses, PostApiEventsErrors, ThrowOnError>({
     url: '/api/events',
     ...options,
     headers: {
@@ -337,54 +428,54 @@ export const postApiAdminEvents = <ThrowOnError extends boolean = false>(options
 /**
  * Get filter options for the events read model.
  */
-export const getApiAdminEventsFilterOptions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventsFilterOptionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventsFilterOptionsResponses, unknown, ThrowOnError>({ url: '/api/events/filter-options', ...options });
+export const getApiEventsFilterOptions = <ThrowOnError extends boolean = false>(options?: Options<GetApiEventsFilterOptionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiEventsFilterOptionsResponses, unknown, ThrowOnError>({ url: '/api/events/filter-options', ...options });
 
 /**
  * List raw events (from msg_events, not the read projection). Returns the
  * most recent rows; no pagination — msg_events ingests at high rates and
  * page navigation through the firehose is meaningless.
  */
-export const getApiAdminEventsRaw = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminEventsRawData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminEventsRawResponses, unknown, ThrowOnError>({ url: '/api/events/raw', ...options });
+export const getApiEventsRaw = <ThrowOnError extends boolean = false>(options?: Options<GetApiEventsRawData, ThrowOnError>) => (options?.client ?? client).get<GetApiEventsRawResponses, unknown, ThrowOnError>({ url: '/api/events/raw', ...options });
 
 /**
  * Get event by ID
  */
-export const getApiAdminEventsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminEventsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminEventsByIdResponses, GetApiAdminEventsByIdErrors, ThrowOnError>({ url: '/api/events/{id}', ...options });
+export const getApiEventsById = <ThrowOnError extends boolean = false>(options: Options<GetApiEventsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiEventsByIdResponses, GetApiEventsByIdErrors, ThrowOnError>({ url: '/api/events/{id}', ...options });
 
 /**
  * Get circuit breaker states
  */
-export const getApiAdminMonitoringCircuitBreakers = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminMonitoringCircuitBreakersData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminMonitoringCircuitBreakersResponses, unknown, ThrowOnError>({ url: '/api/monitoring/circuit-breakers', ...options });
+export const getApiMonitoringCircuitBreakers = <ThrowOnError extends boolean = false>(options?: Options<GetApiMonitoringCircuitBreakersData, ThrowOnError>) => (options?.client ?? client).get<GetApiMonitoringCircuitBreakersResponses, unknown, ThrowOnError>({ url: '/api/monitoring/circuit-breakers', ...options });
 
 /**
  * Get dashboard metrics
  */
-export const getApiAdminMonitoringDashboard = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminMonitoringDashboardData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminMonitoringDashboardResponses, unknown, ThrowOnError>({ url: '/api/monitoring/dashboard', ...options });
+export const getApiMonitoringDashboard = <ThrowOnError extends boolean = false>(options?: Options<GetApiMonitoringDashboardData, ThrowOnError>) => (options?.client ?? client).get<GetApiMonitoringDashboardResponses, unknown, ThrowOnError>({ url: '/api/monitoring/dashboard', ...options });
 
 /**
  * Get in-flight messages
  */
-export const getApiAdminMonitoringInFlightMessages = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminMonitoringInFlightMessagesData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminMonitoringInFlightMessagesResponses, unknown, ThrowOnError>({ url: '/api/monitoring/in-flight-messages', ...options });
+export const getApiMonitoringInFlightMessages = <ThrowOnError extends boolean = false>(options?: Options<GetApiMonitoringInFlightMessagesData, ThrowOnError>) => (options?.client ?? client).get<GetApiMonitoringInFlightMessagesResponses, unknown, ThrowOnError>({ url: '/api/monitoring/in-flight-messages', ...options });
 
 /**
  * Get pool statistics with enhanced metrics
  */
-export const getApiAdminMonitoringPoolStats = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminMonitoringPoolStatsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminMonitoringPoolStatsResponses, unknown, ThrowOnError>({ url: '/api/monitoring/pool-stats', ...options });
+export const getApiMonitoringPoolStats = <ThrowOnError extends boolean = false>(options?: Options<GetApiMonitoringPoolStatsData, ThrowOnError>) => (options?.client ?? client).get<GetApiMonitoringPoolStatsResponses, unknown, ThrowOnError>({ url: '/api/monitoring/pool-stats', ...options });
 
 /**
  * Get standby status
  */
-export const getApiAdminMonitoringStandbyStatus = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminMonitoringStandbyStatusData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminMonitoringStandbyStatusResponses, unknown, ThrowOnError>({ url: '/api/monitoring/standby-status', ...options });
+export const getApiMonitoringStandbyStatus = <ThrowOnError extends boolean = false>(options?: Options<GetApiMonitoringStandbyStatusData, ThrowOnError>) => (options?.client ?? client).get<GetApiMonitoringStandbyStatusResponses, unknown, ThrowOnError>({ url: '/api/monitoring/standby-status', ...options });
 
 /**
  * List OAuth clients
  */
-export const getApiAdminOauthClients = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsResponses, unknown, ThrowOnError>({ url: '/api/oauth-clients', ...options });
+export const getApiOauthClients = <ThrowOnError extends boolean = false>(options: Options<GetApiOauthClientsData, ThrowOnError>) => (options.client ?? client).get<GetApiOauthClientsResponses, unknown, ThrowOnError>({ url: '/api/oauth-clients', ...options });
 
 /**
  * Create a new OAuth client
  */
-export const postApiAdminOauthClients = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsResponses, PostApiAdminOauthClientsErrors, ThrowOnError>({
+export const postApiOauthClients = <ThrowOnError extends boolean = false>(options: Options<PostApiOauthClientsData, ThrowOnError>) => (options.client ?? client).post<PostApiOauthClientsResponses, PostApiOauthClientsErrors, ThrowOnError>({
     url: '/api/oauth-clients',
     ...options,
     headers: {
@@ -396,22 +487,22 @@ export const postApiAdminOauthClients = <ThrowOnError extends boolean = false>(o
 /**
  * Get OAuth client by client_id (public identifier)
  */
-export const getApiAdminOauthClientsByClientId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsByClientIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsByClientIdResponses, GetApiAdminOauthClientsByClientIdErrors, ThrowOnError>({ url: '/api/oauth-clients/by-client-id/{clientId}', ...options });
+export const getApiOauthClientsByClientId = <ThrowOnError extends boolean = false>(options: Options<GetApiOauthClientsByClientIdData, ThrowOnError>) => (options.client ?? client).get<GetApiOauthClientsByClientIdResponses, GetApiOauthClientsByClientIdErrors, ThrowOnError>({ url: '/api/oauth-clients/by-client-id/{clientId}', ...options });
 
 /**
  * Delete OAuth client
  */
-export const deleteApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminOauthClientsByIdResponses, DeleteApiAdminOauthClientsByIdErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}', ...options });
+export const deleteApiOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiOauthClientsByIdResponses, DeleteApiOauthClientsByIdErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}', ...options });
 
 /**
  * Get OAuth client by ID
  */
-export const getApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminOauthClientsByIdResponses, GetApiAdminOauthClientsByIdErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}', ...options });
+export const getApiOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<GetApiOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiOauthClientsByIdResponses, GetApiOauthClientsByIdErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}', ...options });
 
 /**
  * Update OAuth client
  */
-export const putApiAdminOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminOauthClientsByIdResponses, PutApiAdminOauthClientsByIdErrors, ThrowOnError>({
+export const putApiOauthClientsById = <ThrowOnError extends boolean = false>(options: Options<PutApiOauthClientsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiOauthClientsByIdResponses, PutApiOauthClientsByIdErrors, ThrowOnError>({
     url: '/api/oauth-clients/{id}',
     ...options,
     headers: {
@@ -423,37 +514,37 @@ export const putApiAdminOauthClientsById = <ThrowOnError extends boolean = false
 /**
  * Activate OAuth client
  */
-export const postApiAdminOauthClientsActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsActivateResponses, PostApiAdminOauthClientsActivateErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/activate', ...options });
+export const postApiOauthClientsActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiOauthClientsActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiOauthClientsActivateResponses, PostApiOauthClientsActivateErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/activate', ...options });
 
 /**
  * Deactivate OAuth client
  */
-export const postApiAdminOauthClientsDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsDeactivateResponses, PostApiAdminOauthClientsDeactivateErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/deactivate', ...options });
+export const postApiOauthClientsDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiOauthClientsDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiOauthClientsDeactivateResponses, PostApiOauthClientsDeactivateErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/deactivate', ...options });
 
 /**
  * Regenerate OAuth client secret
  */
-export const postApiAdminOauthClientsRegenerateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsRegenerateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsRegenerateSecretResponses, PostApiAdminOauthClientsRegenerateSecretErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/regenerate-secret', ...options });
+export const postApiOauthClientsRegenerateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiOauthClientsRegenerateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiOauthClientsRegenerateSecretResponses, PostApiOauthClientsRegenerateSecretErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/regenerate-secret', ...options });
 
 /**
  * Rotate OAuth client secret (alias for regenerate-secret, matches TS API)
  */
-export const postApiAdminOauthClientsRotateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminOauthClientsRotateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminOauthClientsRotateSecretResponses, PostApiAdminOauthClientsRotateSecretErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/rotate-secret', ...options });
+export const postApiOauthClientsRotateSecret = <ThrowOnError extends boolean = false>(options: Options<PostApiOauthClientsRotateSecretData, ThrowOnError>) => (options.client ?? client).post<PostApiOauthClientsRotateSecretResponses, PostApiOauthClientsRotateSecretErrors, ThrowOnError>({ url: '/api/oauth-clients/{id}/rotate-secret', ...options });
 
 /**
  * List principals
  */
-export const getApiAdminPrincipals = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminPrincipalsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminPrincipalsResponses, unknown, ThrowOnError>({ url: '/api/principals', ...options });
+export const getApiPrincipals = <ThrowOnError extends boolean = false>(options?: Options<GetApiPrincipalsData, ThrowOnError>) => (options?.client ?? client).get<GetApiPrincipalsResponses, unknown, ThrowOnError>({ url: '/api/principals', ...options });
 
 /**
  * Check email domain configuration
  */
-export const getApiAdminPrincipalsCheckEmailDomain = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsCheckEmailDomainData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsCheckEmailDomainResponses, unknown, ThrowOnError>({ url: '/api/principals/check-email-domain', ...options });
+export const getApiPrincipalsCheckEmailDomain = <ThrowOnError extends boolean = false>(options: Options<GetApiPrincipalsCheckEmailDomainData, ThrowOnError>) => (options.client ?? client).get<GetApiPrincipalsCheckEmailDomainResponses, unknown, ThrowOnError>({ url: '/api/principals/check-email-domain', ...options });
 
 /**
  * Create a new user principal
  */
-export const postApiAdminPrincipalsUsers = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsUsersData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsUsersResponses, PostApiAdminPrincipalsUsersErrors, ThrowOnError>({
+export const postApiPrincipalsUsers = <ThrowOnError extends boolean = false>(options: Options<PostApiPrincipalsUsersData, ThrowOnError>) => (options.client ?? client).post<PostApiPrincipalsUsersResponses, PostApiPrincipalsUsersErrors, ThrowOnError>({
     url: '/api/principals/users',
     ...options,
     headers: {
@@ -465,17 +556,17 @@ export const postApiAdminPrincipalsUsers = <ThrowOnError extends boolean = false
 /**
  * Delete principal (deactivate)
  */
-export const deleteApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdResponses, DeleteApiAdminPrincipalsByIdErrors, ThrowOnError>({ url: '/api/principals/{id}', ...options });
+export const deleteApiPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiPrincipalsByIdResponses, DeleteApiPrincipalsByIdErrors, ThrowOnError>({ url: '/api/principals/{id}', ...options });
 
 /**
  * Get principal by ID
  */
-export const getApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdResponses, GetApiAdminPrincipalsByIdErrors, ThrowOnError>({ url: '/api/principals/{id}', ...options });
+export const getApiPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<GetApiPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiPrincipalsByIdResponses, GetApiPrincipalsByIdErrors, ThrowOnError>({ url: '/api/principals/{id}', ...options });
 
 /**
  * Update principal
  */
-export const putApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdResponses, PutApiAdminPrincipalsByIdErrors, ThrowOnError>({
+export const putApiPrincipalsById = <ThrowOnError extends boolean = false>(options: Options<PutApiPrincipalsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiPrincipalsByIdResponses, PutApiPrincipalsByIdErrors, ThrowOnError>({
     url: '/api/principals/{id}',
     ...options,
     headers: {
@@ -489,21 +580,21 @@ export const putApiAdminPrincipalsById = <ThrowOnError extends boolean = false>(
  *
  * Reactivates a deactivated principal.
  */
-export const postApiAdminPrincipalsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdActivateResponses, PostApiAdminPrincipalsByIdActivateErrors, ThrowOnError>({ url: '/api/principals/{id}/activate', ...options });
+export const postApiPrincipalsByIdActivate = <ThrowOnError extends boolean = false>(options: Options<PostApiPrincipalsByIdActivateData, ThrowOnError>) => (options.client ?? client).post<PostApiPrincipalsByIdActivateResponses, PostApiPrincipalsByIdActivateErrors, ThrowOnError>({ url: '/api/principals/{id}/activate', ...options });
 
 /**
  * Get application access for a principal
  *
  * Returns all applications the principal has been granted access to.
  */
-export const getApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdApplicationAccessResponses, GetApiAdminPrincipalsByIdApplicationAccessErrors, ThrowOnError>({ url: '/api/principals/{id}/application-access', ...options });
+export const getApiPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiPrincipalsByIdApplicationAccessResponses, GetApiPrincipalsByIdApplicationAccessErrors, ThrowOnError>({ url: '/api/principals/{id}/application-access', ...options });
 
 /**
  * Set application access for a principal (batch replace)
  *
  * Replaces all application access with the provided list.
  */
-export const putApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdApplicationAccessResponses, PutApiAdminPrincipalsByIdApplicationAccessErrors, ThrowOnError>({
+export const putApiPrincipalsByIdApplicationAccess = <ThrowOnError extends boolean = false>(options: Options<PutApiPrincipalsByIdApplicationAccessData, ThrowOnError>) => (options.client ?? client).put<PutApiPrincipalsByIdApplicationAccessResponses, PutApiPrincipalsByIdApplicationAccessErrors, ThrowOnError>({
     url: '/api/principals/{id}/application-access',
     ...options,
     headers: {
@@ -518,17 +609,17 @@ export const putApiAdminPrincipalsByIdApplicationAccess = <ThrowOnError extends 
  * ANCHOR users see all active applications.
  * CLIENT users see only applications enabled for their accessible client configs.
  */
-export const getApiAdminPrincipalsByIdAvailableApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdAvailableApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdAvailableApplicationsResponses, GetApiAdminPrincipalsByIdAvailableApplicationsErrors, ThrowOnError>({ url: '/api/principals/{id}/available-applications', ...options });
+export const getApiPrincipalsByIdAvailableApplications = <ThrowOnError extends boolean = false>(options: Options<GetApiPrincipalsByIdAvailableApplicationsData, ThrowOnError>) => (options.client ?? client).get<GetApiPrincipalsByIdAvailableApplicationsResponses, GetApiPrincipalsByIdAvailableApplicationsErrors, ThrowOnError>({ url: '/api/principals/{id}/available-applications', ...options });
 
 /**
  * Get client access grants for a principal
  */
-export const getApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdClientAccessResponses, GetApiAdminPrincipalsByIdClientAccessErrors, ThrowOnError>({ url: '/api/principals/{id}/client-access', ...options });
+export const getApiPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<GetApiPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).get<GetApiPrincipalsByIdClientAccessResponses, GetApiPrincipalsByIdClientAccessErrors, ThrowOnError>({ url: '/api/principals/{id}/client-access', ...options });
 
 /**
  * Grant client access to principal
  */
-export const postApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdClientAccessResponses, PostApiAdminPrincipalsByIdClientAccessErrors, ThrowOnError>({
+export const postApiPrincipalsByIdClientAccess = <ThrowOnError extends boolean = false>(options: Options<PostApiPrincipalsByIdClientAccessData, ThrowOnError>) => (options.client ?? client).post<PostApiPrincipalsByIdClientAccessResponses, PostApiPrincipalsByIdClientAccessErrors, ThrowOnError>({
     url: '/api/principals/{id}/client-access',
     ...options,
     headers: {
@@ -540,21 +631,21 @@ export const postApiAdminPrincipalsByIdClientAccess = <ThrowOnError extends bool
 /**
  * Revoke client access from principal
  */
-export const deleteApiAdminPrincipalsByIdClientAccessByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdClientAccessByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponses, DeleteApiAdminPrincipalsByIdClientAccessByClientIdErrors, ThrowOnError>({ url: '/api/principals/{id}/client-access/{client_id}', ...options });
+export const deleteApiPrincipalsByIdClientAccessByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiPrincipalsByIdClientAccessByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiPrincipalsByIdClientAccessByClientIdResponses, DeleteApiPrincipalsByIdClientAccessByClientIdErrors, ThrowOnError>({ url: '/api/principals/{id}/client-access/{client_id}', ...options });
 
 /**
  * Deactivate a principal
  *
  * Deactivates an active principal.
  */
-export const postApiAdminPrincipalsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdDeactivateResponses, PostApiAdminPrincipalsByIdDeactivateErrors, ThrowOnError>({ url: '/api/principals/{id}/deactivate', ...options });
+export const postApiPrincipalsByIdDeactivate = <ThrowOnError extends boolean = false>(options: Options<PostApiPrincipalsByIdDeactivateData, ThrowOnError>) => (options.client ?? client).post<PostApiPrincipalsByIdDeactivateResponses, PostApiPrincipalsByIdDeactivateErrors, ThrowOnError>({ url: '/api/principals/{id}/deactivate', ...options });
 
 /**
  * Reset a user's password
  *
  * Resets the password for an internal auth user. Does not work for OIDC users.
  */
-export const postApiAdminPrincipalsByIdResetPassword = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdResetPasswordData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdResetPasswordResponses, PostApiAdminPrincipalsByIdResetPasswordErrors, ThrowOnError>({
+export const postApiPrincipalsByIdResetPassword = <ThrowOnError extends boolean = false>(options: Options<PostApiPrincipalsByIdResetPasswordData, ThrowOnError>) => (options.client ?? client).post<PostApiPrincipalsByIdResetPasswordResponses, PostApiPrincipalsByIdResetPasswordErrors, ThrowOnError>({
     url: '/api/principals/{id}/reset-password',
     ...options,
     headers: {
@@ -566,12 +657,12 @@ export const postApiAdminPrincipalsByIdResetPassword = <ThrowOnError extends boo
 /**
  * Get roles assigned to a principal
  */
-export const getApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminPrincipalsByIdRolesResponses, GetApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({ url: '/api/principals/{id}/roles', ...options });
+export const getApiPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiPrincipalsByIdRolesResponses, GetApiPrincipalsByIdRolesErrors, ThrowOnError>({ url: '/api/principals/{id}/roles', ...options });
 
 /**
  * Assign role to principal
  */
-export const postApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdRolesResponses, PostApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({
+export const postApiPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiPrincipalsByIdRolesResponses, PostApiPrincipalsByIdRolesErrors, ThrowOnError>({
     url: '/api/principals/{id}/roles',
     ...options,
     headers: {
@@ -583,7 +674,7 @@ export const postApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = f
 /**
  * Batch assign roles to principal (declarative - replaces all roles)
  */
-export const putApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminPrincipalsByIdRolesResponses, PutApiAdminPrincipalsByIdRolesErrors, ThrowOnError>({
+export const putApiPrincipalsByIdRoles = <ThrowOnError extends boolean = false>(options: Options<PutApiPrincipalsByIdRolesData, ThrowOnError>) => (options.client ?? client).put<PutApiPrincipalsByIdRolesResponses, PutApiPrincipalsByIdRolesErrors, ThrowOnError>({
     url: '/api/principals/{id}/roles',
     ...options,
     headers: {
@@ -595,7 +686,7 @@ export const putApiAdminPrincipalsByIdRoles = <ThrowOnError extends boolean = fa
 /**
  * Remove role from principal
  */
-export const deleteApiAdminPrincipalsByIdRolesByRoleName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminPrincipalsByIdRolesByRoleNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminPrincipalsByIdRolesByRoleNameResponses, DeleteApiAdminPrincipalsByIdRolesByRoleNameErrors, ThrowOnError>({ url: '/api/principals/{id}/roles/{role}', ...options });
+export const deleteApiPrincipalsByIdRolesByRoleName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiPrincipalsByIdRolesByRoleNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiPrincipalsByIdRolesByRoleNameResponses, DeleteApiPrincipalsByIdRolesByRoleNameErrors, ThrowOnError>({ url: '/api/principals/{id}/roles/{role}', ...options });
 
 /**
  * Trigger a password reset email for an internal-auth user.
@@ -607,7 +698,7 @@ export const deleteApiAdminPrincipalsByIdRolesByRoleName = <ThrowOnError extends
  * Rejects OIDC-federated users (they manage credentials at their IDP) and
  * users without an email address.
  */
-export const postApiAdminPrincipalsByIdSendPasswordReset = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminPrincipalsByIdSendPasswordResetData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminPrincipalsByIdSendPasswordResetResponses, PostApiAdminPrincipalsByIdSendPasswordResetErrors, ThrowOnError>({ url: '/api/principals/{id}/send-password-reset', ...options });
+export const postApiPrincipalsByIdSendPasswordReset = <ThrowOnError extends boolean = false>(options: Options<PostApiPrincipalsByIdSendPasswordResetData, ThrowOnError>) => (options.client ?? client).post<PostApiPrincipalsByIdSendPasswordResetResponses, PostApiPrincipalsByIdSendPasswordResetErrors, ThrowOnError>({ url: '/api/principals/{id}/send-password-reset', ...options });
 
 export const getApiProcesses = <ThrowOnError extends boolean = false>(options: Options<GetApiProcessesData, ThrowOnError>) => (options.client ?? client).get<GetApiProcessesResponses, unknown, ThrowOnError>({ url: '/api/processes', ...options });
 
@@ -621,15 +712,6 @@ export const postApiProcesses = <ThrowOnError extends boolean = false>(options: 
 });
 
 export const getApiProcessesByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiProcessesByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiProcessesByCodeResponses, GetApiProcessesByCodeErrors, ThrowOnError>({ url: '/api/processes/by-code/{code}', ...options });
-
-export const postApiProcessesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiProcessesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiProcessesSyncResponses, PostApiProcessesSyncErrors, ThrowOnError>({
-    url: '/api/processes/sync',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
 
 export const deleteApiProcessesById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiProcessesByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiProcessesByIdResponses, DeleteApiProcessesByIdErrors, ThrowOnError>({ url: '/api/processes/{id}', ...options });
 
@@ -649,12 +731,12 @@ export const postApiProcessesByIdArchive = <ThrowOnError extends boolean = false
 /**
  * List roles
  */
-export const getApiAdminRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesResponses, unknown, ThrowOnError>({ url: '/api/roles', ...options });
+export const getApiRoles = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesResponses, unknown, ThrowOnError>({ url: '/api/roles', ...options });
 
 /**
  * Create a new role
  */
-export const postApiAdminRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminRolesResponses, PostApiAdminRolesErrors, ThrowOnError>({
+export const postApiRoles = <ThrowOnError extends boolean = false>(options: Options<PostApiRolesData, ThrowOnError>) => (options.client ?? client).post<PostApiRolesResponses, PostApiRolesErrors, ThrowOnError>({
     url: '/api/roles',
     ...options,
     headers: {
@@ -666,37 +748,37 @@ export const postApiAdminRoles = <ThrowOnError extends boolean = false>(options:
 /**
  * Get roles by application ID
  */
-export const getApiAdminRolesByApplicationByApplicationId = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByApplicationByApplicationIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByApplicationByApplicationIdResponses, unknown, ThrowOnError>({ url: '/api/roles/by-application/{application_id}', ...options });
+export const getApiRolesByApplicationByApplicationId = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesByApplicationByApplicationIdData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesByApplicationByApplicationIdResponses, unknown, ThrowOnError>({ url: '/api/roles/by-application/{application_id}', ...options });
 
 /**
  * Get role by code (name)
  */
-export const getApiAdminRolesByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByCodeByCodeResponses, GetApiAdminRolesByCodeByCodeErrors, ThrowOnError>({ url: '/api/roles/by-code/{code}', ...options });
+export const getApiRolesByCodeByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesByCodeByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesByCodeByCodeResponses, GetApiRolesByCodeByCodeErrors, ThrowOnError>({ url: '/api/roles/by-code/{code}', ...options });
 
 /**
  * Get roles by source (CODE, DATABASE, SDK)
  */
-export const getApiAdminRolesBySourceBySource = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesBySourceBySourceData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesBySourceBySourceResponses, GetApiAdminRolesBySourceBySourceErrors, ThrowOnError>({ url: '/api/roles/by-source/{source}', ...options });
+export const getApiRolesBySourceBySource = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesBySourceBySourceData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesBySourceBySourceResponses, GetApiRolesBySourceBySourceErrors, ThrowOnError>({ url: '/api/roles/by-source/{source}', ...options });
 
 /**
  * Get applications for role filter dropdown
  */
-export const getApiAdminRolesFiltersApplications = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminRolesFiltersApplicationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminRolesFiltersApplicationsResponses, unknown, ThrowOnError>({ url: '/api/roles/filters/applications', ...options });
+export const getApiRolesFiltersApplications = <ThrowOnError extends boolean = false>(options?: Options<GetApiRolesFiltersApplicationsData, ThrowOnError>) => (options?.client ?? client).get<GetApiRolesFiltersApplicationsResponses, unknown, ThrowOnError>({ url: '/api/roles/filters/applications', ...options });
 
 /**
  * List all permissions
  */
-export const getApiAdminRolesPermissions = <ThrowOnError extends boolean = false>(options?: Options<GetApiAdminRolesPermissionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiAdminRolesPermissionsResponses, unknown, ThrowOnError>({ url: '/api/roles/permissions', ...options });
+export const getApiRolesPermissions = <ThrowOnError extends boolean = false>(options?: Options<GetApiRolesPermissionsData, ThrowOnError>) => (options?.client ?? client).get<GetApiRolesPermissionsResponses, unknown, ThrowOnError>({ url: '/api/roles/permissions', ...options });
 
 /**
  * Get permission by string
  */
-export const getApiAdminRolesPermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesPermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesPermissionsByPermissionResponses, GetApiAdminRolesPermissionsByPermissionErrors, ThrowOnError>({ url: '/api/roles/permissions/{permission}', ...options });
+export const getApiRolesPermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesPermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesPermissionsByPermissionResponses, GetApiRolesPermissionsByPermissionErrors, ThrowOnError>({ url: '/api/roles/permissions/{permission}', ...options });
 
 /**
  * Delete role
  */
-export const deleteApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminRolesByNameResponses, DeleteApiAdminRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{role_name}', ...options });
+export const deleteApiRolesByName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiRolesByNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiRolesByNameResponses, DeleteApiRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{role_name}', ...options });
 
 /**
  * Get role by ID or name (code)
@@ -704,12 +786,12 @@ export const deleteApiAdminRolesByName = <ThrowOnError extends boolean = false>(
  * The frontend calls this with the role name (e.g., "platform:super-admin"),
  * so we try by code first if it contains ":", otherwise by ID.
  */
-export const getApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminRolesByNameResponses, GetApiAdminRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{role_name}', ...options });
+export const getApiRolesByName = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesByNameData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesByNameResponses, GetApiRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{role_name}', ...options });
 
 /**
  * Update role
  */
-export const putApiAdminRolesByName = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminRolesByNameData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminRolesByNameResponses, PutApiAdminRolesByNameErrors, ThrowOnError>({
+export const putApiRolesByName = <ThrowOnError extends boolean = false>(options: Options<PutApiRolesByNameData, ThrowOnError>) => (options.client ?? client).put<PutApiRolesByNameResponses, PutApiRolesByNameErrors, ThrowOnError>({
     url: '/api/roles/{role_name}',
     ...options,
     headers: {
@@ -721,7 +803,7 @@ export const putApiAdminRolesByName = <ThrowOnError extends boolean = false>(opt
 /**
  * Grant permission to role
  */
-export const postApiAdminRolesByNamePermissions = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminRolesByNamePermissionsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminRolesByNamePermissionsResponses, PostApiAdminRolesByNamePermissionsErrors, ThrowOnError>({
+export const postApiRolesByNamePermissions = <ThrowOnError extends boolean = false>(options: Options<PostApiRolesByNamePermissionsData, ThrowOnError>) => (options.client ?? client).post<PostApiRolesByNamePermissionsResponses, PostApiRolesByNamePermissionsErrors, ThrowOnError>({
     url: '/api/roles/{role_name}/permissions',
     ...options,
     headers: {
@@ -733,7 +815,7 @@ export const postApiAdminRolesByNamePermissions = <ThrowOnError extends boolean 
 /**
  * Revoke permission from role
  */
-export const deleteApiAdminRolesByNamePermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminRolesByNamePermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminRolesByNamePermissionsByPermissionResponses, DeleteApiAdminRolesByNamePermissionsByPermissionErrors, ThrowOnError>({ url: '/api/roles/{role_name}/permissions/{permission}', ...options });
+export const deleteApiRolesByNamePermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<DeleteApiRolesByNamePermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiRolesByNamePermissionsByPermissionResponses, DeleteApiRolesByNamePermissionsByPermissionErrors, ThrowOnError>({ url: '/api/roles/{role_name}/permissions/{permission}', ...options });
 
 export const getApiScheduledJobs = <ThrowOnError extends boolean = false>(options: Options<GetApiScheduledJobsData, ThrowOnError>) => (options.client ?? client).get<GetApiScheduledJobsResponses, unknown, ThrowOnError>({ url: '/api/scheduled-jobs', ...options });
 
@@ -803,25 +885,13 @@ export const postApiScheduledJobsByIdResume = <ThrowOnError extends boolean = fa
 /**
  * List subscriptions
  */
-export const getApiAdminSubscriptions = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminSubscriptionsData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminSubscriptionsResponses, unknown, ThrowOnError>({ url: '/api/subscriptions', ...options });
+export const getApiSubscriptions = <ThrowOnError extends boolean = false>(options: Options<GetApiSubscriptionsData, ThrowOnError>) => (options.client ?? client).get<GetApiSubscriptionsResponses, unknown, ThrowOnError>({ url: '/api/subscriptions', ...options });
 
 /**
  * Create a new subscription
  */
-export const postApiAdminSubscriptions = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsResponses, PostApiAdminSubscriptionsErrors, ThrowOnError>({
+export const postApiSubscriptions = <ThrowOnError extends boolean = false>(options: Options<PostApiSubscriptionsData, ThrowOnError>) => (options.client ?? client).post<PostApiSubscriptionsResponses, PostApiSubscriptionsErrors, ThrowOnError>({
     url: '/api/subscriptions',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Sync subscriptions
- */
-export const postApiAdminSubscriptionsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsSyncResponses, PostApiAdminSubscriptionsSyncErrors, ThrowOnError>({
-    url: '/api/subscriptions/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -832,17 +902,17 @@ export const postApiAdminSubscriptionsSync = <ThrowOnError extends boolean = fal
 /**
  * Delete subscription (archive)
  */
-export const deleteApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiAdminSubscriptionsByIdResponses, DeleteApiAdminSubscriptionsByIdErrors, ThrowOnError>({ url: '/api/subscriptions/{id}', ...options });
+export const deleteApiSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiSubscriptionsByIdResponses, DeleteApiSubscriptionsByIdErrors, ThrowOnError>({ url: '/api/subscriptions/{id}', ...options });
 
 /**
  * Get subscription by ID
  */
-export const getApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<GetApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAdminSubscriptionsByIdResponses, GetApiAdminSubscriptionsByIdErrors, ThrowOnError>({ url: '/api/subscriptions/{id}', ...options });
+export const getApiSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<GetApiSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiSubscriptionsByIdResponses, GetApiSubscriptionsByIdErrors, ThrowOnError>({ url: '/api/subscriptions/{id}', ...options });
 
 /**
  * Update subscription
  */
-export const putApiAdminSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<PutApiAdminSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiAdminSubscriptionsByIdResponses, PutApiAdminSubscriptionsByIdErrors, ThrowOnError>({
+export const putApiSubscriptionsById = <ThrowOnError extends boolean = false>(options: Options<PutApiSubscriptionsByIdData, ThrowOnError>) => (options.client ?? client).put<PutApiSubscriptionsByIdResponses, PutApiSubscriptionsByIdErrors, ThrowOnError>({
     url: '/api/subscriptions/{id}',
     ...options,
     headers: {
@@ -854,12 +924,12 @@ export const putApiAdminSubscriptionsById = <ThrowOnError extends boolean = fals
 /**
  * Pause subscription
  */
-export const postApiAdminSubscriptionsByIdPause = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsByIdPauseData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsByIdPauseResponses, PostApiAdminSubscriptionsByIdPauseErrors, ThrowOnError>({ url: '/api/subscriptions/{id}/pause', ...options });
+export const postApiSubscriptionsByIdPause = <ThrowOnError extends boolean = false>(options: Options<PostApiSubscriptionsByIdPauseData, ThrowOnError>) => (options.client ?? client).post<PostApiSubscriptionsByIdPauseResponses, PostApiSubscriptionsByIdPauseErrors, ThrowOnError>({ url: '/api/subscriptions/{id}/pause', ...options });
 
 /**
  * Resume subscription
  */
-export const postApiAdminSubscriptionsByIdResume = <ThrowOnError extends boolean = false>(options: Options<PostApiAdminSubscriptionsByIdResumeData, ThrowOnError>) => (options.client ?? client).post<PostApiAdminSubscriptionsByIdResumeResponses, PostApiAdminSubscriptionsByIdResumeErrors, ThrowOnError>({ url: '/api/subscriptions/{id}/resume', ...options });
+export const postApiSubscriptionsByIdResume = <ThrowOnError extends boolean = false>(options: Options<PostApiSubscriptionsByIdResumeData, ThrowOnError>) => (options.client ?? client).post<PostApiSubscriptionsByIdResumeResponses, PostApiSubscriptionsByIdResumeErrors, ThrowOnError>({ url: '/api/subscriptions/{id}/resume', ...options });
 
 /**
  * Check email domain authentication method

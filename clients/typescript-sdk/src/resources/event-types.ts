@@ -9,21 +9,22 @@ import type { SdkError } from "../errors";
 import type { FlowCatalystClient } from "../client";
 import * as sdk from "../generated/sdk.gen";
 import type {
-	GetApiAdminEventTypesResponse,
-	GetApiAdminEventTypesByIdResponse,
-	PostApiAdminEventTypesData,
-	PutApiAdminEventTypesByIdData,
-	PostApiAdminEventTypesByIdSchemasData,
-	PostApiAdminEventTypesSyncData,
-	PostApiAdminEventTypesSyncResponse,
+	GetApiEventTypesResponse,
+	GetApiEventTypesByIdResponse,
+	PostApiEventTypesData,
+	PutApiEventTypesByIdData,
+	PostApiEventTypesByIdSchemasData,
+	PostApiApplicationsByAppCodeEventTypesSyncData,
+	PostApiApplicationsByAppCodeEventTypesSyncResponse,
 	PaginationParams,
 } from "../generated/types.gen";
 
-export type EventTypeListResponse = GetApiAdminEventTypesResponse;
-export type EventTypeResponse = GetApiAdminEventTypesByIdResponse;
-export type CreateEventTypeRequest = PostApiAdminEventTypesData["body"];
-export type UpdateEventTypeRequest = PutApiAdminEventTypesByIdData["body"];
-export type SyncEventTypesResponse = PostApiAdminEventTypesSyncResponse;
+export type EventTypeListResponse = GetApiEventTypesResponse;
+export type EventTypeResponse = GetApiEventTypesByIdResponse;
+export type CreateEventTypeRequest = PostApiEventTypesData["body"];
+export type UpdateEventTypeRequest = PutApiEventTypesByIdData["body"];
+export type SyncEventTypesResponse =
+	PostApiApplicationsByAppCodeEventTypesSyncResponse;
 
 export interface EventTypeFilters {
 	status?: string;
@@ -49,7 +50,7 @@ export class EventTypesResource {
 		pagination?: PaginationParams,
 	): ResultAsync<EventTypeListResponse, SdkError> {
 		return this.client.request<EventTypeListResponse>((httpClient, headers) =>
-			sdk.getApiAdminEventTypes({
+			sdk.getApiEventTypes({
 				client: httpClient,
 				headers,
 				query: {
@@ -65,7 +66,7 @@ export class EventTypesResource {
 	 */
 	get(id: string): ResultAsync<EventTypeResponse, SdkError> {
 		return this.client.request<EventTypeResponse>((httpClient, headers) =>
-			sdk.getApiAdminEventTypesById({
+			sdk.getApiEventTypesById({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -80,7 +81,7 @@ export class EventTypesResource {
 		data: CreateEventTypeRequest,
 	): ResultAsync<EventTypeResponse, SdkError> {
 		return this.client.request<EventTypeResponse>((httpClient, headers) =>
-			sdk.postApiAdminEventTypes({
+			sdk.postApiEventTypes({
 				client: httpClient,
 				headers,
 				body: data,
@@ -96,7 +97,7 @@ export class EventTypesResource {
 		data: UpdateEventTypeRequest,
 	): ResultAsync<EventTypeResponse, SdkError> {
 		return this.client.request<EventTypeResponse>((httpClient, headers) =>
-			sdk.putApiAdminEventTypesById({
+			sdk.putApiEventTypesById({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -108,12 +109,12 @@ export class EventTypesResource {
 	/**
 	 * Add a schema version to an event type.
 	 */
-	addSchema(
+	addSchemaVersion(
 		id: string,
-		schema: PostApiAdminEventTypesByIdSchemasData["body"],
+		schema: PostApiEventTypesByIdSchemasData["body"],
 	): ResultAsync<EventTypeResponse, SdkError> {
 		return this.client.request<EventTypeResponse>((httpClient, headers) =>
-			sdk.postApiAdminEventTypesByIdSchemas({
+			sdk.postApiEventTypesByIdSchemas({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -123,11 +124,14 @@ export class EventTypesResource {
 	}
 
 	/**
-	 * Delete an event type.
+	 * Archive (soft-delete) an event type. The server's DELETE on this
+	 * resource is a soft archive — the row is retained with status flipped
+	 * to ARCHIVED. Named `archive` rather than `delete` to make the
+	 * semantics visible (Rust and Laravel SDKs match).
 	 */
-	delete(id: string): ResultAsync<unknown, SdkError> {
+	archive(id: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiAdminEventTypesById({
+			sdk.deleteApiEventTypesById({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -137,17 +141,20 @@ export class EventTypesResource {
 
 	/**
 	 * Sync event types for an application.
+	 *
+	 * Calls `POST /api/applications/{applicationCode}/event-types/sync`.
 	 */
 	sync(
 		applicationCode: string,
-		eventTypes: PostApiAdminEventTypesSyncData["body"]["eventTypes"],
+		eventTypes: PostApiApplicationsByAppCodeEventTypesSyncData["body"]["eventTypes"],
 		removeUnlisted = false,
 	): ResultAsync<SyncEventTypesResponse, SdkError> {
 		return this.client.request<SyncEventTypesResponse>((httpClient, headers) =>
-			sdk.postApiAdminEventTypesSync({
+			sdk.postApiApplicationsByAppCodeEventTypesSync({
 				client: httpClient,
 				headers,
-				body: { applicationCode, eventTypes },
+				path: { app_code: applicationCode },
+				body: { eventTypes },
 				query: { removeUnlisted },
 			}),
 		);

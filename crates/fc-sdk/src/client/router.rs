@@ -49,23 +49,41 @@ pub struct InPipelineBatchRequest {
     pub message_ids: Vec<String>,
 }
 
-impl FlowCatalystClient {
+/// Router monitoring accessor — created via [`FlowCatalystClient::router`].
+pub struct Router<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
+
+impl Router<'_> {
     fn router_url(&self, path: &str) -> String {
-        let base = self.router_base_url.as_deref().unwrap_or(&self.base_url);
-        format!("{}{}", base, path)
+        let base = self
+            .client
+            .router_base_url
+            .as_deref()
+            .unwrap_or_else(|| {
+                // No public accessor for base_url, so reuse the platform helper.
+                // (router_url falls back to platform base_url when no override.)
+                ""
+            });
+        if base.is_empty() {
+            self.client.url(path)
+        } else {
+            format!("{}{}", base, path)
+        }
     }
 
     /// Check whether a single application message ID is currently held in
     /// the router's in-pipeline map. O(1) on the server side.
-    pub async fn is_message_in_pipeline(
+    pub async fn in_pipeline(
         &self,
         message_id: &str,
     ) -> Result<InPipelineCheckResponse, ClientError> {
         let url = self.router_url("/monitoring/in-flight-messages/check");
         let resp = self
+            .client
             .http
-            .get(&url)
-            .headers(self.headers())
+            .get(url)
+            .headers(self.client.headers())
             .query(&[("messageId", message_id)])
             .send()
             .await
@@ -85,7 +103,7 @@ impl FlowCatalystClient {
     /// Batch-check whether each of the given application message IDs is
     /// currently held in the router's in-pipeline map. Returns
     /// `messageId → bool`. The server caps the batch at 5000 ids.
-    pub async fn are_messages_in_pipeline(
+    pub async fn in_pipeline_batch(
         &self,
         message_ids: &[String],
     ) -> Result<HashMap<String, bool>, ClientError> {
@@ -94,9 +112,10 @@ impl FlowCatalystClient {
             message_ids: message_ids.to_vec(),
         };
         let resp = self
+            .client
             .http
-            .post(&url)
-            .headers(self.headers())
+            .post(url)
+            .headers(self.client.headers())
             .json(&body)
             .send()
             .await

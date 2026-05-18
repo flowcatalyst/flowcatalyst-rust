@@ -16,14 +16,13 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::process::entity::Process;
 use crate::process::operations::{
     ArchiveProcessCommand, ArchiveProcessUseCase, CreateProcessCommand, CreateProcessUseCase,
-    DeleteProcessCommand, DeleteProcessUseCase, SyncProcessInput, SyncProcessesCommand,
-    SyncProcessesUseCase, UpdateProcessCommand, UpdateProcessUseCase,
+    DeleteProcessCommand, DeleteProcessUseCase, UpdateProcessCommand, UpdateProcessUseCase,
 };
 use crate::process::repository::ProcessRepository;
 use crate::shared::api_common::{CreatedResponse, PaginationParams};
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseResult};
+use crate::usecase::{ExecutionContext, UseCase};
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -116,44 +115,6 @@ pub struct ProcessesQuery {
     pub search: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncProcessesRequest {
-    pub application_code: String,
-    pub processes: Vec<SyncProcessInputRequest>,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncProcessInputRequest {
-    pub code: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub body: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagram_type: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-}
-
-#[derive(Debug, Default, Deserialize, IntoParams)]
-#[serde(rename_all = "camelCase")]
-#[into_params(parameter_in = Query)]
-pub struct SyncQuery {
-    #[serde(default)]
-    pub remove_unlisted: bool,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncResultResponse {
-    pub created: u32,
-    pub updated: u32,
-    pub deleted: u32,
-}
-
 #[derive(Clone)]
 pub struct ProcessesState {
     pub process_repo: Arc<ProcessRepository>,
@@ -161,7 +122,6 @@ pub struct ProcessesState {
     pub update_use_case: Arc<UpdateProcessUseCase<crate::usecase::PgUnitOfWork>>,
     pub archive_use_case: Arc<ArchiveProcessUseCase<crate::usecase::PgUnitOfWork>>,
     pub delete_use_case: Arc<DeleteProcessUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_use_case: Arc<SyncProcessesUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 #[utoipa::path(
@@ -398,60 +358,11 @@ pub async fn delete_process(
     Ok(StatusCode::NO_CONTENT)
 }
 
-#[utoipa::path(
-    post,
-    path = "/sync",
-    tag = "processes",
-    operation_id = "postApiProcessesSync",
-    params(SyncQuery),
-    request_body = SyncProcessesRequest,
-    responses(
-        (status = 200, description = "Processes synced", body = SyncResultResponse),
-        (status = 400, description = "Validation error")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn sync_processes(
-    State(state): State<ProcessesState>,
-    auth: Authenticated,
-    Query(query): Query<SyncQuery>,
-    Json(req): Json<SyncProcessesRequest>,
-) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_sync_processes(&auth.0)?;
-
-    let command = SyncProcessesCommand {
-        application_code: req.application_code,
-        processes: req
-            .processes
-            .into_iter()
-            .map(|p| SyncProcessInput {
-                code: p.code,
-                name: p.name,
-                description: p.description,
-                body: p.body,
-                diagram_type: p.diagram_type,
-                tags: p.tags,
-            })
-            .collect(),
-        remove_unlisted: query.remove_unlisted,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    match state.sync_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
-            created: event.created,
-            updated: event.updated,
-            deleted: event.deleted,
-        })),
-        UseCaseResult::Failure(err) => Err(err.into()),
-    }
-}
-
 pub fn processes_router(state: ProcessesState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(create_process, list_processes))
         .routes(routes!(get_process, update_process, delete_process))
         .routes(routes!(get_process_by_code))
         .routes(routes!(archive_process))
-        .routes(routes!(sync_processes))
         .with_state(state)
 }

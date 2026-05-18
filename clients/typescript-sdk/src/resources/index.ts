@@ -21,6 +21,7 @@ export {
 	type MyApplicationsResponse,
 } from "./me";
 export { ConnectionsResource } from "./connections";
+export { AuditLogsResource } from "./audit-logs";
 export {
 	ScheduledJobsResource,
 	type ScheduledJob,

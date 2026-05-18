@@ -15,7 +15,6 @@ use utoipa::{IntoParams, ToSchema};
 use crate::dispatch_pool::operations::{
     ArchiveDispatchPoolCommand, ArchiveDispatchPoolUseCase, CreateDispatchPoolCommand,
     CreateDispatchPoolUseCase, DeleteDispatchPoolCommand, DeleteDispatchPoolUseCase,
-    SyncDispatchPoolInput, SyncDispatchPoolsCommand, SyncDispatchPoolsUseCase,
     UpdateDispatchPoolCommand, UpdateDispatchPoolUseCase,
 };
 use crate::shared::api_common::PaginationParams;
@@ -121,53 +120,6 @@ pub struct DispatchPoolListResponse {
     pub total: u32,
 }
 
-/// Sync dispatch pools request (admin)
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncDispatchPoolsRequest {
-    /// Application code
-    pub application_code: String,
-    /// Pools to sync
-    pub pools: Vec<SyncDispatchPoolInputRequest>,
-}
-
-/// A single dispatch pool input for sync
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncDispatchPoolInputRequest {
-    pub code: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Optional. `None` / omitted = concurrency-only (no rate limit).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_limit: Option<u32>,
-    #[serde(default = "default_concurrency")]
-    pub concurrency: u32,
-}
-
-fn default_concurrency() -> u32 {
-    10
-}
-
-/// Sync query parameters
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncDispatchPoolsQuery {
-    /// Remove items not in the sync list
-    #[serde(default)]
-    pub remove_unlisted: bool,
-}
-
-/// Sync result response
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncResultResponse {
-    pub created: u32,
-    pub updated: u32,
-    pub deleted: u32,
-}
-
 /// Dispatch pools service state
 #[derive(Clone)]
 pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
@@ -176,7 +128,6 @@ pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
     pub update_use_case: Arc<UpdateDispatchPoolUseCase<U>>,
     pub archive_use_case: Arc<ArchiveDispatchPoolUseCase<U>>,
     pub delete_use_case: Arc<DeleteDispatchPoolUseCase<U>>,
-    pub sync_use_case: Arc<SyncDispatchPoolsUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 fn parse_status(s: &str) -> Option<DispatchPoolStatus> {
@@ -192,7 +143,7 @@ fn parse_status(s: &str) -> Option<DispatchPoolStatus> {
     post,
     path = "",
     tag = "dispatch-pools",
-    operation_id = "postApiAdminDispatchPools",
+    operation_id = "postApiDispatchPools",
     request_body = CreateDispatchPoolRequest,
     responses(
         (status = 201, description = "Dispatch pool created", body = crate::shared::api_common::CreatedResponse),
@@ -246,7 +197,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "getApiAdminDispatchPoolsById",
+    operation_id = "getApiDispatchPoolsById",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -284,7 +235,7 @@ pub async fn get_dispatch_pool<U: UnitOfWork>(
     get,
     path = "",
     tag = "dispatch-pools",
-    operation_id = "getApiAdminDispatchPools",
+    operation_id = "getApiDispatchPools",
     params(DispatchPoolsQuery),
     responses(
         (status = 200, description = "List of dispatch pools", body = DispatchPoolListResponse)
@@ -348,7 +299,7 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "putApiAdminDispatchPoolsById",
+    operation_id = "putApiDispatchPoolsById",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -405,7 +356,7 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/archive",
     tag = "dispatch-pools",
-    operation_id = "postApiAdminDispatchPoolsByIdArchive",
+    operation_id = "postApiDispatchPoolsByIdArchive",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -460,7 +411,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/suspend",
     tag = "dispatch-pools",
-    operation_id = "postApiAdminDispatchPoolsByIdSuspend",
+    operation_id = "postApiDispatchPoolsByIdSuspend",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -516,7 +467,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     post,
     path = "/{id}/activate",
     tag = "dispatch-pools",
-    operation_id = "postApiAdminDispatchPoolsByIdActivate",
+    operation_id = "postApiDispatchPoolsByIdActivate",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -579,7 +530,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "dispatch-pools",
-    operation_id = "deleteApiAdminDispatchPoolsById",
+    operation_id = "deleteApiDispatchPoolsById",
     params(
         ("id" = String, Path, description = "Dispatch pool ID")
     ),
@@ -605,55 +556,6 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
     }
 }
 
-/// Sync dispatch pools
-#[utoipa::path(
-    post,
-    path = "/sync",
-    tag = "dispatch-pools",
-    operation_id = "postApiAdminDispatchPoolsSync",
-    request_body = SyncDispatchPoolsRequest,
-    responses(
-        (status = 200, description = "Dispatch pools synced", body = SyncResultResponse),
-        (status = 400, description = "Validation error")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn sync_dispatch_pools<U: UnitOfWork>(
-    State(state): State<DispatchPoolsState<U>>,
-    auth: Authenticated,
-    Query(query): Query<SyncDispatchPoolsQuery>,
-    Json(req): Json<SyncDispatchPoolsRequest>,
-) -> Result<Json<SyncResultResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
-
-    let command = SyncDispatchPoolsCommand {
-        application_code: req.application_code,
-        pools: req
-            .pools
-            .into_iter()
-            .map(|p| SyncDispatchPoolInput {
-                code: p.code,
-                name: p.name,
-                description: p.description,
-                rate_limit: p.rate_limit,
-                concurrency: p.concurrency,
-            })
-            .collect(),
-        remove_unlisted: query.remove_unlisted,
-    };
-
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
-
-    match state.sync_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
-            created: event.created,
-            updated: event.updated,
-            deleted: event.deleted,
-        })),
-        UseCaseResult::Failure(err) => Err(err.into()),
-    }
-}
-
 /// Create dispatch pools router
 pub fn dispatch_pools_router<U: UnitOfWork + Clone>(state: DispatchPoolsState<U>) -> Router {
     Router::new()
@@ -670,6 +572,5 @@ pub fn dispatch_pools_router<U: UnitOfWork + Clone>(state: DispatchPoolsState<U>
         .route("/{id}/archive", post(archive_dispatch_pool::<U>))
         .route("/{id}/suspend", post(suspend_dispatch_pool::<U>))
         .route("/{id}/activate", post(activate_dispatch_pool::<U>))
-        .route("/sync", post(sync_dispatch_pools::<U>))
         .with_state(state)
 }

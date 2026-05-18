@@ -227,7 +227,7 @@ fn parse_datetime(s: &str) -> Option<DateTime<Utc>> {
     get,
     path = "/entity-types",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogsEntityTypes",
+    operation_id = "getApiAuditLogsEntityTypes",
     responses(
         (status = 200, description = "List of distinct entity types", body = EntityTypesResponse)
     ),
@@ -249,7 +249,7 @@ pub async fn get_entity_types(
     get,
     path = "/operations",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogsOperations",
+    operation_id = "getApiAuditLogsOperations",
     responses(
         (status = 200, description = "List of distinct operations", body = OperationsResponse)
     ),
@@ -271,7 +271,7 @@ pub async fn get_operations(
     get,
     path = "/{id}",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogsById",
+    operation_id = "getApiAuditLogsById",
     params(
         ("id" = String, Path, description = "Audit log ID")
     ),
@@ -304,7 +304,7 @@ pub async fn get_audit_log(
     get,
     path = "",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogs",
+    operation_id = "getApiAuditLogs",
     params(AuditLogsQuery),
     responses(
         (status = 200, description = "List of audit logs", body = AuditLogListResponse)
@@ -364,7 +364,7 @@ pub async fn list_audit_logs(
     get,
     path = "/entity/{entity_type}/{entity_id}",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogsEntityByEntityTypeByEntityId",
+    operation_id = "getApiAuditLogsEntityByEntityTypeByEntityId",
     params(
         ("entity_type" = String, Path, description = "Entity type"),
         ("entity_id" = String, Path, description = "Entity ID")
@@ -404,7 +404,7 @@ pub async fn get_entity_audit_logs(
     get,
     path = "/principal/{principal_id}",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogsPrincipalByPrincipalId",
+    operation_id = "getApiAuditLogsPrincipalByPrincipalId",
     params(
         ("principal_id" = String, Path, description = "Principal ID")
     ),
@@ -442,7 +442,7 @@ pub async fn get_principal_audit_logs(
     get,
     path = "/recent",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogsRecent",
+    operation_id = "getApiAuditLogsRecent",
     responses(
         (status = 200, description = "Recent audit logs", body = Vec<AuditLogResponse>)
     ),
@@ -468,7 +468,7 @@ pub async fn get_recent_audit_logs(
     get,
     path = "/application-ids",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogsApplicationIds",
+    operation_id = "getApiAuditLogsApplicationIds",
     responses(
         (status = 200, description = "List of distinct application IDs", body = ApplicationIdsResponse)
     ),
@@ -490,7 +490,7 @@ pub async fn get_application_ids(
     get,
     path = "/client-ids",
     tag = "audit-logs",
-    operation_id = "getApiAdminAuditLogsClientIds",
+    operation_id = "getApiAuditLogsClientIds",
     responses(
         (status = 200, description = "List of distinct client IDs", body = ClientIdsResponse)
     ),

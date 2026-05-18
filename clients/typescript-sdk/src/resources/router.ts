@@ -52,8 +52,11 @@ export class RouterResource {
 	 * Check whether a single application message ID is currently held in
 	 * the router's in-pipeline map. O(1) on the server side. Always
 	 * returns 200 — `inPipeline=false` is a normal answer.
+	 *
+	 * Renamed from `isInPipeline` to `inPipeline` so the response field
+	 * (`inPipeline`) and method name line up.
 	 */
-	isInPipeline(
+	inPipeline(
 		messageId: string,
 	): ResultAsync<InPipelineCheckResponse, SdkError> {
 		const url = this.routerUrl(
@@ -67,8 +70,10 @@ export class RouterResource {
 	 * held in the router's in-pipeline map. Returns `messageId → bool`.
 	 * The server caps the batch at `IN_PIPELINE_CHECK_BATCH_LIMIT` ids;
 	 * split larger batches client-side before calling.
+	 *
+	 * Renamed from `areInPipeline`.
 	 */
-	areInPipeline(
+	inPipelineBatch(
 		messageIds: readonly string[],
 	): ResultAsync<InPipelineBatchResponse, SdkError> {
 		const url = this.routerUrl("/monitoring/in-flight-messages/check-batch");

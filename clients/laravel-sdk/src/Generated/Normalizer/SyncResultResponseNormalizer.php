@@ -37,6 +37,13 @@ class SyncResultResponseNormalizer implements DenormalizerInterface, NormalizerI
         if (null === $data || false === \is_array($data)) {
             return $object;
         }
+        if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
+            $object->setApplicationCode($data['applicationCode']);
+            unset($data['applicationCode']);
+        }
+        elseif (\array_key_exists('applicationCode', $data) && $data['applicationCode'] === null) {
+            $object->setApplicationCode(null);
+        }
         if (\array_key_exists('created', $data) && $data['created'] !== null) {
             $object->setCreated($data['created']);
             unset($data['created']);
@@ -51,6 +58,17 @@ class SyncResultResponseNormalizer implements DenormalizerInterface, NormalizerI
         elseif (\array_key_exists('deleted', $data) && $data['deleted'] === null) {
             $object->setDeleted(null);
         }
+        if (\array_key_exists('syncedCodes', $data) && $data['syncedCodes'] !== null) {
+            $values = [];
+            foreach ($data['syncedCodes'] as $value) {
+                $values[] = $value;
+            }
+            $object->setSyncedCodes($values);
+            unset($data['syncedCodes']);
+        }
+        elseif (\array_key_exists('syncedCodes', $data) && $data['syncedCodes'] === null) {
+            $object->setSyncedCodes(null);
+        }
         if (\array_key_exists('updated', $data) && $data['updated'] !== null) {
             $object->setUpdated($data['updated']);
             unset($data['updated']);
@@ -58,9 +76,9 @@ class SyncResultResponseNormalizer implements DenormalizerInterface, NormalizerI
         elseif (\array_key_exists('updated', $data) && $data['updated'] === null) {
             $object->setUpdated(null);
         }
-        foreach ($data as $key => $value) {
+        foreach ($data as $key => $value_1) {
             if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
+                $object[$key] = $value_1;
             }
         }
         return $object;
@@ -68,12 +86,18 @@ class SyncResultResponseNormalizer implements DenormalizerInterface, NormalizerI
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
+        $dataArray['applicationCode'] = $data->getApplicationCode();
         $dataArray['created'] = $data->getCreated();
         $dataArray['deleted'] = $data->getDeleted();
+        $values = [];
+        foreach ($data->getSyncedCodes() as $value) {
+            $values[] = $value;
+        }
+        $dataArray['syncedCodes'] = $values;
         $dataArray['updated'] = $data->getUpdated();
-        foreach ($data as $key => $value) {
+        foreach ($data as $key => $value_1) {
             if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
+                $dataArray[$key] = $value_1;
             }
         }
         return $dataArray;

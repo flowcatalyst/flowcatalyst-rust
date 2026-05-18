@@ -13,6 +13,7 @@ import type { SdkError } from "./errors";
 import { mapHttpStatusToError, httpError, authError } from "./errors";
 
 // Re-export resource classes
+import { AuditLogsResource } from "./resources/audit-logs";
 import { EventTypesResource } from "./resources/event-types";
 import { ProcessesResource } from "./resources/processes";
 import { SubscriptionsResource } from "./resources/subscriptions";
@@ -137,6 +138,7 @@ export class FlowCatalystClient {
 	private _definitions?: DefinitionSynchronizer;
 	private _router?: RouterResource;
 	private _scheduledJobs?: ScheduledJobsResource;
+	private _auditLogs?: AuditLogsResource;
 
 	constructor(config: FlowCatalystConfig) {
 		this.config = {
@@ -249,6 +251,11 @@ export class FlowCatalystClient {
 	/** Scheduled Jobs resource (CRUD + state transitions + history reads). */
 	scheduledJobs(): ScheduledJobsResource {
 		return (this._scheduledJobs ??= new ScheduledJobsResource(this));
+	}
+
+	/** Audit Logs resource (read-only queries against `iam_audit_logs`). */
+	auditLogs(): AuditLogsResource {
+		return (this._auditLogs ??= new AuditLogsResource(this));
 	}
 
 	/**

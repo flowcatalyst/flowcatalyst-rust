@@ -175,10 +175,27 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
             }
         }
 
-        // 2) Insert new CURRENT. Version collisions (same `info.version` synced
-        //    twice with different bodies) surface as a sqlx error — caller bumps
-        //    the version and retries.
-        let version = extract_version(&command.spec, now);
+        // 2) Insert new CURRENT. The `version` column is `UNIQUE (application_id, version)`
+        //    across ALL rows (not just CURRENT), so a repeated `info.version` —
+        //    common for utoipa-generated specs that pin to the crate version —
+        //    would collide with the prior archived row. Disambiguate with the
+        //    synced_at timestamp, the same fallback used when `info.version` is
+        //    missing.
+        let version_candidate = extract_version(&command.spec, now);
+        let version = match self
+            .repo
+            .exists_by_application_and_version(&command.application_id, &version_candidate)
+            .await
+        {
+            Ok(true) => format!("{}+{}", version_candidate, now.format("%Y%m%d%H%M%S")),
+            Ok(false) => version_candidate,
+            Err(e) => {
+                return UseCaseResult::failure(UseCaseError::commit(format!(
+                    "Failed to check OpenAPI version uniqueness: {}",
+                    e
+                )));
+            }
+        };
         let mut new_spec =
             OpenApiSpec::new(&command.application_id, &version, command.spec.clone(), &new_hash)
                 .with_synced_by(Some(ctx.principal_id.clone()));

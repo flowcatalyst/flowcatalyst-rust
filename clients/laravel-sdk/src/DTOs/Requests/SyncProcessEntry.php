@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace FlowCatalyst\DTOs\Requests;
 
 /**
- * One entry in the POST /api/processes/sync payload.
+ * One entry in the POST /api/applications/{appCode}/processes/sync payload.
  *
  * `code` should be the full three-segment code
  * (`{application}:{subdomain}:{processName}`). `body` carries the diagram

@@ -348,7 +348,7 @@ pub struct AuthConfigState {
     post,
     path = "",
     tag = "anchor-domains",
-    operation_id = "postApiAdminAnchorDomains",
+    operation_id = "postApiAnchorDomains",
     request_body = CreateAnchorDomainRequest,
     responses(
         (status = 201, description = "Anchor domain created", body = CreatedResponse),
@@ -394,7 +394,7 @@ pub async fn create_anchor_domain(
     get,
     path = "",
     tag = "anchor-domains",
-    operation_id = "getApiAdminAnchorDomains",
+    operation_id = "getApiAnchorDomains",
     responses(
         (status = 200, description = "List of anchor domains", body = AnchorDomainListResponse)
     ),
@@ -431,7 +431,7 @@ pub async fn list_anchor_domains(
     get,
     path = "/{id}",
     tag = "anchor-domains",
-    operation_id = "getApiAdminAnchorDomainsById",
+    operation_id = "getApiAnchorDomainsById",
     params(
         ("id" = String, Path, description = "Anchor domain ID")
     ),
@@ -480,7 +480,7 @@ pub struct CheckAnchorDomainResponse {
     get,
     path = "/check/{domain}",
     tag = "anchor-domains",
-    operation_id = "getApiAdminAnchorDomainsCheckByDomain",
+    operation_id = "getApiAnchorDomainsCheckByDomain",
     params(
         ("domain" = String, Path, description = "Domain to check")
     ),
@@ -511,7 +511,7 @@ pub async fn check_anchor_domain(
     delete,
     path = "/{id}",
     tag = "anchor-domains",
-    operation_id = "deleteApiAdminAnchorDomainsById",
+    operation_id = "deleteApiAnchorDomainsById",
     params(
         ("id" = String, Path, description = "Anchor domain ID")
     ),
@@ -556,7 +556,7 @@ pub struct UpdateAnchorDomainRequest {
     put,
     path = "/{id}",
     tag = "anchor-domains",
-    operation_id = "putApiAdminAnchorDomainsById",
+    operation_id = "putApiAnchorDomainsById",
     params(
         ("id" = String, Path, description = "Anchor domain ID")
     ),
@@ -600,7 +600,7 @@ pub async fn update_anchor_domain(
     post,
     path = "",
     tag = "auth-configs",
-    operation_id = "postApiAdminAuthConfigs",
+    operation_id = "postApiAuthConfigs",
     request_body = CreateClientAuthConfigRequest,
     responses(
         (status = 201, description = "Client auth config created", body = CreatedResponse),
@@ -656,7 +656,7 @@ pub async fn create_client_auth_config(
     get,
     path = "/{id}",
     tag = "auth-configs",
-    operation_id = "getApiAdminAuthConfigsById",
+    operation_id = "getApiAuthConfigsById",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -687,7 +687,7 @@ pub async fn get_client_auth_config(
     get,
     path = "",
     tag = "auth-configs",
-    operation_id = "getApiAdminAuthConfigs",
+    operation_id = "getApiAuthConfigs",
     responses(
         (status = 200, description = "List of client auth configs", body = AuthConfigListResponse)
     ),
@@ -711,7 +711,7 @@ pub async fn list_client_auth_configs(
     put,
     path = "/{id}",
     tag = "auth-configs",
-    operation_id = "putApiAdminAuthConfigsById",
+    operation_id = "putApiAuthConfigsById",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -759,7 +759,7 @@ pub async fn update_client_auth_config(
     delete,
     path = "/{id}",
     tag = "auth-configs",
-    operation_id = "deleteApiAdminAuthConfigsById",
+    operation_id = "deleteApiAuthConfigsById",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -802,7 +802,7 @@ pub struct UpdateConfigTypeRequest {
     put,
     path = "/{id}/config-type",
     tag = "auth-configs",
-    operation_id = "putApiAdminAuthConfigsByIdConfigType",
+    operation_id = "putApiAuthConfigsByIdConfigType",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -850,7 +850,7 @@ pub async fn update_config_type(
     get,
     path = "/by-domain/{domain}",
     tag = "auth-configs",
-    operation_id = "getApiAdminAuthConfigsByDomainByDomain",
+    operation_id = "getApiAuthConfigsByDomainByDomain",
     params(
         ("domain" = String, Path, description = "Email domain")
     ),
@@ -881,7 +881,7 @@ pub async fn get_by_domain(
     post,
     path = "/internal",
     tag = "auth-configs",
-    operation_id = "postApiAdminAuthConfigsInternal",
+    operation_id = "postApiAuthConfigsInternal",
     request_body = CreateInternalAuthConfigRequest,
     responses(
         (status = 201, description = "Internal auth config created", body = CreatedResponse),
@@ -932,7 +932,7 @@ pub async fn create_internal_auth_config(
     post,
     path = "/oidc",
     tag = "auth-configs",
-    operation_id = "postApiAdminAuthConfigsOidc",
+    operation_id = "postApiAuthConfigsOidc",
     request_body = CreateOidcAuthConfigRequest,
     responses(
         (status = 201, description = "OIDC auth config created", body = CreatedResponse),
@@ -983,7 +983,7 @@ pub async fn create_oidc_auth_config(
     put,
     path = "/{id}/oidc",
     tag = "auth-configs",
-    operation_id = "putApiAdminAuthConfigsByIdOidc",
+    operation_id = "putApiAuthConfigsByIdOidc",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -1031,7 +1031,7 @@ pub async fn update_oidc_config(
     put,
     path = "/{id}/client-binding",
     tag = "auth-configs",
-    operation_id = "putApiAdminAuthConfigsByIdClientBinding",
+    operation_id = "putApiAuthConfigsByIdClientBinding",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -1079,7 +1079,7 @@ pub async fn update_client_binding(
     put,
     path = "/{id}/additional-clients",
     tag = "auth-configs",
-    operation_id = "putApiAdminAuthConfigsByIdAdditionalClients",
+    operation_id = "putApiAuthConfigsByIdAdditionalClients",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -1127,7 +1127,7 @@ pub async fn update_additional_clients(
     put,
     path = "/{id}/granted-clients",
     tag = "auth-configs",
-    operation_id = "putApiAdminAuthConfigsByIdGrantedClients",
+    operation_id = "putApiAuthConfigsByIdGrantedClients",
     params(
         ("id" = String, Path, description = "Client auth config ID")
     ),
@@ -1175,7 +1175,7 @@ pub async fn update_granted_clients(
     post,
     path = "/validate-secret",
     tag = "auth-configs",
-    operation_id = "postApiAdminAuthConfigsValidateSecret",
+    operation_id = "postApiAuthConfigsValidateSecret",
     request_body = ValidateSecretRequest,
     responses(
         (status = 200, description = "Secret validation result", body = ValidateSecretResponse)
@@ -1212,7 +1212,7 @@ pub async fn validate_secret(
     post,
     path = "",
     tag = "idp-role-mappings",
-    operation_id = "postApiAdminIdpRoleMappings",
+    operation_id = "postApiIdpRoleMappings",
     request_body = CreateIdpRoleMappingRequest,
     responses(
         (status = 201, description = "IDP role mapping created", body = CreatedResponse),
@@ -1266,7 +1266,7 @@ pub struct IdpRoleMappingQuery {
     get,
     path = "",
     tag = "idp-role-mappings",
-    operation_id = "getApiAdminIdpRoleMappings",
+    operation_id = "getApiIdpRoleMappings",
     params(IdpRoleMappingQuery),
     responses(
         (status = 200, description = "List of IDP role mappings", body = IdpRoleMappingListResponse)
@@ -1300,7 +1300,7 @@ pub async fn list_idp_role_mappings(
     delete,
     path = "/{id}",
     tag = "idp-role-mappings",
-    operation_id = "deleteApiAdminIdpRoleMappingsById",
+    operation_id = "deleteApiIdpRoleMappingsById",
     params(
         ("id" = String, Path, description = "IDP role mapping ID")
     ),

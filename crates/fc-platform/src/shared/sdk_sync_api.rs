@@ -1,16 +1,17 @@
 //! SDK Sync API — application-scoped sync endpoints
 //!
 //! Provides sync routes scoped under /api/applications/:appCode for
-//! roles, event types, subscriptions, dispatch pools, and principals.
+//! roles, event types, subscriptions, dispatch pools, principals,
+//! scheduled jobs, processes, and OpenAPI specs.
 
 use axum::{
     extract::{Path, Query, State},
-    routing::post,
-    Json, Router,
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
+use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application::repository::ApplicationRepository;
 use crate::application_openapi_spec::operations::{
@@ -24,6 +25,9 @@ use crate::event_type::operations::{
 };
 use crate::principal::operations::{
     SyncPrincipalInput, SyncPrincipalsCommand, SyncPrincipalsUseCase,
+};
+use crate::process::operations::{
+    SyncProcessInput, SyncProcessesCommand, SyncProcessesUseCase,
 };
 use crate::role::operations::{SyncRoleInput, SyncRolesCommand, SyncRolesUseCase};
 use crate::scheduled_job::operations::{
@@ -184,6 +188,35 @@ fn default_concurrency() -> u32 {
 }
 
 // ---------------------------------------------------------------------------
+// Processes sync
+// ---------------------------------------------------------------------------
+
+/// Sync processes request body
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProcessesRequest {
+    pub processes: Vec<SyncProcessInputRequest>,
+}
+
+/// A single process input for sync
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProcessInputRequest {
+    /// Full code (application:subdomain:process-name)
+    pub code: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Diagram body (typically Mermaid source).
+    #[serde(default)]
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_type: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Principals sync
 // ---------------------------------------------------------------------------
 
@@ -226,6 +259,7 @@ pub struct SdkSyncState {
     pub sync_subscriptions_use_case: Arc<SyncSubscriptionsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_dispatch_pools_use_case: Arc<SyncDispatchPoolsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_principals_use_case: Arc<SyncPrincipalsUseCase<crate::usecase::PgUnitOfWork>>,
+    pub sync_processes_use_case: Arc<SyncProcessesUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_scheduled_jobs_use_case: Arc<SyncScheduledJobsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<crate::usecase::PgUnitOfWork>>,
     pub application_repo: Arc<ApplicationRepository>,
@@ -297,7 +331,7 @@ pub struct SyncScheduledJobsResultResponse {
     operation_id = "postApiApplicationsByAppCodeRolesSync",
     params(
         ("app_code" = String, Path, description = "Application code"),
-        ("remove_unlisted" = Option<bool>, Query, description = "Remove SDK roles not in list")
+        ("removeUnlisted" = Option<bool>, Query, description = "Remove SDK roles not in list")
     ),
     request_body = SyncRolesRequest,
     responses(
@@ -314,6 +348,8 @@ async fn sync_roles(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncRolesRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_sync_roles(&auth.0)?;
+
     let command = SyncRolesCommand {
         application_code: app_code,
         roles: req
@@ -352,7 +388,7 @@ async fn sync_roles(
     operation_id = "postApiApplicationsByAppCodeEventTypesSync",
     params(
         ("app_code" = String, Path, description = "Application code"),
-        ("remove_unlisted" = Option<bool>, Query, description = "Remove API-sourced event types not in list")
+        ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced event types not in list")
     ),
     request_body = SyncEventTypesRequest,
     responses(
@@ -368,6 +404,8 @@ async fn sync_event_types(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncEventTypesRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_sync_event_types(&auth.0)?;
+
     let command = SyncEventTypesCommand {
         application_code: app_code,
         event_types: req
@@ -405,7 +443,7 @@ async fn sync_event_types(
     operation_id = "postApiApplicationsByAppCodeSubscriptionsSync",
     params(
         ("app_code" = String, Path, description = "Application code"),
-        ("remove_unlisted" = Option<bool>, Query, description = "Remove API-sourced subscriptions not in list")
+        ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced subscriptions not in list")
     ),
     request_body = SyncSubscriptionsRequest,
     responses(
@@ -422,6 +460,8 @@ async fn sync_subscriptions(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncSubscriptionsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_sync_subscriptions(&auth.0)?;
+
     let command = SyncSubscriptionsCommand {
         application_code: app_code,
         subscriptions: req
@@ -473,7 +513,7 @@ async fn sync_subscriptions(
     operation_id = "postApiApplicationsByAppCodeDispatchPoolsSync",
     params(
         ("app_code" = String, Path, description = "Application code"),
-        ("remove_unlisted" = Option<bool>, Query, description = "Archive pools not in list")
+        ("removeUnlisted" = Option<bool>, Query, description = "Archive pools not in list")
     ),
     request_body = SyncDispatchPoolsRequest,
     responses(
@@ -489,6 +529,8 @@ async fn sync_dispatch_pools(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncDispatchPoolsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_sync_dispatch_pools(&auth.0)?;
+
     let command = SyncDispatchPoolsCommand {
         application_code: app_code,
         pools: req
@@ -527,7 +569,7 @@ async fn sync_dispatch_pools(
     operation_id = "postApiApplicationsByAppCodePrincipalsSync",
     params(
         ("app_code" = String, Path, description = "Application code"),
-        ("remove_unlisted" = Option<bool>, Query, description = "Remove SDK_SYNC roles from unlisted principals")
+        ("removeUnlisted" = Option<bool>, Query, description = "Remove SDK_SYNC roles from unlisted principals")
     ),
     request_body = SyncPrincipalsRequest,
     responses(
@@ -544,6 +586,8 @@ async fn sync_principals(
     Query(query): Query<SyncQuery>,
     Json(req): Json<SyncPrincipalsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_sync_principals(&auth.0)?;
+
     let command = SyncPrincipalsCommand {
         application_code: app_code,
         principals: req
@@ -650,6 +694,63 @@ async fn sync_scheduled_jobs(
             created: event.created,
             updated: event.updated,
             archived: event.archived,
+        })),
+        UseCaseResult::Failure(err) => Err(err.into()),
+    }
+}
+
+/// Sync processes for an application
+#[utoipa::path(
+    post,
+    path = "/{app_code}/processes/sync",
+    tag = "sdk-sync",
+    operation_id = "postApiApplicationsByAppCodeProcessesSync",
+    params(
+        ("app_code" = String, Path, description = "Application code"),
+        ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced processes not in list")
+    ),
+    request_body = SyncProcessesRequest,
+    responses(
+        (status = 200, description = "Processes synced", body = SyncResultResponse),
+        (status = 400, description = "Validation error")
+    ),
+    security(("bearer_auth" = []))
+)]
+async fn sync_processes(
+    State(state): State<SdkSyncState>,
+    auth: Authenticated,
+    Path(app_code): Path<String>,
+    Query(query): Query<SyncQuery>,
+    Json(req): Json<SyncProcessesRequest>,
+) -> Result<Json<SyncResultResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_sync_processes(&auth.0)?;
+
+    let command = SyncProcessesCommand {
+        application_code: app_code,
+        processes: req
+            .processes
+            .into_iter()
+            .map(|p| SyncProcessInput {
+                code: p.code,
+                name: p.name,
+                description: p.description,
+                body: p.body,
+                diagram_type: p.diagram_type,
+                tags: p.tags,
+            })
+            .collect(),
+        remove_unlisted: query.remove_unlisted,
+    };
+
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+
+    match state.sync_processes_use_case.run(command, ctx).await {
+        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
+            application_code: event.application_code,
+            created: event.created,
+            updated: event.updated,
+            deleted: event.deleted,
+            synced_codes: event.synced_codes,
         })),
         UseCaseResult::Failure(err) => Err(err.into()),
     }
@@ -774,15 +875,18 @@ async fn sync_openapi(
 /// - POST /{app_code}/subscriptions/sync
 /// - POST /{app_code}/dispatch-pools/sync
 /// - POST /{app_code}/principals/sync
+/// - POST /{app_code}/processes/sync
 /// - POST /{app_code}/scheduled-jobs/sync
-pub fn sdk_sync_router(state: SdkSyncState) -> Router {
-    Router::new()
-        .route("/{app_code}/roles/sync", post(sync_roles))
-        .route("/{app_code}/event-types/sync", post(sync_event_types))
-        .route("/{app_code}/subscriptions/sync", post(sync_subscriptions))
-        .route("/{app_code}/dispatch-pools/sync", post(sync_dispatch_pools))
-        .route("/{app_code}/principals/sync", post(sync_principals))
-        .route("/{app_code}/scheduled-jobs/sync", post(sync_scheduled_jobs))
-        .route("/{app_code}/openapi/sync", post(sync_openapi))
+/// - POST /{app_code}/openapi/sync
+pub fn sdk_sync_router(state: SdkSyncState) -> OpenApiRouter {
+    OpenApiRouter::new()
+        .routes(routes!(sync_roles))
+        .routes(routes!(sync_event_types))
+        .routes(routes!(sync_subscriptions))
+        .routes(routes!(sync_dispatch_pools))
+        .routes(routes!(sync_principals))
+        .routes(routes!(sync_processes))
+        .routes(routes!(sync_scheduled_jobs))
+        .routes(routes!(sync_openapi))
         .with_state(state)
 }

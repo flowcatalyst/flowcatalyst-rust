@@ -60,12 +60,42 @@ pub struct DispatchPoolResponse {
     pub updated_at: String,
 }
 
-impl FlowCatalystClient {
+/// Request body for the per-resource sync endpoint.
+///
+/// The platform's app-scoped endpoint expects `{ pools: [...] }`, NOT
+/// `{ dispatchPools: [...] }` (see `shared/sdk_sync_api.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDispatchPoolsRequest {
+    pub pools: Vec<SyncDispatchPoolItem>,
+}
+
+/// A dispatch pool item for sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncDispatchPoolItem {
+    pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<u32>,
+    /// Messages per minute. The backend's camelCase field is `rateLimit`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Dispatch pools resource accessor — created via [`FlowCatalystClient::dispatch_pools`].
+pub struct DispatchPools<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
+
+impl DispatchPools<'_> {
     /// List dispatch pools with optional filters.
     ///
-    /// The platform returns a bare JSON array for this endpoint — no
-    /// `{ pools, total }` envelope. No total count available.
-    pub async fn list_dispatch_pools(
+    /// The platform returns a bare JSON array — no `{ pools, total }` envelope.
+    pub async fn list(
         &self,
         filters: &DispatchPoolFilters,
     ) -> Result<Vec<DispatchPoolResponse>, ClientError> {
@@ -81,52 +111,87 @@ impl FlowCatalystClient {
         } else {
             format!("?{}", params.join("&"))
         };
-        self.get(&format!("/api/dispatch-pools{}", query)).await
+        self.client
+            .get(&format!("/api/dispatch-pools{}", query))
+            .await
     }
 
     /// Get a dispatch pool by ID.
-    pub async fn get_dispatch_pool(&self, id: &str) -> Result<DispatchPoolResponse, ClientError> {
-        self.get(&format!("/api/dispatch-pools/{}", id)).await
+    pub async fn get(&self, id: &str) -> Result<DispatchPoolResponse, ClientError> {
+        self.client
+            .get(&format!("/api/dispatch-pools/{}", id))
+            .await
     }
 
     /// Create a new dispatch pool.
-    pub async fn create_dispatch_pool(
+    pub async fn create(
         &self,
         req: &CreateDispatchPoolRequest,
     ) -> Result<DispatchPoolResponse, ClientError> {
-        self.post("/api/dispatch-pools", req).await
+        self.client.post("/api/dispatch-pools", req).await
     }
 
     /// Update a dispatch pool.
-    pub async fn update_dispatch_pool(
+    pub async fn update(
         &self,
         id: &str,
         req: &UpdateDispatchPoolRequest,
     ) -> Result<DispatchPoolResponse, ClientError> {
-        self.put(&format!("/api/dispatch-pools/{}", id), req).await
+        self.client
+            .put(&format!("/api/dispatch-pools/{}", id), req)
+            .await
     }
 
-    /// Delete a dispatch pool.
-    pub async fn delete_dispatch_pool(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/dispatch-pools/{}", id))
+    /// Hard-delete a dispatch pool.
+    pub async fn delete(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .delete_req(&format!("/api/dispatch-pools/{}", id))
+            .await
+    }
+
+    /// Archive (soft-delete) a dispatch pool. The row is kept; status flips
+    /// to ARCHIVED.
+    pub async fn archive(&self, id: &str) -> Result<DispatchPoolResponse, ClientError> {
+        self.client
+            .post_action(&format!("/api/dispatch-pools/{}/archive", id))
             .await
     }
 
     /// Suspend a dispatch pool.
-    pub async fn suspend_dispatch_pool(
-        &self,
-        id: &str,
-    ) -> Result<DispatchPoolResponse, ClientError> {
-        self.post_action(&format!("/api/dispatch-pools/{}/suspend", id))
+    pub async fn suspend(&self, id: &str) -> Result<DispatchPoolResponse, ClientError> {
+        self.client
+            .post_action(&format!("/api/dispatch-pools/{}/suspend", id))
             .await
     }
 
     /// Activate a dispatch pool.
-    pub async fn activate_dispatch_pool(
+    pub async fn activate(&self, id: &str) -> Result<DispatchPoolResponse, ClientError> {
+        self.client
+            .post_action(&format!("/api/dispatch-pools/{}/activate", id))
+            .await
+    }
+
+    /// Sync dispatch pools for an application — declarative reconciliation
+    /// against `POST /api/applications/{app_code}/dispatch-pools/sync`.
+    pub async fn sync(
         &self,
-        id: &str,
-    ) -> Result<DispatchPoolResponse, ClientError> {
-        self.post_action(&format!("/api/dispatch-pools/{}/activate", id))
+        app_code: &str,
+        req: &SyncDispatchPoolsRequest,
+        remove_unlisted: bool,
+    ) -> Result<crate::client::SyncResult, ClientError> {
+        let query = if remove_unlisted {
+            "?removeUnlisted=true"
+        } else {
+            ""
+        };
+        self.client
+            .post(
+                &format!(
+                    "/api/applications/{}/dispatch-pools/sync{}",
+                    app_code, query
+                ),
+                req,
+            )
             .await
     }
 }

@@ -104,7 +104,7 @@ pub struct PlatformConfigState {
     get,
     path = "/{app_code}",
     tag = "platform-config",
-    operation_id = "getApiAdminConfigByAppCode",
+    operation_id = "getApiConfigByAppCode",
     params(
         ("app_code" = String, Path, description = "Application code"),
         ("scope" = Option<String>, Query, description = "Config scope filter"),
@@ -139,7 +139,7 @@ pub async fn list_configs(
     get,
     path = "/{app_code}/{section}",
     tag = "platform-config",
-    operation_id = "getApiAdminConfigByAppCodeBySection",
+    operation_id = "getApiConfigByAppCodeBySection",
     params(
         ("app_code" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Config section"),
@@ -185,7 +185,7 @@ pub async fn get_section(
     get,
     path = "/{app_code}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "getApiAdminConfigByAppCodeBySectionByProperty",
+    operation_id = "getApiConfigByAppCodeBySectionByProperty",
     params(
         ("app_code" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Config section"),
@@ -239,7 +239,7 @@ pub async fn get_property(
     put,
     path = "/{app_code}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "putApiAdminConfigByAppCodeBySectionByProperty",
+    operation_id = "putApiConfigByAppCodeBySectionByProperty",
     params(
         ("app_code" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Config section"),
@@ -309,7 +309,7 @@ pub async fn set_property(
     delete,
     path = "/{app_code}/{section}/{property}",
     tag = "platform-config",
-    operation_id = "deleteApiAdminConfigByAppCodeBySectionByProperty",
+    operation_id = "deleteApiConfigByAppCodeBySectionByProperty",
     params(
         ("app_code" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Config section"),

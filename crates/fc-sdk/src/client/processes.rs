@@ -94,47 +94,41 @@ pub struct SyncProcessInput {
     pub tags: Vec<String>,
 }
 
-/// Request body for `POST /api/processes/sync`.
+/// Request body for the per-resource sync endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncProcessesRequest {
-    pub application_code: String,
     pub processes: Vec<SyncProcessInput>,
 }
 
-/// Result of a sync operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncProcessesResponse {
-    pub created: u32,
-    pub updated: u32,
-    pub deleted: u32,
+/// Processes resource accessor — created via [`FlowCatalystClient::processes`].
+pub struct Processes<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
 }
 
-impl FlowCatalystClient {
+impl Processes<'_> {
     /// Create a new process.
-    pub async fn create_process(
+    pub async fn create(
         &self,
         req: &CreateProcessRequest,
     ) -> Result<ProcessResponse, ClientError> {
-        self.post("/api/processes", req).await
+        self.client.post("/api/processes", req).await
     }
 
     /// Get a process by ID.
-    pub async fn get_process(&self, id: &str) -> Result<ProcessResponse, ClientError> {
-        self.get(&format!("/api/processes/{}", id)).await
+    pub async fn get(&self, id: &str) -> Result<ProcessResponse, ClientError> {
+        self.client.get(&format!("/api/processes/{}", id)).await
     }
 
     /// Get a process by code.
-    pub async fn get_process_by_code(
-        &self,
-        code: &str,
-    ) -> Result<ProcessResponse, ClientError> {
-        self.get(&format!("/api/processes/by-code/{}", code)).await
+    pub async fn get_by_code(&self, code: &str) -> Result<ProcessResponse, ClientError> {
+        self.client
+            .get(&format!("/api/processes/by-code/{}", code))
+            .await
     }
 
     /// List processes with optional filters.
-    pub async fn list_processes(
+    pub async fn list(
         &self,
         application: Option<&str>,
         subdomain: Option<&str>,
@@ -159,50 +153,58 @@ impl FlowCatalystClient {
         } else {
             format!("?{}", params.join("&"))
         };
-        self.get(&format!("/api/processes{}", query)).await
+        self.client.get(&format!("/api/processes{}", query)).await
     }
 
     /// Update a process. The platform returns 204 No Content on success.
-    pub async fn update_process(
+    pub async fn update(
         &self,
         id: &str,
         req: &UpdateProcessRequest,
     ) -> Result<(), ClientError> {
-        self.put_empty(&format!("/api/processes/{}", id), req).await
+        self.client
+            .put_empty(&format!("/api/processes/{}", id), req)
+            .await
     }
 
-    /// Archive (soft-delete) a process. Distinct from `delete_process`,
-    /// which hard-deletes — and which the platform only permits on
-    /// already-archived processes.
-    pub async fn archive_process(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/processes/{}/archive", id))
+    /// Archive (soft-delete) a process. Distinct from `delete`, which
+    /// hard-deletes — and which the platform only permits on already-archived
+    /// processes.
+    pub async fn archive(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .post_empty(&format!("/api/processes/{}/archive", id))
             .await
     }
 
     /// Hard-delete an archived process.
-    pub async fn delete_process(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/processes/{}", id)).await
+    pub async fn delete(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .delete_req(&format!("/api/processes/{}", id))
+            .await
     }
 
-    /// Sync processes for an application.
+    /// Sync processes for an application — declarative reconciliation
+    /// against `POST /api/applications/{app_code}/processes/sync`.
     ///
     /// `remove_unlisted` removes API/CODE-sourced processes not in the
     /// list. UI-sourced processes are never touched.
-    pub async fn sync_processes(
+    pub async fn sync(
         &self,
-        application_code: &str,
+        app_code: &str,
         processes: Vec<SyncProcessInput>,
         remove_unlisted: bool,
-    ) -> Result<SyncProcessesResponse, ClientError> {
-        let path = if remove_unlisted {
-            "/api/processes/sync?removeUnlisted=true".to_string()
+    ) -> Result<crate::client::SyncResult, ClientError> {
+        let query = if remove_unlisted {
+            "?removeUnlisted=true"
         } else {
-            "/api/processes/sync".to_string()
+            ""
         };
-        let req = SyncProcessesRequest {
-            application_code: application_code.to_string(),
-            processes,
-        };
-        self.post(&path, &req).await
+        let req = SyncProcessesRequest { processes };
+        self.client
+            .post(
+                &format!("/api/applications/{}/processes/sync{}", app_code, query),
+                &req,
+            )
+            .await
     }
 }

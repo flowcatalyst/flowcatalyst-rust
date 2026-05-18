@@ -53,7 +53,7 @@ class Router
      *
      * @throws FlowCatalystException
      */
-    public function isInPipeline(string $messageId): array
+    public function inPipeline(string $messageId): array
     {
         try {
             $response = $this->http()->get('/monitoring/in-flight-messages/check', [
@@ -92,7 +92,7 @@ class Router
      *
      * @throws FlowCatalystException
      */
-    public function areInPipeline(array $messageIds): array
+    public function inPipelineBatch(array $messageIds): array
     {
         try {
             $response = $this->http()->post(

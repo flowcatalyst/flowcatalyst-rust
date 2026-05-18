@@ -73,7 +73,7 @@ pub struct ConfigAccessState {
     get,
     path = "/{app_code}",
     tag = "config-access",
-    operation_id = "getApiAdminConfigAccessByAppCode",
+    operation_id = "getApiConfigAccessByAppCode",
     params(
         ("app_code" = String, Path, description = "Application code")
     ),
@@ -98,7 +98,7 @@ pub async fn list_access(
     post,
     path = "/{app_code}",
     tag = "config-access",
-    operation_id = "postApiAdminConfigAccessByAppCode",
+    operation_id = "postApiConfigAccessByAppCode",
     params(
         ("app_code" = String, Path, description = "Application code")
     ),
@@ -157,7 +157,7 @@ pub async fn create_access(
     put,
     path = "/{app_code}/{role_code}",
     tag = "config-access",
-    operation_id = "putApiAdminConfigAccessByAppCodeByRoleCode",
+    operation_id = "putApiConfigAccessByAppCodeByRoleCode",
     params(
         ("app_code" = String, Path, description = "Application code"),
         ("role_code" = String, Path, description = "Role code")
@@ -217,7 +217,7 @@ pub async fn update_access(
     delete,
     path = "/{app_code}/{role_code}",
     tag = "config-access",
-    operation_id = "deleteApiAdminConfigAccessByAppCodeByRoleCode",
+    operation_id = "deleteApiConfigAccessByAppCodeByRoleCode",
     params(
         ("app_code" = String, Path, description = "Application code"),
         ("role_code" = String, Path, description = "Role code")

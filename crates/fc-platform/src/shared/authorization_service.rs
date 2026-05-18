@@ -649,6 +649,87 @@ pub mod checks {
             Err(PlatformError::forbidden("Cannot sync scheduled jobs"))
         }
     }
+
+    // ── App-scoped SDK sync checks ─────────────────────────────────────────
+    //
+    // These guard the `/api/applications/{app_code}/{resource}/sync` handlers.
+    // They admit both admin-tier callers (messaging-admin, ADMIN_ALL) and
+    // application-service service accounts where an app-service permission
+    // exists for the resource. Per-application scope is verified inside the
+    // use case (the app_code in the URL is the partition key).
+
+    pub fn can_sync_event_types(context: &AuthContext) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::admin::EVENT_TYPE_SYNC,
+            permissions::admin::EVENT_TYPE_MANAGE,
+            permissions::application_service::EVENT_TYPE_CREATE,
+            permissions::application_service::EVENT_TYPE_UPDATE,
+            permissions::application_service::EVENT_TYPE_DELETE,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot sync event types"))
+        }
+    }
+
+    pub fn can_sync_subscriptions(context: &AuthContext) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::admin::SUBSCRIPTION_SYNC,
+            permissions::admin::SUBSCRIPTION_MANAGE,
+            permissions::application_service::SUBSCRIPTION_CREATE,
+            permissions::application_service::SUBSCRIPTION_UPDATE,
+            permissions::application_service::SUBSCRIPTION_DELETE,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot sync subscriptions"))
+        }
+    }
+
+    pub fn can_sync_roles(context: &AuthContext) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::iam::ROLE_MANAGE,
+            permissions::iam::ROLE_CREATE,
+            permissions::iam::ROLE_UPDATE,
+            permissions::iam::ROLE_DELETE,
+            permissions::application_service::ROLE_CREATE,
+            permissions::application_service::ROLE_UPDATE,
+            permissions::application_service::ROLE_DELETE,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot sync roles"))
+        }
+    }
+
+    /// Dispatch-pool sync is admin-tier only — no application-service
+    /// permission exists for dispatch pools today.
+    pub fn can_sync_dispatch_pools(context: &AuthContext) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::admin::DISPATCH_POOL_SYNC,
+            permissions::admin::DISPATCH_POOL_MANAGE,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot sync dispatch pools"))
+        }
+    }
+
+    /// Principal sync is admin-tier only — no application-service
+    /// permission exists for users today.
+    pub fn can_sync_principals(context: &AuthContext) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::iam::USER_MANAGE,
+            permissions::iam::USER_CREATE,
+            permissions::iam::USER_UPDATE,
+            permissions::iam::USER_DELETE,
+            permissions::iam::USER_ASSIGN_ROLES,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot sync principals"))
+        }
+    }
 }
 
 #[cfg(test)]

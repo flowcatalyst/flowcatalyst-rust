@@ -69,25 +69,29 @@ pub struct ConnectionResponse {
     pub updated_at: String,
 }
 
-impl FlowCatalystClient {
+/// Connections resource accessor — created via [`FlowCatalystClient::connections`].
+pub struct Connections<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
+
+impl Connections<'_> {
     /// Create a new connection.
     ///
-    /// Returns `{ id }` only. Call `get_connection(&id)` if you need the
-    /// full record.
-    pub async fn create_connection(
+    /// Returns `{ id }` only. Call `get(&id)` if you need the full record.
+    pub async fn create(
         &self,
         req: &CreateConnectionRequest,
     ) -> Result<CreatedResponse, ClientError> {
-        self.post("/api/connections", req).await
+        self.client.post("/api/connections", req).await
     }
 
-    /// Get a connection by ID
-    pub async fn get_connection(&self, id: &str) -> Result<ConnectionResponse, ClientError> {
-        self.get(&format!("/api/connections/{}", id)).await
+    /// Get a connection by ID.
+    pub async fn get(&self, id: &str) -> Result<ConnectionResponse, ClientError> {
+        self.client.get(&format!("/api/connections/{}", id)).await
     }
 
-    /// List connections with optional filters
-    pub async fn list_connections(
+    /// List connections with optional filters.
+    pub async fn list(
         &self,
         client_id: Option<&str>,
         status: Option<&str>,
@@ -107,32 +111,40 @@ impl FlowCatalystClient {
         if !params.is_empty() {
             query = format!("?{}", params.join("&"));
         }
-        self.get(&format!("/api/connections{}", query)).await
+        self.client
+            .get(&format!("/api/connections{}", query))
+            .await
     }
 
-    /// Update a connection
-    pub async fn update_connection(
+    /// Update a connection.
+    pub async fn update(
         &self,
         id: &str,
         req: &UpdateConnectionRequest,
     ) -> Result<(), ClientError> {
-        self.put(&format!("/api/connections/{}", id), req).await
-    }
-
-    /// Delete a connection
-    pub async fn delete_connection(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/connections/{}", id)).await
-    }
-
-    /// Pause a connection
-    pub async fn pause_connection(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/connections/{}/pause", id))
+        self.client
+            .put(&format!("/api/connections/{}", id), req)
             .await
     }
 
-    /// Activate a connection
-    pub async fn activate_connection(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/connections/{}/activate", id))
+    /// Delete a connection.
+    pub async fn delete(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .delete_req(&format!("/api/connections/{}", id))
+            .await
+    }
+
+    /// Pause a connection.
+    pub async fn pause(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .post_empty(&format!("/api/connections/{}/pause", id))
+            .await
+    }
+
+    /// Activate a connection.
+    pub async fn activate(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .post_empty(&format!("/api/connections/{}/activate", id))
             .await
     }
 }

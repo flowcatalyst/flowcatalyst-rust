@@ -147,22 +147,68 @@ pub struct SubscriptionResponse {
     pub updated_at: String,
 }
 
-impl FlowCatalystClient {
+/// Request body for the per-resource sync endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSubscriptionsRequest {
+    pub subscriptions: Vec<SyncSubscriptionItem>,
+}
+
+/// A subscription item for sync — matches platform's SyncSubscriptionInput.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSubscriptionItem {
+    pub code: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Webhook endpoint URL
+    pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+    pub event_types: Vec<SyncEventTypeBinding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_pool_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
+    #[serde(default)]
+    pub data_only: bool,
+}
+
+/// Event type binding for subscription sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncEventTypeBinding {
+    pub event_type_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+}
+
+/// Subscriptions resource accessor — created via [`FlowCatalystClient::subscriptions`].
+pub struct Subscriptions<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
+
+impl Subscriptions<'_> {
     /// Create a new subscription.
-    pub async fn create_subscription(
+    pub async fn create(
         &self,
         req: &CreateSubscriptionRequest,
     ) -> Result<SubscriptionResponse, ClientError> {
-        self.post("/api/subscriptions", req).await
+        self.client.post("/api/subscriptions", req).await
     }
 
     /// Get a subscription by ID.
-    pub async fn get_subscription(&self, id: &str) -> Result<SubscriptionResponse, ClientError> {
-        self.get(&format!("/api/subscriptions/{}", id)).await
+    pub async fn get(&self, id: &str) -> Result<SubscriptionResponse, ClientError> {
+        self.client.get(&format!("/api/subscriptions/{}", id)).await
     }
 
     /// List subscriptions with optional filters.
-    pub async fn list_subscriptions(
+    pub async fn list(
         &self,
         client_id: Option<&str>,
         status: Option<&str>,
@@ -181,32 +227,64 @@ impl FlowCatalystClient {
             format!("?{}", params.join("&"))
         };
 
-        self.get(&format!("/api/subscriptions{}", query)).await
+        self.client
+            .get(&format!("/api/subscriptions{}", query))
+            .await
     }
 
     /// Update a subscription.
-    pub async fn update_subscription(
+    pub async fn update(
         &self,
         id: &str,
         req: &UpdateSubscriptionRequest,
     ) -> Result<SubscriptionResponse, ClientError> {
-        self.put(&format!("/api/subscriptions/{}", id), req).await
+        self.client
+            .put(&format!("/api/subscriptions/{}", id), req)
+            .await
     }
 
     /// Pause a subscription.
-    pub async fn pause_subscription(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/subscriptions/{}/pause", id))
+    pub async fn pause(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .post_empty(&format!("/api/subscriptions/{}/pause", id))
             .await
     }
 
     /// Resume a subscription.
-    pub async fn resume_subscription(&self, id: &str) -> Result<(), ClientError> {
-        self.post_empty(&format!("/api/subscriptions/{}/resume", id))
+    pub async fn resume(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .post_empty(&format!("/api/subscriptions/{}/resume", id))
             .await
     }
 
     /// Delete a subscription.
-    pub async fn delete_subscription(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/subscriptions/{}", id)).await
+    pub async fn delete(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .delete_req(&format!("/api/subscriptions/{}", id))
+            .await
+    }
+
+    /// Sync subscriptions for an application — declarative reconciliation
+    /// against `POST /api/applications/{app_code}/subscriptions/sync`.
+    pub async fn sync(
+        &self,
+        app_code: &str,
+        req: &SyncSubscriptionsRequest,
+        remove_unlisted: bool,
+    ) -> Result<crate::client::SyncResult, ClientError> {
+        let query = if remove_unlisted {
+            "?removeUnlisted=true"
+        } else {
+            ""
+        };
+        self.client
+            .post(
+                &format!(
+                    "/api/applications/{}/subscriptions/sync{}",
+                    app_code, query
+                ),
+                req,
+            )
+            .await
     }
 }

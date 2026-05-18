@@ -13,6 +13,10 @@ class SyncResultResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * @var string|null
+     */
+    protected $applicationCode;
+    /**
      * @var int|null
      */
     protected $created;
@@ -21,9 +25,31 @@ class SyncResultResponse extends \ArrayObject
      */
     protected $deleted;
     /**
+     * @var list<string>|null
+     */
+    protected $syncedCodes;
+    /**
      * @var int|null
      */
     protected $updated;
+    /**
+     * @return string|null
+     */
+    public function getApplicationCode(): ?string
+    {
+        return $this->applicationCode;
+    }
+    /**
+     * @param string|null $applicationCode
+     *
+     * @return self
+     */
+    public function setApplicationCode(?string $applicationCode): self
+    {
+        $this->initialized['applicationCode'] = true;
+        $this->applicationCode = $applicationCode;
+        return $this;
+    }
     /**
      * @return int|null
      */
@@ -58,6 +84,24 @@ class SyncResultResponse extends \ArrayObject
     {
         $this->initialized['deleted'] = true;
         $this->deleted = $deleted;
+        return $this;
+    }
+    /**
+     * @return list<string>|null
+     */
+    public function getSyncedCodes(): ?array
+    {
+        return $this->syncedCodes;
+    }
+    /**
+     * @param list<string>|null $syncedCodes
+     *
+     * @return self
+     */
+    public function setSyncedCodes(?array $syncedCodes): self
+    {
+        $this->initialized['syncedCodes'] = true;
+        $this->syncedCodes = $syncedCodes;
         return $this;
     }
     /**

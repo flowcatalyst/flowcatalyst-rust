@@ -236,7 +236,7 @@ pub struct MonitoringState {
     get,
     path = "/standby-status",
     tag = "monitoring",
-    operation_id = "getApiAdminMonitoringStandbyStatus",
+    operation_id = "getApiMonitoringStandbyStatus",
     responses(
         (status = 200, description = "Standby status", body = StandbyStatus)
     ),
@@ -271,7 +271,7 @@ pub async fn get_standby_status(
     get,
     path = "/dashboard",
     tag = "monitoring",
-    operation_id = "getApiAdminMonitoringDashboard",
+    operation_id = "getApiMonitoringDashboard",
     responses(
         (status = 200, description = "Dashboard metrics", body = DashboardMetrics)
     ),
@@ -320,7 +320,7 @@ pub async fn get_dashboard(
     get,
     path = "/circuit-breakers",
     tag = "monitoring",
-    operation_id = "getApiAdminMonitoringCircuitBreakers",
+    operation_id = "getApiMonitoringCircuitBreakers",
     responses(
         (status = 200, description = "Circuit breaker states", body = CircuitBreakersResponse)
     ),
@@ -351,7 +351,7 @@ pub async fn get_circuit_breakers(
     get,
     path = "/in-flight-messages",
     tag = "monitoring",
-    operation_id = "getApiAdminMonitoringInFlightMessages",
+    operation_id = "getApiMonitoringInFlightMessages",
     responses(
         (status = 200, description = "In-flight messages", body = InFlightMessagesResponse)
     ),
@@ -409,7 +409,7 @@ pub struct PoolStatsResponse {
     get,
     path = "/pool-stats",
     tag = "monitoring",
-    operation_id = "getApiAdminMonitoringPoolStats",
+    operation_id = "getApiMonitoringPoolStats",
     responses(
         (status = 200, description = "Pool statistics with enhanced metrics", body = PoolStatsResponse)
     ),

@@ -9,20 +9,25 @@ import type { SdkError } from "../errors";
 import type { FlowCatalystClient } from "../client";
 import * as sdk from "../generated/sdk.gen";
 import type {
-	GetApiAdminRolesResponse,
-	GetApiAdminRolesByNameResponse,
-	PostApiAdminRolesData,
-	PutApiAdminRolesByNameData,
-	GetApiAdminRolesByApplicationByApplicationIdResponse,
+	GetApiRolesResponse,
+	GetApiRolesByNameResponse,
+	GetApiRolesByCodeByCodeResponse,
+	PostApiRolesData,
+	PutApiRolesByNameData,
+	GetApiRolesByApplicationByApplicationIdResponse,
+	PostApiApplicationsByAppCodeRolesSyncData,
+	PostApiApplicationsByAppCodeRolesSyncResponse,
 	PaginationParams,
 } from "../generated/types.gen";
 
-export type RoleListResponse = GetApiAdminRolesResponse;
-export type RoleDto = GetApiAdminRolesByNameResponse;
-export type CreateRoleRequest = PostApiAdminRolesData["body"];
-export type UpdateRoleRequest = PutApiAdminRolesByNameData["body"];
+export type RoleListResponse = GetApiRolesResponse;
+export type RoleDto = GetApiRolesByNameResponse;
+export type RoleByCodeResponse = GetApiRolesByCodeByCodeResponse;
+export type CreateRoleRequest = PostApiRolesData["body"];
+export type UpdateRoleRequest = PutApiRolesByNameData["body"];
 export type RoleListByApplicationResponse =
-	GetApiAdminRolesByApplicationByApplicationIdResponse;
+	GetApiRolesByApplicationByApplicationIdResponse;
+export type SyncRolesResponse = PostApiApplicationsByAppCodeRolesSyncResponse;
 
 /**
  * Roles resource for managing role-based access control.
@@ -39,7 +44,7 @@ export class RolesResource {
 	 */
 	list(pagination?: PaginationParams): ResultAsync<RoleListResponse, SdkError> {
 		return this.client.request<RoleListResponse>((httpClient, headers) =>
-			sdk.getApiAdminRoles({
+			sdk.getApiRoles({
 				client: httpClient,
 				headers,
 				query: { pagination: pagination ?? {} },
@@ -52,10 +57,23 @@ export class RolesResource {
 	 */
 	get(roleName: string): ResultAsync<RoleDto, SdkError> {
 		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.getApiAdminRolesByName({
+			sdk.getApiRolesByName({
 				client: httpClient,
 				headers,
 				path: { role_name: roleName },
+			}),
+		);
+	}
+
+	/**
+	 * Get a role by code (`application:role-name`).
+	 */
+	getByCode(code: string): ResultAsync<RoleByCodeResponse, SdkError> {
+		return this.client.request<RoleByCodeResponse>((httpClient, headers) =>
+			sdk.getApiRolesByCodeByCode({
+				client: httpClient,
+				headers,
+				path: { code },
 			}),
 		);
 	}
@@ -65,7 +83,7 @@ export class RolesResource {
 	 */
 	create(data: CreateRoleRequest): ResultAsync<RoleDto, SdkError> {
 		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.postApiAdminRoles({
+			sdk.postApiRoles({
 				client: httpClient,
 				headers,
 				body: data,
@@ -81,7 +99,7 @@ export class RolesResource {
 		data: UpdateRoleRequest,
 	): ResultAsync<RoleDto, SdkError> {
 		return this.client.request<RoleDto>((httpClient, headers) =>
-			sdk.putApiAdminRolesByName({
+			sdk.putApiRolesByName({
 				client: httpClient,
 				headers,
 				path: { role_name: roleName },
@@ -95,7 +113,7 @@ export class RolesResource {
 	 */
 	delete(roleName: string): ResultAsync<unknown, SdkError> {
 		return this.client.request<unknown>((httpClient, headers) =>
-			sdk.deleteApiAdminRolesByName({
+			sdk.deleteApiRolesByName({
 				client: httpClient,
 				headers,
 				path: { role_name: roleName },
@@ -111,11 +129,64 @@ export class RolesResource {
 	): ResultAsync<RoleListByApplicationResponse, SdkError> {
 		return this.client.request<RoleListByApplicationResponse>(
 			(httpClient, headers) =>
-				sdk.getApiAdminRolesByApplicationByApplicationId({
+				sdk.getApiRolesByApplicationByApplicationId({
 					client: httpClient,
 					headers,
 					path: { application_id: applicationId },
 				}),
+		);
+	}
+
+	/**
+	 * Grant a permission to a role. Returns the updated role.
+	 */
+	grantPermission(
+		roleName: string,
+		permission: string,
+	): ResultAsync<RoleDto, SdkError> {
+		return this.client.request<RoleDto>((httpClient, headers) =>
+			sdk.postApiRolesByNamePermissions({
+				client: httpClient,
+				headers,
+				path: { role_name: roleName },
+				body: { permission },
+			}),
+		);
+	}
+
+	/**
+	 * Revoke a permission from a role. Returns the updated role.
+	 */
+	revokePermission(
+		roleName: string,
+		permission: string,
+	): ResultAsync<RoleDto, SdkError> {
+		return this.client.request<RoleDto>((httpClient, headers) =>
+			sdk.deleteApiRolesByNamePermissionsByPermission({
+				client: httpClient,
+				headers,
+				path: { role_name: roleName, permission },
+			}),
+		);
+	}
+
+	/**
+	 * Sync roles for an application — declarative reconciliation against
+	 * `POST /api/applications/{applicationCode}/roles/sync`.
+	 */
+	sync(
+		applicationCode: string,
+		roles: PostApiApplicationsByAppCodeRolesSyncData["body"]["roles"],
+		removeUnlisted = false,
+	): ResultAsync<SyncRolesResponse, SdkError> {
+		return this.client.request<SyncRolesResponse>((httpClient, headers) =>
+			sdk.postApiApplicationsByAppCodeRolesSync({
+				client: httpClient,
+				headers,
+				path: { app_code: applicationCode },
+				body: { roles },
+				query: { removeUnlisted },
+			}),
 		);
 	}
 }

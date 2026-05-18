@@ -386,7 +386,7 @@ impl From<DispatchAttempt> for DispatchAttemptResponse {
     get,
     path = "/{id}",
     tag = "dispatch-jobs",
-    operation_id = "getApiAdminDispatchJobsById",
+    operation_id = "getApiDispatchJobsById",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -425,7 +425,7 @@ pub async fn get_dispatch_job(
     get,
     path = "",
     tag = "dispatch-jobs",
-    operation_id = "getApiAdminDispatchJobs",
+    operation_id = "getApiDispatchJobs",
     params(DispatchJobsQuery),
     responses(
         (status = 200, description = "List of dispatch jobs", body = Vec<DispatchJobReadResponse>)
@@ -510,7 +510,7 @@ pub async fn list_dispatch_jobs(
     get,
     path = "/by-event/{event_id}",
     tag = "dispatch-jobs",
-    operation_id = "getApiAdminDispatchJobsByEventByEventId",
+    operation_id = "getApiDispatchJobsByEventByEventId",
     params(
         ("event_id" = String, Path, description = "Event ID")
     ),
@@ -552,7 +552,7 @@ pub async fn get_jobs_for_event(
     post,
     path = "",
     tag = "dispatch-jobs",
-    operation_id = "postApiAdminDispatchJobs",
+    operation_id = "postApiDispatchJobs",
     request_body = CreateDispatchJobRequest,
     responses(
         (status = 201, description = "Dispatch job created", body = crate::shared::api_common::CreatedResponse),
@@ -687,7 +687,7 @@ pub async fn create_dispatch_job(
     post,
     path = "/batch",
     tag = "dispatch-jobs",
-    operation_id = "postApiAdminDispatchJobsBatch",
+    operation_id = "postApiDispatchJobsBatch",
     request_body = BatchCreateDispatchJobsRequest,
     responses(
         (status = 201, description = "Dispatch jobs created", body = BatchCreateDispatchJobsResponse),
@@ -808,7 +808,7 @@ pub async fn batch_create_dispatch_jobs(
     get,
     path = "/{id}/attempts",
     tag = "dispatch-jobs",
-    operation_id = "getApiAdminDispatchJobsByIdAttempts",
+    operation_id = "getApiDispatchJobsByIdAttempts",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -882,7 +882,7 @@ pub struct DispatchJobFilterOptionsResponse {
     get,
     path = "/filter-options",
     tag = "dispatch-jobs",
-    operation_id = "getApiAdminDispatchJobsFilterOptions",
+    operation_id = "getApiDispatchJobsFilterOptions",
     responses(
         (status = 200, description = "Filter options", body = DispatchJobFilterOptionsResponse)
     ),
@@ -934,7 +934,7 @@ pub async fn get_filter_options(
     get,
     path = "/{id}/raw",
     tag = "dispatch-jobs",
-    operation_id = "getApiAdminDispatchJobsByIdRaw",
+    operation_id = "getApiDispatchJobsByIdRaw",
     params(
         ("id" = String, Path, description = "Dispatch job ID")
     ),
@@ -992,7 +992,7 @@ pub struct RawDispatchJobsQuery {
     get,
     path = "/raw",
     tag = "dispatch-jobs",
-    operation_id = "getApiAdminDispatchJobsRaw",
+    operation_id = "getApiDispatchJobsRaw",
     params(RawDispatchJobsQuery),
     responses(
         (status = 200, description = "Raw dispatch jobs", body = Vec<DispatchJobResponse>)

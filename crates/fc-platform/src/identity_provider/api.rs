@@ -108,7 +108,7 @@ pub struct IdentityProvidersState {
     post,
     path = "",
     tag = "identity-providers",
-    operation_id = "postApiAdminIdentityProviders",
+    operation_id = "postApiIdentityProviders",
     request_body = CreateIdentityProviderRequest,
     responses(
         (status = 201, description = "Identity provider created", body = crate::shared::api_common::CreatedResponse),
@@ -158,7 +158,7 @@ async fn create_identity_provider(
     get,
     path = "",
     tag = "identity-providers",
-    operation_id = "getApiAdminIdentityProviders",
+    operation_id = "getApiIdentityProviders",
     responses(
         (status = 200, description = "List of identity providers", body = IdentityProvidersListResponse)
     ),
@@ -180,7 +180,7 @@ async fn list_identity_providers(
     get,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "getApiAdminIdentityProvidersById",
+    operation_id = "getApiIdentityProvidersById",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),
@@ -207,7 +207,7 @@ async fn get_identity_provider(
     put,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "putApiAdminIdentityProvidersById",
+    operation_id = "putApiIdentityProvidersById",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),
@@ -248,7 +248,7 @@ async fn update_identity_provider(
     delete,
     path = "/{id}",
     tag = "identity-providers",
-    operation_id = "deleteApiAdminIdentityProvidersById",
+    operation_id = "deleteApiIdentityProvidersById",
     params(
         ("id" = String, Path, description = "Identity provider ID")
     ),

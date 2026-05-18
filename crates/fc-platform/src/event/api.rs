@@ -248,7 +248,7 @@ pub struct EventsState {
     post,
     path = "",
     tag = "events",
-    operation_id = "postApiAdminEvents",
+    operation_id = "postApiEvents",
     request_body = CreateEventRequest,
     responses(
         (status = 201, description = "Event created", body = CreateEventResponse),
@@ -345,7 +345,7 @@ pub async fn create_event(
     get,
     path = "/{id}",
     tag = "events",
-    operation_id = "getApiAdminEventsById",
+    operation_id = "getApiEventsById",
     params(
         ("id" = String, Path, description = "Event ID")
     ),
@@ -384,7 +384,7 @@ pub async fn get_event(
     get,
     path = "",
     tag = "events",
-    operation_id = "getApiAdminEvents",
+    operation_id = "getApiEvents",
     params(EventsQuery),
     responses(
         (status = 200, description = "List of events", body = Vec<super::entity::EventRead>)
@@ -476,7 +476,7 @@ pub struct BatchCreateResponse {
     post,
     path = "/batch",
     tag = "events",
-    operation_id = "postApiAdminEventsBatch",
+    operation_id = "postApiEventsBatch",
     request_body = BatchCreateEventsRequest,
     responses(
         (status = 201, description = "Events created", body = BatchCreateResponse),
@@ -647,7 +647,7 @@ pub struct RawEventsQuery {
     get,
     path = "/raw",
     tag = "events",
-    operation_id = "getApiAdminEventsRaw",
+    operation_id = "getApiEventsRaw",
     params(RawEventsQuery),
     responses(
         (status = 200, description = "Raw events", body = Vec<EventSummaryResponse>)
@@ -672,7 +672,7 @@ pub async fn list_events_raw(
     get,
     path = "/filter-options",
     tag = "events",
-    operation_id = "getApiAdminEventsFilterOptions",
+    operation_id = "getApiEventsFilterOptions",
     responses((status = 200, body = super::entity::EventFilterOptions)),
     security(("bearer_auth" = []))
 )]

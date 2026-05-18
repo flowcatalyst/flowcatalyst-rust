@@ -84,31 +84,41 @@ pub struct SpecVersionResponse {
     pub schema: Option<serde_json::Value>,
 }
 
-impl FlowCatalystClient {
+/// Request body for the per-resource sync endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncEventTypesRequest {
+    pub event_types: Vec<CreateEventTypeRequest>,
+}
+
+/// Event types resource accessor — created via [`FlowCatalystClient::event_types`].
+pub struct EventTypes<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
+
+impl EventTypes<'_> {
     /// Create a new event type.
-    pub async fn create_event_type(
+    pub async fn create(
         &self,
         req: &CreateEventTypeRequest,
     ) -> Result<EventTypeResponse, ClientError> {
-        self.post("/api/event-types", req).await
+        self.client.post("/api/event-types", req).await
     }
 
     /// Get an event type by ID.
-    pub async fn get_event_type(&self, id: &str) -> Result<EventTypeResponse, ClientError> {
-        self.get(&format!("/api/event-types/{}", id)).await
+    pub async fn get(&self, id: &str) -> Result<EventTypeResponse, ClientError> {
+        self.client.get(&format!("/api/event-types/{}", id)).await
     }
 
     /// Get an event type by code.
-    pub async fn get_event_type_by_code(
-        &self,
-        code: &str,
-    ) -> Result<EventTypeResponse, ClientError> {
-        self.get(&format!("/api/event-types/by-code/{}", code))
+    pub async fn get_by_code(&self, code: &str) -> Result<EventTypeResponse, ClientError> {
+        self.client
+            .get(&format!("/api/event-types/by-code/{}", code))
             .await
     }
 
     /// List event types with optional filters.
-    pub async fn list_event_types(
+    pub async fn list(
         &self,
         application: Option<&str>,
         status: Option<&str>,
@@ -131,16 +141,20 @@ impl FlowCatalystClient {
             format!("?{}", params.join("&"))
         };
 
-        self.get(&format!("/api/event-types{}", query)).await
+        self.client
+            .get(&format!("/api/event-types{}", query))
+            .await
     }
 
     /// Update an event type.
-    pub async fn update_event_type(
+    pub async fn update(
         &self,
         id: &str,
         req: &UpdateEventTypeRequest,
     ) -> Result<EventTypeResponse, ClientError> {
-        self.put(&format!("/api/event-types/{}", id), req).await
+        self.client
+            .put(&format!("/api/event-types/{}", id), req)
+            .await
     }
 
     /// Add a schema version to an event type.
@@ -149,12 +163,40 @@ impl FlowCatalystClient {
         id: &str,
         req: &AddSchemaVersionRequest,
     ) -> Result<EventTypeResponse, ClientError> {
-        self.post(&format!("/api/event-types/{}/versions", id), req)
+        self.client
+            .post(&format!("/api/event-types/{}/versions", id), req)
             .await
     }
 
     /// Archive (soft-delete) an event type.
-    pub async fn archive_event_type(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/event-types/{}", id)).await
+    ///
+    /// The server's DELETE on this resource is a soft archive — the row is
+    /// retained with status flipped to ARCHIVED. We name it `archive` rather
+    /// than `delete` to make the semantics visible.
+    pub async fn archive(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .delete_req(&format!("/api/event-types/{}", id))
+            .await
+    }
+
+    /// Sync event types for an application — declarative reconciliation
+    /// against `POST /api/applications/{app_code}/event-types/sync`.
+    pub async fn sync(
+        &self,
+        app_code: &str,
+        req: &SyncEventTypesRequest,
+        remove_unlisted: bool,
+    ) -> Result<crate::client::SyncResult, ClientError> {
+        let query = if remove_unlisted {
+            "?removeUnlisted=true"
+        } else {
+            ""
+        };
+        self.client
+            .post(
+                &format!("/api/applications/{}/event-types/sync{}", app_code, query),
+                req,
+            )
+            .await
     }
 }

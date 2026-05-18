@@ -13,10 +13,14 @@ class SyncProcessInputRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * Diagram body (typically Mermaid source).
+     *
      * @var string|null
      */
     protected $body;
     /**
+     * Full code (application:subdomain:process-name)
+     *
      * @var string|null
      */
     protected $code;
@@ -37,6 +41,8 @@ class SyncProcessInputRequest extends \ArrayObject
      */
     protected $tags;
     /**
+     * Diagram body (typically Mermaid source).
+     *
      * @return string|null
      */
     public function getBody(): ?string
@@ -44,6 +50,8 @@ class SyncProcessInputRequest extends \ArrayObject
         return $this->body;
     }
     /**
+     * Diagram body (typically Mermaid source).
+     *
      * @param string|null $body
      *
      * @return self
@@ -55,6 +63,8 @@ class SyncProcessInputRequest extends \ArrayObject
         return $this;
     }
     /**
+     * Full code (application:subdomain:process-name)
+     *
      * @return string|null
      */
     public function getCode(): ?string
@@ -62,6 +72,8 @@ class SyncProcessInputRequest extends \ArrayObject
         return $this->code;
     }
     /**
+     * Full code (application:subdomain:process-name)
+     *
      * @param string|null $code
      *
      * @return self

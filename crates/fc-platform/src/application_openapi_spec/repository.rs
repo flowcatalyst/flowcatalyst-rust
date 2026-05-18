@@ -94,6 +94,26 @@ impl OpenApiSpecRepository {
         Ok(rows.into_iter().map(OpenApiSpec::from).collect())
     }
 
+    /// Does any row (CURRENT or ARCHIVED) already occupy this version slot?
+    /// Used by the sync use case to disambiguate when `info.version` repeats
+    /// across syncs (e.g. utoipa-generated specs that pin to the crate
+    /// version).
+    pub async fn exists_by_application_and_version(
+        &self,
+        application_id: &str,
+        version: &str,
+    ) -> Result<bool> {
+        let row: (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM app_application_openapi_specs \
+             WHERE application_id = $1 AND version = $2)",
+        )
+        .bind(application_id)
+        .bind(version)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.0)
+    }
+
     pub async fn find_by_id(&self, id: &str) -> Result<Option<OpenApiSpec>> {
         let row = sqlx::query_as::<_, OpenApiSpecRow>(&format!(
             "SELECT {SELECT_COLS} FROM app_application_openapi_specs WHERE id = $1"

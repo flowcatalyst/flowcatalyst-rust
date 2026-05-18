@@ -164,19 +164,22 @@ pub struct SuccessResponse {
     pub message: Option<String>,
 }
 
-impl FlowCatalystClient {
-    // ── Applications ─────────────────────────────────────────────
+/// Applications resource accessor — created via [`FlowCatalystClient::applications`].
+pub struct Applications<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
 
+impl Applications<'_> {
     /// Create a new application.
-    pub async fn create_application(
+    pub async fn create(
         &self,
         req: &CreateApplicationRequest,
     ) -> Result<CreatedResponse, ClientError> {
-        self.post("/api/applications", req).await
+        self.client.post("/api/applications", req).await
     }
 
     /// List applications with optional pagination and filters.
-    pub async fn list_applications(
+    pub async fn list(
         &self,
         active: Option<bool>,
         page: Option<u32>,
@@ -199,131 +202,138 @@ impl FlowCatalystClient {
             format!("?{}", params.join("&"))
         };
 
-        self.get(&format!("/api/applications{}", query)).await
+        self.client
+            .get(&format!("/api/applications{}", query))
+            .await
     }
 
     /// Get an application by ID.
-    pub async fn get_application(&self, id: &str) -> Result<ApplicationResponse, ClientError> {
-        self.get(&format!("/api/applications/{}", id)).await
+    pub async fn get(&self, id: &str) -> Result<ApplicationResponse, ClientError> {
+        self.client.get(&format!("/api/applications/{}", id)).await
     }
 
     /// Get an application by code.
-    pub async fn get_application_by_code(
-        &self,
-        code: &str,
-    ) -> Result<ApplicationResponse, ClientError> {
-        self.get(&format!("/api/applications/by-code/{}", code))
+    pub async fn get_by_code(&self, code: &str) -> Result<ApplicationResponse, ClientError> {
+        self.client
+            .get(&format!("/api/applications/by-code/{}", code))
             .await
     }
 
     /// Update an application.
-    pub async fn update_application(
+    pub async fn update(
         &self,
         id: &str,
         req: &UpdateApplicationRequest,
     ) -> Result<ApplicationResponse, ClientError> {
-        self.put(&format!("/api/applications/{}", id), req).await
+        self.client
+            .put(&format!("/api/applications/{}", id), req)
+            .await
     }
 
     /// Delete (deactivate) an application.
-    pub async fn delete_application(&self, id: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/applications/{}", id)).await
+    pub async fn delete(&self, id: &str) -> Result<(), ClientError> {
+        self.client
+            .delete_req(&format!("/api/applications/{}", id))
+            .await
     }
 
     /// Activate an application.
-    pub async fn activate_application(&self, id: &str) -> Result<ApplicationResponse, ClientError> {
-        self.post_action(&format!("/api/applications/{}/activate", id))
+    pub async fn activate(&self, id: &str) -> Result<ApplicationResponse, ClientError> {
+        self.client
+            .post_action(&format!("/api/applications/{}/activate", id))
             .await
     }
 
     /// Deactivate an application.
-    pub async fn deactivate_application(
-        &self,
-        id: &str,
-    ) -> Result<ApplicationResponse, ClientError> {
-        self.post_action(&format!("/api/applications/{}/deactivate", id))
+    pub async fn deactivate(&self, id: &str) -> Result<ApplicationResponse, ClientError> {
+        self.client
+            .post_action(&format!("/api/applications/{}/deactivate", id))
             .await
     }
 
     /// Provision a service account for an application.
     pub async fn provision_service_account(
         &self,
-        application_id: &str,
+        id: &str,
     ) -> Result<ServiceAccountResponse, ClientError> {
-        self.post_action(&format!(
-            "/api/applications/{}/provision-service-account",
-            application_id
-        ))
-        .await
+        self.client
+            .post_action(&format!(
+                "/api/applications/{}/provision-service-account",
+                id
+            ))
+            .await
     }
 
     /// Get the service account for an application.
     pub async fn get_service_account(
         &self,
-        application_id: &str,
+        id: &str,
     ) -> Result<ServiceAccountResponse, ClientError> {
-        self.get(&format!(
-            "/api/applications/{}/service-account",
-            application_id
-        ))
-        .await
+        self.client
+            .get(&format!("/api/applications/{}/service-account", id))
+            .await
     }
 
-    /// List roles for an application.
-    pub async fn list_application_roles(
+    /// List roles for an application (by TSID).
+    ///
+    /// Mounted under `/by-id` server-side so the admin TSID lookup doesn't
+    /// collide with the SDK's `/{app_code}/roles/sync` route.
+    pub async fn list_roles(
         &self,
-        application_id: &str,
+        id: &str,
     ) -> Result<Vec<ApplicationRoleResponse>, ClientError> {
-        self.get(&format!("/api/applications/{}/roles", application_id))
+        self.client
+            .get(&format!("/api/applications/by-id/{}/roles", id))
             .await
     }
 
-    /// List client configs for an application.
-    pub async fn list_application_clients(
-        &self,
-        application_id: &str,
-    ) -> Result<ClientConfigsResponse, ClientError> {
-        self.get(&format!("/api/applications/{}/clients", application_id))
+    /// List per-client configs for an application.
+    pub async fn list_clients(&self, id: &str) -> Result<ClientConfigsResponse, ClientError> {
+        self.client
+            .get(&format!("/api/applications/{}/clients", id))
             .await
     }
 
-    /// Update client config for an application.
-    pub async fn update_application_client_config(
+    /// Update per-client config for an application.
+    pub async fn update_client_config(
         &self,
-        application_id: &str,
+        id: &str,
         client_id: &str,
         req: &ClientConfigRequest,
     ) -> Result<ClientConfigResponse, ClientError> {
-        self.put(
-            &format!("/api/applications/{}/clients/{}", application_id, client_id),
-            req,
-        )
-        .await
+        self.client
+            .put(
+                &format!("/api/applications/{}/clients/{}", id, client_id),
+                req,
+            )
+            .await
     }
 
     /// Enable an application for a specific client.
-    pub async fn enable_application_for_client(
+    pub async fn enable_for_client(
         &self,
-        application_id: &str,
+        id: &str,
         client_id: &str,
     ) -> Result<ClientConfigResponse, ClientError> {
-        self.post_action(&format!(
-            "/api/applications/{}/clients/{}/enable",
-            application_id, client_id
-        ))
-        .await
+        self.client
+            .post_action(&format!(
+                "/api/applications/{}/clients/{}/enable",
+                id, client_id
+            ))
+            .await
     }
 
     /// Disable an application for a specific client.
-    pub async fn disable_application_for_client(
+    pub async fn disable_for_client(
         &self,
-        application_id: &str,
+        id: &str,
         client_id: &str,
     ) -> Result<ClientConfigResponse, ClientError> {
-        self.post_action(&format!(
-            "/api/applications/{}/clients/{}/disable",
-            application_id, client_id
-        ))
-        .await
+        self.client
+            .post_action(&format!(
+                "/api/applications/{}/clients/{}/disable",
+                id, client_id
+            ))
+            .await
     }
 }

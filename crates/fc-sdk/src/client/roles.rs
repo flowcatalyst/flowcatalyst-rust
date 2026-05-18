@@ -1,4 +1,7 @@
-//! Role and permission management operations.
+//! Role management operations.
+//!
+//! Permission-catalogue queries live on a sibling [`crate::client::Permissions`]
+//! accessor.
 
 use super::applications::CreatedResponse;
 use super::{ClientError, FlowCatalystClient};
@@ -9,15 +12,6 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RoleListResponse {
     pub roles: Vec<RoleResponse>,
-    #[serde(default)]
-    pub total: u64,
-}
-
-/// Paginated list of permissions — `GET /api/roles/permissions`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PermissionListResponse {
-    pub permissions: Vec<PermissionResponse>,
     #[serde(default)]
     pub total: u64,
 }
@@ -82,67 +76,87 @@ pub struct RoleResponse {
     pub updated_at: String,
 }
 
-/// Permission response from the platform API.
+/// Request body for the per-resource sync endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PermissionResponse {
-    pub permission: String,
-    pub application: String,
-    pub context: String,
-    pub aggregate: String,
-    pub action: String,
-    pub description: String,
+pub struct SyncRolesRequest {
+    pub roles: Vec<SyncRoleItem>,
 }
 
-impl FlowCatalystClient {
-    // ── Roles ────────────────────────────────────────────────────────────────
+/// A role item for sync.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRoleItem {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+    #[serde(default)]
+    pub client_managed: bool,
+}
 
+/// Roles resource accessor — created via [`FlowCatalystClient::roles`].
+pub struct Roles<'a> {
+    pub(crate) client: &'a FlowCatalystClient,
+}
+
+impl Roles<'_> {
     /// List all roles.
-    pub async fn list_roles(&self) -> Result<RoleListResponse, ClientError> {
-        self.get("/api/roles").await
+    pub async fn list(&self) -> Result<RoleListResponse, ClientError> {
+        self.client.get("/api/roles").await
     }
 
     /// Get a role by name.
-    pub async fn get_role(&self, name: &str) -> Result<RoleResponse, ClientError> {
-        self.get(&format!("/api/roles/{}", name)).await
+    pub async fn get(&self, name: &str) -> Result<RoleResponse, ClientError> {
+        self.client.get(&format!("/api/roles/{}", name)).await
     }
 
     /// Get a role by code (`application:role-name`).
-    pub async fn get_role_by_code(&self, code: &str) -> Result<RoleResponse, ClientError> {
-        self.get(&format!("/api/roles/by-code/{}", code)).await
+    pub async fn get_by_code(&self, code: &str) -> Result<RoleResponse, ClientError> {
+        self.client
+            .get(&format!("/api/roles/by-code/{}", code))
+            .await
     }
 
     /// Create a new role.
     ///
-    /// Returns `{ id }` only. Call `get_role(name)` if you need the full record.
-    pub async fn create_role(
+    /// Returns `{ id }` only. Call `get(name)` if you need the full record.
+    pub async fn create(
         &self,
         req: &CreateRoleRequest,
     ) -> Result<CreatedResponse, ClientError> {
-        self.post("/api/roles", req).await
+        self.client.post("/api/roles", req).await
     }
 
     /// Update an existing role by name. The platform responds with 204.
-    pub async fn update_role(
+    pub async fn update(
         &self,
         name: &str,
         req: &UpdateRoleRequest,
     ) -> Result<(), ClientError> {
-        let _: serde_json::Value = self.put(&format!("/api/roles/{}", name), req).await?;
+        let _: serde_json::Value = self
+            .client
+            .put(&format!("/api/roles/{}", name), req)
+            .await?;
         Ok(())
     }
 
     /// Delete a role by name.
-    pub async fn delete_role(&self, name: &str) -> Result<(), ClientError> {
-        self.delete_req(&format!("/api/roles/{}", name)).await
+    pub async fn delete(&self, name: &str) -> Result<(), ClientError> {
+        self.client
+            .delete_req(&format!("/api/roles/{}", name))
+            .await
     }
 
     /// List roles scoped to an application.
-    pub async fn list_roles_for_application(
+    pub async fn list_for_application(
         &self,
         application_id: &str,
     ) -> Result<RoleListResponse, ClientError> {
-        self.get(&format!("/api/roles/by-application/{}", application_id))
+        self.client
+            .get(&format!("/api/roles/by-application/{}", application_id))
             .await
     }
 
@@ -155,7 +169,8 @@ impl FlowCatalystClient {
         let body = GrantPermissionRequest {
             permission: permission.to_string(),
         };
-        self.post(&format!("/api/roles/{}/permissions", role_name), &body)
+        self.client
+            .post(&format!("/api/roles/{}/permissions", role_name), &body)
             .await
     }
 
@@ -165,22 +180,32 @@ impl FlowCatalystClient {
         role_name: &str,
         permission: &str,
     ) -> Result<RoleResponse, ClientError> {
-        self.delete_with_response(&format!(
-            "/api/roles/{}/permissions/{}",
-            role_name, permission
-        ))
-        .await
+        self.client
+            .delete_with_response(&format!(
+                "/api/roles/{}/permissions/{}",
+                role_name, permission
+            ))
+            .await
     }
 
-    // ── Permissions ──────────────────────────────────────────────────────────
-
-    /// List all permissions.
-    pub async fn list_permissions(&self) -> Result<PermissionListResponse, ClientError> {
-        self.get("/api/roles/permissions").await
-    }
-
-    /// Get a permission by name.
-    pub async fn get_permission(&self, name: &str) -> Result<PermissionResponse, ClientError> {
-        self.get(&format!("/api/roles/permissions/{}", name)).await
+    /// Sync roles for an application — declarative reconciliation against
+    /// `POST /api/applications/{app_code}/roles/sync`.
+    pub async fn sync(
+        &self,
+        app_code: &str,
+        req: &SyncRolesRequest,
+        remove_unlisted: bool,
+    ) -> Result<crate::client::SyncResult, ClientError> {
+        let query = if remove_unlisted {
+            "?removeUnlisted=true"
+        } else {
+            ""
+        };
+        self.client
+            .post(
+                &format!("/api/applications/{}/roles/sync{}", app_code, query),
+                req,
+            )
+            .await
     }
 }

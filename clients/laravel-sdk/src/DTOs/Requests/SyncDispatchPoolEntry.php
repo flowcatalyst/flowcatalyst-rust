@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace FlowCatalyst\DTOs\Requests;
 
 /**
- * One entry in the POST /api/dispatch-pools/sync payload.
+ * One entry in the POST /api/applications/{appCode}/dispatch-pools/sync payload.
  */
 final class SyncDispatchPoolEntry
 {

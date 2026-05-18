@@ -88,6 +88,7 @@ export {
 	ClientsResource,
 	PrincipalsResource,
 	ScheduledJobsResource,
+	AuditLogsResource,
 } from "./resources";
 
 // Scheduled-job runner (handler registration + lock + completion callback).

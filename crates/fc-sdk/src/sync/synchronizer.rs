@@ -30,11 +30,10 @@ use super::definitions::{
 };
 use super::options::SyncOptions;
 use super::result::{CategorySyncResult, SyncResult};
-use crate::client::sync::{
-    SyncDispatchPoolsRequest, SyncEventTypesRequest, SyncPrincipalsRequest, SyncResult as WireSyncResult,
-    SyncRolesRequest, SyncSubscriptionsRequest,
+use crate::client::{
+    ClientError, FlowCatalystClient, SyncDispatchPoolsRequest, SyncEventTypesRequest,
+    SyncPrincipalsRequest, SyncResult as WireSyncResult, SyncRolesRequest, SyncSubscriptionsRequest,
 };
-use crate::client::{ClientError, FlowCatalystClient};
 
 /// Orchestrates per-category sync calls against a `FlowCatalystClient`.
 ///
@@ -124,7 +123,7 @@ impl DefinitionSynchronizer {
         let req = SyncRolesRequest {
             roles: roles.iter().cloned().map(RoleDefinition::into_wire).collect(),
         };
-        match self.client.sync_roles(app, &req, remove_unlisted).await {
+        match self.client.roles().sync(app, &req, remove_unlisted).await {
             Ok(r) => from_wire(r),
             Err(e) => CategorySyncResult::from_error(format_error(e)),
         }
@@ -145,7 +144,8 @@ impl DefinitionSynchronizer {
         };
         match self
             .client
-            .sync_event_types(app, &req, remove_unlisted)
+            .event_types()
+            .sync(app, &req, remove_unlisted)
             .await
         {
             Ok(r) => from_wire(r),
@@ -168,7 +168,8 @@ impl DefinitionSynchronizer {
         };
         match self
             .client
-            .sync_subscriptions(app, &req, remove_unlisted)
+            .subscriptions()
+            .sync(app, &req, remove_unlisted)
             .await
         {
             Ok(r) => from_wire(r),
@@ -191,7 +192,8 @@ impl DefinitionSynchronizer {
         };
         match self
             .client
-            .sync_dispatch_pools(app, &req, remove_unlisted)
+            .dispatch_pools()
+            .sync(app, &req, remove_unlisted)
             .await
         {
             Ok(r) => from_wire(r),
@@ -214,7 +216,8 @@ impl DefinitionSynchronizer {
         };
         match self
             .client
-            .sync_principals(app, &req, remove_unlisted)
+            .principals()
+            .sync(app, &req, remove_unlisted)
             .await
         {
             Ok(r) => from_wire(r),
@@ -228,21 +231,18 @@ impl DefinitionSynchronizer {
         processes: &[ProcessDefinition],
         remove_unlisted: bool,
     ) -> CategorySyncResult {
-        // Processes returns a different wire shape ({created, updated,
-        // deleted} only) and the SDK method takes a Vec, not &Request.
         let inputs = processes
             .iter()
             .cloned()
             .map(ProcessDefinition::into_wire)
             .collect();
-        match self.client.sync_processes(app, inputs, remove_unlisted).await {
-            Ok(r) => CategorySyncResult {
-                created: r.created,
-                updated: r.updated,
-                deleted: r.deleted,
-                synced_codes: Vec::new(),
-                error: None,
-            },
+        match self
+            .client
+            .processes()
+            .sync(app, inputs, remove_unlisted)
+            .await
+        {
+            Ok(r) => from_wire(r),
             Err(e) => CategorySyncResult::from_error(format_error(e)),
         }
     }

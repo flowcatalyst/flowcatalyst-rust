@@ -80,7 +80,7 @@ pub struct LoginAttemptsState {
     get,
     path = "",
     tag = "login-attempts",
-    operation_id = "getApiAdminLoginAttempts",
+    operation_id = "getApiLoginAttempts",
     params(
         ("attempt_type" = Option<String>, Query, description = "Filter by attempt type"),
         ("outcome" = Option<String>, Query, description = "Filter by outcome"),

@@ -231,7 +231,7 @@ pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     get,
     path = "",
     tag = "service-accounts",
-    operation_id = "getApiAdminServiceAccounts",
+    operation_id = "getApiServiceAccounts",
     params(
         ("clientId" = Option<String>, Query, description = "Filter by client ID"),
         ("applicationId" = Option<String>, Query, description = "Filter by application ID"),
@@ -280,7 +280,7 @@ pub async fn list_service_accounts<U: UnitOfWork>(
     get,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "getApiAdminServiceAccountsById",
+    operation_id = "getApiServiceAccountsById",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -309,7 +309,7 @@ pub async fn get_service_account<U: UnitOfWork>(
     get,
     path = "/code/{code}",
     tag = "service-accounts",
-    operation_id = "getApiAdminServiceAccountsCodeByCode",
+    operation_id = "getApiServiceAccountsCodeByCode",
     params(
         ("code" = String, Path, description = "Service account code")
     ),
@@ -338,7 +338,7 @@ pub async fn get_service_account_by_code<U: UnitOfWork>(
     post,
     path = "",
     tag = "service-accounts",
-    operation_id = "postApiAdminServiceAccounts",
+    operation_id = "postApiServiceAccounts",
     request_body = CreateServiceAccountRequest,
     responses(
         (status = 201, description = "Service account created", body = CreateServiceAccountResponse),
@@ -443,7 +443,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     put,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "putApiAdminServiceAccountsById",
+    operation_id = "putApiServiceAccountsById",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -481,7 +481,7 @@ pub async fn update_service_account<U: UnitOfWork>(
     delete,
     path = "/{id}",
     tag = "service-accounts",
-    operation_id = "deleteApiAdminServiceAccountsById",
+    operation_id = "deleteApiServiceAccountsById",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -512,7 +512,7 @@ pub async fn delete_service_account<U: UnitOfWork>(
     put,
     path = "/{id}/auth-token",
     tag = "service-accounts",
-    operation_id = "putApiAdminServiceAccountsByIdAuthToken",
+    operation_id = "putApiServiceAccountsByIdAuthToken",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -547,7 +547,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
     post,
     path = "/{id}/regenerate-auth-token",
     tag = "service-accounts",
-    operation_id = "postApiAdminServiceAccountsByIdRegenerateAuthToken",
+    operation_id = "postApiServiceAccountsByIdRegenerateAuthToken",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -582,7 +582,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
     post,
     path = "/{id}/regenerate-signing-secret",
     tag = "service-accounts",
-    operation_id = "postApiAdminServiceAccountsByIdRegenerateSigningSecret",
+    operation_id = "postApiServiceAccountsByIdRegenerateSigningSecret",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -617,7 +617,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     get,
     path = "/{id}/roles",
     tag = "service-accounts",
-    operation_id = "getApiAdminServiceAccountsByIdRoles",
+    operation_id = "getApiServiceAccountsByIdRoles",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),
@@ -656,7 +656,7 @@ pub async fn get_roles<U: UnitOfWork>(
     put,
     path = "/{id}/roles",
     tag = "service-accounts",
-    operation_id = "putApiAdminServiceAccountsByIdRoles",
+    operation_id = "putApiServiceAccountsByIdRoles",
     params(
         ("id" = String, Path, description = "Service account ID")
     ),

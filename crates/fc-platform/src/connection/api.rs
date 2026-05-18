@@ -99,7 +99,7 @@ pub struct ConnectionsState {
     post,
     path = "",
     tag = "connections",
-    operation_id = "postApiAdminConnections",
+    operation_id = "postApiConnections",
     request_body = CreateConnectionRequest,
     responses(
         (status = 201, description = "Connection created", body = crate::shared::api_common::CreatedResponse),
@@ -147,7 +147,7 @@ pub async fn create_connection(
     get,
     path = "",
     tag = "connections",
-    operation_id = "getApiAdminConnections",
+    operation_id = "getApiConnections",
     params(
         ("clientId" = Option<String>, Query, description = "Filter by client ID"),
         ("status" = Option<String>, Query, description = "Filter by status"),
@@ -183,7 +183,7 @@ pub async fn list_connections(
     get,
     path = "/{id}",
     tag = "connections",
-    operation_id = "getApiAdminConnectionsById",
+    operation_id = "getApiConnectionsById",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),
@@ -211,7 +211,7 @@ pub async fn get_connection(
     put,
     path = "/{id}",
     tag = "connections",
-    operation_id = "putApiAdminConnectionsById",
+    operation_id = "putApiConnectionsById",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),
@@ -251,7 +251,7 @@ pub async fn update_connection(
     delete,
     path = "/{id}",
     tag = "connections",
-    operation_id = "deleteApiAdminConnectionsById",
+    operation_id = "deleteApiConnectionsById",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),
@@ -282,7 +282,7 @@ pub async fn delete_connection(
     post,
     path = "/{id}/pause",
     tag = "connections",
-    operation_id = "postApiAdminConnectionsByIdPause",
+    operation_id = "postApiConnectionsByIdPause",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),
@@ -325,7 +325,7 @@ pub async fn pause_connection(
     post,
     path = "/{id}/activate",
     tag = "connections",
-    operation_id = "postApiAdminConnectionsByIdActivate",
+    operation_id = "postApiConnectionsByIdActivate",
     params(
         ("id" = String, Path, description = "Connection ID")
     ),

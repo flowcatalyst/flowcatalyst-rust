@@ -18,8 +18,8 @@ import type {
 	GetApiProcessesByIdResponse,
 	PostApiProcessesData,
 	PutApiProcessesByIdData,
-	PostApiProcessesSyncData,
-	PostApiProcessesSyncResponse,
+	PostApiApplicationsByAppCodeProcessesSyncData,
+	PostApiApplicationsByAppCodeProcessesSyncResponse,
 	PaginationParams,
 } from "../generated/types.gen";
 
@@ -27,7 +27,8 @@ export type ProcessListResponse = GetApiProcessesResponse;
 export type ProcessResponse = GetApiProcessesByIdResponse;
 export type CreateProcessRequest = PostApiProcessesData["body"];
 export type UpdateProcessRequest = PutApiProcessesByIdData["body"];
-export type SyncProcessesResponse = PostApiProcessesSyncResponse;
+export type SyncProcessesResponse =
+	PostApiApplicationsByAppCodeProcessesSyncResponse;
 
 export interface ProcessFilters {
 	status?: string;
@@ -139,17 +140,20 @@ export class ProcessesResource {
 	 * Sync processes for an application. The platform reconciles the
 	 * provided list against existing API/CODE-sourced processes; UI-sourced
 	 * processes are never touched.
+	 *
+	 * Calls `POST /api/applications/{applicationCode}/processes/sync`.
 	 */
 	sync(
 		applicationCode: string,
-		processes: PostApiProcessesSyncData["body"]["processes"],
+		processes: PostApiApplicationsByAppCodeProcessesSyncData["body"]["processes"],
 		removeUnlisted = false,
 	): ResultAsync<SyncProcessesResponse, SdkError> {
 		return this.client.request<SyncProcessesResponse>((httpClient, headers) =>
-			sdk.postApiProcessesSync({
+			sdk.postApiApplicationsByAppCodeProcessesSync({
 				client: httpClient,
 				headers,
-				body: { applicationCode, processes },
+				path: { app_code: applicationCode },
+				body: { processes },
 				query: { removeUnlisted },
 			}),
 		);

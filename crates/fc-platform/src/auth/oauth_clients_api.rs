@@ -191,7 +191,7 @@ fn parse_client_type(s: &str) -> OAuthClientType {
     post,
     path = "",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClients",
+    operation_id = "postApiOauthClients",
     request_body = CreateOAuthClientRequest,
     responses(
         (status = 201, description = "OAuth client created", body = CreateOAuthClientResponse),
@@ -299,7 +299,7 @@ pub async fn create_oauth_client(
     get,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "getApiAdminOauthClientsById",
+    operation_id = "getApiOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -330,7 +330,7 @@ pub async fn get_oauth_client(
     get,
     path = "",
     tag = "oauth-clients",
-    operation_id = "getApiAdminOauthClients",
+    operation_id = "getApiOauthClients",
     params(OAuthClientsQuery),
     responses(
         (status = 200, description = "List of OAuth clients", body = OAuthClientListResponse)
@@ -360,7 +360,7 @@ pub async fn list_oauth_clients(
     put,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "putApiAdminOauthClientsById",
+    operation_id = "putApiOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -407,7 +407,7 @@ pub async fn update_oauth_client(
     delete,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "deleteApiAdminOauthClientsById",
+    operation_id = "deleteApiOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -453,7 +453,7 @@ pub struct RegenerateSecretResponse {
     get,
     path = "/by-client-id/{clientId}",
     tag = "oauth-clients",
-    operation_id = "getApiAdminOauthClientsByClientId",
+    operation_id = "getApiOauthClientsByClientId",
     params(
         ("clientId" = String, Path, description = "OAuth client_id (public identifier)")
     ),
@@ -484,7 +484,7 @@ pub async fn get_oauth_client_by_client_id(
     post,
     path = "/{id}/activate",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClientsActivate",
+    operation_id = "postApiOauthClientsActivate",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -524,7 +524,7 @@ pub async fn activate_oauth_client(
     post,
     path = "/{id}/deactivate",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClientsDeactivate",
+    operation_id = "postApiOauthClientsDeactivate",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -564,7 +564,7 @@ pub async fn deactivate_oauth_client(
     post,
     path = "/{id}/regenerate-secret",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClientsRegenerateSecret",
+    operation_id = "postApiOauthClientsRegenerateSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -617,7 +617,7 @@ pub async fn regenerate_oauth_client_secret(
     post,
     path = "/{id}/rotate-secret",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClientsRotateSecret",
+    operation_id = "postApiOauthClientsRotateSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),

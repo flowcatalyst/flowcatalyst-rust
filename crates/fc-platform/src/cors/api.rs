@@ -72,7 +72,7 @@ pub struct CorsState {
     post,
     path = "",
     tag = "cors",
-    operation_id = "postApiAdminPlatformCors",
+    operation_id = "postApiPlatformCors",
     request_body = CreateCorsOriginRequest,
     responses(
         (status = 201, description = "CORS origin created", body = crate::shared::api_common::CreatedResponse),
@@ -115,7 +115,7 @@ pub async fn create_cors_origin(
     get,
     path = "",
     tag = "cors",
-    operation_id = "getApiAdminPlatformCors",
+    operation_id = "getApiPlatformCors",
     responses(
         (status = 200, description = "List of CORS origins", body = CorsOriginsListResponse)
     ),
@@ -138,7 +138,7 @@ pub async fn list_cors_origins(
     get,
     path = "/allowed",
     tag = "cors",
-    operation_id = "getApiAdminPlatformCorsAllowed",
+    operation_id = "getApiPlatformCorsAllowed",
     responses(
         (status = 200, description = "Allowed origins list", body = AllowedOriginsResponse)
     ),
@@ -157,7 +157,7 @@ pub async fn get_allowed_origins(
     get,
     path = "/{id}",
     tag = "cors",
-    operation_id = "getApiAdminPlatformCorsById",
+    operation_id = "getApiPlatformCorsById",
     params(
         ("id" = String, Path, description = "CORS origin ID")
     ),
@@ -185,7 +185,7 @@ pub async fn get_cors_origin(
     delete,
     path = "/{id}",
     tag = "cors",
-    operation_id = "deleteApiAdminPlatformCorsById",
+    operation_id = "deleteApiPlatformCorsById",
     params(
         ("id" = String, Path, description = "CORS origin ID")
     ),
