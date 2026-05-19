@@ -76,7 +76,11 @@ export const emailDomainMappingsApi = {
 		);
 	},
 
-	create(data: CreateEmailDomainMappingRequest): Promise<EmailDomainMapping> {
+	// Backend returns `{ id }` only on create (CreatedResponse shape, see
+	// crates/fc-platform/src/shared/api_common.rs::CreatedResponse). To
+	// display the full mapping, re-fetch via `get(id)`. Don't depend on
+	// other fields being present on this response.
+	create(data: CreateEmailDomainMappingRequest): Promise<{ id: string }> {
 		return apiFetch("/email-domain-mappings", {
 			method: "POST",
 			body: JSON.stringify(data),

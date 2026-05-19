@@ -170,7 +170,12 @@ async function createMapping() {
 		};
 
 		const created = await emailDomainMappingsApi.create(requestData);
-		toast.success("Success", `Email domain mapping for "${created.emailDomain}" created successfully`);
+		// `created` is `{ id }` only — see api/email-domain-mappings.ts.
+		// Use the form input for the toast so we don't render "undefined".
+		toast.success(
+			"Success",
+			`Email domain mapping for "${requestData.emailDomain}" created successfully`,
+		);
 		router.push(`/authentication/email-domain-mappings/${created.id}`);
 	} catch (e: unknown) {
 		error.value = getErrorMessage(e, "Failed to create mapping");
