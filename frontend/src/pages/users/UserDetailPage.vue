@@ -138,10 +138,40 @@ const availableClients = computed(() => {
 	return clients.value.filter((c) => !existingIds.has(c.id));
 });
 
+// Roles the principal *can* be assigned, gated by the application(s) they
+// can actually access. ANCHOR-scope users have implicit access to all apps
+// so they see every role. CLIENT/PARTNER users are bounded by
+// `applicationAccessGrants` (which is in turn bounded by their client's
+// enabled apps) — assigning a role from an inaccessible app silently
+// produces no effective permissions because the auth context filters by
+// accessible_application_ids. So we hide those roles upstream.
+//
+// Already-assigned roles stay visible so the user can revoke them even if
+// the app access was later removed.
+const assignableRoles = computed(() => {
+	if (user.value?.scope === "ANCHOR") {
+		return availableRoles.value;
+	}
+	const accessibleCodes = new Set(
+		applicationAccessGrants.value.map((g) => g.applicationCode),
+	);
+	const assignedNames = new Set(
+		roleAssignments.value.map((r) => r.roleName),
+	);
+	return availableRoles.value.filter(
+		(r) =>
+			accessibleCodes.has(r.applicationCode) || assignedNames.has(r.name),
+	);
+});
+
+const hiddenRoleCount = computed(
+	() => availableRoles.value.length - assignableRoles.value.length,
+);
+
 // Roles filtered by search query for the picker
 const filteredAvailableRoles = computed(() => {
 	const query = roleSearchQuery.value.toLowerCase();
-	return availableRoles.value.filter(
+	return assignableRoles.value.filter(
 		(r) =>
 			r.name.toLowerCase().includes(query) ||
 			r.displayName?.toLowerCase().includes(query),
@@ -937,6 +967,12 @@ function goBack() {
             </div>
             <div v-if="filteredAvailableRoles.length === 0" class="no-results">No roles found</div>
           </div>
+          <p v-if="hiddenRoleCount > 0" class="role-pane-hint">
+            {{ hiddenRoleCount }} role<span v-if="hiddenRoleCount !== 1">s</span>
+            hidden because their application isn't enabled for this user. Add the
+            application under <strong>Application Access</strong> to make them
+            available here.
+          </p>
         </div>
 
         <!-- Right Pane: Selected Roles -->
@@ -1532,6 +1568,16 @@ function goBack() {
   text-align: center;
   color: #94a3b8;
   font-size: 13px;
+}
+
+.role-pane-hint {
+  margin: 8px 12px 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-color-secondary);
+  background: var(--surface-ground);
+  border-left: 3px solid var(--p-warning-color, #f59e0b);
+  border-radius: 4px;
 }
 
 /* Dual-pane app picker styles (mirrors role picker) */
