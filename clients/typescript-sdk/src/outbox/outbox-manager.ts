@@ -30,8 +30,14 @@ export class OutboxManager {
 		this.clientId = clientId;
 	}
 
-	/** Create a single event in the outbox. Returns the generated TSID. */
-	async createEvent(event: CreateEventDto): Promise<string> {
+	/**
+	 * Create a single event in the outbox. Returns the generated TSID.
+	 *
+	 * @param tx Optional transaction handle. If provided, the row joins that
+	 *   transaction so the outbox write is atomic with the caller's business
+	 *   writes. Pass the same handle to both your repository and this call.
+	 */
+	async createEvent(event: CreateEventDto, tx?: unknown): Promise<string> {
 		this.ensureClientId();
 
 		const id = generate();
@@ -45,12 +51,15 @@ export class OutboxManager {
 			Object.keys(event.headers).length > 0 ? event.headers : null,
 		);
 
-		await this.driver.insert(message);
+		await this.driver.insert(message, tx);
 		return id;
 	}
 
 	/** Create multiple events in the outbox (batch). Returns the generated TSIDs. */
-	async createEvents(events: CreateEventDto[]): Promise<string[]> {
+	async createEvents(
+		events: CreateEventDto[],
+		tx?: unknown,
+	): Promise<string[]> {
 		if (events.length === 0) return [];
 		this.ensureClientId();
 
@@ -73,12 +82,15 @@ export class OutboxManager {
 			);
 		}
 
-		await this.driver.insertBatch(messages);
+		await this.driver.insertBatch(messages, tx);
 		return ids;
 	}
 
 	/** Create a single dispatch job in the outbox. Returns the generated TSID. */
-	async createDispatchJob(job: CreateDispatchJobDto): Promise<string> {
+	async createDispatchJob(
+		job: CreateDispatchJobDto,
+		tx?: unknown,
+	): Promise<string> {
 		this.ensureClientId();
 
 		const id = generate();
@@ -92,12 +104,15 @@ export class OutboxManager {
 			null,
 		);
 
-		await this.driver.insert(message);
+		await this.driver.insert(message, tx);
 		return id;
 	}
 
 	/** Create multiple dispatch jobs in the outbox (batch). Returns the generated TSIDs. */
-	async createDispatchJobs(jobs: CreateDispatchJobDto[]): Promise<string[]> {
+	async createDispatchJobs(
+		jobs: CreateDispatchJobDto[],
+		tx?: unknown,
+	): Promise<string[]> {
 		if (jobs.length === 0) return [];
 		this.ensureClientId();
 
@@ -114,12 +129,15 @@ export class OutboxManager {
 			);
 		}
 
-		await this.driver.insertBatch(messages);
+		await this.driver.insertBatch(messages, tx);
 		return ids;
 	}
 
 	/** Create a single audit log in the outbox. Returns the generated TSID. */
-	async createAuditLog(auditLog: CreateAuditLogDto): Promise<string> {
+	async createAuditLog(
+		auditLog: CreateAuditLogDto,
+		tx?: unknown,
+	): Promise<string> {
 		this.ensureClientId();
 
 		const id = generate();
@@ -133,12 +151,15 @@ export class OutboxManager {
 			Object.keys(auditLog.headers).length > 0 ? auditLog.headers : null,
 		);
 
-		await this.driver.insert(message);
+		await this.driver.insert(message, tx);
 		return id;
 	}
 
 	/** Create multiple audit logs in the outbox (batch). Returns the generated TSIDs. */
-	async createAuditLogs(auditLogs: CreateAuditLogDto[]): Promise<string[]> {
+	async createAuditLogs(
+		auditLogs: CreateAuditLogDto[],
+		tx?: unknown,
+	): Promise<string[]> {
 		if (auditLogs.length === 0) return [];
 		this.ensureClientId();
 
@@ -161,7 +182,7 @@ export class OutboxManager {
 			);
 		}
 
-		await this.driver.insertBatch(messages);
+		await this.driver.insertBatch(messages, tx);
 		return ids;
 	}
 
