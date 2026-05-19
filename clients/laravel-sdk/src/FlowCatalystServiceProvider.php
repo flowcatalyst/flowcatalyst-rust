@@ -111,7 +111,8 @@ class FlowCatalystServiceProvider extends ServiceProvider
                 ),
                 default => new DatabaseDriver(
                     connection: $config['connection'],
-                    table: $config['table'] ?? 'outbox_messages'
+                    table: $config['table'] ?? 'outbox_messages',
+                    strictTransactions: (bool) ($config['strict_transactions'] ?? false),
                 ),
             };
         });
