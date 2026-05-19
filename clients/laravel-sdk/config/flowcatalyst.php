@@ -346,5 +346,25 @@ return [
         |
         */
         'default_partition' => env('FLOWCATALYST_DEFAULT_PARTITION', 'default'),
+
+        /*
+        |----------------------------------------------------------------------
+        | Strict Transactional Outbox
+        |----------------------------------------------------------------------
+        |
+        | When enabled, the database outbox driver throws an OutboxException
+        | if a write is attempted outside of an active database transaction
+        | on the configured connection. This catches the most common
+        | transactional-outbox bug: writing the outbox row without wrapping
+        | it in `DB::transaction(fn () => ...)` alongside the business writes,
+        | which lets business state and outbox state drift on partial failure.
+        |
+        | When disabled (default, for backwards compatibility), a warning is
+        | logged via Log::warning(...) but the write proceeds. Flip this on
+        | per environment once your callers consistently wrap outbox writes
+        | in DB::transaction(...).
+        |
+        */
+        'strict_transactions' => env('FLOWCATALYST_OUTBOX_STRICT_TRANSACTIONS', false),
     ],
 ];
