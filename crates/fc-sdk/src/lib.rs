@@ -86,6 +86,12 @@ pub mod usecase;
 ))]
 pub mod outbox;
 
+#[cfg(any(feature = "cache", feature = "cache-postgres", feature = "cache-redis"))]
+pub mod cache;
+
+#[cfg(any(feature = "lock", feature = "lock-postgres", feature = "lock-redis"))]
+pub mod lock;
+
 #[cfg(feature = "client")]
 pub mod client;
 
