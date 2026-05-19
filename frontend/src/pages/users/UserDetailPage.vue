@@ -1415,6 +1415,18 @@ function goBack() {
   width: 100%;
 }
 
+/* PrimeVue Password forwards `inputClass` to the inner <input>, which
+ * doesn't carry this file's Vue scope attribute — so the .w-full class
+ * silently no-ops there. Deep-select the rendered wrappers instead so the
+ * Reset Password dialog's Password fields fill the form-field width.
+ * Same trick used in LoginPage.vue + ResetPasswordPage.vue. */
+:deep(.p-password) {
+  width: 100%;
+}
+:deep(.p-password-input) {
+  width: 100%;
+}
+
 /* Dual-pane role picker styles */
 .role-picker {
   display: flex;
