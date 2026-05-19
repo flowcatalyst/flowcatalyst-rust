@@ -106,6 +106,36 @@ export {
 	NoOpLockProvider,
 	InMemoryLockProvider,
 } from "./runner/lock-provider";
+export {
+	PgLockProvider,
+	type PgLockProviderOptions,
+} from "./runner/pg-lock-provider";
+export {
+	RedisLockProvider,
+	type RedisLockCommandable,
+	type RedisLockProviderOptions,
+} from "./runner/redis-lock-provider";
+export {
+	CREATE_LOCK_TABLE_SQL,
+	initLockSchema,
+	initLockSchemaWithTable,
+} from "./runner/lock-schema";
+
+// Cache — pluggable key-value cache with required TTL. Three backends:
+// MemoryCacheStore (default for tests/dev), PgCacheStore (node-postgres-
+// compatible), RedisCacheStore (ioredis-compatible).
+export {
+	CacheError,
+	type CacheStore,
+	MemoryCacheStore,
+	PgCacheStore,
+	RedisCacheStore,
+	type RedisCommandable,
+	type RedisCacheStoreOptions,
+	CREATE_CACHE_TABLE_SQL,
+	initCacheSchema,
+	initCacheSchemaWithTable,
+} from "./cache/index.js";
 
 // Scheduled-job DTOs (re-exported here so consumers don't need to drill in).
 export type {
