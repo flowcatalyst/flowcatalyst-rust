@@ -171,7 +171,7 @@ async function provisionServiceAccount() {
 		provisionedCredentials.value = result.serviceAccount;
 		showCredentialsDialog.value = true;
 
-		// Reload application to get updated serviceAccountPrincipalId
+		// Reload application to get updated serviceAccountId
 		await loadApplication(id);
 	} catch (e: unknown) {
 	} finally {
@@ -335,7 +335,7 @@ function formatDate(dateString: string) {
           <h3>Service Account</h3>
         </div>
         <div class="card-content">
-          <template v-if="application.serviceAccountPrincipalId">
+          <template v-if="application.serviceAccountId">
             <div class="detail-grid">
               <div class="detail-item">
                 <label>Status</label>
@@ -343,7 +343,7 @@ function formatDate(dateString: string) {
               </div>
               <div class="detail-item">
                 <label>Principal ID</label>
-                <code>{{ application.serviceAccountPrincipalId }}</code>
+                <code>{{ application.serviceAccountId }}</code>
               </div>
             </div>
             <Message severity="info" class="service-account-info">

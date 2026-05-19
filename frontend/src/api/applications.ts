@@ -13,7 +13,7 @@ export interface Application {
 	website?: string;
 	logo?: string;
 	logoMimeType?: string;
-	serviceAccountPrincipalId?: string;
+	serviceAccountId?: string;
 	active: boolean;
 	createdAt: string;
 	updatedAt: string;
