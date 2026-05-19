@@ -18,11 +18,13 @@ use crate::application::operations::{
     CreateApplicationUseCase, DeactivateApplicationCommand, DeactivateApplicationUseCase,
     UpdateApplicationCommand, UpdateApplicationUseCase,
 };
+use crate::auth::oauth_entity::{GrantType, OAuthClientType};
+use crate::auth::operations::CreateOAuthClientUseCase;
 use crate::shared::api_common::PaginationParams;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseResult};
-use crate::{Application, AuthRole, ServiceAccount};
+use crate::{Application, AuthRole, OAuthClientRepository, ServiceAccount};
 use crate::{
     ApplicationClientConfigRepository, ApplicationRepository, ClientRepository, RoleRepository,
     ServiceAccountRepository,
@@ -86,6 +88,12 @@ pub struct ApplicationResponse {
     pub active: bool,
     pub created_at: String,
     pub updated_at: String,
+    /// True iff this application has a login OAuth client provisioned (used
+    /// to gate the "Provision Login Client" button in the UI). Populated by
+    /// the detail endpoint only; list responses leave it `None` to avoid an
+    /// N+1 lookup across rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_login_client: Option<bool>,
 }
 
 impl From<Application> for ApplicationResponse {
@@ -102,6 +110,7 @@ impl From<Application> for ApplicationResponse {
             active: a.active,
             created_at: a.created_at.to_rfc3339(),
             updated_at: a.updated_at.to_rfc3339(),
+            has_login_client: None,
         }
     }
 }
@@ -143,6 +152,82 @@ impl From<ServiceAccount> for ServiceAccountResponse {
             created_at: sa.created_at.to_rfc3339(),
         }
     }
+}
+
+/// OAuth client credentials returned from a provisioning endpoint.
+///
+/// The `clientSecret` is only populated for CONFIDENTIAL clients and only at
+/// the moment of creation — the platform stores it encrypted and never
+/// returns it again. Rotate via `POST /api/oauth-clients/{id}/regenerate-secret`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthClientCredentials {
+    /// OAuth client row id (`oac_…`).
+    pub id: String,
+    /// Public `clientId` used in the OAuth flows.
+    pub client_id: String,
+    /// Plaintext client secret — only on creation, only for CONFIDENTIAL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+}
+
+/// Wrapper returned from `POST /api/applications/{id}/provision-service-account`.
+///
+/// Matches the frontend's existing `ServiceAccountCredentials` shape so the
+/// page can display the freshly-minted credentials in one modal.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceAccountCredentialsResponse {
+    /// Principal id of the service account (`sac_…`).
+    pub principal_id: String,
+    /// Service account display name (used in the credentials dialog).
+    pub name: String,
+    /// OAuth client minted alongside the service account, with the only
+    /// chance to read the plaintext secret.
+    pub oauth_client: OAuthClientCredentials,
+}
+
+/// Wrapper response from `POST /api/applications/{id}/provision-service-account`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionServiceAccountResponse {
+    pub message: String,
+    pub service_account: ServiceAccountCredentialsResponse,
+}
+
+/// Request body for `POST /api/applications/{id}/provision-login-client`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionLoginClientRequest {
+    /// `"PUBLIC"` (default, PKCE-only) or `"CONFIDENTIAL"` (has a client secret).
+    /// PUBLIC is the right choice for SPAs and native apps; CONFIDENTIAL is for
+    /// server-rendered apps that can keep a secret.
+    #[serde(default)]
+    pub client_type: Option<String>,
+    /// One or more URLs the application redirects to after login. At least one is required.
+    pub redirect_uris: Vec<String>,
+    /// Origins permitted by the browser for CORS preflight on the auth endpoints.
+    /// Optional; defaults to the redirect URI origins.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+}
+
+/// Response from `POST /api/applications/{id}/provision-login-client`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionLoginClientResponse {
+    pub message: String,
+    pub login_client: LoginClientCredentialsResponse,
+}
+
+/// Login-client credentials returned at provision time. `clientSecret` is
+/// populated only for CONFIDENTIAL clients.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginClientCredentialsResponse {
+    pub client_type: String,
+    pub oauth_client: OAuthClientCredentials,
+    pub redirect_uris: Vec<String>,
 }
 
 /// Application role response DTO
@@ -192,6 +277,11 @@ pub struct ApplicationsState<U: UnitOfWork + 'static> {
         Arc<crate::application::operations::DisableApplicationForClientUseCase<U>>,
     pub update_client_config_use_case:
         Arc<crate::application::operations::UpdateApplicationClientConfigUseCase<U>>,
+    /// OAuth client repo + create use case — used by the provision-service-account
+    /// and provision-login-client endpoints to mint a client_credentials or
+    /// authorization_code OAuth client for the application.
+    pub oauth_client_repo: Arc<OAuthClientRepository>,
+    pub create_oauth_client_use_case: Arc<CreateOAuthClientUseCase<U>>,
     /// Concrete `PgUnitOfWork` for orchestrated operations (provision-service-account)
     /// that span two aggregates. Routed via `run(closure)` — handler owns the
     /// tx boundary. Trait-backed use cases still go through `U`.
@@ -268,7 +358,13 @@ pub async fn get_application<U: UnitOfWork>(
         .await?
         .ok_or_else(|| PlatformError::not_found("Application", &id))?;
 
-    Ok(Json(app.into()))
+    // Populate `hasLoginClient` so the UI can hide the "Provision Login
+    // Client" button when one is already in place. Only computed for the
+    // detail endpoint — list responses leave it absent.
+    let has_login_client = app_has_login_client(&state.oauth_client_repo, &app.id).await?;
+    let mut response: ApplicationResponse = app.into();
+    response.has_login_client = Some(has_login_client);
+    Ok(Json(response))
 }
 
 /// Applications list response (wrapped)
@@ -490,10 +586,17 @@ pub async fn get_application_by_code<U: UnitOfWork>(
 
 /// Provision a service account for an application.
 ///
-/// Two-aggregate operation: creates a ServiceAccount + updates Application.
-/// Both commits happen inside a single DB transaction via
-/// `PgUnitOfWork::run(…)` — either both land or both roll back. The
-/// handler owns the tx boundary; the use cases stay tx-agnostic.
+/// Three-aggregate operation in a single PG transaction (via
+/// `PgUnitOfWork::run`): creates a `ServiceAccount`, attaches it to the
+/// `Application`, and mints a CONFIDENTIAL OAuth client with
+/// `grant_types: ["client_credentials"]` so consumer apps can authenticate
+/// AS the service account. All three commits land together or all roll back.
+///
+/// The plaintext `clientSecret` is included in the response **only on this
+/// call** — the platform stores only the encrypted form and can never
+/// return it again. The frontend's credentials dialog is the user's only
+/// chance to capture it. Rotate later via
+/// `POST /api/oauth-clients/{id}/regenerate-secret` if needed.
 #[utoipa::path(
     post,
     path = "/{id}/provision-service-account",
@@ -503,7 +606,7 @@ pub async fn get_application_by_code<U: UnitOfWork>(
         ("id" = String, Path, description = "Application ID")
     ),
     responses(
-        (status = 201, description = "Service account provisioned", body = ServiceAccountResponse),
+        (status = 201, description = "Service account provisioned", body = ProvisionServiceAccountResponse),
         (status = 404, description = "Application not found"),
         (status = 409, description = "Service account already exists")
     ),
@@ -513,10 +616,11 @@ pub async fn provision_service_account<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<ServiceAccountResponse>, PlatformError> {
+) -> Result<Json<ProvisionServiceAccountResponse>, PlatformError> {
     use crate::application::operations::{
         AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
     };
+    use crate::auth::operations::CreateOAuthClientCommand;
     use crate::service_account::operations::{
         CreateServiceAccountCommand, CreateServiceAccountUseCase,
     };
@@ -536,23 +640,43 @@ pub async fn provision_service_account<U: UnitOfWork>(
         ));
     }
 
+    // Mint the OAuth client identifiers and a fresh secret BEFORE opening
+    // the tx. We hand the encrypted ref into the closure and keep the
+    // plaintext to return in the response.
+    let oauth_row_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let oauth_public_client_id =
+        crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let (client_secret_plaintext, client_secret_ref) = generate_and_encrypt_client_secret()?;
+
     let sa_code = format!("app:{}", app.code);
     let sa_name = format!("{} Service Account", app.name);
     let sa_description = format!("Service account for application: {}", app.name);
+    let oauth_client_name = format!("{} Service Account Client", app.name);
 
     let app_id = app.id.clone();
     let principal_id = auth.0.principal_id.clone();
     let sa_repo = state.service_account_repo.clone();
     let app_repo = state.application_repo.clone();
+    let oauth_client_repo = state.oauth_client_repo.clone();
 
-    // One DB tx for both use cases. If the attach fails for any reason
-    // (rare — we pre-checked), the ServiceAccount insert rolls back too.
+    let oauth_row_id_for_cmd = oauth_row_id.clone();
+    let oauth_public_client_id_for_cmd = oauth_public_client_id.clone();
+
+    // One DB tx for all three use cases. If any step fails, all rows
+    // (SA insert, Application update, OAuth client insert) roll back.
     let result = state
         .pg_unit_of_work
         .run(|session| async move {
             let create_sa_uc = CreateServiceAccountUseCase::new(sa_repo, session.clone());
-            let attach_uc = AttachServiceAccountToApplicationUseCase::new(app_repo, session);
+            let attach_uc =
+                AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
+            let create_oauth_uc =
+                CreateOAuthClientUseCase::new(oauth_client_repo, session);
 
+            let ctx = crate::usecase::ExecutionContext::create(&principal_id);
+
+            // 1. Create the ServiceAccount (a Principal row is created
+            //    behind it; SA.id == Principal.id).
             let create_cmd = CreateServiceAccountCommand {
                 code: sa_code.clone(),
                 name: sa_name,
@@ -560,7 +684,6 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 client_ids: Vec::new(),
                 application_id: Some(app_id.clone()),
             };
-            let ctx = crate::usecase::ExecutionContext::create(&principal_id);
             let created = match create_sa_uc
                 .run(create_cmd, ctx.clone())
                 .await
@@ -571,30 +694,226 @@ pub async fn provision_service_account<U: UnitOfWork>(
             };
             let sa_id = created.event.service_account_id.clone();
 
+            // 2. Attach SA to Application — sets `application.service_account_id`.
             let attach_cmd = AttachServiceAccountToApplicationCommand {
-                application_id: app_id,
+                application_id: app_id.clone(),
                 service_account_id: sa_id.clone(),
                 service_account_code: sa_code,
             };
-            // `.map()` transforms the attach event into the SA id without
-            // bypassing the Result seal — success can only come from a UoW
-            // commit, then we re-shape the success payload.
-            attach_uc.run(attach_cmd, ctx).await.map(move |_| sa_id)
+            if let Err(err) = attach_uc
+                .run(attach_cmd, ctx.clone())
+                .await
+                .into_result()
+            {
+                return crate::usecase::UseCaseResult::failure(err);
+            }
+
+            // 3. Mint the OAuth client (client_credentials grant) so the
+            //    consumer can actually authenticate AS this service account.
+            let oauth_cmd = CreateOAuthClientCommand {
+                oauth_client_id: oauth_row_id_for_cmd,
+                client_id: oauth_public_client_id_for_cmd,
+                client_name: oauth_client_name,
+                client_type: OAuthClientType::Confidential.as_str().to_string(),
+                client_secret_ref: Some(format!("encrypted:{}", client_secret_ref)),
+                redirect_uris: Vec::new(),
+                grant_types: vec![GrantType::ClientCredentials.as_str().to_string()],
+                default_scopes: Vec::new(),
+                pkce_required: false,
+                application_ids: vec![app_id],
+                allowed_origins: Vec::new(),
+                service_account_principal_id: Some(sa_id.clone()),
+                created_by: Some(principal_id.clone()),
+            };
+            create_oauth_uc.run(oauth_cmd, ctx).await.map(move |_| sa_id)
         })
         .await;
 
     let sa_id = result.into_result()?;
 
-    // Fetch the committed service account for the response. This is a read
-    // after the tx closed — safe, the SA row is guaranteed to exist on the
-    // success path.
+    // Fetch the SA for its display name. The OAuth client id + client_id
+    // are the ones we minted above, so we don't need to re-read the row.
     let service_account = state
         .service_account_repo
         .find_by_id(&sa_id)
         .await?
         .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
 
-    Ok(Json(service_account.into()))
+    Ok(Json(ProvisionServiceAccountResponse {
+        message: "Service account provisioned".to_string(),
+        service_account: ServiceAccountCredentialsResponse {
+            principal_id: service_account.id,
+            name: service_account.name,
+            oauth_client: OAuthClientCredentials {
+                id: oauth_row_id,
+                client_id: oauth_public_client_id,
+                client_secret: Some(client_secret_plaintext),
+            },
+        },
+    }))
+}
+
+/// Provision an OAuth Login Client for an application.
+///
+/// Creates a single OAuth client with `grant_types: ["authorization_code"]`
+/// scoped to this application. Used for OIDC-driven user login flows in the
+/// app's frontend — separate from `provision-service-account`, which mints
+/// a CONFIDENTIAL `client_credentials` client for M2M auth.
+///
+/// `clientType` defaults to `"PUBLIC"` (PKCE enforced — right answer for
+/// SPAs / native apps). Pass `"CONFIDENTIAL"` for server-rendered apps that
+/// can keep a secret; in that case the response includes a plaintext
+/// `clientSecret` exactly once.
+///
+/// 409 if a login client (any OAuth client with `grant_types` containing
+/// `authorization_code` AND no service-account link) already exists for
+/// the application. Rotate or delete the existing one via the OAuth
+/// Clients page before re-provisioning.
+#[utoipa::path(
+    post,
+    path = "/{id}/provision-login-client",
+    tag = "applications",
+    operation_id = "postApiApplicationsByIdProvisionLoginClient",
+    params(
+        ("id" = String, Path, description = "Application ID")
+    ),
+    request_body = ProvisionLoginClientRequest,
+    responses(
+        (status = 201, description = "Login client provisioned", body = ProvisionLoginClientResponse),
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Application not found"),
+        (status = 409, description = "Login client already exists")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn provision_login_client<U: UnitOfWork>(
+    State(state): State<ApplicationsState<U>>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+    Json(req): Json<ProvisionLoginClientRequest>,
+) -> Result<Json<ProvisionLoginClientResponse>, PlatformError> {
+    use crate::auth::operations::CreateOAuthClientCommand;
+
+    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+
+    // Validate the request body before we touch the DB.
+    if req.redirect_uris.is_empty() {
+        return Err(PlatformError::validation(
+            "At least one redirect URI is required",
+        ));
+    }
+
+    let client_type = match req.client_type.as_deref() {
+        Some("CONFIDENTIAL") => OAuthClientType::Confidential,
+        _ => OAuthClientType::Public,
+    };
+
+    // Pre-validate: app must exist; reject if a login client already exists
+    // (one per app — rotate or delete the existing one if you need fresh
+    // credentials).
+    let app = state
+        .application_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+    if app_has_login_client(&state.oauth_client_repo, &app.id).await? {
+        return Err(PlatformError::conflict(
+            "Application already has a login OAuth client provisioned",
+        ));
+    }
+
+    let oauth_row_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let oauth_public_client_id =
+        crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let client_name = format!("{} Login", app.name);
+
+    // CONFIDENTIAL clients get a secret at the edge (only confidential
+    // clients have one — PUBLIC clients use PKCE alone).
+    let (client_secret_plaintext, client_secret_ref) = if client_type
+        == OAuthClientType::Confidential
+    {
+        let (plaintext, encrypted) = generate_and_encrypt_client_secret()?;
+        (Some(plaintext), Some(format!("encrypted:{}", encrypted)))
+    } else {
+        (None, None)
+    };
+
+    let cmd = CreateOAuthClientCommand {
+        oauth_client_id: oauth_row_id.clone(),
+        client_id: oauth_public_client_id.clone(),
+        client_name,
+        client_type: client_type.as_str().to_string(),
+        client_secret_ref,
+        redirect_uris: req.redirect_uris.clone(),
+        grant_types: vec![GrantType::AuthorizationCode.as_str().to_string()],
+        default_scopes: vec![
+            "openid".to_string(),
+            "profile".to_string(),
+            "email".to_string(),
+        ],
+        pkce_required: client_type == OAuthClientType::Public,
+        application_ids: vec![app.id.clone()],
+        allowed_origins: req.allowed_origins.clone(),
+        service_account_principal_id: None,
+        created_by: Some(auth.0.principal_id.clone()),
+    };
+    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    state
+        .create_oauth_client_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
+
+    Ok(Json(ProvisionLoginClientResponse {
+        message: "Login client provisioned".to_string(),
+        login_client: LoginClientCredentialsResponse {
+            client_type: client_type.as_str().to_string(),
+            oauth_client: OAuthClientCredentials {
+                id: oauth_row_id,
+                client_id: oauth_public_client_id,
+                client_secret: client_secret_plaintext,
+            },
+            redirect_uris: req.redirect_uris,
+        },
+    }))
+}
+
+/// Check whether the application already has an OAuth client provisioned
+/// for the user-login flow (authorization_code grant + NOT linked to a
+/// service account). Filters in-memory off `find_by_application` — the
+/// list is small per app, so no extra index needed.
+async fn app_has_login_client(
+    repo: &OAuthClientRepository,
+    app_id: &str,
+) -> Result<bool, PlatformError> {
+    let clients = repo.find_by_application(app_id).await?;
+    Ok(clients.iter().any(|c| {
+        c.service_account_principal_id.is_none()
+            && c.grant_types.contains(&GrantType::AuthorizationCode)
+    }))
+}
+
+/// Generate a fresh 32-byte client secret and encrypt it for storage.
+/// Returns `(plaintext, encrypted_payload)`. The caller wraps the second
+/// value as `format!("encrypted:{}", …)` before persistence (matches what
+/// the OAuth client API at `oauth_clients_api.rs:226` does).
+fn generate_and_encrypt_client_secret() -> Result<(String, String), PlatformError> {
+    use base64::Engine;
+    let mut secret_bytes = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
+    let plaintext = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+
+    let enc = crate::shared::encryption_service::EncryptionService::from_env().ok_or_else(
+        || {
+            PlatformError::internal(
+                "FLOWCATALYST_APP_KEY not configured — cannot encrypt client secret",
+            )
+        },
+    )?;
+    let encrypted = enc
+        .encrypt(&plaintext)
+        .map_err(|e| PlatformError::internal(format!("Failed to encrypt client secret: {}", e)))?;
+    Ok((plaintext, encrypted))
 }
 
 /// Get service account for an application
@@ -967,6 +1286,10 @@ pub fn applications_router<U: UnitOfWork + Clone>(state: ApplicationsState<U>) -
         .route(
             "/{id}/provision-service-account",
             post(provision_service_account::<U>),
+        )
+        .route(
+            "/{id}/provision-login-client",
+            post(provision_login_client::<U>),
         )
         .route(
             "/{id}/service-account",
