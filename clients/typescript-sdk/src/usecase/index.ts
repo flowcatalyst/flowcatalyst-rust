@@ -42,6 +42,7 @@ export { type Aggregate, type UnitOfWork } from "./unit-of-work.js";
 
 export {
 	OutboxUnitOfWork,
+	TxScopedOutboxUnitOfWork,
 	type OutboxUnitOfWorkConfig,
 	type OutboxUnitOfWorkOptions,
 } from "./outbox-unit-of-work.js";

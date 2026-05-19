@@ -173,6 +173,12 @@ export { CreateEventDto } from "./outbox/index.js";
 export { CreateDispatchJobDto } from "./outbox/index.js";
 export { CreateAuditLogDto } from "./outbox/index.js";
 export { generateTsid, isValidTsid } from "./outbox/index.js";
+export { PgOutboxDriver } from "./outbox/index.js";
+export type {
+	PgQueryable,
+	PgPoolLike,
+	PgPoolClientLike,
+} from "./outbox/index.js";
 
 // UseCase / UnitOfWork — domain-driven write pattern with outbox dispatch.
 // Exported as a namespace to avoid clashing with neverthrow's `Result` and the

@@ -55,54 +55,44 @@ export interface OutboxMessage {
 /**
  * Driver interface for outbox persistence.
  *
- * Users implement this with their own DB client to participate
- * in the same transaction as their business logic.
+ * Implementations write outbox rows. To make outbox writes atomic with the
+ * caller's business writes, pass the same transaction handle (opaque to the
+ * SDK) to both: your repository's persist call and the driver's insert call.
  *
- * @example
- * ```typescript
- * import { OutboxDriver, OutboxMessage } from '@flowcatalyst/sdk';
- * import { Pool } from 'pg';
+ * - `insert` / `insertBatch` accept an optional `tx` handle. If omitted, the
+ *   driver writes against its default executor (typically a pool). If
+ *   present, the driver writes against the caller-supplied transaction so
+ *   the row is part of the same tx as the business writes.
+ * - `withTransaction` is optional; implementations that support it enable
+ *   `OutboxUnitOfWork.run(callback)`, which opens a tx, runs the callback
+ *   against a scoped UoW, then commits or rolls back based on the result.
  *
- * class PostgresOutboxDriver implements OutboxDriver {
- *   constructor(private pool: Pool) {}
- *
- *   async insert(message: OutboxMessage): Promise<void> {
- *     await this.pool.query(
- *       `INSERT INTO outbox_messages
- *        (id, type, message_group, payload, status, created_at, updated_at,
- *         client_id, payload_size, headers)
- *        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
- *       [
- *         message.id, message.type, message.message_group, message.payload,
- *         message.status, message.created_at, message.updated_at,
- *         message.client_id, message.payload_size,
- *         message.headers ? JSON.stringify(message.headers) : null,
- *       ]
- *     );
- *   }
- *
- *   async insertBatch(messages: OutboxMessage[]): Promise<void> {
- *     const client = await this.pool.connect();
- *     try {
- *       await client.query('BEGIN');
- *       for (const message of messages) {
- *         await this.insert(message);
- *       }
- *       await client.query('COMMIT');
- *     } catch (e) {
- *       await client.query('ROLLBACK');
- *       throw e;
- *     } finally {
- *       client.release();
- *     }
- *   }
- * }
- * ```
+ * The bundled [`PgOutboxDriver`](./drivers/pg-outbox-driver.js) implements
+ * both methods against `node-postgres`-compatible pools and clients (including
+ * Drizzle's underlying client). Most consumers should use it directly.
  */
 export interface OutboxDriver {
-	/** Insert a single message into the outbox. */
-	insert(message: OutboxMessage): Promise<void>;
+	/**
+	 * Insert a single message into the outbox.
+	 *
+	 * If `tx` is provided, the write joins that transaction. Otherwise the
+	 * driver writes via its default executor.
+	 */
+	insert(message: OutboxMessage, tx?: unknown): Promise<void>;
 
-	/** Insert multiple messages into the outbox (batch). */
-	insertBatch(messages: OutboxMessage[]): Promise<void>;
+	/**
+	 * Insert multiple messages into the outbox (batch).
+	 *
+	 * If `tx` is provided, all rows join that transaction. Otherwise the
+	 * driver opens its own short-lived transaction so the batch is atomic.
+	 */
+	insertBatch(messages: OutboxMessage[], tx?: unknown): Promise<void>;
+
+	/**
+	 * Open a transaction, run the callback against the tx handle, and commit
+	 * (or roll back on throw). Required for `OutboxUnitOfWork.run` — drivers
+	 * that don't implement this can still be used via the non-orchestrated
+	 * `commit` / `commitAggregate` / `emitEvent` methods.
+	 */
+	withTransaction?<T>(callback: (tx: unknown) => Promise<T>): Promise<T>;
 }
