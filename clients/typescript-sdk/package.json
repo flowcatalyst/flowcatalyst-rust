@@ -43,7 +43,7 @@
 		"dev": "tsc --watch",
 		"generate": "openapi-ts",
 		"generate:live": "OPENAPI_LIVE=true openapi-ts",
-		"prebuild": "npm run generate",
+		"prebuild": "pnpm run generate",
 		"test": "echo \"Tests coming soon\" && exit 0",
 		"lint": "tsc --noEmit",
 		"clean": "rm -rf dist src/generated"
@@ -52,7 +52,7 @@
 		"neverthrow": "^8.1.1"
 	},
 	"peerDependencies": {
-		"effect": "^4.0.0"
+		"effect": "^4.0.0-beta.68"
 	},
 	"peerDependenciesMeta": {
 		"effect": {
@@ -62,8 +62,8 @@
 	"devDependencies": {
 		"@hey-api/openapi-ts": "^0.91.1",
 		"@types/node": "^22.0.0",
-		"effect": "^4.0.0",
-		"typescript": "^5.9.0"
+		"effect": "^4.0.0-beta.68",
+		"typescript": "^6.0.0"
 	},
 	"engines": {
 		"node": ">=18.0.0"
