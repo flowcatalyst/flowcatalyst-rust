@@ -3,7 +3,7 @@ name = "fc-dev"
 # fc-dev releases on its own cadence — not tied to the workspace version.
 # Bump this, then tag `fc-dev/vX.Y.Z` to cut a release; the
 # release-fc-dev workflow does the rest.
-version = "0.4.5"
+version = "0.4.6"
 edition.workspace = true
 description = "FlowCatalyst Development Monolith - All components in a single binary"
 
