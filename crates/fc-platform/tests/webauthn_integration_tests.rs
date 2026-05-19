@@ -1,7 +1,7 @@
 //! WebAuthn Integration Tests
 //!
 //! Exercise the parts of the passkey flow that don't require a real
-//! browser / authenticator ceremony: migration sanity, the email-domain
+//! browser / authenticator ceremony: migration sanity, the per-principal
 //! gate against a real database, and cascade-delete behaviour.
 //!
 //! Full register/authenticate ceremony testing requires synthesising a
@@ -14,10 +14,9 @@
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
-use fc_platform::email_domain_mapping::entity::ScopeType;
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
-use fc_platform::webauthn::gate::ensure_internal_auth;
-use fc_platform::{EmailDomainMapping, EmailDomainMappingRepository};
+use fc_platform::webauthn::gate::ensure_internal_principal;
+use fc_platform::{Principal, PrincipalRepository, UserScope};
 
 async fn setup_test_db() -> (sqlx::PgPool, testcontainers::ContainerAsync<Postgres>) {
     let container = Postgres::default()
@@ -82,32 +81,66 @@ async fn migration_creates_webauthn_credentials_table_with_expected_columns() {
     assert_eq!(by_name["last_used_at"].1, "YES");
 }
 
-#[tokio::test]
-#[ignore = "requires Docker"]
-async fn gate_allows_internal_domain_with_no_mapping() {
-    let (pool, _c) = setup_test_db().await;
-    let edm_repo = EmailDomainMappingRepository::new(&pool);
-
-    // No mapping for example.com — gate must pass.
-    ensure_internal_auth("alice@example.com", &edm_repo)
-        .await
-        .expect("internal-auth domain should be allowed");
+/// Insert a USER principal whose `user_identity` matches the requested
+/// auth shape. Returns the inserted principal so the caller can use its
+/// email or id.
+async fn insert_principal_with_identity(
+    repo: &PrincipalRepository,
+    email: &str,
+    password_hash: Option<&str>,
+    external_id: Option<&str>,
+) -> Principal {
+    let mut principal = Principal::new_user(email, UserScope::Anchor);
+    let identity = principal
+        .user_identity
+        .as_mut()
+        .expect("USER principal must have user_identity");
+    identity.password_hash = password_hash.map(String::from);
+    identity.external_id = external_id.map(String::from);
+    repo.insert(&principal).await.expect("insert principal");
+    principal
 }
 
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn gate_rejects_federated_domain() {
+async fn gate_allows_principal_with_password_and_no_external_id() {
     let (pool, _c) = setup_test_db().await;
-    let edm_repo = EmailDomainMappingRepository::new(&pool);
+    let principal_repo = PrincipalRepository::new(&pool);
 
-    let mapping = EmailDomainMapping::new("federated.com", "idp_FAKE12345678", ScopeType::Anchor);
-    edm_repo.insert(&mapping).await.expect("insert mapping");
+    // Local-auth user: password hash present, no external_id. Gate passes.
+    insert_principal_with_identity(
+        &principal_repo,
+        "alice@example.com",
+        Some("argon2id$dummy"),
+        None,
+    )
+    .await;
 
-    let err = ensure_internal_auth("user@federated.com", &edm_repo)
+    ensure_internal_principal("alice@example.com", &principal_repo)
         .await
-        .expect_err("federated domain should be rejected");
+        .expect("internal-auth principal should be allowed");
+}
 
-    // Should map to a 4xx, not a 5xx.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn gate_rejects_principal_with_external_id() {
+    let (pool, _c) = setup_test_db().await;
+    let principal_repo = PrincipalRepository::new(&pool);
+
+    // Federated user: linked to an external IdP. Even if a stale password
+    // hash exists, the presence of an external_id locks out passkeys.
+    insert_principal_with_identity(
+        &principal_repo,
+        "bob@example.com",
+        Some("argon2id$dummy"),
+        Some("idp-subject-123"),
+    )
+    .await;
+
+    let err = ensure_internal_principal("bob@example.com", &principal_repo)
+        .await
+        .expect_err("federated principal should be rejected");
+
     let resp_kind = format!("{:?}", err);
     assert!(
         resp_kind.contains("Validation"),
@@ -118,28 +151,42 @@ async fn gate_rejects_federated_domain() {
 
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn gate_normalises_domain_case_when_matching_mapping() {
+async fn gate_rejects_principal_without_password_hash() {
     let (pool, _c) = setup_test_db().await;
-    let edm_repo = EmailDomainMappingRepository::new(&pool);
+    let principal_repo = PrincipalRepository::new(&pool);
 
-    // Mappings are stored lowercased (see EmailDomainMapping::new); the gate
-    // must lowercase the email domain before lookup so mixed-case email
-    // inputs aren't mistakenly treated as internal.
-    let mapping = EmailDomainMapping::new("acme.com", "idp_FAKE87654321", ScopeType::Anchor);
-    edm_repo.insert(&mapping).await.expect("insert mapping");
+    // Newly-created user that hasn't set a password yet — internal-auth
+    // path requires a password hash before passkey registration is offered.
+    insert_principal_with_identity(&principal_repo, "carol@example.com", None, None).await;
 
-    assert!(ensure_internal_auth("USER@ACME.COM", &edm_repo)
-        .await
-        .is_err());
-    assert!(ensure_internal_auth("user@Acme.Com", &edm_repo)
-        .await
-        .is_err());
+    assert!(
+        ensure_internal_principal("carol@example.com", &principal_repo)
+            .await
+            .is_err(),
+        "password-less principal should be rejected"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn gate_rejects_unknown_email() {
+    let (pool, _c) = setup_test_db().await;
+    let principal_repo = PrincipalRepository::new(&pool);
+
+    // No principal for this email. The gate returns the same error shape
+    // as the federated case so the caller's enumeration-defence wrapper
+    // (which collapses any error into "no credentials") can't distinguish.
+    assert!(
+        ensure_internal_principal("nobody@example.com", &principal_repo)
+            .await
+            .is_err(),
+        "unknown email should be rejected"
+    );
 }
 
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn webauthn_credentials_cascade_when_principal_deleted() {
-    use fc_platform::{Principal, PrincipalRepository, UserScope};
     let (pool, _c) = setup_test_db().await;
 
     // Create a principal directly via repo.

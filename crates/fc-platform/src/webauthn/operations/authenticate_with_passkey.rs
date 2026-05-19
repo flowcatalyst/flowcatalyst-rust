@@ -3,9 +3,9 @@
 //! The handler has consumed the matching authentication ceremony state from
 //! `oauth_oidc_payloads` and resolved the recovered `PasskeyAuthentication`.
 //! This use case completes the assertion check, applies counter / backup-state
-//! updates, enforces the hard-cutover domain gate (federated principals can
-//! never authenticate with a passkey, even if a stale row exists), and emits
-//! `UserLoggedInWithPasskey`.
+//! updates, enforces the hard-cutover per-principal gate (federated principals
+//! and password-less principals can never authenticate with a passkey, even
+//! if a stale row exists), and emits `UserLoggedInWithPasskey`.
 //!
 //! Counter regression: handled inside `webauthn-rs` — its
 //! `require_valid_counter_value` defaults to `true`, so the library returns
@@ -18,7 +18,6 @@ use std::sync::Arc;
 use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
 
 use super::events::UserLoggedInWithPasskey;
-use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
 use crate::principal::repository::PrincipalRepository;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use crate::webauthn::repository::WebauthnCredentialRepository;
@@ -40,7 +39,6 @@ pub struct AuthenticationOutcome {
 pub struct AuthenticatePasskeyUseCase<U: UnitOfWork> {
     credential_repo: Arc<WebauthnCredentialRepository>,
     principal_repo: Arc<PrincipalRepository>,
-    email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
     webauthn_service: Arc<WebauthnService>,
     unit_of_work: Arc<U>,
 }
@@ -49,14 +47,12 @@ impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
     pub fn new(
         credential_repo: Arc<WebauthnCredentialRepository>,
         principal_repo: Arc<PrincipalRepository>,
-        email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
         webauthn_service: Arc<WebauthnService>,
         unit_of_work: Arc<U>,
     ) -> Self {
         Self {
             credential_repo,
             principal_repo,
-            email_domain_mapping_repo,
             webauthn_service,
             unit_of_work,
         }
@@ -166,37 +162,25 @@ impl<U: UnitOfWork> UseCase for AuthenticatePasskeyUseCase<U> {
             ));
         }
 
-        // 4. Hard-cutover domain gate: if the principal's domain has been
-        //    mapped to a federated IdP since the passkey was registered, the
-        //    passkey is no longer usable — the IdP owns identity.
-        let email = match principal.email() {
-            Some(e) => e,
+        // 4. Hard-cutover per-principal gate: if the principal has been
+        //    converted to federated (got an external_id) OR has had their
+        //    password removed since the passkey was registered, the passkey
+        //    is no longer usable — the IdP owns identity, and a password-
+        //    less account doesn't qualify for internal-auth-only flows.
+        let identity = match principal.user_identity.as_ref() {
+            Some(i) => i,
             None => {
                 return UseCaseResult::failure(UseCaseError::business_rule(
-                    "PRINCIPAL_NO_EMAIL",
-                    "passkey login requires a principal with an email address",
+                    "PRINCIPAL_NOT_USER",
+                    "passkey login requires a user principal",
                 ))
             }
         };
-        let domain = email.split('@').nth(1).unwrap_or("").to_lowercase();
-        match self
-            .email_domain_mapping_repo
-            .find_by_email_domain(&domain)
-            .await
-        {
-            Ok(Some(_)) => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "DOMAIN_FEDERATED",
-                    "this account's domain is federated; sign in via your identity provider",
-                ))
-            }
-            Ok(None) => {}
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to check email domain mapping: {}",
-                    e,
-                )))
-            }
+        if identity.external_id.is_some() || identity.password_hash.is_none() {
+            return UseCaseResult::failure(UseCaseError::business_rule(
+                "ACCOUNT_NOT_INTERNAL",
+                "this account is managed by an external identity provider; sign in there instead",
+            ));
         }
 
         // 5. Apply counter / backup-state updates to the stored Passkey.
