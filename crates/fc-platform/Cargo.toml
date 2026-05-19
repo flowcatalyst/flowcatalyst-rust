@@ -40,6 +40,22 @@ rsa = { version = "0.9", features = ["pem"] }
 rand = { workspace = true }
 webauthn-rs = { workspace = true }
 
+## webauthn-rs-core pulls `openssl` for attestation crypto — that's a
+## hard dep of the crate, not switchable. Adding it here with the
+## `vendored` feature flips `openssl-sys` to build OpenSSL from source
+## via the `openssl-src` crate instead of linking against a system
+## install. Net effect: the Windows release CI no longer needs
+## `vcpkg install openssl:x64-windows-static-md` — the openssl-src
+## build artifact lands in target/ and gets reused via rust-cache.
+## On Linux/macOS the first build is ~1-2 min slower (one-off),
+## subsequent builds hit the cache and are unchanged.
+##
+## This dep is unused by fc-platform's own code; the feature
+## propagates through workspace-wide unification to webauthn-rs's
+## openssl pull. Keep it here (not in fc-server) so dev builds in
+## fc-platform get the same toolchain shape as release builds.
+openssl = { version = "0.10", features = ["vendored"] }
+
 # HTTP client for OIDC. Inherit from workspace so we pick up the
 # `default-features = false` + rustls-tls posture; declaring our own
 # reqwest here used to re-enable `default-tls` via feature unification

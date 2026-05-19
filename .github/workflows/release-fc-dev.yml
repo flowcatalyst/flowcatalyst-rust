@@ -132,20 +132,13 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y lld
 
-      # `openssl-sys` (pulled transitively by mongodb's native-tls default
-      # feature, among others) needs an OpenSSL build to link against. The
-      # Windows runner has vcpkg pre-installed at $VCPKG_INSTALLATION_ROOT
-      # but `openssl-sys` checks `VCPKG_ROOT`, and the openssl package
-      # isn't installed by default. Install + export.
-      - name: Install OpenSSL via vcpkg (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          export VCPKG_ROOT="$VCPKG_INSTALLATION_ROOT"
-          "$VCPKG_INSTALLATION_ROOT/vcpkg" install openssl:x64-windows-static-md
-          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          echo "OPENSSL_STATIC=1" >> "$GITHUB_ENV"
+      # We used to need `vcpkg install openssl:x64-windows-static-md` on
+      # Windows because `openssl-sys` linked against a system install.
+      # The workspace now vendors OpenSSL via `openssl = { features =
+      # ["vendored"] }` in fc-platform/Cargo.toml — `openssl-src` builds
+      # OpenSSL in-tree, output cached by Swatinem/rust-cache above.
+      # The one extra dep needed by openssl-src (perl) is preinstalled
+      # on every GitHub runner (macOS/Linux/Windows).
 
       - name: Build
         env:
