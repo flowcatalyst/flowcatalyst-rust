@@ -62,9 +62,13 @@
 //! The handler checks authorization, builds the command, creates an
 //! `ExecutionContext`, and calls `use_case.execute(cmd, ctx).await.into_result()?`.
 
+use std::future::Future;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::Serialize;
 use sqlx::{PgPool, Postgres, Transaction};
+use tokio::sync::Mutex;
 use tracing::{debug, error};
 
 use crate::tsid::TsidGenerator;
@@ -626,6 +630,325 @@ impl UnitOfWork for OutboxUnitOfWork {
     }
 }
 
+// ─── TxScopedOutboxUnitOfWork ────────────────────────────────────────────────
+
+/// UnitOfWork implementation that writes into an already-open transaction
+/// owned by [`OutboxUnitOfWork::run`].
+///
+/// `commit()` / `commit_delete()` / `emit_event()` / `commit_all()` append
+/// their rows to the shared transaction but do NOT close it — the outer
+/// `run` does (commits on `UseCaseResult::Success`, rolls back on `Failure`).
+///
+/// This is the SDK analogue of the platform's `TxScopedUnitOfWork` and exists
+/// so consumer applications can orchestrate **their own writes alongside
+/// outbox writes** in a single, atomic transaction owned by the application.
+/// Inside the closure passed to [`OutboxUnitOfWork::run`], use either:
+///
+/// - Multiple use cases that all share this `Arc<TxScopedOutboxUnitOfWork>`
+///   so their aggregate writes + outbox rows commit together, or
+/// - [`TxScopedOutboxUnitOfWork::with_tx`] for ad-hoc sqlx writes (non-aggregate
+///   tables, raw SQL) that need to be atomic with the outbox rows.
+pub struct TxScopedOutboxUnitOfWork {
+    // tokio Mutex because the guard is held across `.await`. `Option` so
+    // `run` can `.take()` the tx back out after the closure completes.
+    tx: Mutex<Option<Transaction<'static, Postgres>>>,
+    config: OutboxConfig,
+}
+
+impl TxScopedOutboxUnitOfWork {
+    fn new(tx: Transaction<'static, Postgres>, config: OutboxConfig) -> Self {
+        Self {
+            tx: Mutex::new(Some(tx)),
+            config,
+        }
+    }
+
+    async fn take_tx(&self) -> Option<Transaction<'static, Postgres>> {
+        self.tx.lock().await.take()
+    }
+
+    /// Run a closure with mutable access to the shared transaction.
+    ///
+    /// Use this for ad-hoc sqlx writes (non-aggregate rows, raw SQL) that
+    /// must commit atomically with the outbox rows the UoW produces:
+    ///
+    /// ```ignore
+    /// uow.run(|session| async move {
+    ///     session
+    ///         .with_tx(|txn| async move {
+    ///             sqlx::query("UPDATE users SET last_seen_at = NOW() WHERE id = $1")
+    ///                 .bind(&user_id)
+    ///                 .execute(&mut **txn)
+    ///                 .await
+    ///                 .map_err(UseCaseError::commit)
+    ///         })
+    ///         .await?;
+    ///     ship_order_uc.run(cmd, ctx).await.into_result()
+    /// })
+    /// .await
+    /// ```
+    pub async fn with_tx<F, Fut, R, E>(&self, f: F) -> Result<R, E>
+    where
+        F: for<'t> FnOnce(&'t mut Transaction<'static, Postgres>) -> Fut,
+        Fut: Future<Output = Result<R, E>>,
+        E: From<UseCaseError>,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = guard.as_mut().ok_or_else(|| {
+            E::from(UseCaseError::commit(
+                "TxScopedOutboxUnitOfWork: transaction already finalized",
+            ))
+        })?;
+        f(txn).await
+    }
+}
+
+#[async_trait]
+impl UnitOfWork for TxScopedOutboxUnitOfWork {
+    async fn commit<E, T, C>(&self, aggregate: &T, event: E, command: &C) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Serialize + Send + 'static,
+        T: Serialize + HasId + PgPersist + Send + Sync,
+        C: Serialize + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => {
+                return UseCaseResult::failure(UseCaseError::commit(
+                    "TxScopedOutboxUnitOfWork: transaction already finalized",
+                ));
+            }
+        };
+
+        if let Err(e) = aggregate.pg_upsert(txn).await {
+            error!("Failed to persist aggregate in scoped tx: {}", e);
+            return UseCaseResult::failure(UseCaseError::commit(format!(
+                "Failed to persist aggregate: {}",
+                e
+            )));
+        }
+
+        if let Err(e) = OutboxUnitOfWork::persist_outbox_items(
+            txn,
+            &self.config.table_name,
+            &event,
+            command,
+            &self.config.client_id,
+            self.config.audit_enabled,
+        )
+        .await
+        {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(event)
+    }
+
+    async fn commit_delete<E, T, C>(
+        &self,
+        aggregate: &T,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Serialize + Send + 'static,
+        T: Serialize + HasId + PgPersist + Send + Sync,
+        C: Serialize + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => {
+                return UseCaseResult::failure(UseCaseError::commit(
+                    "TxScopedOutboxUnitOfWork: transaction already finalized",
+                ));
+            }
+        };
+
+        if let Err(e) = aggregate.pg_delete(txn).await {
+            error!("Failed to delete aggregate in scoped tx: {}", e);
+            return UseCaseResult::failure(UseCaseError::commit(format!(
+                "Failed to delete aggregate: {}",
+                e
+            )));
+        }
+
+        if let Err(e) = OutboxUnitOfWork::persist_outbox_items(
+            txn,
+            &self.config.table_name,
+            &event,
+            command,
+            &self.config.client_id,
+            self.config.audit_enabled,
+        )
+        .await
+        {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(event)
+    }
+
+    async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Serialize + Send + 'static,
+        C: Serialize + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => {
+                return UseCaseResult::failure(UseCaseError::commit(
+                    "TxScopedOutboxUnitOfWork: transaction already finalized",
+                ));
+            }
+        };
+
+        if let Err(e) = OutboxUnitOfWork::persist_outbox_items(
+            txn,
+            &self.config.table_name,
+            &event,
+            command,
+            &self.config.client_id,
+            self.config.audit_enabled,
+        )
+        .await
+        {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(event)
+    }
+
+    async fn commit_all<E, C>(
+        &self,
+        aggregates: Vec<Box<dyn PgAggregate>>,
+        event: E,
+        command: &C,
+    ) -> UseCaseResult<E>
+    where
+        E: DomainEvent + Serialize + Send + 'static,
+        C: Serialize + Send + Sync,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = match guard.as_mut() {
+            Some(t) => t,
+            None => {
+                return UseCaseResult::failure(UseCaseError::commit(
+                    "TxScopedOutboxUnitOfWork: transaction already finalized",
+                ));
+            }
+        };
+
+        for aggregate in &aggregates {
+            if let Err(e) = aggregate.pg_upsert(txn).await {
+                error!("Failed to persist aggregate in scoped batch: {}", e);
+                return UseCaseResult::failure(UseCaseError::commit(format!(
+                    "Failed to persist aggregate: {}",
+                    e
+                )));
+            }
+        }
+
+        if let Err(e) = OutboxUnitOfWork::persist_outbox_items(
+            txn,
+            &self.config.table_name,
+            &event,
+            command,
+            &self.config.client_id,
+            self.config.audit_enabled,
+        )
+        .await
+        {
+            return UseCaseResult::failure(e);
+        }
+
+        UseCaseResult::success(event)
+    }
+}
+
+impl OutboxUnitOfWork {
+    /// Run a closure inside a single, application-orchestrated transaction.
+    ///
+    /// The closure receives an `Arc<TxScopedOutboxUnitOfWork>` that implements
+    /// [`UnitOfWork`] and exposes [`TxScopedOutboxUnitOfWork::with_tx`] for
+    /// ad-hoc writes. Use cases or repositories constructed against the scoped
+    /// UoW all share the same transaction. The closure's `UseCaseResult`
+    /// drives commit (on `Success`) vs rollback (on `Failure`).
+    ///
+    /// Use this when the consumer application needs to compose multiple
+    /// aggregate writes (or non-aggregate writes via `with_tx`) with the
+    /// outbox event/audit rows so they commit atomically:
+    ///
+    /// ```ignore
+    /// uow.run(|session| async move {
+    ///     let order_uc = ShipOrderUseCase::new(order_repo, session.clone());
+    ///     let ledger_uc = DebitAccountUseCase::new(ledger_repo, session.clone());
+    ///
+    ///     order_uc.run(ship_cmd, ctx.clone()).await.into_result()?;
+    ///     ledger_uc.run(debit_cmd, ctx).await.into_result()?;
+    ///     UseCaseResult::success(())
+    /// })
+    /// .await
+    /// ```
+    ///
+    /// The tx boundary lives in the application's handler; use cases stay
+    /// tx-agnostic — they only see the `UnitOfWork` trait, so the same use
+    /// case body works whether invoked against the standalone
+    /// [`OutboxUnitOfWork`] (one use case per tx) or `TxScopedOutboxUnitOfWork`
+    /// (many use cases per tx).
+    ///
+    /// This mirrors `PgUnitOfWork::run` from the platform crate so consumer
+    /// apps and the platform follow the same orchestration pattern.
+    pub async fn run<F, Fut, R>(&self, f: F) -> UseCaseResult<R>
+    where
+        F: FnOnce(Arc<TxScopedOutboxUnitOfWork>) -> Fut + Send,
+        Fut: Future<Output = UseCaseResult<R>> + Send,
+        R: Send + 'static,
+    {
+        let tx = match self.pool.begin().await {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to start orchestration transaction: {}", e);
+                return UseCaseResult::failure(UseCaseError::commit(format!(
+                    "Failed to start transaction: {}",
+                    e
+                )));
+            }
+        };
+
+        let scoped = Arc::new(TxScopedOutboxUnitOfWork::new(tx, self.config.clone()));
+        let result = f(Arc::clone(&scoped)).await;
+
+        // Reclaim the tx. If the scoped UoW has outstanding references
+        // (e.g. a use case leaked it into a spawned task) we can't reclaim
+        // — drop without explicit commit, which rolls back.
+        let tx_opt = scoped.take_tx().await;
+
+        if let Some(tx) = tx_opt {
+            match &result {
+                UseCaseResult::Success(_) => {
+                    if let Err(e) = tx.commit().await {
+                        error!("Failed to commit orchestration tx: {}", e);
+                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                            "Failed to commit transaction: {}",
+                            e
+                        )));
+                    }
+                    debug!("Orchestration tx committed");
+                }
+                UseCaseResult::Failure(err) => {
+                    let _ = tx.rollback().await;
+                    debug!(error = %err.code(), "Orchestration tx rolled back");
+                }
+            }
+        }
+
+        result
+    }
+}
+
 // ─── InMemoryUnitOfWork (tests) ──────────────────────────────────────────────
 
 /// In-memory implementation of [`UnitOfWork`] for unit testing use cases.
@@ -1005,5 +1328,17 @@ mod tests {
         let event = result.unwrap();
         assert_eq!(event.event_id(), "evt_return");
         assert_eq!(event.event_type(), "test:event");
+    }
+
+    // ─── TxScopedOutboxUnitOfWork (compile-time bounds) ─────────────────
+
+    /// Compile-time assertion that `TxScopedOutboxUnitOfWork` implements
+    /// the `UnitOfWork` trait. Constructing one requires a real `Transaction`
+    /// from a live pool, so runtime behaviour is exercised by the postgres
+    /// integration tests in `fc-platform/tests/postgres_integration_tests.rs`.
+    #[test]
+    fn tx_scoped_outbox_uow_implements_unit_of_work() {
+        fn assert_uow<T: UnitOfWork>() {}
+        assert_uow::<TxScopedOutboxUnitOfWork>();
     }
 }
