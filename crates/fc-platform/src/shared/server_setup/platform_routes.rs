@@ -842,6 +842,8 @@ pub fn build_platform_routes(
         enable_for_client_use_case,
         disable_for_client_use_case,
         update_client_config_use_case,
+        oauth_client_repo: repos.oauth_client_repo.clone(),
+        create_oauth_client_use_case: oauth_clients_state.create_oauth_client_use_case.clone(),
         pg_unit_of_work: unit_of_work.clone(),
     };
     let service_accounts_state = ServiceAccountsState {
