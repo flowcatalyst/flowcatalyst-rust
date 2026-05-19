@@ -2494,7 +2494,7 @@ export type PostApiApplicationsByAppCodeDispatchPoolsSyncData = {
         /**
          * Application code
          */
-        app_code: string;
+        appCode: string;
     };
     query?: {
         /**
@@ -2502,7 +2502,7 @@ export type PostApiApplicationsByAppCodeDispatchPoolsSyncData = {
          */
         removeUnlisted?: boolean;
     };
-    url: '/api/applications/{app_code}/dispatch-pools/sync';
+    url: '/api/applications/{appCode}/dispatch-pools/sync';
 };
 
 export type PostApiApplicationsByAppCodeDispatchPoolsSyncErrors = {
@@ -2527,7 +2527,7 @@ export type PostApiApplicationsByAppCodeEventTypesSyncData = {
         /**
          * Application code
          */
-        app_code: string;
+        appCode: string;
     };
     query?: {
         /**
@@ -2535,7 +2535,7 @@ export type PostApiApplicationsByAppCodeEventTypesSyncData = {
          */
         removeUnlisted?: boolean;
     };
-    url: '/api/applications/{app_code}/event-types/sync';
+    url: '/api/applications/{appCode}/event-types/sync';
 };
 
 export type PostApiApplicationsByAppCodeEventTypesSyncErrors = {
@@ -2560,10 +2560,10 @@ export type PostApiApplicationsByAppCodeOpenapiSyncData = {
         /**
          * Application code
          */
-        app_code: string;
+        appCode: string;
     };
     query?: never;
-    url: '/api/applications/{app_code}/openapi/sync';
+    url: '/api/applications/{appCode}/openapi/sync';
 };
 
 export type PostApiApplicationsByAppCodeOpenapiSyncErrors = {
@@ -2596,7 +2596,7 @@ export type PostApiApplicationsByAppCodePrincipalsSyncData = {
         /**
          * Application code
          */
-        app_code: string;
+        appCode: string;
     };
     query?: {
         /**
@@ -2604,7 +2604,7 @@ export type PostApiApplicationsByAppCodePrincipalsSyncData = {
          */
         removeUnlisted?: boolean;
     };
-    url: '/api/applications/{app_code}/principals/sync';
+    url: '/api/applications/{appCode}/principals/sync';
 };
 
 export type PostApiApplicationsByAppCodePrincipalsSyncErrors = {
@@ -2633,7 +2633,7 @@ export type PostApiApplicationsByAppCodeProcessesSyncData = {
         /**
          * Application code
          */
-        app_code: string;
+        appCode: string;
     };
     query?: {
         /**
@@ -2641,7 +2641,7 @@ export type PostApiApplicationsByAppCodeProcessesSyncData = {
          */
         removeUnlisted?: boolean;
     };
-    url: '/api/applications/{app_code}/processes/sync';
+    url: '/api/applications/{appCode}/processes/sync';
 };
 
 export type PostApiApplicationsByAppCodeProcessesSyncErrors = {
@@ -2666,7 +2666,7 @@ export type PostApiApplicationsByAppCodeRolesSyncData = {
         /**
          * Application code
          */
-        app_code: string;
+        appCode: string;
     };
     query?: {
         /**
@@ -2674,7 +2674,7 @@ export type PostApiApplicationsByAppCodeRolesSyncData = {
          */
         removeUnlisted?: boolean;
     };
-    url: '/api/applications/{app_code}/roles/sync';
+    url: '/api/applications/{appCode}/roles/sync';
 };
 
 export type PostApiApplicationsByAppCodeRolesSyncErrors = {
@@ -2703,10 +2703,10 @@ export type PostApiApplicationsByAppCodeScheduledJobsSyncData = {
         /**
          * Application code
          */
-        app_code: string;
+        appCode: string;
     };
     query?: never;
-    url: '/api/applications/{app_code}/scheduled-jobs/sync';
+    url: '/api/applications/{appCode}/scheduled-jobs/sync';
 };
 
 export type PostApiApplicationsByAppCodeScheduledJobsSyncErrors = {
@@ -2735,7 +2735,7 @@ export type PostApiApplicationsByAppCodeSubscriptionsSyncData = {
         /**
          * Application code
          */
-        app_code: string;
+        appCode: string;
     };
     query?: {
         /**
@@ -2743,7 +2743,7 @@ export type PostApiApplicationsByAppCodeSubscriptionsSyncData = {
          */
         removeUnlisted?: boolean;
     };
-    url: '/api/applications/{app_code}/subscriptions/sync';
+    url: '/api/applications/{appCode}/subscriptions/sync';
 };
 
 export type PostApiApplicationsByAppCodeSubscriptionsSyncErrors = {
@@ -2862,14 +2862,14 @@ export type GetApiAuditLogsEntityByEntityTypeByEntityIdData = {
         /**
          * Entity type
          */
-        entity_type: string;
+        entityType: string;
         /**
          * Entity ID
          */
-        entity_id: string;
+        entityId: string;
     };
     query?: never;
-    url: '/api/audit-logs/entity/{entity_type}/{entity_id}';
+    url: '/api/audit-logs/entity/{entityType}/{entityId}';
 };
 
 export type GetApiAuditLogsEntityByEntityTypeByEntityIdResponses = {
@@ -2903,10 +2903,10 @@ export type GetApiAuditLogsPrincipalByPrincipalIdData = {
         /**
          * Principal ID
          */
-        principal_id: string;
+        principalId: string;
     };
     query?: never;
-    url: '/api/audit-logs/principal/{principal_id}';
+    url: '/api/audit-logs/principal/{principalId}';
 };
 
 export type GetApiAuditLogsPrincipalByPrincipalIdResponses = {
@@ -3249,10 +3249,10 @@ export type PostApiClientsByIdApplicationsByAppIdDisableData = {
         /**
          * Application ID
          */
-        application_id: string;
+        applicationId: string;
     };
     query?: never;
-    url: '/api/clients/{id}/applications/{application_id}/disable';
+    url: '/api/clients/{id}/applications/{applicationId}/disable';
 };
 
 export type PostApiClientsByIdApplicationsByAppIdDisableErrors = {
@@ -3281,10 +3281,10 @@ export type PostApiClientsByIdApplicationsByAppIdEnableData = {
         /**
          * Application ID
          */
-        application_id: string;
+        applicationId: string;
     };
     query?: never;
-    url: '/api/clients/{id}/applications/{application_id}/enable';
+    url: '/api/clients/{id}/applications/{applicationId}/enable';
 };
 
 export type PostApiClientsByIdApplicationsByAppIdEnableErrors = {
@@ -3489,10 +3489,10 @@ export type GetApiDispatchJobsByEventByEventIdData = {
         /**
          * Event ID
          */
-        event_id: string;
+        eventId: string;
     };
     query?: never;
-    url: '/api/dispatch-jobs/by-event/{event_id}';
+    url: '/api/dispatch-jobs/by-event/{eventId}';
 };
 
 export type GetApiDispatchJobsByEventByEventIdResponses = {
@@ -4690,10 +4690,10 @@ export type DeleteApiPrincipalsByIdClientAccessByClientIdData = {
         /**
          * Client ID to revoke
          */
-        client_id: string;
+        clientId: string;
     };
     query?: never;
-    url: '/api/principals/{id}/client-access/{client_id}';
+    url: '/api/principals/{id}/client-access/{clientId}';
 };
 
 export type DeleteApiPrincipalsByIdClientAccessByClientIdErrors = {
@@ -5184,10 +5184,10 @@ export type GetApiRolesByApplicationByApplicationIdData = {
         /**
          * Application ID
          */
-        application_id: string;
+        applicationId: string;
     };
     query?: never;
-    url: '/api/roles/by-application/{application_id}';
+    url: '/api/roles/by-application/{applicationId}';
 };
 
 export type GetApiRolesByApplicationByApplicationIdResponses = {
@@ -5321,10 +5321,10 @@ export type DeleteApiRolesByNameData = {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}';
+    url: '/api/roles/{roleName}';
 };
 
 export type DeleteApiRolesByNameErrors = {
@@ -5349,10 +5349,10 @@ export type GetApiRolesByNameData = {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}';
+    url: '/api/roles/{roleName}';
 };
 
 export type GetApiRolesByNameErrors = {
@@ -5377,10 +5377,10 @@ export type PutApiRolesByNameData = {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}';
+    url: '/api/roles/{roleName}';
 };
 
 export type PutApiRolesByNameErrors = {
@@ -5405,10 +5405,10 @@ export type PostApiRolesByNamePermissionsData = {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}/permissions';
+    url: '/api/roles/{roleName}/permissions';
 };
 
 export type PostApiRolesByNamePermissionsErrors = {
@@ -5433,14 +5433,14 @@ export type DeleteApiRolesByNamePermissionsByPermissionData = {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
         /**
          * Permission to revoke
          */
         permission: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}/permissions/{permission}';
+    url: '/api/roles/{roleName}/permissions/{permission}';
 };
 
 export type DeleteApiRolesByNamePermissionsByPermissionErrors = {
@@ -5529,10 +5529,10 @@ export type GetApiScheduledJobsInstancesByIdData = {
         /**
          * Instance ID
          */
-        instance_id: string;
+        instanceId: string;
     };
     query?: never;
-    url: '/api/scheduled-jobs/instances/{instance_id}';
+    url: '/api/scheduled-jobs/instances/{instanceId}';
 };
 
 export type GetApiScheduledJobsInstancesByIdErrors = {
@@ -5551,10 +5551,10 @@ export type PostApiScheduledJobsInstancesByIdCompleteData = {
         /**
          * Instance ID
          */
-        instance_id: string;
+        instanceId: string;
     };
     query?: never;
-    url: '/api/scheduled-jobs/instances/{instance_id}/complete';
+    url: '/api/scheduled-jobs/instances/{instanceId}/complete';
 };
 
 export type PostApiScheduledJobsInstancesByIdCompleteErrors = {
@@ -5574,10 +5574,10 @@ export type PostApiScheduledJobsInstancesByIdLogData = {
         /**
          * Instance ID
          */
-        instance_id: string;
+        instanceId: string;
     };
     query?: never;
-    url: '/api/scheduled-jobs/instances/{instance_id}/log';
+    url: '/api/scheduled-jobs/instances/{instanceId}/log';
 };
 
 export type PostApiScheduledJobsInstancesByIdLogErrors = {
@@ -5595,10 +5595,10 @@ export type GetApiScheduledJobsInstancesByIdLogsData = {
         /**
          * Instance ID
          */
-        instance_id: string;
+        instanceId: string;
     };
     query?: never;
-    url: '/api/scheduled-jobs/instances/{instance_id}/logs';
+    url: '/api/scheduled-jobs/instances/{instanceId}/logs';
 };
 
 export type GetApiScheduledJobsInstancesByIdLogsErrors = {

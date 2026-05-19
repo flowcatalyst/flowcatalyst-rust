@@ -4,14 +4,14 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class PostApiRolesByNamePermissions extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $role_name;
+    protected $roleName;
     /**
      * @param string $roleName Role name (code) or ID
      * @param null|\FlowCatalyst\Generated\Model\GrantPermissionRequest $requestBody
      */
     public function __construct(string $roleName, ?\FlowCatalyst\Generated\Model\GrantPermissionRequest $requestBody = null)
     {
-        $this->role_name = $roleName;
+        $this->roleName = $roleName;
         $this->body = $requestBody;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
@@ -21,7 +21,7 @@ class PostApiRolesByNamePermissions extends \FlowCatalyst\Generated\Runtime\Clie
     }
     public function getUri(): string
     {
-        return str_replace(['{role_name}'], [$this->role_name], '/api/roles/{role_name}/permissions');
+        return str_replace(['{roleName}'], [$this->roleName], '/api/roles/{roleName}/permissions');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

@@ -203,7 +203,7 @@ export class ClientsResource {
 			sdk.postApiClientsByIdApplicationsByAppIdEnable({
 				client: httpClient,
 				headers,
-				path: { id: clientId, application_id: applicationId },
+				path: { id: clientId, applicationId },
 			}),
 		);
 	}
@@ -219,7 +219,7 @@ export class ClientsResource {
 			sdk.postApiClientsByIdApplicationsByAppIdDisable({
 				client: httpClient,
 				headers,
-				path: { id: clientId, application_id: applicationId },
+				path: { id: clientId, applicationId },
 			}),
 		);
 	}

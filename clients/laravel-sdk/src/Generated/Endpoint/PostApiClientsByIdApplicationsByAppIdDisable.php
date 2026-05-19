@@ -5,7 +5,7 @@ namespace FlowCatalyst\Generated\Endpoint;
 class PostApiClientsByIdApplicationsByAppIdDisable extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
     protected $id;
-    protected $application_id;
+    protected $applicationId;
     /**
      * @param string $id Client ID
      * @param string $applicationId Application ID
@@ -13,7 +13,7 @@ class PostApiClientsByIdApplicationsByAppIdDisable extends \FlowCatalyst\Generat
     public function __construct(string $id, string $applicationId)
     {
         $this->id = $id;
-        $this->application_id = $applicationId;
+        $this->applicationId = $applicationId;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
     public function getMethod(): string
@@ -22,7 +22,7 @@ class PostApiClientsByIdApplicationsByAppIdDisable extends \FlowCatalyst\Generat
     }
     public function getUri(): string
     {
-        return str_replace(['{id}', '{application_id}'], [$this->id, $this->application_id], '/api/clients/{id}/applications/{application_id}/disable');
+        return str_replace(['{id}', '{applicationId}'], [$this->id, $this->applicationId], '/api/clients/{id}/applications/{applicationId}/disable');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

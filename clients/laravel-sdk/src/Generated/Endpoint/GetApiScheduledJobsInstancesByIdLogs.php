@@ -4,13 +4,13 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class GetApiScheduledJobsInstancesByIdLogs extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $instance_id;
+    protected $instanceId;
     /**
      * @param string $instanceId Instance ID
      */
     public function __construct(string $instanceId)
     {
-        $this->instance_id = $instanceId;
+        $this->instanceId = $instanceId;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
     public function getMethod(): string
@@ -19,7 +19,7 @@ class GetApiScheduledJobsInstancesByIdLogs extends \FlowCatalyst\Generated\Runti
     }
     public function getUri(): string
     {
-        return str_replace(['{instance_id}'], [$this->instance_id], '/api/scheduled-jobs/instances/{instance_id}/logs');
+        return str_replace(['{instanceId}'], [$this->instanceId], '/api/scheduled-jobs/instances/{instanceId}/logs');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

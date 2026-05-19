@@ -277,7 +277,7 @@ impl Applications<'_> {
     /// List roles for an application (by TSID).
     ///
     /// Mounted under `/by-id` server-side so the admin TSID lookup doesn't
-    /// collide with the SDK's `/{app_code}/roles/sync` route.
+    /// collide with the SDK's `/{appCode}/roles/sync` route.
     pub async fn list_roles(
         &self,
         id: &str,

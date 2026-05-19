@@ -4,16 +4,16 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class GetApiAuditLogsEntityByEntityTypeByEntityId extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $entity_type;
-    protected $entity_id;
+    protected $entityType;
+    protected $entityId;
     /**
      * @param string $entityType Entity type
      * @param string $entityId Entity ID
      */
     public function __construct(string $entityType, string $entityId)
     {
-        $this->entity_type = $entityType;
-        $this->entity_id = $entityId;
+        $this->entityType = $entityType;
+        $this->entityId = $entityId;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
     public function getMethod(): string
@@ -22,7 +22,7 @@ class GetApiAuditLogsEntityByEntityTypeByEntityId extends \FlowCatalyst\Generate
     }
     public function getUri(): string
     {
-        return str_replace(['{entity_type}', '{entity_id}'], [$this->entity_type, $this->entity_id], '/api/audit-logs/entity/{entity_type}/{entity_id}');
+        return str_replace(['{entityType}', '{entityId}'], [$this->entityType, $this->entityId], '/api/audit-logs/entity/{entityType}/{entityId}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

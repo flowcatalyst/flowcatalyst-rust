@@ -375,7 +375,7 @@ impl Principals<'_> {
     }
 
     /// Sync principals for an application — declarative reconciliation
-    /// against `POST /api/applications/{app_code}/principals/sync`.
+    /// against `POST /api/applications/{appCode}/principals/sync`.
     ///
     /// When `remove_unlisted` is true the platform strips SDK-sourced role
     /// assignments from principals not in the list (principals themselves

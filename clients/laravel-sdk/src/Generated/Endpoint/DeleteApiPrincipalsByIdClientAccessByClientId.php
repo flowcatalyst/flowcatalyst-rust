@@ -5,7 +5,7 @@ namespace FlowCatalyst\Generated\Endpoint;
 class DeleteApiPrincipalsByIdClientAccessByClientId extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
     protected $id;
-    protected $client_id;
+    protected $clientId;
     /**
      * @param string $id Principal ID
      * @param string $clientId Client ID to revoke
@@ -13,7 +13,7 @@ class DeleteApiPrincipalsByIdClientAccessByClientId extends \FlowCatalyst\Genera
     public function __construct(string $id, string $clientId)
     {
         $this->id = $id;
-        $this->client_id = $clientId;
+        $this->clientId = $clientId;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
     public function getMethod(): string
@@ -22,7 +22,7 @@ class DeleteApiPrincipalsByIdClientAccessByClientId extends \FlowCatalyst\Genera
     }
     public function getUri(): string
     {
-        return str_replace(['{id}', '{client_id}'], [$this->id, $this->client_id], '/api/principals/{id}/client-access/{client_id}');
+        return str_replace(['{id}', '{clientId}'], [$this->id, $this->clientId], '/api/principals/{id}/client-access/{clientId}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

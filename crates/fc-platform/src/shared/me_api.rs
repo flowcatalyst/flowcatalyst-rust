@@ -101,11 +101,11 @@ async fn list_my_clients(
 /// Get a specific client by ID for the authenticated user
 #[utoipa::path(
     get,
-    path = "/clients/{client_id}",
+    path = "/clients/{clientId}",
     tag = "me",
     operation_id = "getApiMeClientsByClientId",
     params(
-        ("client_id" = String, Path, description = "Client ID")
+        ("clientId" = String, Path, description = "Client ID")
     ),
     responses(
         (status = 200, description = "Client found", body = MyClientResponse),
@@ -142,11 +142,11 @@ async fn get_my_client(
 /// List applications enabled for a specific client
 #[utoipa::path(
     get,
-    path = "/clients/{client_id}/applications",
+    path = "/clients/{clientId}/applications",
     tag = "me",
     operation_id = "getApiMeClientsByClientIdApplications",
     params(
-        ("client_id" = String, Path, description = "Client ID")
+        ("clientId" = String, Path, description = "Client ID")
     ),
     responses(
         (status = 200, description = "Client applications", body = MyApplicationsListResponse),
@@ -210,9 +210,9 @@ async fn list_my_client_applications(
 pub fn me_router(state: MeState) -> Router {
     Router::new()
         .route("/clients", get(list_my_clients))
-        .route("/clients/{client_id}", get(get_my_client))
+        .route("/clients/{clientId}", get(get_my_client))
         .route(
-            "/clients/{client_id}/applications",
+            "/clients/{clientId}/applications",
             get(list_my_client_applications),
         )
         .with_state(state)

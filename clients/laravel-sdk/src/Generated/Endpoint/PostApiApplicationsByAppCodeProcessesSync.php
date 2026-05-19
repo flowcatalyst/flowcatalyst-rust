@@ -4,7 +4,7 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class PostApiApplicationsByAppCodeProcessesSync extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $app_code;
+    protected $appCode;
     /**
      * @param string $appCode Application code
      * @param null|\FlowCatalyst\Generated\Model\SyncProcessesRequest $requestBody
@@ -14,7 +14,7 @@ class PostApiApplicationsByAppCodeProcessesSync extends \FlowCatalyst\Generated\
      */
     public function __construct(string $appCode, ?\FlowCatalyst\Generated\Model\SyncProcessesRequest $requestBody = null, array $queryParameters = [])
     {
-        $this->app_code = $appCode;
+        $this->appCode = $appCode;
         $this->body = $requestBody;
         $this->queryParameters = $queryParameters;
     }
@@ -25,7 +25,7 @@ class PostApiApplicationsByAppCodeProcessesSync extends \FlowCatalyst\Generated\
     }
     public function getUri(): string
     {
-        return str_replace(['{app_code}'], [$this->app_code], '/api/applications/{app_code}/processes/sync');
+        return str_replace(['{appCode}'], [$this->appCode], '/api/applications/{appCode}/processes/sync');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

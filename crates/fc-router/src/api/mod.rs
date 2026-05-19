@@ -546,7 +546,7 @@ pub fn create_router_with_options(
         .route("/monitoring", get(monitoring_handler))
         .route("/monitoring/health", get(dashboard_health_handler))
         .route("/monitoring/pools", get(pool_stats_handler))
-        .route("/monitoring/pools/{pool_code}", put(update_pool_config))
+        .route("/monitoring/pools/{poolCode}", put(update_pool_config))
         .route("/monitoring/queues", get(queue_metrics_handler))
         .route(
             "/monitoring/broker-stats/refresh",
@@ -987,10 +987,10 @@ async fn reload_config(
 /// Update pool configuration
 #[utoipa::path(
     put,
-    path = "/monitoring/pools/{pool_code}",
+    path = "/monitoring/pools/{poolCode}",
     tag = "monitoring",
     params(
-        ("pool_code" = String, Path, description = "Pool code to update")
+        ("poolCode" = String, Path, description = "Pool code to update")
     ),
     request_body = PoolConfigUpdateRequest,
     responses(

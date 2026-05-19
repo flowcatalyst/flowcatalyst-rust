@@ -4,13 +4,13 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class GetApiAuditLogsPrincipalByPrincipalId extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $principal_id;
+    protected $principalId;
     /**
      * @param string $principalId Principal ID
      */
     public function __construct(string $principalId)
     {
-        $this->principal_id = $principalId;
+        $this->principalId = $principalId;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
     public function getMethod(): string
@@ -19,7 +19,7 @@ class GetApiAuditLogsPrincipalByPrincipalId extends \FlowCatalyst\Generated\Runt
     }
     public function getUri(): string
     {
-        return str_replace(['{principal_id}'], [$this->principal_id], '/api/audit-logs/principal/{principal_id}');
+        return str_replace(['{principalId}'], [$this->principalId], '/api/audit-logs/principal/{principalId}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

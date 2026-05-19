@@ -152,7 +152,7 @@ export class ProcessesResource {
 			sdk.postApiApplicationsByAppCodeProcessesSync({
 				client: httpClient,
 				headers,
-				path: { app_code: applicationCode },
+				path: { appCode: applicationCode },
 				body: { processes },
 				query: { removeUnlisted },
 			}),

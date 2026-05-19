@@ -109,10 +109,10 @@ pub struct ApplicationRolesSdkState {
 /// List all roles for an application
 #[utoipa::path(
     get,
-    path = "/{app_code}/roles",
+    path = "/{appCode}/roles",
     tag = "application-roles-sdk",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("source" = Option<String>, Query, description = "Filter by source (CODE, DATABASE, SDK)")
     ),
     responses(
@@ -163,10 +163,10 @@ pub async fn list_roles(
 /// Create a single role
 #[utoipa::path(
     post,
-    path = "/{app_code}/roles",
+    path = "/{appCode}/roles",
     tag = "application-roles-sdk",
     params(
-        ("app_code" = String, Path, description = "Application code")
+        ("appCode" = String, Path, description = "Application code")
     ),
     request_body = CreateRoleRequest,
     responses(
@@ -218,11 +218,11 @@ pub async fn create_role(
 /// Delete a role (SDK-sourced only)
 #[utoipa::path(
     delete,
-    path = "/{app_code}/roles/{role_name}",
+    path = "/{appCode}/roles/{roleName}",
     tag = "application-roles-sdk",
     params(
-        ("app_code" = String, Path, description = "Application code"),
-        ("role_name" = String, Path, description = "Role name (without app prefix)")
+        ("appCode" = String, Path, description = "Application code"),
+        ("roleName" = String, Path, description = "Role name (without app prefix)")
     ),
     responses(
         (status = 204, description = "Role deleted"),
@@ -264,7 +264,7 @@ pub async fn delete_role(
 /// Create application roles SDK router
 pub fn application_roles_sdk_router(state: ApplicationRolesSdkState) -> Router {
     Router::new()
-        .route("/{app_code}/roles", get(list_roles).post(create_role))
-        .route("/{app_code}/roles/{role_name}", delete(delete_role))
+        .route("/{appCode}/roles", get(list_roles).post(create_role))
+        .route("/{appCode}/roles/{roleName}", delete(delete_role))
         .with_state(state)
 }

@@ -4,7 +4,7 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class PostApiApplicationsByAppCodeOpenapiSync extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $app_code;
+    protected $appCode;
     /**
      * Versioned: the prior CURRENT (if any) is flipped to ARCHIVED with computed
      * change-notes; the incoming document becomes the new CURRENT. Re-sending an
@@ -14,7 +14,7 @@ class PostApiApplicationsByAppCodeOpenapiSync extends \FlowCatalyst\Generated\Ru
      */
     public function __construct(string $appCode, ?\FlowCatalyst\Generated\Model\SyncOpenApiSpecRequest $requestBody = null)
     {
-        $this->app_code = $appCode;
+        $this->appCode = $appCode;
         $this->body = $requestBody;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
@@ -24,7 +24,7 @@ class PostApiApplicationsByAppCodeOpenapiSync extends \FlowCatalyst\Generated\Ru
     }
     public function getUri(): string
     {
-        return str_replace(['{app_code}'], [$this->app_code], '/api/applications/{app_code}/openapi/sync');
+        return str_replace(['{appCode}'], [$this->appCode], '/api/applications/{appCode}/openapi/sync');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

@@ -172,7 +172,7 @@ impl DispatchPools<'_> {
     }
 
     /// Sync dispatch pools for an application — declarative reconciliation
-    /// against `POST /api/applications/{app_code}/dispatch-pools/sync`.
+    /// against `POST /api/applications/{appCode}/dispatch-pools/sync`.
     pub async fn sync(
         &self,
         app_code: &str,

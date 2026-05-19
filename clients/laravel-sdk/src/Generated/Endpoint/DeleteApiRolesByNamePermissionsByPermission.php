@@ -4,7 +4,7 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class DeleteApiRolesByNamePermissionsByPermission extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $role_name;
+    protected $roleName;
     protected $permission;
     /**
      * @param string $roleName Role name (code) or ID
@@ -12,7 +12,7 @@ class DeleteApiRolesByNamePermissionsByPermission extends \FlowCatalyst\Generate
      */
     public function __construct(string $roleName, string $permission)
     {
-        $this->role_name = $roleName;
+        $this->roleName = $roleName;
         $this->permission = $permission;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
@@ -22,7 +22,7 @@ class DeleteApiRolesByNamePermissionsByPermission extends \FlowCatalyst\Generate
     }
     public function getUri(): string
     {
-        return str_replace(['{role_name}', '{permission}'], [$this->role_name, $this->permission], '/api/roles/{role_name}/permissions/{permission}');
+        return str_replace(['{roleName}', '{permission}'], [$this->roleName, $this->permission], '/api/roles/{roleName}/permissions/{permission}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

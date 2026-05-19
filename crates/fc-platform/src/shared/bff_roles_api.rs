@@ -299,11 +299,11 @@ pub async fn get_permission(
 /// Get role by name (code)
 #[utoipa::path(
     get,
-    path = "/{role_name}",
+    path = "/{roleName}",
     tag = "bff-roles",
     operation_id = "getBffRolesByName",
     params(
-        ("role_name" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role name (code) or ID")
     ),
     responses(
         (status = 200, description = "Role found", body = BffRoleResponse),
@@ -370,11 +370,11 @@ pub async fn create_role(
 /// Update role
 #[utoipa::path(
     put,
-    path = "/{role_name}",
+    path = "/{roleName}",
     tag = "bff-roles",
     operation_id = "putBffRolesByName",
     params(
-        ("role_name" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role name (code) or ID")
     ),
     request_body = BffUpdateRoleRequest,
     responses(
@@ -419,11 +419,11 @@ pub async fn update_role(
 /// Delete role
 #[utoipa::path(
     delete,
-    path = "/{role_name}",
+    path = "/{roleName}",
     tag = "bff-roles",
     operation_id = "deleteBffRolesByName",
     params(
-        ("role_name" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role name (code) or ID")
     ),
     responses(
         (status = 204, description = "Role deleted"),

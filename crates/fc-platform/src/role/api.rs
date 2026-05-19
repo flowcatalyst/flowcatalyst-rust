@@ -241,11 +241,11 @@ pub async fn create_role(
 /// so we try by code first if it contains ":", otherwise by ID.
 #[utoipa::path(
     get,
-    path = "/{role_name}",
+    path = "/{roleName}",
     tag = "roles",
     operation_id = "getApiRolesByName",
     params(
-        ("role_name" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role name (code) or ID")
     ),
     responses(
         (status = 200, description = "Role found", body = RoleResponse),
@@ -339,11 +339,11 @@ pub async fn list_roles(
 /// Update role
 #[utoipa::path(
     put,
-    path = "/{role_name}",
+    path = "/{roleName}",
     tag = "roles",
     operation_id = "putApiRolesByName",
     params(
-        ("role_name" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role name (code) or ID")
     ),
     request_body = UpdateRoleRequest,
     responses(
@@ -386,11 +386,11 @@ pub async fn update_role(
 /// Grant permission to role
 #[utoipa::path(
     post,
-    path = "/{role_name}/permissions",
+    path = "/{roleName}/permissions",
     tag = "roles",
     operation_id = "postApiRolesByNamePermissions",
     params(
-        ("role_name" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role name (code) or ID")
     ),
     request_body = GrantPermissionRequest,
     responses(
@@ -439,11 +439,11 @@ pub async fn grant_permission(
 /// Revoke permission from role
 #[utoipa::path(
     delete,
-    path = "/{role_name}/permissions/{permission}",
+    path = "/{roleName}/permissions/{permission}",
     tag = "roles",
     operation_id = "deleteApiRolesByNamePermissionsByPermission",
     params(
-        ("role_name" = String, Path, description = "Role name (code) or ID"),
+        ("roleName" = String, Path, description = "Role name (code) or ID"),
         ("permission" = String, Path, description = "Permission to revoke")
     ),
     responses(
@@ -491,11 +491,11 @@ pub async fn revoke_permission(
 /// Delete role
 #[utoipa::path(
     delete,
-    path = "/{role_name}",
+    path = "/{roleName}",
     tag = "roles",
     operation_id = "deleteApiRolesByName",
     params(
-        ("role_name" = String, Path, description = "Role name (code) or ID")
+        ("roleName" = String, Path, description = "Role name (code) or ID")
     ),
     responses(
         (status = 204, description = "Role deleted"),
@@ -635,11 +635,11 @@ pub async fn get_roles_by_source(
 /// Get roles by application ID
 #[utoipa::path(
     get,
-    path = "/by-application/{application_id}",
+    path = "/by-application/{applicationId}",
     tag = "roles",
     operation_id = "getApiRolesByApplicationByApplicationId",
     params(
-        ("application_id" = String, Path, description = "Application ID")
+        ("applicationId" = String, Path, description = "Application ID")
     ),
     responses(
         (status = 200, description = "Roles filtered by application ID", body = Vec<RoleResponse>)

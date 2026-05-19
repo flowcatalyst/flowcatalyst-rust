@@ -641,7 +641,7 @@ pub async fn get_application_service_account<U: UnitOfWork>(
 /// List roles for an application (admin, by TSID).
 ///
 /// Mounted under a `/by-id` prefix so it doesn't collide with the SDK's
-/// `/{app_code}/roles` route. The SDK path takes the application code;
+/// `/{appCode}/roles` route. The SDK path takes the application code;
 /// this admin path takes the TSID (which the frontend has on hand).
 #[utoipa::path(
     get,
@@ -768,12 +768,12 @@ pub async fn list_client_configs<U: UnitOfWork>(
 /// atomic with an `ApplicationClientConfigUpdated` event + audit log.
 #[utoipa::path(
     put,
-    path = "/{id}/clients/{client_id}",
+    path = "/{id}/clients/{clientId}",
     tag = "applications",
     operation_id = "putApiApplicationsByIdClientsByClientId",
     params(
         ("id" = String, Path, description = "Application ID"),
-        ("client_id" = String, Path, description = "Client ID")
+        ("clientId" = String, Path, description = "Client ID")
     ),
     request_body = ClientConfigRequest,
     responses(
@@ -840,12 +840,12 @@ pub async fn update_client_config<U: UnitOfWork>(
 /// Routes through EnableApplicationForClientUseCase (UoW-backed).
 #[utoipa::path(
     post,
-    path = "/{id}/clients/{client_id}/enable",
+    path = "/{id}/clients/{clientId}/enable",
     tag = "applications",
     operation_id = "postApiApplicationsByIdClientsByClientIdEnable",
     params(
         ("id" = String, Path, description = "Application ID"),
-        ("client_id" = String, Path, description = "Client ID")
+        ("clientId" = String, Path, description = "Client ID")
     ),
     responses(
         (status = 200, description = "Application enabled for client", body = ClientConfigResponse),
@@ -878,12 +878,12 @@ pub async fn enable_for_client<U: UnitOfWork>(
 /// Routes through DisableApplicationForClientUseCase (UoW-backed).
 #[utoipa::path(
     post,
-    path = "/{id}/clients/{client_id}/disable",
+    path = "/{id}/clients/{clientId}/disable",
     tag = "applications",
     operation_id = "postApiApplicationsByIdClientsByClientIdDisable",
     params(
         ("id" = String, Path, description = "Application ID"),
-        ("client_id" = String, Path, description = "Client ID")
+        ("clientId" = String, Path, description = "Client ID")
     ),
     responses(
         (status = 200, description = "Application disabled for client", body = ClientConfigResponse),
@@ -974,13 +974,13 @@ pub fn applications_router<U: UnitOfWork + Clone>(state: ApplicationsState<U>) -
         )
         .route("/by-id/{id}/roles", get(list_application_roles::<U>))
         .route("/{id}/clients", get(list_client_configs::<U>))
-        .route("/{id}/clients/{client_id}", put(update_client_config::<U>))
+        .route("/{id}/clients/{clientId}", put(update_client_config::<U>))
         .route(
-            "/{id}/clients/{client_id}/enable",
+            "/{id}/clients/{clientId}/enable",
             post(enable_for_client::<U>),
         )
         .route(
-            "/{id}/clients/{client_id}/disable",
+            "/{id}/clients/{clientId}/disable",
             post(disable_for_client::<U>),
         )
         .route("/by-code/{code}", get(get_application_by_code::<U>))

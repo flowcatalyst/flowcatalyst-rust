@@ -461,7 +461,7 @@ pub fn bff_scheduled_jobs_router(state: BffScheduledJobsState) -> Router {
         .route("/filter-options", get(filter_options))
         .route("/{id}", get(get_job))
         .route("/{id}/instances", get(list_instances))
-        .route("/instances/{instance_id}", get(get_instance))
-        .route("/instances/{instance_id}/logs", get(list_instance_logs))
+        .route("/instances/{instanceId}", get(get_instance))
+        .route("/instances/{instanceId}/logs", get(list_instance_logs))
         .with_state(state)
 }

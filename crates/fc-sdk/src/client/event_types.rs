@@ -180,7 +180,7 @@ impl EventTypes<'_> {
     }
 
     /// Sync event types for an application — declarative reconciliation
-    /// against `POST /api/applications/{app_code}/event-types/sync`.
+    /// against `POST /api/applications/{appCode}/event-types/sync`.
     pub async fn sync(
         &self,
         app_code: &str,

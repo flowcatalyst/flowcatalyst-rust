@@ -4,13 +4,13 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class GetApiDispatchJobsByEventByEventId extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $event_id;
+    protected $eventId;
     /**
      * @param string $eventId Event ID
      */
     public function __construct(string $eventId)
     {
-        $this->event_id = $eventId;
+        $this->eventId = $eventId;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
     public function getMethod(): string
@@ -19,7 +19,7 @@ class GetApiDispatchJobsByEventByEventId extends \FlowCatalyst\Generated\Runtime
     }
     public function getUri(): string
     {
-        return str_replace(['{event_id}'], [$this->event_id], '/api/dispatch-jobs/by-event/{event_id}');
+        return str_replace(['{eventId}'], [$this->eventId], '/api/dispatch-jobs/by-event/{eventId}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

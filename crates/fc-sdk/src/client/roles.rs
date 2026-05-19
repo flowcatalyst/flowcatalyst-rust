@@ -189,7 +189,7 @@ impl Roles<'_> {
     }
 
     /// Sync roles for an application — declarative reconciliation against
-    /// `POST /api/applications/{app_code}/roles/sync`.
+    /// `POST /api/applications/{appCode}/roles/sync`.
     pub async fn sync(
         &self,
         app_code: &str,

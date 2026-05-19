@@ -4,13 +4,13 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class GetApiRolesByApplicationByApplicationId extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $application_id;
+    protected $applicationId;
     /**
      * @param string $applicationId Application ID
      */
     public function __construct(string $applicationId)
     {
-        $this->application_id = $applicationId;
+        $this->applicationId = $applicationId;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
     public function getMethod(): string
@@ -19,7 +19,7 @@ class GetApiRolesByApplicationByApplicationId extends \FlowCatalyst\Generated\Ru
     }
     public function getUri(): string
     {
-        return str_replace(['{application_id}'], [$this->application_id], '/api/roles/by-application/{application_id}');
+        return str_replace(['{applicationId}'], [$this->applicationId], '/api/roles/by-application/{applicationId}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

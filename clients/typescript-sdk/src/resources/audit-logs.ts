@@ -90,7 +90,7 @@ export class AuditLogsResource {
 				sdk.getApiAuditLogsEntityByEntityTypeByEntityId({
 					client: httpClient,
 					headers,
-					path: { entity_type: entityType, entity_id: entityId },
+					path: { entityType, entityId },
 				}),
 		);
 	}
@@ -106,7 +106,7 @@ export class AuditLogsResource {
 				sdk.getApiAuditLogsPrincipalByPrincipalId({
 					client: httpClient,
 					headers,
-					path: { principal_id: principalId },
+					path: { principalId },
 				}),
 		);
 	}

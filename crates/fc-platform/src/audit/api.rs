@@ -362,12 +362,12 @@ pub async fn list_audit_logs(
 /// Get audit logs for a specific entity
 #[utoipa::path(
     get,
-    path = "/entity/{entity_type}/{entity_id}",
+    path = "/entity/{entityType}/{entityId}",
     tag = "audit-logs",
     operation_id = "getApiAuditLogsEntityByEntityTypeByEntityId",
     params(
-        ("entity_type" = String, Path, description = "Entity type"),
-        ("entity_id" = String, Path, description = "Entity ID")
+        ("entityType" = String, Path, description = "Entity type"),
+        ("entityId" = String, Path, description = "Entity ID")
     ),
     responses(
         (status = 200, description = "Audit logs for entity", body = EntityAuditLogsResponse)
@@ -402,11 +402,11 @@ pub async fn get_entity_audit_logs(
 /// Get audit logs for a principal
 #[utoipa::path(
     get,
-    path = "/principal/{principal_id}",
+    path = "/principal/{principalId}",
     tag = "audit-logs",
     operation_id = "getApiAuditLogsPrincipalByPrincipalId",
     params(
-        ("principal_id" = String, Path, description = "Principal ID")
+        ("principalId" = String, Path, description = "Principal ID")
     ),
     responses(
         (status = 200, description = "Audit logs for principal", body = Vec<AuditLogResponse>)

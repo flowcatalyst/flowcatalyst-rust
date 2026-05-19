@@ -4,14 +4,14 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class PostApiScheduledJobsInstancesByIdComplete extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $instance_id;
+    protected $instanceId;
     /**
      * @param string $instanceId Instance ID
      * @param null|\FlowCatalyst\Generated\Model\InstanceCompleteRequest $requestBody
      */
     public function __construct(string $instanceId, ?\FlowCatalyst\Generated\Model\InstanceCompleteRequest $requestBody = null)
     {
-        $this->instance_id = $instanceId;
+        $this->instanceId = $instanceId;
         $this->body = $requestBody;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
@@ -21,7 +21,7 @@ class PostApiScheduledJobsInstancesByIdComplete extends \FlowCatalyst\Generated\
     }
     public function getUri(): string
     {
-        return str_replace(['{instance_id}'], [$this->instance_id], '/api/scheduled-jobs/instances/{instance_id}/complete');
+        return str_replace(['{instanceId}'], [$this->instanceId], '/api/scheduled-jobs/instances/{instanceId}/complete');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

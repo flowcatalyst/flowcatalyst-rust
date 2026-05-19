@@ -4,14 +4,14 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class PutApiRolesByName extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $role_name;
+    protected $roleName;
     /**
      * @param string $roleName Role name (code) or ID
      * @param null|\FlowCatalyst\Generated\Model\UpdateRoleRequest $requestBody
      */
     public function __construct(string $roleName, ?\FlowCatalyst\Generated\Model\UpdateRoleRequest $requestBody = null)
     {
-        $this->role_name = $roleName;
+        $this->roleName = $roleName;
         $this->body = $requestBody;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
@@ -21,7 +21,7 @@ class PutApiRolesByName extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpo
     }
     public function getUri(): string
     {
-        return str_replace(['{role_name}'], [$this->role_name], '/api/roles/{role_name}');
+        return str_replace(['{roleName}'], [$this->roleName], '/api/roles/{roleName}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

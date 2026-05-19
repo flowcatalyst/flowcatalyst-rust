@@ -265,7 +265,7 @@ impl Subscriptions<'_> {
     }
 
     /// Sync subscriptions for an application — declarative reconciliation
-    /// against `POST /api/applications/{app_code}/subscriptions/sync`.
+    /// against `POST /api/applications/{appCode}/subscriptions/sync`.
     pub async fn sync(
         &self,
         app_code: &str,

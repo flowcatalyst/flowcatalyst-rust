@@ -71,11 +71,11 @@ pub struct ConfigAccessState {
 /// List config access grants for an application
 #[utoipa::path(
     get,
-    path = "/{app_code}",
+    path = "/{appCode}",
     tag = "config-access",
     operation_id = "getApiConfigAccessByAppCode",
     params(
-        ("app_code" = String, Path, description = "Application code")
+        ("appCode" = String, Path, description = "Application code")
     ),
     responses(
         (status = 200, description = "Access list", body = AccessListResponse)
@@ -96,11 +96,11 @@ pub async fn list_access(
 /// Create a config access grant
 #[utoipa::path(
     post,
-    path = "/{app_code}",
+    path = "/{appCode}",
     tag = "config-access",
     operation_id = "postApiConfigAccessByAppCode",
     params(
-        ("app_code" = String, Path, description = "Application code")
+        ("appCode" = String, Path, description = "Application code")
     ),
     request_body = CreateAccessRequest,
     responses(
@@ -155,12 +155,12 @@ pub async fn create_access(
 /// Update a config access grant
 #[utoipa::path(
     put,
-    path = "/{app_code}/{role_code}",
+    path = "/{appCode}/{roleCode}",
     tag = "config-access",
     operation_id = "putApiConfigAccessByAppCodeByRoleCode",
     params(
-        ("app_code" = String, Path, description = "Application code"),
-        ("role_code" = String, Path, description = "Role code")
+        ("appCode" = String, Path, description = "Application code"),
+        ("roleCode" = String, Path, description = "Role code")
     ),
     request_body = UpdateAccessRequest,
     responses(
@@ -215,12 +215,12 @@ pub async fn update_access(
 /// Delete a config access grant
 #[utoipa::path(
     delete,
-    path = "/{app_code}/{role_code}",
+    path = "/{appCode}/{roleCode}",
     tag = "config-access",
     operation_id = "deleteApiConfigAccessByAppCodeByRoleCode",
     params(
-        ("app_code" = String, Path, description = "Application code"),
-        ("role_code" = String, Path, description = "Role code")
+        ("appCode" = String, Path, description = "Application code"),
+        ("roleCode" = String, Path, description = "Role code")
     ),
     responses(
         (status = 204, description = "Access deleted"),

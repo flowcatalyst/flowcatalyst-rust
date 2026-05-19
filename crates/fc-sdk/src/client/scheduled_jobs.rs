@@ -511,7 +511,7 @@ impl ScheduledJobs<'_> {
     }
 
     /// Sync scheduled jobs for an application — declarative reconciliation
-    /// against `POST /api/applications/{app_code}/scheduled-jobs/sync`.
+    /// against `POST /api/applications/{appCode}/scheduled-jobs/sync`.
     ///
     /// Unlike the other syncs, scheduled-jobs sync uses `archiveUnlisted` in
     /// the body (not `removeUnlisted` in the query) and returns a distinct

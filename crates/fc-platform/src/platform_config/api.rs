@@ -102,11 +102,11 @@ pub struct PlatformConfigState {
 /// List all configs for an application
 #[utoipa::path(
     get,
-    path = "/{app_code}",
+    path = "/{appCode}",
     tag = "platform-config",
     operation_id = "getApiConfigByAppCode",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("scope" = Option<String>, Query, description = "Config scope filter"),
         ("client_id" = Option<String>, Query, description = "Client ID filter")
     ),
@@ -137,11 +137,11 @@ pub async fn list_configs(
 /// Get config section for an application
 #[utoipa::path(
     get,
-    path = "/{app_code}/{section}",
+    path = "/{appCode}/{section}",
     tag = "platform-config",
     operation_id = "getApiConfigByAppCodeBySection",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Config section"),
         ("scope" = Option<String>, Query, description = "Config scope filter"),
         ("client_id" = Option<String>, Query, description = "Client ID filter")
@@ -183,11 +183,11 @@ pub async fn get_section(
 /// Get a specific config property
 #[utoipa::path(
     get,
-    path = "/{app_code}/{section}/{property}",
+    path = "/{appCode}/{section}/{property}",
     tag = "platform-config",
     operation_id = "getApiConfigByAppCodeBySectionByProperty",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Config section"),
         ("property" = String, Path, description = "Config property"),
         ("scope" = Option<String>, Query, description = "Config scope filter"),
@@ -237,11 +237,11 @@ pub async fn get_property(
 /// Set (create or update) a config property
 #[utoipa::path(
     put,
-    path = "/{app_code}/{section}/{property}",
+    path = "/{appCode}/{section}/{property}",
     tag = "platform-config",
     operation_id = "putApiConfigByAppCodeBySectionByProperty",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Config section"),
         ("property" = String, Path, description = "Config property"),
         ("scope" = Option<String>, Query, description = "Config scope filter"),
@@ -307,11 +307,11 @@ pub async fn set_property(
 /// Delete a config property
 #[utoipa::path(
     delete,
-    path = "/{app_code}/{section}/{property}",
+    path = "/{appCode}/{section}/{property}",
     tag = "platform-config",
     operation_id = "deleteApiConfigByAppCodeBySectionByProperty",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("section" = String, Path, description = "Config section"),
         ("property" = String, Path, description = "Config property"),
         ("scope" = Option<String>, Query, description = "Config scope filter"),

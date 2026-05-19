@@ -744,12 +744,12 @@ pub async fn get_client_applications(
 /// Enable application for client
 #[utoipa::path(
     post,
-    path = "/{id}/applications/{application_id}/enable",
+    path = "/{id}/applications/{applicationId}/enable",
     tag = "clients",
     operation_id = "postApiClientsByIdApplicationsByAppIdEnable",
     params(
         ("id" = String, Path, description = "Client ID"),
-        ("application_id" = String, Path, description = "Application ID")
+        ("applicationId" = String, Path, description = "Application ID")
     ),
     responses(
         (status = 204, description = "Application enabled"),
@@ -784,12 +784,12 @@ pub async fn enable_application(
 /// Disable application for client
 #[utoipa::path(
     post,
-    path = "/{id}/applications/{application_id}/disable",
+    path = "/{id}/applications/{applicationId}/disable",
     tag = "clients",
     operation_id = "postApiClientsByIdApplicationsByAppIdDisable",
     params(
         ("id" = String, Path, description = "Client ID"),
-        ("application_id" = String, Path, description = "Application ID")
+        ("applicationId" = String, Path, description = "Application ID")
     ),
     responses(
         (status = 204, description = "Application disabled"),

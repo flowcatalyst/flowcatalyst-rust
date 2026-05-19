@@ -22,7 +22,7 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
  * Sync dispatch pools for an application
  */
 export const postApiApplicationsByAppCodeDispatchPoolsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeDispatchPoolsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeDispatchPoolsSyncResponses, PostApiApplicationsByAppCodeDispatchPoolsSyncErrors, ThrowOnError>({
-    url: '/api/applications/{app_code}/dispatch-pools/sync',
+    url: '/api/applications/{appCode}/dispatch-pools/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -34,7 +34,7 @@ export const postApiApplicationsByAppCodeDispatchPoolsSync = <ThrowOnError exten
  * Sync event types for an application
  */
 export const postApiApplicationsByAppCodeEventTypesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeEventTypesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeEventTypesSyncResponses, PostApiApplicationsByAppCodeEventTypesSyncErrors, ThrowOnError>({
-    url: '/api/applications/{app_code}/event-types/sync',
+    url: '/api/applications/{appCode}/event-types/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -50,7 +50,7 @@ export const postApiApplicationsByAppCodeEventTypesSync = <ThrowOnError extends 
  * unchanged spec is a no-op (returns `unchanged: true`).
  */
 export const postApiApplicationsByAppCodeOpenapiSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeOpenapiSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeOpenapiSyncResponses, PostApiApplicationsByAppCodeOpenapiSyncErrors, ThrowOnError>({
-    url: '/api/applications/{app_code}/openapi/sync',
+    url: '/api/applications/{appCode}/openapi/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -62,7 +62,7 @@ export const postApiApplicationsByAppCodeOpenapiSync = <ThrowOnError extends boo
  * Sync principals for an application
  */
 export const postApiApplicationsByAppCodePrincipalsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodePrincipalsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodePrincipalsSyncResponses, PostApiApplicationsByAppCodePrincipalsSyncErrors, ThrowOnError>({
-    url: '/api/applications/{app_code}/principals/sync',
+    url: '/api/applications/{appCode}/principals/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -74,7 +74,7 @@ export const postApiApplicationsByAppCodePrincipalsSync = <ThrowOnError extends 
  * Sync processes for an application
  */
 export const postApiApplicationsByAppCodeProcessesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeProcessesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeProcessesSyncResponses, PostApiApplicationsByAppCodeProcessesSyncErrors, ThrowOnError>({
-    url: '/api/applications/{app_code}/processes/sync',
+    url: '/api/applications/{appCode}/processes/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -86,7 +86,7 @@ export const postApiApplicationsByAppCodeProcessesSync = <ThrowOnError extends b
  * Sync roles for an application
  */
 export const postApiApplicationsByAppCodeRolesSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeRolesSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeRolesSyncResponses, PostApiApplicationsByAppCodeRolesSyncErrors, ThrowOnError>({
-    url: '/api/applications/{app_code}/roles/sync',
+    url: '/api/applications/{appCode}/roles/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -101,7 +101,7 @@ export const postApiApplicationsByAppCodeRolesSync = <ThrowOnError extends boole
  * must have access to that client (or be anchor for platform-scoped).
  */
 export const postApiApplicationsByAppCodeScheduledJobsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeScheduledJobsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeScheduledJobsSyncResponses, PostApiApplicationsByAppCodeScheduledJobsSyncErrors, ThrowOnError>({
-    url: '/api/applications/{app_code}/scheduled-jobs/sync',
+    url: '/api/applications/{appCode}/scheduled-jobs/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -113,7 +113,7 @@ export const postApiApplicationsByAppCodeScheduledJobsSync = <ThrowOnError exten
  * Sync subscriptions for an application
  */
 export const postApiApplicationsByAppCodeSubscriptionsSync = <ThrowOnError extends boolean = false>(options: Options<PostApiApplicationsByAppCodeSubscriptionsSyncData, ThrowOnError>) => (options.client ?? client).post<PostApiApplicationsByAppCodeSubscriptionsSyncResponses, PostApiApplicationsByAppCodeSubscriptionsSyncErrors, ThrowOnError>({
-    url: '/api/applications/{app_code}/subscriptions/sync',
+    url: '/api/applications/{appCode}/subscriptions/sync',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -144,7 +144,7 @@ export const getApiAuditLogsEntityTypes = <ThrowOnError extends boolean = false>
 /**
  * Get audit logs for a specific entity
  */
-export const getApiAuditLogsEntityByEntityTypeByEntityId = <ThrowOnError extends boolean = false>(options: Options<GetApiAuditLogsEntityByEntityTypeByEntityIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAuditLogsEntityByEntityTypeByEntityIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/entity/{entity_type}/{entity_id}', ...options });
+export const getApiAuditLogsEntityByEntityTypeByEntityId = <ThrowOnError extends boolean = false>(options: Options<GetApiAuditLogsEntityByEntityTypeByEntityIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAuditLogsEntityByEntityTypeByEntityIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/entity/{entityType}/{entityId}', ...options });
 
 /**
  * Get distinct operations
@@ -154,7 +154,7 @@ export const getApiAuditLogsOperations = <ThrowOnError extends boolean = false>(
 /**
  * Get audit logs for a principal
  */
-export const getApiAuditLogsPrincipalByPrincipalId = <ThrowOnError extends boolean = false>(options: Options<GetApiAuditLogsPrincipalByPrincipalIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAuditLogsPrincipalByPrincipalIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/principal/{principal_id}', ...options });
+export const getApiAuditLogsPrincipalByPrincipalId = <ThrowOnError extends boolean = false>(options: Options<GetApiAuditLogsPrincipalByPrincipalIdData, ThrowOnError>) => (options.client ?? client).get<GetApiAuditLogsPrincipalByPrincipalIdResponses, unknown, ThrowOnError>({ url: '/api/audit-logs/principal/{principalId}', ...options });
 
 /**
  * Get recent audit logs
@@ -242,12 +242,12 @@ export const putApiClientsByIdApplications = <ThrowOnError extends boolean = fal
 /**
  * Disable application for client
  */
-export const postApiClientsByIdApplicationsByAppIdDisable = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdApplicationsByAppIdDisableData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdApplicationsByAppIdDisableResponses, PostApiClientsByIdApplicationsByAppIdDisableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{application_id}/disable', ...options });
+export const postApiClientsByIdApplicationsByAppIdDisable = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdApplicationsByAppIdDisableData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdApplicationsByAppIdDisableResponses, PostApiClientsByIdApplicationsByAppIdDisableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{applicationId}/disable', ...options });
 
 /**
  * Enable application for client
  */
-export const postApiClientsByIdApplicationsByAppIdEnable = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdApplicationsByAppIdEnableData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdApplicationsByAppIdEnableResponses, PostApiClientsByIdApplicationsByAppIdEnableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{application_id}/enable', ...options });
+export const postApiClientsByIdApplicationsByAppIdEnable = <ThrowOnError extends boolean = false>(options: Options<PostApiClientsByIdApplicationsByAppIdEnableData, ThrowOnError>) => (options.client ?? client).post<PostApiClientsByIdApplicationsByAppIdEnableResponses, PostApiClientsByIdApplicationsByAppIdEnableErrors, ThrowOnError>({ url: '/api/clients/{id}/applications/{applicationId}/enable', ...options });
 
 /**
  * Deactivate a client (soft delete)
@@ -312,7 +312,7 @@ export const postApiDispatchJobs = <ThrowOnError extends boolean = false>(option
 /**
  * Get dispatch jobs for an event
  */
-export const getApiDispatchJobsByEventByEventId = <ThrowOnError extends boolean = false>(options: Options<GetApiDispatchJobsByEventByEventIdData, ThrowOnError>) => (options.client ?? client).get<GetApiDispatchJobsByEventByEventIdResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs/by-event/{event_id}', ...options });
+export const getApiDispatchJobsByEventByEventId = <ThrowOnError extends boolean = false>(options: Options<GetApiDispatchJobsByEventByEventIdData, ThrowOnError>) => (options.client ?? client).get<GetApiDispatchJobsByEventByEventIdResponses, unknown, ThrowOnError>({ url: '/api/dispatch-jobs/by-event/{eventId}', ...options });
 
 /**
  * Get filter options for dispatch jobs
@@ -631,7 +631,7 @@ export const postApiPrincipalsByIdClientAccess = <ThrowOnError extends boolean =
 /**
  * Revoke client access from principal
  */
-export const deleteApiPrincipalsByIdClientAccessByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiPrincipalsByIdClientAccessByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiPrincipalsByIdClientAccessByClientIdResponses, DeleteApiPrincipalsByIdClientAccessByClientIdErrors, ThrowOnError>({ url: '/api/principals/{id}/client-access/{client_id}', ...options });
+export const deleteApiPrincipalsByIdClientAccessByClientId = <ThrowOnError extends boolean = false>(options: Options<DeleteApiPrincipalsByIdClientAccessByClientIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiPrincipalsByIdClientAccessByClientIdResponses, DeleteApiPrincipalsByIdClientAccessByClientIdErrors, ThrowOnError>({ url: '/api/principals/{id}/client-access/{clientId}', ...options });
 
 /**
  * Deactivate a principal
@@ -748,7 +748,7 @@ export const postApiRoles = <ThrowOnError extends boolean = false>(options: Opti
 /**
  * Get roles by application ID
  */
-export const getApiRolesByApplicationByApplicationId = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesByApplicationByApplicationIdData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesByApplicationByApplicationIdResponses, unknown, ThrowOnError>({ url: '/api/roles/by-application/{application_id}', ...options });
+export const getApiRolesByApplicationByApplicationId = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesByApplicationByApplicationIdData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesByApplicationByApplicationIdResponses, unknown, ThrowOnError>({ url: '/api/roles/by-application/{applicationId}', ...options });
 
 /**
  * Get role by code (name)
@@ -778,7 +778,7 @@ export const getApiRolesPermissionsByPermission = <ThrowOnError extends boolean 
 /**
  * Delete role
  */
-export const deleteApiRolesByName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiRolesByNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiRolesByNameResponses, DeleteApiRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{role_name}', ...options });
+export const deleteApiRolesByName = <ThrowOnError extends boolean = false>(options: Options<DeleteApiRolesByNameData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiRolesByNameResponses, DeleteApiRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{roleName}', ...options });
 
 /**
  * Get role by ID or name (code)
@@ -786,13 +786,13 @@ export const deleteApiRolesByName = <ThrowOnError extends boolean = false>(optio
  * The frontend calls this with the role name (e.g., "platform:super-admin"),
  * so we try by code first if it contains ":", otherwise by ID.
  */
-export const getApiRolesByName = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesByNameData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesByNameResponses, GetApiRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{role_name}', ...options });
+export const getApiRolesByName = <ThrowOnError extends boolean = false>(options: Options<GetApiRolesByNameData, ThrowOnError>) => (options.client ?? client).get<GetApiRolesByNameResponses, GetApiRolesByNameErrors, ThrowOnError>({ url: '/api/roles/{roleName}', ...options });
 
 /**
  * Update role
  */
 export const putApiRolesByName = <ThrowOnError extends boolean = false>(options: Options<PutApiRolesByNameData, ThrowOnError>) => (options.client ?? client).put<PutApiRolesByNameResponses, PutApiRolesByNameErrors, ThrowOnError>({
-    url: '/api/roles/{role_name}',
+    url: '/api/roles/{roleName}',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -804,7 +804,7 @@ export const putApiRolesByName = <ThrowOnError extends boolean = false>(options:
  * Grant permission to role
  */
 export const postApiRolesByNamePermissions = <ThrowOnError extends boolean = false>(options: Options<PostApiRolesByNamePermissionsData, ThrowOnError>) => (options.client ?? client).post<PostApiRolesByNamePermissionsResponses, PostApiRolesByNamePermissionsErrors, ThrowOnError>({
-    url: '/api/roles/{role_name}/permissions',
+    url: '/api/roles/{roleName}/permissions',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -815,7 +815,7 @@ export const postApiRolesByNamePermissions = <ThrowOnError extends boolean = fal
 /**
  * Revoke permission from role
  */
-export const deleteApiRolesByNamePermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<DeleteApiRolesByNamePermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiRolesByNamePermissionsByPermissionResponses, DeleteApiRolesByNamePermissionsByPermissionErrors, ThrowOnError>({ url: '/api/roles/{role_name}/permissions/{permission}', ...options });
+export const deleteApiRolesByNamePermissionsByPermission = <ThrowOnError extends boolean = false>(options: Options<DeleteApiRolesByNamePermissionsByPermissionData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiRolesByNamePermissionsByPermissionResponses, DeleteApiRolesByNamePermissionsByPermissionErrors, ThrowOnError>({ url: '/api/roles/{roleName}/permissions/{permission}', ...options });
 
 export const getApiScheduledJobs = <ThrowOnError extends boolean = false>(options: Options<GetApiScheduledJobsData, ThrowOnError>) => (options.client ?? client).get<GetApiScheduledJobsResponses, unknown, ThrowOnError>({ url: '/api/scheduled-jobs', ...options });
 
@@ -830,10 +830,10 @@ export const postApiScheduledJobs = <ThrowOnError extends boolean = false>(optio
 
 export const getApiScheduledJobsByCode = <ThrowOnError extends boolean = false>(options: Options<GetApiScheduledJobsByCodeData, ThrowOnError>) => (options.client ?? client).get<GetApiScheduledJobsByCodeResponses, GetApiScheduledJobsByCodeErrors, ThrowOnError>({ url: '/api/scheduled-jobs/by-code/{code}', ...options });
 
-export const getApiScheduledJobsInstancesById = <ThrowOnError extends boolean = false>(options: Options<GetApiScheduledJobsInstancesByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiScheduledJobsInstancesByIdResponses, GetApiScheduledJobsInstancesByIdErrors, ThrowOnError>({ url: '/api/scheduled-jobs/instances/{instance_id}', ...options });
+export const getApiScheduledJobsInstancesById = <ThrowOnError extends boolean = false>(options: Options<GetApiScheduledJobsInstancesByIdData, ThrowOnError>) => (options.client ?? client).get<GetApiScheduledJobsInstancesByIdResponses, GetApiScheduledJobsInstancesByIdErrors, ThrowOnError>({ url: '/api/scheduled-jobs/instances/{instanceId}', ...options });
 
 export const postApiScheduledJobsInstancesByIdComplete = <ThrowOnError extends boolean = false>(options: Options<PostApiScheduledJobsInstancesByIdCompleteData, ThrowOnError>) => (options.client ?? client).post<PostApiScheduledJobsInstancesByIdCompleteResponses, PostApiScheduledJobsInstancesByIdCompleteErrors, ThrowOnError>({
-    url: '/api/scheduled-jobs/instances/{instance_id}/complete',
+    url: '/api/scheduled-jobs/instances/{instanceId}/complete',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -842,7 +842,7 @@ export const postApiScheduledJobsInstancesByIdComplete = <ThrowOnError extends b
 });
 
 export const postApiScheduledJobsInstancesByIdLog = <ThrowOnError extends boolean = false>(options: Options<PostApiScheduledJobsInstancesByIdLogData, ThrowOnError>) => (options.client ?? client).post<PostApiScheduledJobsInstancesByIdLogResponses, PostApiScheduledJobsInstancesByIdLogErrors, ThrowOnError>({
-    url: '/api/scheduled-jobs/instances/{instance_id}/log',
+    url: '/api/scheduled-jobs/instances/{instanceId}/log',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -850,7 +850,7 @@ export const postApiScheduledJobsInstancesByIdLog = <ThrowOnError extends boolea
     }
 });
 
-export const getApiScheduledJobsInstancesByIdLogs = <ThrowOnError extends boolean = false>(options: Options<GetApiScheduledJobsInstancesByIdLogsData, ThrowOnError>) => (options.client ?? client).get<GetApiScheduledJobsInstancesByIdLogsResponses, GetApiScheduledJobsInstancesByIdLogsErrors, ThrowOnError>({ url: '/api/scheduled-jobs/instances/{instance_id}/logs', ...options });
+export const getApiScheduledJobsInstancesByIdLogs = <ThrowOnError extends boolean = false>(options: Options<GetApiScheduledJobsInstancesByIdLogsData, ThrowOnError>) => (options.client ?? client).get<GetApiScheduledJobsInstancesByIdLogsResponses, GetApiScheduledJobsInstancesByIdLogsErrors, ThrowOnError>({ url: '/api/scheduled-jobs/instances/{instanceId}/logs', ...options });
 
 export const deleteApiScheduledJobsById = <ThrowOnError extends boolean = false>(options: Options<DeleteApiScheduledJobsByIdData, ThrowOnError>) => (options.client ?? client).delete<DeleteApiScheduledJobsByIdResponses, DeleteApiScheduledJobsByIdErrors, ThrowOnError>({ url: '/api/scheduled-jobs/{id}', ...options });
 

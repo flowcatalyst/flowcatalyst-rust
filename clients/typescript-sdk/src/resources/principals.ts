@@ -274,7 +274,7 @@ export class PrincipalsResource {
 			sdk.deleteApiPrincipalsByIdClientAccessByClientId({
 				client: httpClient,
 				headers,
-				path: { id, client_id: clientId },
+				path: { id, clientId },
 			}),
 		);
 	}
@@ -297,7 +297,7 @@ export class PrincipalsResource {
 				sdk.postApiApplicationsByAppCodePrincipalsSync({
 					client: httpClient,
 					headers,
-					path: { app_code: applicationCode },
+					path: { appCode: applicationCode },
 					body: { principals },
 					query: { removeUnlisted },
 				}),

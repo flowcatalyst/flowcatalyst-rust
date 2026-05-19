@@ -769,9 +769,9 @@ pub async fn list_instances_for_job(
 }
 
 #[utoipa::path(
-    get, path = "/instances/{instance_id}", tag = "scheduled-jobs",
+    get, path = "/instances/{instanceId}", tag = "scheduled-jobs",
     operation_id = "getApiScheduledJobsInstancesById",
-    params(("instance_id" = String, Path, description = "Instance ID")),
+    params(("instanceId" = String, Path, description = "Instance ID")),
     responses((status = 200, body = ScheduledJobInstanceResponse), (status = 404)),
     security(("bearer_auth" = []))
 )]
@@ -791,9 +791,9 @@ pub async fn get_instance(
 }
 
 #[utoipa::path(
-    get, path = "/instances/{instance_id}/logs", tag = "scheduled-jobs",
+    get, path = "/instances/{instanceId}/logs", tag = "scheduled-jobs",
     operation_id = "getApiScheduledJobsInstancesByIdLogs",
-    params(("instance_id" = String, Path, description = "Instance ID")),
+    params(("instanceId" = String, Path, description = "Instance ID")),
     responses((status = 200, body = Vec<InstanceLogResponse>), (status = 404)),
     security(("bearer_auth" = []))
 )]
@@ -819,9 +819,9 @@ pub async fn list_instance_logs(
 // ── SDK callback path (infrastructure write — bypasses UoW) ────────────────
 
 #[utoipa::path(
-    post, path = "/instances/{instance_id}/log", tag = "scheduled-jobs",
+    post, path = "/instances/{instanceId}/log", tag = "scheduled-jobs",
     operation_id = "postApiScheduledJobsInstancesByIdLog",
-    params(("instance_id" = String, Path, description = "Instance ID")),
+    params(("instanceId" = String, Path, description = "Instance ID")),
     request_body = InstanceLogRequest,
     responses((status = 202), (status = 403), (status = 404)),
     security(("bearer_auth" = []))
@@ -855,9 +855,9 @@ pub async fn post_instance_log(
 }
 
 #[utoipa::path(
-    post, path = "/instances/{instance_id}/complete", tag = "scheduled-jobs",
+    post, path = "/instances/{instanceId}/complete", tag = "scheduled-jobs",
     operation_id = "postApiScheduledJobsInstancesByIdComplete",
-    params(("instance_id" = String, Path, description = "Instance ID")),
+    params(("instanceId" = String, Path, description = "Instance ID")),
     request_body = InstanceCompleteRequest,
     responses((status = 204), (status = 403), (status = 404)),
     security(("bearer_auth" = []))

@@ -508,11 +508,11 @@ pub async fn list_dispatch_jobs(
 /// Get dispatch jobs for an event
 #[utoipa::path(
     get,
-    path = "/by-event/{event_id}",
+    path = "/by-event/{eventId}",
     tag = "dispatch-jobs",
     operation_id = "getApiDispatchJobsByEventByEventId",
     params(
-        ("event_id" = String, Path, description = "Event ID")
+        ("eventId" = String, Path, description = "Event ID")
     ),
     responses(
         (status = 200, description = "Dispatch jobs for event", body = Vec<DispatchJobResponse>)

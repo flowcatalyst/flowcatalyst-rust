@@ -4,7 +4,7 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class GetApiRolesByName extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $role_name;
+    protected $roleName;
     /**
      * The frontend calls this with the role name (e.g., "platform:super-admin"),
      * so we try by code first if it contains ":", otherwise by ID.
@@ -12,7 +12,7 @@ class GetApiRolesByName extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpo
      */
     public function __construct(string $roleName)
     {
-        $this->role_name = $roleName;
+        $this->roleName = $roleName;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
     public function getMethod(): string
@@ -21,7 +21,7 @@ class GetApiRolesByName extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpo
     }
     public function getUri(): string
     {
-        return str_replace(['{role_name}'], [$this->role_name], '/api/roles/{role_name}');
+        return str_replace(['{roleName}'], [$this->roleName], '/api/roles/{roleName}');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

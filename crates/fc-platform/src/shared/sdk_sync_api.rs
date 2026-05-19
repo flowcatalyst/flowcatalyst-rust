@@ -326,11 +326,11 @@ pub struct SyncScheduledJobsResultResponse {
 /// Sync roles for an application
 #[utoipa::path(
     post,
-    path = "/{app_code}/roles/sync",
+    path = "/{appCode}/roles/sync",
     tag = "sdk-sync",
     operation_id = "postApiApplicationsByAppCodeRolesSync",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove SDK roles not in list")
     ),
     request_body = SyncRolesRequest,
@@ -383,11 +383,11 @@ async fn sync_roles(
 /// Sync event types for an application
 #[utoipa::path(
     post,
-    path = "/{app_code}/event-types/sync",
+    path = "/{appCode}/event-types/sync",
     tag = "sdk-sync",
     operation_id = "postApiApplicationsByAppCodeEventTypesSync",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced event types not in list")
     ),
     request_body = SyncEventTypesRequest,
@@ -438,11 +438,11 @@ async fn sync_event_types(
 /// Sync subscriptions for an application
 #[utoipa::path(
     post,
-    path = "/{app_code}/subscriptions/sync",
+    path = "/{appCode}/subscriptions/sync",
     tag = "sdk-sync",
     operation_id = "postApiApplicationsByAppCodeSubscriptionsSync",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced subscriptions not in list")
     ),
     request_body = SyncSubscriptionsRequest,
@@ -508,11 +508,11 @@ async fn sync_subscriptions(
 /// Sync dispatch pools for an application
 #[utoipa::path(
     post,
-    path = "/{app_code}/dispatch-pools/sync",
+    path = "/{appCode}/dispatch-pools/sync",
     tag = "sdk-sync",
     operation_id = "postApiApplicationsByAppCodeDispatchPoolsSync",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Archive pools not in list")
     ),
     request_body = SyncDispatchPoolsRequest,
@@ -564,11 +564,11 @@ async fn sync_dispatch_pools(
 /// Sync principals for an application
 #[utoipa::path(
     post,
-    path = "/{app_code}/principals/sync",
+    path = "/{appCode}/principals/sync",
     tag = "sdk-sync",
     operation_id = "postApiApplicationsByAppCodePrincipalsSync",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove SDK_SYNC roles from unlisted principals")
     ),
     request_body = SyncPrincipalsRequest,
@@ -623,10 +623,10 @@ async fn sync_principals(
 /// must have access to that client (or be anchor for platform-scoped).
 #[utoipa::path(
     post,
-    path = "/{app_code}/scheduled-jobs/sync",
+    path = "/{appCode}/scheduled-jobs/sync",
     tag = "sdk-sync",
     operation_id = "postApiApplicationsByAppCodeScheduledJobsSync",
-    params(("app_code" = String, Path, description = "Application code")),
+    params(("appCode" = String, Path, description = "Application code")),
     request_body = SyncScheduledJobsRequest,
     responses(
         (status = 200, description = "Scheduled jobs synced", body = SyncScheduledJobsResultResponse),
@@ -702,11 +702,11 @@ async fn sync_scheduled_jobs(
 /// Sync processes for an application
 #[utoipa::path(
     post,
-    path = "/{app_code}/processes/sync",
+    path = "/{appCode}/processes/sync",
     tag = "sdk-sync",
     operation_id = "postApiApplicationsByAppCodeProcessesSync",
     params(
-        ("app_code" = String, Path, description = "Application code"),
+        ("appCode" = String, Path, description = "Application code"),
         ("removeUnlisted" = Option<bool>, Query, description = "Remove API-sourced processes not in list")
     ),
     request_body = SyncProcessesRequest,
@@ -791,10 +791,10 @@ pub struct SyncOpenApiSpecResponse {
 /// unchanged spec is a no-op (returns `unchanged: true`).
 #[utoipa::path(
     post,
-    path = "/{app_code}/openapi/sync",
+    path = "/{appCode}/openapi/sync",
     tag = "sdk-sync",
     operation_id = "postApiApplicationsByAppCodeOpenapiSync",
-    params(("app_code" = String, Path, description = "Application code")),
+    params(("appCode" = String, Path, description = "Application code")),
     request_body = SyncOpenApiSpecRequest,
     responses(
         (status = 200, description = "OpenAPI spec synced", body = SyncOpenApiSpecResponse),
@@ -870,14 +870,14 @@ async fn sync_openapi(
 /// Create SDK sync router
 ///
 /// Mounts application-scoped sync routes:
-/// - POST /{app_code}/roles/sync
-/// - POST /{app_code}/event-types/sync
-/// - POST /{app_code}/subscriptions/sync
-/// - POST /{app_code}/dispatch-pools/sync
-/// - POST /{app_code}/principals/sync
-/// - POST /{app_code}/processes/sync
-/// - POST /{app_code}/scheduled-jobs/sync
-/// - POST /{app_code}/openapi/sync
+/// - POST /{appCode}/roles/sync
+/// - POST /{appCode}/event-types/sync
+/// - POST /{appCode}/subscriptions/sync
+/// - POST /{appCode}/dispatch-pools/sync
+/// - POST /{appCode}/principals/sync
+/// - POST /{appCode}/processes/sync
+/// - POST /{appCode}/scheduled-jobs/sync
+/// - POST /{appCode}/openapi/sync
 pub fn sdk_sync_router(state: SdkSyncState) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(sync_roles))

@@ -60,7 +60,7 @@ export class RolesResource {
 			sdk.getApiRolesByName({
 				client: httpClient,
 				headers,
-				path: { role_name: roleName },
+				path: { roleName },
 			}),
 		);
 	}
@@ -102,7 +102,7 @@ export class RolesResource {
 			sdk.putApiRolesByName({
 				client: httpClient,
 				headers,
-				path: { role_name: roleName },
+				path: { roleName },
 				body: data,
 			}),
 		);
@@ -116,7 +116,7 @@ export class RolesResource {
 			sdk.deleteApiRolesByName({
 				client: httpClient,
 				headers,
-				path: { role_name: roleName },
+				path: { roleName },
 			}),
 		);
 	}
@@ -132,7 +132,7 @@ export class RolesResource {
 				sdk.getApiRolesByApplicationByApplicationId({
 					client: httpClient,
 					headers,
-					path: { application_id: applicationId },
+					path: { applicationId },
 				}),
 		);
 	}
@@ -148,7 +148,7 @@ export class RolesResource {
 			sdk.postApiRolesByNamePermissions({
 				client: httpClient,
 				headers,
-				path: { role_name: roleName },
+				path: { roleName },
 				body: { permission },
 			}),
 		);
@@ -165,7 +165,7 @@ export class RolesResource {
 			sdk.deleteApiRolesByNamePermissionsByPermission({
 				client: httpClient,
 				headers,
-				path: { role_name: roleName, permission },
+				path: { roleName, permission },
 			}),
 		);
 	}
@@ -183,7 +183,7 @@ export class RolesResource {
 			sdk.postApiApplicationsByAppCodeRolesSync({
 				client: httpClient,
 				headers,
-				path: { app_code: applicationCode },
+				path: { appCode: applicationCode },
 				body: { roles },
 				query: { removeUnlisted },
 			}),

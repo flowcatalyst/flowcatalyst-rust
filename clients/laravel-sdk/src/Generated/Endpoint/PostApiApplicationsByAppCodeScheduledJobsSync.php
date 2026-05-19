@@ -4,7 +4,7 @@ namespace FlowCatalyst\Generated\Endpoint;
 
 class PostApiApplicationsByAppCodeScheduledJobsSync extends \FlowCatalyst\Generated\Runtime\Client\BaseEndpoint implements \FlowCatalyst\Generated\Runtime\Client\Endpoint
 {
-    protected $app_code;
+    protected $appCode;
     /**
      * Body specifies the target client (or null for platform-scoped). Caller
      * must have access to that client (or be anchor for platform-scoped).
@@ -13,7 +13,7 @@ class PostApiApplicationsByAppCodeScheduledJobsSync extends \FlowCatalyst\Genera
      */
     public function __construct(string $appCode, ?\FlowCatalyst\Generated\Model\SyncScheduledJobsRequest $requestBody = null)
     {
-        $this->app_code = $appCode;
+        $this->appCode = $appCode;
         $this->body = $requestBody;
     }
     use \FlowCatalyst\Generated\Runtime\Client\EndpointTrait;
@@ -23,7 +23,7 @@ class PostApiApplicationsByAppCodeScheduledJobsSync extends \FlowCatalyst\Genera
     }
     public function getUri(): string
     {
-        return str_replace(['{app_code}'], [$this->app_code], '/api/applications/{app_code}/scheduled-jobs/sync');
+        return str_replace(['{appCode}'], [$this->appCode], '/api/applications/{appCode}/scheduled-jobs/sync');
     }
     public function getBody(\Symfony\Component\Serializer\SerializerInterface $serializer, $streamFactory = null): array
     {

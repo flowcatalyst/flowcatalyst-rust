@@ -1219,12 +1219,12 @@ pub async fn grant_client_access(
 /// Revoke client access from principal
 #[utoipa::path(
     delete,
-    path = "/{id}/client-access/{client_id}",
+    path = "/{id}/client-access/{clientId}",
     tag = "principals",
     operation_id = "deleteApiPrincipalsByIdClientAccessByClientId",
     params(
         ("id" = String, Path, description = "Principal ID"),
-        ("client_id" = String, Path, description = "Client ID to revoke")
+        ("clientId" = String, Path, description = "Client ID to revoke")
     ),
     responses(
         (status = 204, description = "Client access revoked"),

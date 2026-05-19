@@ -153,7 +153,7 @@ export class EventTypesResource {
 			sdk.postApiApplicationsByAppCodeEventTypesSync({
 				client: httpClient,
 				headers,
-				path: { app_code: applicationCode },
+				path: { appCode: applicationCode },
 				body: { eventTypes },
 				query: { removeUnlisted },
 			}),

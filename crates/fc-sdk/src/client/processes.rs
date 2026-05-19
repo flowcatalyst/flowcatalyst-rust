@@ -184,7 +184,7 @@ impl Processes<'_> {
     }
 
     /// Sync processes for an application — declarative reconciliation
-    /// against `POST /api/applications/{app_code}/processes/sync`.
+    /// against `POST /api/applications/{appCode}/processes/sync`.
     ///
     /// `remove_unlisted` removes API/CODE-sourced processes not in the
     /// list. UI-sourced processes are never touched.
