@@ -330,6 +330,24 @@ async fn main() -> Result<()> {
         std::env::set_var("FC_DEV_MODE", "true");
     }
 
+    // WebAuthn / passkeys default to localhost in fc-dev so the browser
+    // accepts the credentials without TLS. Override either by exporting
+    // the env var or by putting it in `.env.development`.
+    //   RP_ID must be the bare hostname (no scheme, no port).
+    //   ORIGINS is a comma-separated allow-list of full origins — Vite
+    //   on :5173 and the fc-dev API on :8080 cover both the SPA dev
+    //   server and the production-served frontend on the same port as
+    //   the API.
+    if std::env::var("FC_WEBAUTHN_RP_ID").is_err() {
+        std::env::set_var("FC_WEBAUTHN_RP_ID", "localhost");
+    }
+    if std::env::var("FC_WEBAUTHN_ORIGINS").is_err() {
+        std::env::set_var(
+            "FC_WEBAUTHN_ORIGINS",
+            "http://localhost:5173,http://localhost:8080",
+        );
+    }
+
     // Anchor the JWT keypair to an absolute dev-cache path so sessions
     // survive across launches regardless of CWD. Without this, the keys
     // land in `./.jwt-keys/` relative to wherever fc-dev was invoked —
