@@ -973,7 +973,6 @@ pub fn build_platform_routes(
         credential_repo: webauthn_credential_repo,
         ceremony_repo: webauthn_ceremony_repo,
         principal_repo: repos.principal_repo.clone(),
-        email_domain_mapping_repo: repos.edm_repo.clone(),
         login_attempt_repo: repos.login_attempt_repo.clone(),
         webauthn_service,
         auth_service: auth.auth.clone(),

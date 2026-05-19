@@ -1,8 +1,11 @@
 //! WebAuthn / Passkeys
 //!
-//! Public-key credential support for internal-auth users (those whose email
-//! domain has no row in `email_domain_mapping`). Federated users never have
-//! credentials here — see `project_passkeys_scope.md` for rationale.
+//! Public-key credential support for internal-auth principals: a principal
+//! qualifies iff `user_identity.password_hash.is_some()` AND
+//! `user_identity.external_id.is_none()`. Federated principals (managed by
+//! an external IdP) never have credentials here — the IdP owns identity.
+//! The gate is per-principal, not per-domain; a single email domain can
+//! mix local and federated accounts. See `project_passkeys_scope.md`.
 
 pub mod api;
 pub mod ceremony_repository;
