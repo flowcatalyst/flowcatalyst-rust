@@ -28,6 +28,33 @@
 //!
 //! For unit testing use cases without a database, use [`InMemoryUnitOfWork`].
 //!
+//! ### Orchestration: multiple writes in one transaction
+//!
+//! When your handler needs to compose multiple aggregate writes — or mix
+//! ad-hoc sqlx writes with outbox events — in a single application-owned
+//! transaction, use [`OutboxUnitOfWork::run`]. The closure receives an
+//! `Arc<TxScopedOutboxUnitOfWork>` that implements [`UnitOfWork`] and shares
+//! one transaction across everything inside it. The closure's
+//! `UseCaseResult` drives commit vs rollback:
+//!
+//! ```ignore
+//! uow.run(|session| async move {
+//!     let order_uc = ShipOrderUseCase::new(order_repo, session.clone());
+//!     let ledger_uc = DebitAccountUseCase::new(ledger_repo, session.clone());
+//!
+//!     order_uc.run(ship_cmd, ctx.clone()).await.into_result()?;
+//!     ledger_uc.run(debit_cmd, ctx).await.into_result()?;
+//!     UseCaseResult::success(())
+//! })
+//! .await
+//! ```
+//!
+//! Use [`TxScopedOutboxUnitOfWork::with_tx`] inside the closure for ad-hoc
+//! sqlx writes that aren't expressed as aggregates. The use case bodies stay
+//! tx-agnostic — they only see the `UnitOfWork` trait — so the same code
+//! works under [`OutboxUnitOfWork::commit`] (one tx per use case) or
+//! [`OutboxUnitOfWork::run`] (one tx per orchestration).
+//!
 //! ## 2. Simple Outbox Pattern (lightweight, matches TS/Laravel SDKs)
 //!
 //! Use [`OutboxManager`] with builder DTOs when you don't need the full use case ceremony.
@@ -81,7 +108,8 @@ pub use payload::{
 };
 pub use schema::{init_outbox_schema, init_outbox_schema_with_table, CREATE_OUTBOX_TABLE_SQL};
 pub use unit_of_work::{
-    HasId, InMemoryUnitOfWork, OutboxConfig, OutboxUnitOfWork, PgAggregate, PgPersist, UnitOfWork,
+    HasId, InMemoryUnitOfWork, OutboxConfig, OutboxUnitOfWork, PgAggregate, PgPersist,
+    TxScopedOutboxUnitOfWork, UnitOfWork,
 };
 
 // ─── Simple outbox pattern re-exports ───────────────────────────────────────
