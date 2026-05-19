@@ -46,7 +46,16 @@ mime_guess = "2"
 #
 # Gated behind the `embedded-db` feature (on by default for fc-dev only)
 # so fc-server never pulls this dep.
-postgresql_embedded = { version = "0.19", features = ["bundled"], optional = true }
+## `default-features = false` is load-bearing: postgresql_embedded's
+## default feature set includes `native-tls`, which propagates to
+## `postgresql_archive/native-tls → reqwest/native-tls`. Through cargo's
+## workspace-wide feature unification, that drags OpenSSL/native-tls
+## into every binary in the workspace, not just fc-dev. The Windows CI
+## release job needed a `vcpkg install openssl:x64-windows-static-md`
+## step purely because of that. Explicit `rustls` feature keeps the
+## embedded-pg download path (reqwest GET to github releases) on
+## rustls and matches the rest of the workspace's TLS posture.
+postgresql_embedded = { version = "0.19", default-features = false, features = ["bundled", "rustls", "tokio", "theseus"], optional = true }
 # Used for both the embedded-pg data dir and the JWT key cache dir, so it's
 # unconditional even though the embedded-pg bundle is feature-gated.
 dirs = "5"

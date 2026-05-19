@@ -40,8 +40,11 @@ rsa = { version = "0.9", features = ["pem"] }
 rand = { workspace = true }
 webauthn-rs = { workspace = true }
 
-# HTTP client for OIDC
-reqwest = { version = "0.12", features = ["json"] }
+# HTTP client for OIDC. Inherit from workspace so we pick up the
+# `default-features = false` + rustls-tls posture; declaring our own
+# reqwest here used to re-enable `default-tls` via feature unification
+# and drag OpenSSL/native-tls back into every binary.
+reqwest = { workspace = true }
 urlencoding = "2.1"
 
 # Email

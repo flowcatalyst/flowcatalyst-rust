@@ -33,7 +33,18 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 axum = "0.8"
 axum-extra = { version = "0.10", features = ["cookie"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+## NOTE: `default-features = false` is load-bearing.
+##
+## reqwest's default `default-tls` feature pulls in `native-tls`/openssl
+## even when `rustls-tls` is also enabled — they're additive, not
+## exclusive. That made every workspace binary link against OpenSSL on
+## Windows, which forced a `vcpkg install openssl:x64-windows-static-md`
+## step in release-fc-dev.yml that dominated the Windows CI runtime.
+## With defaults off, only rustls is wired in; nothing in the workspace
+## (or our transitive deps as of writing — see `cargo tree -i native-tls`)
+## links OpenSSL anymore. Confirm with that command before adding any new
+## reqwest feature flag.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2", "system-proxy"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "postgres", "mysql", "chrono", "uuid"] }
 mongodb = "3.2"
 bson = { version = "2.15", features = ["chrono-0_4"] }
