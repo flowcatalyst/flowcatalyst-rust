@@ -24,6 +24,9 @@
 	"main": "./dist/index.js",
 	"module": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"bin": {
+		"flowcatalyst": "./dist/cli/index.js"
+	},
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
