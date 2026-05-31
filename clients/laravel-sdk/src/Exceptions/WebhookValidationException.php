@@ -47,6 +47,14 @@ class WebhookValidationException extends FlowCatalystException
     }
 
     /**
+     * Create an exception for an unparseable timestamp.
+     */
+    public static function invalidTimestamp(): static
+    {
+        return new static('Webhook timestamp is not a valid ISO8601 or Unix-seconds value.', 401);
+    }
+
+    /**
      * Create an exception for missing signing secret.
      */
     public static function missingSigningSecret(): static

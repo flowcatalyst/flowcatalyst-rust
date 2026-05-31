@@ -21,6 +21,27 @@ func TestValidateAcceptsFreshSignedRequest(t *testing.T) {
 	require.NoError(t, v.Validate(sig, ts, body))
 }
 
+// The FlowCatalyst router signs with an ISO8601 millisecond timestamp
+// (e.g. 2026-05-24T08:30:00.123Z), not Unix seconds. The validator must
+// accept it.
+func TestValidateAcceptsISO8601MillisecondTimestamp(t *testing.T) {
+	v := webhook.New("test-secret")
+	body := []byte(`{"type":"order.created"}`)
+	ts := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	sig := v.ComputeSignature(ts, body)
+
+	require.NoError(t, v.Validate(sig, ts, body))
+}
+
+func TestValidateRejectsExpiredISO8601Timestamp(t *testing.T) {
+	v := webhook.New("test-secret")
+	body := []byte(`{"x":1}`)
+	ts := time.Now().UTC().Add(-time.Hour).Format("2006-01-02T15:04:05.000Z")
+	sig := v.ComputeSignature(ts, body)
+
+	assert.True(t, errors.Is(v.Validate(sig, ts, body), webhook.ErrTimestampExpired))
+}
+
 func TestValidateRejectsBadSignature(t *testing.T) {
 	v := webhook.New("test-secret")
 	body := []byte(`{"type":"order.created"}`)

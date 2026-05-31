@@ -81,7 +81,10 @@ class WebhookValidator
      */
     private function validateTimestamp(string $timestamp, int $tolerance): void
     {
-        $webhookTime = (int) $timestamp;
+        $webhookTime = $this->parseTimestamp($timestamp);
+        if ($webhookTime === null) {
+            throw WebhookValidationException::invalidTimestamp();
+        }
         $currentTime = time();
 
         // Check if timestamp is too old
@@ -92,6 +95,33 @@ class WebhookValidator
         // Check if timestamp is in the future (with 60 second grace period)
         if ($webhookTime > ($currentTime + 60)) {
             throw WebhookValidationException::timestampInFuture();
+        }
+    }
+
+    /**
+     * Parse the X-FlowCatalyst-Timestamp header value into Unix seconds.
+     *
+     * The FlowCatalyst router emits an ISO8601 timestamp with millisecond
+     * precision (e.g. 2026-05-24T08:30:00.123Z). For backward compatibility
+     * we also accept a bare Unix-seconds integer. Returns null when the
+     * value is unparseable.
+     *
+     * Note: the HMAC is computed over the raw header string (timestamp .
+     * payload), so this parsing only affects the replay-window check — it
+     * never changes signature verification.
+     */
+    private function parseTimestamp(string $timestamp): ?int
+    {
+        // Backward-compat: a bare Unix-seconds integer.
+        if (ctype_digit($timestamp)) {
+            return (int) $timestamp;
+        }
+
+        // ISO8601 (handles the trailing Z and fractional seconds).
+        try {
+            return (new \DateTimeImmutable($timestamp))->getTimestamp();
+        } catch (\Exception) {
+            return null;
         }
     }
 

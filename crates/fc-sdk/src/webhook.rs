@@ -24,7 +24,10 @@ use sha2::Sha256;
 /// Header name for the HMAC-SHA256 signature (hex-encoded).
 pub const SIGNATURE_HEADER: &str = "X-FlowCatalyst-Signature";
 
-/// Header name for the Unix timestamp (seconds).
+/// Header name for the timestamp. The FlowCatalyst router emits an ISO8601
+/// value with millisecond precision (e.g. `2026-05-24T08:30:00.123Z`). HTTP
+/// header lookups are case-insensitive, so this matches the router's
+/// uppercase `X-FLOWCATALYST-TIMESTAMP` in any compliant framework.
 pub const TIMESTAMP_HEADER: &str = "X-FlowCatalyst-Timestamp";
 
 /// Default timestamp tolerance in seconds (5 minutes).
@@ -51,7 +54,7 @@ pub enum WebhookValidationError {
     #[error("missing timestamp header ({TIMESTAMP_HEADER})")]
     MissingTimestamp,
 
-    #[error("invalid timestamp: not a valid integer")]
+    #[error("invalid timestamp")]
     InvalidTimestamp,
 
     #[error("invalid signature")]
@@ -96,7 +99,9 @@ impl WebhookValidator {
     /// Validate a webhook request.
     ///
     /// - `signature` — value of the `X-FlowCatalyst-Signature` header
-    /// - `timestamp` — value of the `X-FlowCatalyst-Timestamp` header
+    /// - `timestamp` — value of the `X-FlowCatalyst-Timestamp` header (ISO8601
+    ///   with millisecond precision, e.g. `2026-05-24T08:30:00.123Z`; a bare
+    ///   Unix-seconds integer is also accepted for backward compatibility)
     /// - `payload` — raw request body bytes
     pub fn validate(
         &self,
@@ -107,9 +112,8 @@ impl WebhookValidator {
         let signature = signature.ok_or(WebhookValidationError::MissingSignature)?;
         let timestamp_str = timestamp.ok_or(WebhookValidationError::MissingTimestamp)?;
 
-        let webhook_time: u64 = timestamp_str
-            .parse()
-            .map_err(|_| WebhookValidationError::InvalidTimestamp)?;
+        let webhook_time =
+            parse_timestamp(timestamp_str).ok_or(WebhookValidationError::InvalidTimestamp)?;
 
         // Validate timestamp freshness
         self.validate_timestamp(webhook_time)?;
@@ -155,6 +159,21 @@ impl WebhookValidator {
 
         Ok(())
     }
+}
+
+/// Parse the `X-FlowCatalyst-Timestamp` value into Unix seconds.
+///
+/// The FlowCatalyst router emits ISO8601 with millisecond precision (e.g.
+/// `2026-05-24T08:30:00.123Z`); we accept any RFC3339 timestamp and, for
+/// backward compatibility, a bare Unix-seconds integer.
+fn parse_timestamp(s: &str) -> Option<u64> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        let secs = dt.timestamp();
+        if secs >= 0 {
+            return Some(secs as u64);
+        }
+    }
+    s.parse::<u64>().ok()
 }
 
 /// Constant-time byte comparison to prevent timing attacks.
@@ -254,6 +273,36 @@ mod tests {
         assert!(matches!(
             result,
             Err(WebhookValidationError::InvalidSignature)
+        ));
+    }
+
+    #[test]
+    fn test_iso8601_millisecond_timestamp_accepted() {
+        // The router signs with an ISO8601 millisecond timestamp
+        // (e.g. 2026-05-24T08:30:00.123Z); the validator must accept it.
+        let validator = WebhookValidator::new("test-secret");
+        let payload = b"{\"type\":\"order.created\"}";
+        let timestamp = chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
+        let sig = validator.compute_signature(&timestamp, payload);
+
+        assert!(validator
+            .validate(Some(&sig), Some(&timestamp), payload)
+            .is_ok());
+    }
+
+    #[test]
+    fn test_iso8601_expired_timestamp_rejected() {
+        let validator = WebhookValidator::new("test-secret").with_tolerance(60);
+        let payload = b"{}";
+        let old = chrono::Utc::now() - chrono::Duration::seconds(120);
+        let timestamp = old.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+        let sig = validator.compute_signature(&timestamp, payload);
+
+        assert!(matches!(
+            validator.validate(Some(&sig), Some(&timestamp), payload),
+            Err(WebhookValidationError::TimestampExpired { .. })
         ));
     }
 }

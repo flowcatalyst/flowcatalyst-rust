@@ -3,8 +3,9 @@
 //
 // The signed message is the timestamp string concatenated with the raw
 // request body (no separator). The signature is hex-encoded and lives
-// in X-FlowCatalyst-Signature; the timestamp (Unix seconds) is in
-// X-FlowCatalyst-Timestamp.
+// in X-FlowCatalyst-Signature; the timestamp is in X-FlowCatalyst-Timestamp
+// as an ISO8601 value with millisecond precision (e.g.
+// 2026-05-24T08:30:00.123Z), with a bare Unix-seconds integer also accepted.
 //
 // Mirrors the Rust SDK's webhook module byte-for-byte so the same
 // signing secret works against any FlowCatalyst SDK.
@@ -21,7 +22,9 @@ import (
 	"time"
 )
 
-// Header names sent by the FlowCatalyst platform.
+// Header names sent by the FlowCatalyst platform. HTTP header lookups are
+// case-insensitive, so these match the router's uppercase X-FLOWCATALYST-*
+// headers in any compliant framework.
 const (
 	SignatureHeader = "X-FlowCatalyst-Signature"
 	TimestampHeader = "X-FlowCatalyst-Timestamp"
@@ -38,7 +41,7 @@ const FutureGraceSecs = 60
 var (
 	ErrMissingSignature  = errors.New("webhook: missing signature header (" + SignatureHeader + ")")
 	ErrMissingTimestamp  = errors.New("webhook: missing timestamp header (" + TimestampHeader + ")")
-	ErrInvalidTimestamp  = errors.New("webhook: invalid timestamp: not an integer")
+	ErrInvalidTimestamp  = errors.New("webhook: invalid timestamp")
 	ErrInvalidSignature  = errors.New("webhook: invalid signature")
 	ErrTimestampExpired  = errors.New("webhook: timestamp expired")
 	ErrTimestampInFuture = errors.New("webhook: timestamp is in the future")
@@ -92,7 +95,8 @@ func FromEnv(opts ...Option) (*Validator, error) {
 // Validate checks the signature against the body and timestamp.
 //
 //   - signature: value of X-FlowCatalyst-Signature header (hex-encoded HMAC-SHA256)
-//   - timestamp: value of X-FlowCatalyst-Timestamp header (Unix seconds)
+//   - timestamp: value of X-FlowCatalyst-Timestamp header (ISO8601 ms, e.g.
+//     2026-05-24T08:30:00.123Z; a bare Unix-seconds integer is also accepted)
 //   - payload: raw request body
 //
 // Returns nil on success, or one of the sentinel errors. The signature
@@ -104,7 +108,7 @@ func (v *Validator) Validate(signature, timestamp string, payload []byte) error 
 	if timestamp == "" {
 		return ErrMissingTimestamp
 	}
-	tsSecs, err := strconv.ParseInt(timestamp, 10, 64)
+	tsSecs, err := parseTimestamp(timestamp)
 	if err != nil {
 		return ErrInvalidTimestamp
 	}
@@ -127,6 +131,24 @@ func (v *Validator) ComputeSignature(timestamp string, payload []byte) string {
 	mac.Write([]byte(timestamp))
 	mac.Write(payload)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// parseTimestamp accepts the X-FlowCatalyst-Timestamp value. The FlowCatalyst
+// router emits ISO8601 with millisecond precision (e.g.
+// 2026-05-24T08:30:00.123Z); we also accept any RFC3339 fractional precision
+// and, for backward compatibility, a bare Unix-seconds integer. Returns Unix
+// seconds.
+func parseTimestamp(s string) (int64, error) {
+	if t, err := time.Parse("2006-01-02T15:04:05.000Z", s); err == nil {
+		return t.UTC().Unix(), nil
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t.UTC().Unix(), nil
+	}
+	if secs, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return secs, nil
+	}
+	return 0, errors.New("webhook: unparseable timestamp")
 }
 
 func (v *Validator) validateTimestamp(tsSecs int64) error {
