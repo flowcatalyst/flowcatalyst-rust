@@ -85,3 +85,19 @@ tokio = { workspace = true, features = ["sync"] }
 [dev-dependencies]
 tokio = { workspace = true }
 tokio-test = { workspace = true }
+
+# Examples are gated on the features they use so `cargo build/clippy/test
+# --all-targets` (run without these features in CI) skips them instead of
+# failing to resolve `fc_sdk::client` / `fc_sdk::scheduled_jobs`. Run them
+# with the matching --features (see the crate-level docs).
+[[example]]
+name = "fc-sync"
+required-features = ["client"]
+
+[[example]]
+name = "list-event-types"
+required-features = ["client"]
+
+[[example]]
+name = "scheduled-jobs-runner"
+required-features = ["scheduled-jobs-runner", "axum"]

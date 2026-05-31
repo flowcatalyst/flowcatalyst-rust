@@ -73,15 +73,15 @@
 //! - **`examples/fc-sync.rs`** — push roles, event types, and subscriptions
 //!   for an application. The direct analogue of the TypeScript
 //!   `"fc:sync"` pattern.
-//!     `cargo run --example fc-sync --features client`
+//!   `cargo run --example fc-sync --features client`
 //! - **`examples/list-event-types.rs`** — smallest possible smoke test of
 //!   the API client. Lists event types currently registered on the
 //!   platform.
-//!     `cargo run --example list-event-types --features client`
+//!   `cargo run --example list-event-types --features client`
 //! - **`examples/scheduled-jobs-runner.rs`** — end-to-end Axum server
 //!   hosting a [`scheduled_jobs::ScheduledJobRunner`] with two handlers,
 //!   memory-backed concurrency lock, and on-error hook.
-//!     `cargo run --example scheduled-jobs-runner --features scheduled-jobs-runner,axum`
+//!   `cargo run --example scheduled-jobs-runner --features scheduled-jobs-runner,axum`
 //!
 //! All three read `FC_BASE_URL` and `FC_TOKEN` from the environment.
 //!
