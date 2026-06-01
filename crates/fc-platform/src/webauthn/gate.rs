@@ -1,62 +1,51 @@
-//! Domain gate — passkeys are only available for internal-auth principals.
+//! Principal gate — passkeys are only available for internal-auth principals.
 //!
-//! A domain is considered federated if it has any row in
-//! `email_domain_mapping` (see `project_passkeys_scope.md`). Federated
-//! domains MUST NOT be issued passkey challenges or have credentials
-//! returned to them — the IdP owns identity. The check is enforced both at
-//! the `begin` handlers (refuse to issue a challenge) and inside the
-//! `AuthenticatePasskeyUseCase` (hard cutover at auth time).
+//! A principal is "internal-auth" iff they have a local password hash AND no
+//! external IdP subject (`user_identity.password_hash.is_some()` AND
+//! `user_identity.external_id.is_none()`). The check is per-principal, NOT
+//! per-domain — a single email domain can have a mix of local accounts and
+//! federated accounts (the domain mapping drives where to send *new* users
+//! who don't have a local row, but it doesn't determine eligibility for an
+//! existing principal).
+//!
+//! Federated principals MUST NOT be issued passkey challenges or have
+//! credentials returned to them — the IdP owns identity. The check is
+//! enforced at both `begin` handlers (refuse to issue a challenge) and
+//! inside `AuthenticatePasskeyUseCase` (hard cutover at auth time, in case
+//! a principal flipped from internal to federated after registering a
+//! passkey).
+//!
+//! Enumeration safety: the callers turn `Err(_)` from this gate into the
+//! same "no credentials available" envelope as a genuinely unknown user
+//! (see `resolve_real_credentials` in `api.rs`), so the exact error string
+//! returned here never reaches the wire.
 
-use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
+use crate::principal::repository::PrincipalRepository;
 use crate::shared::error::{PlatformError, Result};
 
-pub fn extract_domain(email: &str) -> Result<String> {
-    email
-        .split('@')
-        .nth(1)
-        .filter(|d| !d.is_empty())
-        .map(|d| d.to_lowercase())
-        .ok_or_else(|| {
-            PlatformError::bad_request("email is not in a valid 'local@domain' format".to_string())
-        })
-}
-
-/// Returns `Ok(())` if the domain is internal (no mapping). Returns
-/// `BadRequest` if the domain maps to a federated IdP — callers should
-/// surface a generic enumeration-safe response, not the underlying reason
-/// (see `enumeration_defence.rs`).
-pub async fn ensure_internal_auth(email: &str, repo: &EmailDomainMappingRepository) -> Result<()> {
-    let domain = extract_domain(email)?;
-    if repo.find_by_email_domain(&domain).await?.is_some() {
+/// Returns `Ok(())` iff the principal identified by `email` exists, is
+/// active, has a local password hash, and is NOT linked to an external IdP.
+/// Any other state returns `BadRequest` with a generic message.
+pub async fn ensure_internal_principal(email: &str, repo: &PrincipalRepository) -> Result<()> {
+    let Some(principal) = repo.find_by_email(email).await? else {
+        // Unknown email — same envelope as the federated case so callers
+        // can't distinguish "no such user" from "federated user" from
+        // "user has no passkey". The `authenticate/begin` flow turns this
+        // into a synthesized random challenge for enumeration safety.
         return Err(PlatformError::bad_request(
-            "passkeys are not available for this domain".to_string(),
+            "passkeys are not available for this account".to_string(),
+        ));
+    };
+    let Some(identity) = principal.user_identity.as_ref() else {
+        // Service-account or otherwise non-user principal — no passkey path.
+        return Err(PlatformError::bad_request(
+            "passkeys are not available for this account".to_string(),
+        ));
+    };
+    if identity.external_id.is_some() || identity.password_hash.is_none() {
+        return Err(PlatformError::bad_request(
+            "passkeys are not available for this account".to_string(),
         ));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extract_domain_lowercases() {
-        assert_eq!(extract_domain("Alice@Example.COM").unwrap(), "example.com");
-    }
-
-    #[test]
-    fn extract_domain_rejects_no_at() {
-        assert!(extract_domain("alice").is_err());
-    }
-
-    #[test]
-    fn extract_domain_rejects_empty_domain() {
-        assert!(extract_domain("alice@").is_err());
-    }
-
-    #[test]
-    fn extract_domain_takes_first_at_split() {
-        // RFC-illegal but defensive: only the part after the first '@' counts.
-        assert_eq!(extract_domain("alice@example.com").unwrap(), "example.com");
-    }
 }

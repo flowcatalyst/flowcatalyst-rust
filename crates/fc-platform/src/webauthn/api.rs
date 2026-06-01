@@ -25,7 +25,7 @@ use crate::shared::middleware::{Authenticated, ClientIp};
 use crate::usecase::ExecutionContext;
 use crate::usecase::{PgUnitOfWork, UseCase};
 use crate::webauthn::ceremony_repository::WebauthnCeremonyRepository;
-use crate::webauthn::gate::ensure_internal_auth;
+use crate::webauthn::gate::ensure_internal_principal;
 use crate::webauthn::operations::{
     AuthenticatePasskeyCommand, AuthenticatePasskeyUseCase, RegisterPasskeyCommand,
     RegisterPasskeyUseCase, RevokePasskeyCommand, RevokePasskeyUseCase,
@@ -33,8 +33,8 @@ use crate::webauthn::operations::{
 use crate::webauthn::repository::WebauthnCredentialRepository;
 use crate::webauthn::webauthn_service::WebauthnService;
 use crate::{
-    AttemptType, AuthService, EmailDomainMappingRepository, LoginAttempt, LoginAttemptRepository,
-    LoginOutcome, PrincipalRepository,
+    AttemptType, AuthService, LoginAttempt, LoginAttemptRepository, LoginOutcome,
+    PrincipalRepository,
 };
 
 #[derive(Clone)]
@@ -42,7 +42,6 @@ pub struct WebauthnApiState {
     pub credential_repo: Arc<WebauthnCredentialRepository>,
     pub ceremony_repo: Arc<WebauthnCeremonyRepository>,
     pub principal_repo: Arc<PrincipalRepository>,
-    pub email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
     pub login_attempt_repo: Arc<LoginAttemptRepository>,
     pub webauthn_service: Arc<WebauthnService>,
     pub auth_service: Arc<AuthService>,
@@ -215,7 +214,7 @@ pub async fn register_begin(
         .email
         .clone()
         .ok_or_else(|| PlatformError::bad_request("session has no email"))?;
-    ensure_internal_auth(&email, &state.email_domain_mapping_repo).await?;
+    ensure_internal_principal(&email, &state.principal_repo).await?;
 
     let display_name = req
         .display_name
@@ -369,7 +368,7 @@ async fn resolve_real_credentials(
     state: &WebauthnApiState,
     email: &str,
 ) -> Option<Vec<webauthn_rs::prelude::Passkey>> {
-    if ensure_internal_auth(email, &state.email_domain_mapping_repo)
+    if ensure_internal_principal(email, &state.principal_repo)
         .await
         .is_err()
     {
@@ -440,7 +439,6 @@ pub async fn authenticate_complete(
     let use_case = AuthenticatePasskeyUseCase::new(
         state.credential_repo.clone(),
         state.principal_repo.clone(),
-        state.email_domain_mapping_repo.clone(),
         state.webauthn_service.clone(),
         state.unit_of_work.clone(),
     );
