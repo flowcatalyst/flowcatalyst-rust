@@ -714,6 +714,80 @@ async fn reload_config_with_consumer_factory_does_not_block_readers() {
     assert_eq!(manager.consumer_ids().await, vec!["slow-queue".to_string()]);
 }
 
+/// `restart_consumer` must serialise against an in-flight `reload_config`
+/// (it takes `pool_configs.read()`, which reloads hold for `write()` for
+/// their whole duration). Otherwise a health-triggered restart racing a
+/// reload that removes the same queue could resurrect a consumer the
+/// config just dropped.
+///
+/// Timing: the factory sleeps 500 ms per `create_consumer`. A reload that
+/// adds a second queue is started, then 50 ms later a restart of the
+/// first queue. Unserialised, the restart would take ≈500 ms (its own
+/// factory call); serialised it must first wait out the reload's remaining
+/// ≈450 ms, so ≈950 ms total. Assert ≥ 800 ms.
+#[tokio::test]
+async fn restart_consumer_serialises_against_in_flight_reload() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator)
+            .consumer_factory(Arc::new(SlowConsumerFactory {
+                delay: Duration::from_millis(500),
+            }))
+            .build(),
+    );
+
+    let queue = |name: &str| fc_common::QueueConfig {
+        name: name.to_string(),
+        uri: format!("mock://{}", name),
+        connections: 1,
+        visibility_timeout: 30,
+    };
+
+    // Initial config: one queue, created up front.
+    manager
+        .reload_config(RouterConfig {
+            processing_pools: vec![],
+            queues: vec![queue("q1")],
+        })
+        .await
+        .unwrap();
+    assert_eq!(manager.consumer_ids().await, vec!["q1".to_string()]);
+
+    // Reload that adds q2 — spends ~500 ms inside the factory while holding
+    // the reload lock.
+    let reload_handle = {
+        let manager = manager.clone();
+        tokio::spawn(async move {
+            manager
+                .reload_config(RouterConfig {
+                    processing_pools: vec![],
+                    queues: vec![queue("q1"), queue("q2")],
+                })
+                .await
+                .unwrap();
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let start = std::time::Instant::now();
+    let restarted = manager.restart_consumer("q1").await;
+    let elapsed = start.elapsed();
+
+    assert!(restarted, "restart should succeed once the reload releases the lock");
+    assert!(
+        elapsed >= Duration::from_millis(800),
+        "restart_consumer should have waited for the in-flight reload, took {:?}",
+        elapsed
+    );
+
+    reload_handle
+        .await
+        .expect("reload_config task should not panic");
+    let mut ids = manager.consumer_ids().await;
+    ids.sort();
+    assert_eq!(ids, vec!["q1".to_string(), "q2".to_string()]);
+}
+
 // ============================================================================
 // restart_consumer tests
 // ============================================================================

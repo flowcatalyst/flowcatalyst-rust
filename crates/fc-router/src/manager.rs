@@ -2126,6 +2126,17 @@ impl QueueManager {
     /// the ordinary hot-add path instead of being permanently stranded by a
     /// single transient factory failure.
     pub async fn restart_consumer(self: &Arc<Self>, consumer_id: &str) -> bool {
+        // Serialise against `apply_config` / `reload_config`, which hold
+        // `pool_configs.write()` for their whole duration (see that field's
+        // doc comment — it doubles as the reload lock). Held across the
+        // awaits below on purpose: without it, a health-triggered restart
+        // racing a reload that removes this very queue could stop the old
+        // consumer, then swap a fresh one into `consumers` *after* the
+        // reload removed it — resurrecting a queue the config just dropped.
+        // Nothing on the hot path takes this lock, so the only thing this
+        // can wait on is an in-flight reload.
+        let _reload_guard = self.pool_configs.read().await;
+
         // Brief read lock — clone the Arc and drop the guard before any
         // `.await` (same discipline as `sync_queue_consumers`).
         let old = {
