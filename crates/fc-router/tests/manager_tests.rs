@@ -59,6 +59,13 @@ struct MockQueueConsumer {
     acked: parking_lot::Mutex<Vec<String>>,
     nacked: parking_lot::Mutex<Vec<(String, Option<u32>)>>,
     running: AtomicBool,
+    /// Set to `true` inside `stop()` — lets tests assert a consumer was (or
+    /// deliberately was not) stopped, distinct from `running`/`is_healthy`.
+    stopped: AtomicBool,
+    /// Incremented at the top of every `poll()` call, success or failure —
+    /// used by the restart/poll-loop tests to observe whether the spawned
+    /// poll task is still looping.
+    poll_count: AtomicU32,
 }
 
 impl MockQueueConsumer {
@@ -69,6 +76,8 @@ impl MockQueueConsumer {
             acked: parking_lot::Mutex::new(Vec::new()),
             nacked: parking_lot::Mutex::new(Vec::new()),
             running: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+            poll_count: AtomicU32::new(0),
         }
     }
 
@@ -79,7 +88,17 @@ impl MockQueueConsumer {
             acked: parking_lot::Mutex::new(Vec::new()),
             nacked: parking_lot::Mutex::new(Vec::new()),
             running: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+            poll_count: AtomicU32::new(0),
         }
+    }
+
+    fn was_stopped(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
+    }
+
+    fn poll_count(&self) -> u32 {
+        self.poll_count.load(Ordering::SeqCst)
     }
 }
 
@@ -90,6 +109,8 @@ impl QueueConsumer for MockQueueConsumer {
     }
 
     async fn poll(&self, max_messages: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
+        self.poll_count.fetch_add(1, Ordering::SeqCst);
+
         if !self.running.load(Ordering::SeqCst) {
             return Err(QueueError::Stopped);
         }
@@ -126,6 +147,7 @@ impl QueueConsumer for MockQueueConsumer {
 
     async fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
+        self.stopped.store(true, Ordering::SeqCst);
     }
 }
 
@@ -690,4 +712,269 @@ async fn reload_config_with_consumer_factory_does_not_block_readers() {
         .await
         .expect("reload_config task should not panic");
     assert_eq!(manager.consumer_ids().await, vec!["slow-queue".to_string()]);
+}
+
+// ============================================================================
+// restart_consumer tests
+// ============================================================================
+
+/// `ConsumerFactory` that hands out fresh `MockQueueConsumer`s and keeps an
+/// `Arc` handle to every one it creates (in creation order), so a test can
+/// still inspect an old instance after `restart_consumer` has replaced it.
+struct CountingConsumerFactory {
+    created: AtomicU32,
+    handles: parking_lot::Mutex<Vec<Arc<MockQueueConsumer>>>,
+}
+
+impl CountingConsumerFactory {
+    fn new() -> Self {
+        Self {
+            created: AtomicU32::new(0),
+            handles: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn created_count(&self) -> u32 {
+        self.created.load(Ordering::SeqCst)
+    }
+
+    fn handle(&self, index: usize) -> Arc<MockQueueConsumer> {
+        self.handles.lock()[index].clone()
+    }
+}
+
+#[async_trait]
+impl ConsumerFactory for CountingConsumerFactory {
+    async fn create_consumer(
+        &self,
+        config: &fc_common::QueueConfig,
+    ) -> fc_router::Result<Arc<dyn QueueConsumer + Send + Sync>> {
+        self.created.fetch_add(1, Ordering::SeqCst);
+        let mock = Arc::new(MockQueueConsumer::new(&config.name));
+        self.handles.lock().push(mock.clone());
+        Ok(mock as Arc<dyn QueueConsumer + Send + Sync>)
+    }
+}
+
+/// `ConsumerFactory` whose *second* `create_consumer` call fails and every
+/// other call succeeds — used to exercise `restart_consumer`'s
+/// factory-failure path (call #1 creates the original consumer via
+/// `reload_config`, call #2 is the failing replacement attempt inside
+/// `restart_consumer`, call #3 is the recreation on the next `reload_config`).
+struct FlakyConsumerFactory {
+    calls: AtomicU32,
+}
+
+impl FlakyConsumerFactory {
+    fn new() -> Self {
+        Self {
+            calls: AtomicU32::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl ConsumerFactory for FlakyConsumerFactory {
+    async fn create_consumer(
+        &self,
+        config: &fc_common::QueueConfig,
+    ) -> fc_router::Result<Arc<dyn QueueConsumer + Send + Sync>> {
+        let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call_index != 1 {
+            Ok(Arc::new(MockQueueConsumer::new(&config.name))
+                as Arc<dyn QueueConsumer + Send + Sync>)
+        } else {
+            // Cheapest way to manufacture a `RouterError` from outside the
+            // crate: `RouterError::Serialization` has a `#[from]` conversion
+            // from `serde_json::Error`, and this reliably produces one.
+            Err(serde_json::from_str::<serde_json::Value>("not json")
+                .unwrap_err()
+                .into())
+        }
+    }
+}
+
+fn queue_config(name: &str) -> fc_common::QueueConfig {
+    fc_common::QueueConfig {
+        name: name.to_string(),
+        uri: format!("mock://{}", name),
+        connections: 1,
+        visibility_timeout: 30,
+    }
+}
+
+/// Waits (up to ~2s) for `cond` to become true, polling every 10ms. Used
+/// throughout the restart tests instead of a single fixed sleep, since the
+/// exact timing of a hot-added poll task's first iteration isn't guaranteed.
+async fn wait_until(mut cond: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while !cond() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// `restart_consumer` with a working factory + stored queue config actually
+/// replaces the consumer: the old one is stopped, a new one is created via
+/// the factory, and the new one's poll task is spawned and running.
+#[tokio::test]
+async fn restart_consumer_replaces_consumer_and_respawns_poll_task() {
+    let mediator = Arc::new(MockMediator::new());
+    let factory = Arc::new(CountingConsumerFactory::new());
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator)
+            .consumer_factory(factory.clone())
+            .build(),
+    );
+
+    let config = RouterConfig {
+        processing_pools: vec![],
+        queues: vec![queue_config("restart-queue")],
+    };
+    manager.reload_config(config).await.unwrap();
+
+    wait_until(|| factory.created_count() >= 1).await;
+    assert_eq!(factory.created_count(), 1);
+    let first = factory.handle(0);
+
+    wait_until(|| first.poll_count() > 0).await;
+    assert!(
+        first.poll_count() > 0,
+        "consumer #1's poll task should have run at least once"
+    );
+
+    let restarted = manager.restart_consumer("restart-queue").await;
+    assert!(
+        restarted,
+        "restart_consumer should succeed with a factory + stored config"
+    );
+
+    assert!(first.was_stopped(), "old consumer should have been stopped");
+    assert_eq!(
+        factory.created_count(),
+        2,
+        "factory should have created a replacement consumer"
+    );
+    assert_eq!(
+        manager.consumer_ids().await,
+        vec!["restart-queue".to_string()]
+    );
+    assert!(manager.is_consumer_healthy("restart-queue").await);
+
+    let second = factory.handle(1);
+    wait_until(|| second.poll_count() > 0).await;
+    assert!(
+        second.poll_count() > 0,
+        "replacement consumer's poll task should be running within ~2s"
+    );
+}
+
+/// Without a `ConsumerFactory`, `restart_consumer` cannot build a
+/// replacement, so it must not stop the existing consumer — that would
+/// strand it with nothing polling in its place (the original bug). It
+/// returns `false` and records a `ConsumerHealth` warning instead.
+#[tokio::test]
+async fn restart_consumer_without_factory_does_not_stop_consumer() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
+
+    let mock = Arc::new(MockQueueConsumer::new("no-factory-consumer"));
+    manager.add_consumer(mock.clone()).await;
+
+    let restarted = manager.restart_consumer("no-factory-consumer").await;
+    assert!(
+        !restarted,
+        "restart_consumer must fail when there is no factory to build a replacement"
+    );
+    assert!(
+        !mock.was_stopped(),
+        "existing consumer must not be stopped when it can't be replaced"
+    );
+    assert!(manager.is_consumer_healthy("no-factory-consumer").await);
+    assert!(
+        manager.warning_service().warning_count() >= 1,
+        "a ConsumerHealth warning should have been recorded"
+    );
+}
+
+/// If the factory's replacement call fails, `restart_consumer` removes the
+/// now-dead entry from `consumers` (so it stops being reported as a live
+/// consumer) but leaves its `queue_configs` entry alone. The next
+/// `reload_config` with the same queue config should then recreate it via
+/// the ordinary hot-add path, self-healing a transient factory failure.
+#[tokio::test]
+async fn restart_consumer_factory_failure_removes_dead_consumer_and_keeps_config() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator)
+            .consumer_factory(Arc::new(FlakyConsumerFactory::new()))
+            .build(),
+    );
+
+    let config = RouterConfig {
+        processing_pools: vec![],
+        queues: vec![queue_config("flaky-queue")],
+    };
+    manager.reload_config(config.clone()).await.unwrap();
+    assert_eq!(
+        manager.consumer_ids().await,
+        vec!["flaky-queue".to_string()]
+    );
+
+    let restarted = manager.restart_consumer("flaky-queue").await;
+    assert!(
+        !restarted,
+        "restart should fail when the factory errors building the replacement"
+    );
+    assert!(
+        manager.consumer_ids().await.is_empty(),
+        "dead consumer entry should be removed from `consumers`"
+    );
+
+    // A second reload with the *same* queue config should recreate it: the
+    // config-sync path treats "in config, not in `consumers`" as new.
+    manager.reload_config(config).await.unwrap();
+    assert_eq!(
+        manager.consumer_ids().await,
+        vec!["flaky-queue".to_string()]
+    );
+}
+
+/// After a consumer is stopped, its poll task must exit on the very next
+/// poll instead of looping on `QueueError::Stopped` forever. Snapshots the
+/// poll counter, stops the mock directly (not via `restart_consumer`, so
+/// this isolates the poll-loop fix from the restart-replacement logic),
+/// waits well past the old 1s error-retry interval, and asserts the counter
+/// advanced by at most one more call (the poll already in flight when
+/// `stop()` landed).
+#[tokio::test]
+async fn poll_task_exits_after_consumer_stop() {
+    let mediator = Arc::new(MockMediator::new());
+    let factory = Arc::new(CountingConsumerFactory::new());
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator)
+            .consumer_factory(factory.clone())
+            .build(),
+    );
+
+    let config = RouterConfig {
+        processing_pools: vec![],
+        queues: vec![queue_config("stop-queue")],
+    };
+    manager.reload_config(config).await.unwrap();
+
+    wait_until(|| factory.created_count() >= 1).await;
+    let consumer = factory.handle(0);
+    wait_until(|| consumer.poll_count() > 0).await;
+
+    let count_before = consumer.poll_count();
+    consumer.stop().await;
+
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+
+    let count_after = consumer.poll_count();
+    assert!(
+        count_after <= count_before + 1,
+        "poll task should have exited on Stopped instead of looping \
+         (before={count_before}, after={count_after})"
+    );
 }

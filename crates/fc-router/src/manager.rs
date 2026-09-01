@@ -1421,6 +1421,20 @@ impl QueueManager {
                 // Prevents hot poll-defer loop that wastes SQS API calls.
                 if !manager.has_pool_capacity() {
                     debug!(consumer = %consumer.identifier(), "All pools at capacity — pausing poll");
+
+                    // A capacity wait is a deliberate pause, not a stall — record
+                    // liveness before pausing so the lifecycle health monitor's
+                    // "no poll recorded in 60s" check never misreads a run of
+                    // full pools as a dead consumer and kills a perfectly good
+                    // one (see `restart_consumer`'s doc comment for the history
+                    // here). `record_consumer_poll` only stamps a last-seen
+                    // `Instant` — it doesn't feed any poll-count metric — so
+                    // calling it on a non-poll iteration doesn't inflate
+                    // anything downstream.
+                    if let Some(ref health_service) = manager.health_service {
+                        health_service.record_consumer_poll(consumer.identifier());
+                    }
+
                     if sleep_or_cancel(&token, Duration::from_secs(2)).await {
                         info!(consumer = %consumer.identifier(), "Consumer shutting down");
                         break;
@@ -1463,6 +1477,18 @@ impl QueueManager {
                                     info!(consumer = %consumer.identifier(), "Consumer shutting down");
                                     break;
                                 }
+                            }
+                            Err(fc_queue::QueueError::Stopped) => {
+                                // The consumer was stopped (directly, or as
+                                // part of `restart_consumer` swapping in a
+                                // replacement) — `poll()` will keep returning
+                                // `Stopped` forever, so looping on it would
+                                // spin at 1s intervals reporting a dead
+                                // consumer as "just erroring". Exit instead;
+                                // whoever stopped this consumer is
+                                // responsible for spawning any replacement.
+                                info!(consumer = %consumer.identifier(), "consumer stopped — poll task exiting");
+                                break;
                             }
                             Err(e) => {
                                 error!(error = %e, consumer = %consumer.identifier(), "Error polling");
@@ -2068,27 +2094,113 @@ impl QueueManager {
         true
     }
 
-    /// Restart a specific consumer by ID
-    /// Returns true if consumer was found and restart was initiated
-    pub async fn restart_consumer(&self, consumer_id: &str) -> bool {
-        let consumer = {
+    /// Restart a specific consumer by ID — actually replaces it.
+    ///
+    /// Stops the existing consumer, asks the configured [`ConsumerFactory`]
+    /// to build a fresh one from the queue's last-known `QueueConfig`, swaps
+    /// the replacement into `consumers`, and spawns a new poll task for it
+    /// (see [`Self::spawn_consumer_poll_task`], which now exits promptly on
+    /// `QueueError::Stopped` rather than looping on it forever). Returns
+    /// `true` only if a live replacement ends up running.
+    ///
+    /// **Why `self: &Arc<Self>`**: it calls `spawn_consumer_poll_task`, which
+    /// needs an `Arc` clone to hand to the spawned task.
+    ///
+    /// **No factory / no stored config → no-op, not a stop.** Building a
+    /// replacement requires both a [`ConsumerFactory`] and a `QueueConfig`
+    /// for this id. If either is missing, this deliberately does **not**
+    /// stop the existing consumer — stopping it with nothing to replace it
+    /// is exactly the bug this method used to have (the old body called
+    /// `consumer.stop()` and returned `true` with a comment saying "a new
+    /// poll loop will need to be started externally", which nothing ever
+    /// did — the consumer just died in place). Instead it logs a warning,
+    /// records a `ConsumerHealth` warning, and returns `false`.
+    ///
+    /// **Factory failure → self-healing via the next reload.** If
+    /// `create_consumer` errors, the dead entry is removed from `consumers`
+    /// but its `queue_configs` entry is deliberately left in place. The next
+    /// `reload_config` → `sync_queue_consumers` pass computes "new" queues
+    /// as config entries not already present in `consumers` (see that
+    /// method's step (c)) — since this id is now missing from `consumers`
+    /// but still present in the caller's config, it gets recreated through
+    /// the ordinary hot-add path instead of being permanently stranded by a
+    /// single transient factory failure.
+    pub async fn restart_consumer(self: &Arc<Self>, consumer_id: &str) -> bool {
+        // Brief read lock — clone the Arc and drop the guard before any
+        // `.await` (same discipline as `sync_queue_consumers`).
+        let old = {
             let guard = self.consumers.read().await;
             guard.get(consumer_id).cloned()
         };
-        match consumer {
-            Some(consumer) => {
-                info!(consumer_id = %consumer_id, "Restarting consumer");
+        let Some(old) = old else {
+            warn!(consumer_id = %consumer_id, "Consumer not found for restart");
+            return false;
+        };
 
-                // Stop the consumer first — outside the read lock.
-                consumer.stop().await;
+        // Brief read lock — clone the stored QueueConfig, if any.
+        let queue_config = {
+            let guard = self.queue_configs.read().await;
+            guard.get(consumer_id).cloned()
+        };
 
-                // The consumer loop will detect the stop and exit
-                // A new poll loop will need to be started externally
-                // This is a signal that the consumer needs attention
+        let (factory, queue_config) = match (self.consumer_factory.as_ref(), queue_config) {
+            (Some(factory), Some(cfg)) => (factory, cfg),
+            _ => {
+                warn!(
+                    consumer_id = %consumer_id,
+                    "Cannot restart consumer: no consumer factory and/or stored queue \
+                     config available to build a replacement — restart is unsupported \
+                     without both, leaving the existing consumer running"
+                );
+                self.warning_service.add_warning(
+                    WarningCategory::ConsumerHealth,
+                    WarningSeverity::Warn,
+                    format!(
+                        "Restart requested for consumer [{}] but no consumer factory/config \
+                         is available to build a replacement — restart unsupported here",
+                        consumer_id
+                    ),
+                    "QueueManager".to_string(),
+                );
+                return false;
+            }
+        };
+
+        info!(consumer_id = %consumer_id, "Restarting consumer: stopping old instance");
+        // Stopping this makes its poll task observe `QueueError::Stopped` on
+        // its next poll and exit on its own (see (b) in spawn_consumer_poll_task).
+        old.stop().await;
+
+        match factory.create_consumer(&queue_config).await {
+            Ok(new_consumer) => {
+                // Brief write lock — swap in the replacement.
+                {
+                    let mut guard = self.consumers.write().await;
+                    guard.insert(consumer_id.to_string(), new_consumer.clone());
+                }
+                self.spawn_consumer_poll_task(new_consumer);
+                info!(consumer_id = %consumer_id, "Consumer restarted with a fresh instance");
                 true
             }
-            None => {
-                warn!(consumer_id = %consumer_id, "Consumer not found for restart");
+            Err(e) => {
+                error!(
+                    consumer_id = %consumer_id,
+                    error = %e,
+                    "Failed to create replacement consumer during restart"
+                );
+                self.warning_service.add_warning(
+                    WarningCategory::ConsumerHealth,
+                    WarningSeverity::Critical,
+                    format!(
+                        "Failed to create replacement consumer for [{}] during restart: {}",
+                        consumer_id, e
+                    ),
+                    "QueueManager".to_string(),
+                );
+                // Remove the dead entry from `consumers` but leave
+                // `queue_configs` alone — see the self-healing note above.
+                let mut guard = self.consumers.write().await;
+                guard.remove(consumer_id);
                 false
             }
         }
