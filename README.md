@@ -179,4 +179,19 @@ PostgreSQL extensions: **none required**. Partitioning is managed by an in-Rust 
 
 ## License
 
-Proprietary — FlowCatalyst.
+Copyright (c) 2026 Belac (FlowCatalyst).
+
+This repository is dual-licensed by component:
+
+| Component | License | Text |
+|---|---|---|
+| The platform — every crate and binary under `crates/` and `bin/` (except `fc-sdk`), the `frontend/`, migrations, docs | [GNU AGPL-3.0-or-later](https://www.gnu.org/licenses/agpl-3.0.html) | [`LICENSE`](LICENSE) |
+| The SDKs — [`crates/fc-sdk`](crates/fc-sdk) (Rust), [`clients/typescript-sdk`](clients/typescript-sdk), [`clients/laravel-sdk`](clients/laravel-sdk), [`clients/go-sdk`](clients/go-sdk) | [MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/) | `LICENSE` in each SDK directory |
+
+**Why the split.** The AGPL keeps the platform copyleft even when it is only
+run as a hosted service: anyone who modifies it and lets users interact with
+it over a network must offer them the modified source. The SDKs are embedded
+in customer applications; MPL-2.0 is a file-level copyleft, so changes to the
+SDK's own files must be shared, but your application that links against it
+stays yours under whatever license you choose. Using an SDK does not make your
+application AGPL.

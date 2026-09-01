@@ -2,6 +2,7 @@
 name = "fc-outbox-processor"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "FlowCatalyst Outbox Processor - Reads from app database outbox and sends to FlowCatalyst API"
 
 [dependencies]

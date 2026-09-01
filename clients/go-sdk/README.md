@@ -210,3 +210,11 @@ See [ERRORS.md](ERRORS.md) for the full table of which sentinels use
 `docs/architecture/go-sdk.md` (in the parent repo) has the full design:
 rationale for sibling vs sub-packages, the seal mechanism, why
 opt-in driver packages, the multi-backend story.
+
+## License
+
+Copyright (c) 2026 Belac (FlowCatalyst).
+
+[MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/) — see [LICENSE](LICENSE).
+File-level copyleft: changes to the SDK's own files must be shared; your
+application that depends on it is not affected.

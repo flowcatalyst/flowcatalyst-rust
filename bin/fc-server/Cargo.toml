@@ -2,6 +2,7 @@
 name = "fc-server"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "FlowCatalyst Unified Production Server - all subsystems in one binary"
 
 [[bin]]

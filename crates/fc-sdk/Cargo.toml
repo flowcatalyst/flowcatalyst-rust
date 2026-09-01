@@ -3,7 +3,7 @@ name = "fc-sdk"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-license.workspace = true
+license = "MPL-2.0"
 description = "FlowCatalyst SDK for Rust — domain event patterns, outbox integration, and platform API client"
 
 [features]
