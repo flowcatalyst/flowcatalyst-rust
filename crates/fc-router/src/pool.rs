@@ -414,10 +414,9 @@ impl ProcessPool {
         let batch_group_message_count = self.batch_group_message_count.clone();
 
         self.tracker.spawn(async move {
-            // Wait for rate limit permit (no timeout — see fn doc).
-            Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
-
-            // Acquire semaphore
+            // Acquire a concurrency slot FIRST, then pace on the rate
+            // limiter while holding it — see `wait_for_rate_limit_permit`
+            // for why this order matters.
             let permit = match semaphore.acquire().await {
                 Ok(p) => p,
                 Err(_) => {
@@ -433,6 +432,9 @@ impl ProcessPool {
                     return;
                 }
             };
+
+            // Wait for rate limit permit (no timeout — see fn doc).
+            Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
 
             active_workers.fetch_add(1, Ordering::Relaxed);
             queue_size.fetch_sub(1, Ordering::Relaxed);
@@ -665,10 +667,9 @@ impl ProcessPool {
                 // Decrement queue size
                 queue_size.fetch_sub(1, Ordering::Relaxed);
 
-                // Wait for rate limit permit (no timeout — see fn doc).
-                Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
-
-                // Acquire semaphore permit
+                // Acquire a concurrency slot FIRST, then pace on the rate
+                // limiter while holding it — see `wait_for_rate_limit_permit`
+                // for why this order matters.
                 let permit = match semaphore.acquire().await {
                     Ok(p) => p,
                     Err(_) => {
@@ -689,6 +690,9 @@ impl ProcessPool {
                         break;
                     }
                 };
+
+                // Wait for rate limit permit (no timeout — see fn doc).
+                Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
 
                 active_workers.fetch_add(1, Ordering::Relaxed);
                 panic_guard.holding_permit = true;
@@ -872,13 +876,21 @@ impl ProcessPool {
             .unwrap_or(false)
     }
 
-    /// Maximum time to wait for a rate limit permit before giving up.
     /// Wait for a rate-limit permit using governor's async API (zero CPU
     /// while waiting). No timeout: the rate limiter is internal pacing and
     /// NACKing on timeout was strictly worse than waiting — bouncing a
     /// message back to SQS only to re-arrive at the same wait creates
     /// churn without changing the achievable throughput. Capacity backpressure
     /// is enforced upstream at `submit()` (bounded queue, NACK on overflow).
+    ///
+    /// **Ordering:** callers acquire the concurrency semaphore *before*
+    /// calling this, and hold the permit while pacing. Governor consumes a
+    /// token the moment `until_ready()` resolves, so pacing first and then
+    /// queueing on the semaphore would spend tokens while the message sits
+    /// waiting for a slot — under saturation the achieved rate lags the
+    /// configured rpm, and when slots free up several token-holders fire
+    /// at once, bursting above the limit. Holding a slot while pacing costs
+    /// nothing: the rate limit is the ceiling either way.
     ///
     /// Within an ordered message group, messages drain serially anyway, so
     /// waiting here doesn't block anything that wasn't already going to
