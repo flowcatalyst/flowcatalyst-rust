@@ -9,7 +9,7 @@
 		"postbox",
 		"sdk"
 	],
-	"license": "MIT",
+	"license": "MPL-2.0",
 	"type": "library",
 	"authors": [
 		{

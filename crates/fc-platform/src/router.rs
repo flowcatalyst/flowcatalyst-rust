@@ -474,6 +474,22 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         openapi.info.version = env!("CARGO_PKG_VERSION").to_string();
         openapi.info.description =
             Some("REST APIs for events, subscriptions, and administration".to_string());
+        // `OpenApiRouter::new()` seeds `info` from utoipa-axum's *own* crate
+        // metadata (its author as contact, "MIT OR Apache-2.0" as license),
+        // so these must be set explicitly or the published spec advertises
+        // the wrong license.
+        openapi.info.contact = Some(
+            utoipa::openapi::ContactBuilder::new()
+                .name(Some("FlowCatalyst"))
+                .email(Some("support@flowcatalyst.io"))
+                .build(),
+        );
+        openapi.info.license = Some(
+            utoipa::openapi::LicenseBuilder::new()
+                .name(env!("CARGO_PKG_LICENSE"))
+                .identifier(Some(env!("CARGO_PKG_LICENSE")))
+                .build(),
+        );
 
         // Snapshot the platform's own OpenAPI document for the Developer
         // portal. Compile-time-derived from utoipa, so a single capture at

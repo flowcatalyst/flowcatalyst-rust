@@ -2,6 +2,7 @@
 name = "fc-stream-processor"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "FlowCatalyst Stream Processor - PostgreSQL CQRS projection engine"
 
 [dependencies]

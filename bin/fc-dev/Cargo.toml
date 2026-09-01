@@ -5,6 +5,7 @@ name = "fc-dev"
 # release-fc-dev workflow does the rest.
 version = "0.4.16"
 edition.workspace = true
+license.workspace = true
 description = "FlowCatalyst Development Monolith - All components in a single binary"
 
 [dependencies]
