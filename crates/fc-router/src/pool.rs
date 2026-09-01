@@ -4,6 +4,16 @@
 //! dedicated tokio tasks with channels. A task is spawned only when there's work to do
 //! and exits when the group's queue is empty. This matches the TS MessageGroupHandler
 //! pattern and uses ~200 bytes per idle group vs ~100KB with the old design.
+//!
+//! Every task spawned by the pool (`spawn_immediate_task`'s standalone workers and
+//! `spawn_drain_task`'s per-group drain loops) is spawned via `self.tracker`, a
+//! `tokio_util::task::TaskTracker`, instead of bare `tokio::spawn`. Nothing explicitly
+//! joins these tasks — they're self-terminating — but the tracker gives the pool a
+//! tokio-native answer to "has everything finished?": `is_fully_drained()` is a
+//! non-blocking `tracker.is_empty()` check, and `wait_drained()` closes the tracker
+//! and awaits `tracker.wait()`. This replaces the older design of polling
+//! `queue_size == 0 && active_workers == 0` on Relaxed atomics, which could read
+//! "drained" momentarily between a counter decrement and the task's actual exit.
 
 use arc_swap::ArcSwapOption;
 use dashmap::{DashMap, DashSet};
@@ -18,6 +28,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn};
 
 use crate::mediator::Mediator;
@@ -181,6 +192,14 @@ pub struct ProcessPool {
 
     /// Per-endpoint circuit breaker registry — shared across pools, keyed by mediation target URL.
     circuit_breaker_registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
+
+    /// Tracks every worker/drain task spawned by this pool (`spawn_immediate_task`,
+    /// `spawn_drain_task`). Tasks spawned through it are always tracked, before
+    /// or after `close()` — closing only arms `wait()`, which then resolves as
+    /// soon as the tracker is empty. `drain()`/`shutdown()` close it;
+    /// `wait_drained()` awaits `tracker.wait()`; `is_fully_drained()` is a
+    /// non-blocking snapshot of the same state via `tracker.is_empty()`.
+    tracker: TaskTracker,
 }
 
 impl ProcessPool {
@@ -217,7 +236,9 @@ impl ProcessPool {
             config.concurrency
         };
 
-        let initial_rate_limit = config.rate_limit_per_minute.and_then(RateLimitState::from_rpm);
+        let initial_rate_limit = config
+            .rate_limit_per_minute
+            .and_then(RateLimitState::from_rpm);
 
         Self {
             config: config.clone(),
@@ -233,6 +254,7 @@ impl ProcessPool {
             active_workers: Arc::new(AtomicU32::new(0)),
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
             circuit_breaker_registry,
+            tracker: TaskTracker::new(),
         }
     }
 
@@ -375,8 +397,11 @@ impl ProcessPool {
     /// **Exits:** when mediation finishes (success, failure, or callback
     /// fired). Self-terminating — there is no shutdown channel; the task
     /// is short-lived (one message).
-    /// **Joined by:** nobody. The pool tracks in-flight work via the
-    /// `active_workers` counter and the semaphore permit lifetime.
+    /// **Tracked by:** `self.tracker` (a `tokio_util::task::TaskTracker`).
+    /// `wait_drained()` awaits every task the tracker knows about, so this
+    /// task is included in that wait even though nothing explicitly joins
+    /// it. The pool also tracks in-flight work via the `active_workers`
+    /// counter and the semaphore permit lifetime, for stats.
     fn spawn_immediate_task(&self, task: PoolTask) {
         let semaphore = self.semaphore.clone();
         let mediator = self.mediator.clone();
@@ -388,7 +413,7 @@ impl ProcessPool {
         let failed_batch_groups = self.failed_batch_groups.clone();
         let batch_group_message_count = self.batch_group_message_count.clone();
 
-        tokio::spawn(async move {
+        self.tracker.spawn(async move {
             // Wait for rate limit permit (no timeout — see fn doc).
             Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
 
@@ -485,9 +510,12 @@ impl ProcessPool {
     /// `processing` flag is cleared and the loop breaks). Self-terminating
     /// — one drain task per active group, recreated by the next submit
     /// that finds the queue idle.
-    /// **Joined by:** nobody. The `processing` flag in the handler is the
-    /// "is a drain task running" signal; the Drop guard at the top of the
-    /// spawned body resets that flag even on panic.
+    /// **Tracked by:** `self.tracker` (a `tokio_util::task::TaskTracker`).
+    /// `wait_drained()` awaits every task the tracker knows about, so this
+    /// task is included in that wait. The `processing` flag in the handler
+    /// remains the "is a drain task running" signal used by `submit()`; the
+    /// Drop guard at the top of the spawned body resets that flag even on
+    /// panic.
     fn spawn_drain_task(&self, group_id: Arc<str>) {
         let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
         let semaphore = self.semaphore.clone();
@@ -501,7 +529,7 @@ impl ProcessPool {
         let metrics_collector = self.metrics_collector.clone();
         let cb_registry = self.circuit_breaker_registry.clone();
 
-        tokio::spawn(async move {
+        self.tracker.spawn(async move {
             debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task started");
 
             // Safety guard: if this task panics or exits via an early break,
@@ -608,16 +636,26 @@ impl ProcessPool {
                 let task = match task {
                     Some(t) => t,
                     None => {
-                        // Clean up empty handler from map
-                        // Only remove if still empty (another submit might have raced)
-                        if let Some(entry) = group_handlers.get(&group_id) {
-                            let handler = entry.lock();
-                            if handler.is_empty() && !handler.processing {
-                                drop(handler);
-                                drop(entry);
-                                group_handlers.remove(&group_id);
-                            }
-                        }
+                        // Clean up the empty handler from the map — but the
+                        // check ("is it still empty and idle?") and the
+                        // removal must be a single atomic map operation.
+                        // A separate get() + drop() + remove() opens a
+                        // window between the drop and the remove where a
+                        // concurrent submit() can find the handler via
+                        // entry().or_insert_with, enqueue a task, set
+                        // `processing = true`, and spawn a new drain task —
+                        // only for this remove() to then yank the handler
+                        // (with the freshly queued task inside) out from
+                        // under it. The new drain task's next get() then
+                        // sees `None` and exits immediately, and the
+                        // abandoned `PoolTask`'s callback fires a spurious
+                        // fallback nack on Drop. `remove_if` holds the
+                        // shard lock across the predicate and the removal,
+                        // closing that window.
+                        group_handlers.remove_if(&group_id, |_, handler_mutex| {
+                            let handler = handler_mutex.lock();
+                            handler.is_empty() && !handler.processing
+                        });
                         panic_guard.active = false; // Normal exit, don't trigger guard
                         debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task exited");
                         break;
@@ -871,22 +909,71 @@ impl ProcessPool {
         state.limiter.until_ready().await;
     }
 
-    /// Drain the pool (stop accepting new work)
+    /// Drain the pool: stop accepting new work and close the task tracker
+    /// so that [`ProcessPool::wait_drained`] can resolve.
+    ///
+    /// This does **not** wait for in-flight work to finish — it only flips
+    /// `running` to `false` and calls `TaskTracker::close()`, both
+    /// non-blocking. `TaskTracker::spawn` still works (and still tracks)
+    /// after `close()` — close only arms `wait()` — so a drain task already
+    /// mid-loop for an ordered group keeps dequeuing until its queue is
+    /// empty; new submissions are rejected via the `running` flag.
+    /// Callers that need to block until every tracked task has exited
+    /// should await [`ProcessPool::wait_drained`] afterwards. Kept
+    /// non-blocking deliberately: `QueueManager::reload_config` calls this
+    /// while holding a lock, and a blocking wait here would stall it.
     pub async fn drain(&self) {
         info!(pool_code = %self.config.code, "Draining pool");
         self.running.store(false, Ordering::SeqCst);
+        self.tracker.close();
     }
 
-    /// Check if fully drained
+    /// Non-blocking snapshot of whether every tracked worker/drain task has
+    /// exited. Backed by `TaskTracker::is_empty()` rather than the
+    /// `queue_size`/`active_workers` counters — those stay as-is for stats,
+    /// but the tracker is the source of truth for "has every spawned task
+    /// actually returned", since it also accounts for tasks that are
+    /// mid-teardown (e.g. running their final callback) after decrementing
+    /// those counters.
     pub fn is_fully_drained(&self) -> bool {
-        self.queue_size.load(Ordering::Relaxed) == 0
-            && self.active_workers.load(Ordering::Relaxed) == 0
+        self.tracker.is_empty()
     }
 
-    /// Shutdown the pool
+    /// Wait for every worker/drain task spawned by this pool to finish.
+    ///
+    /// Closes the tracker (defensive — `TaskTracker::wait` never resolves on
+    /// an un-closed tracker, and this method should work correctly even if
+    /// called without a preceding `drain()`/`shutdown()`) and then awaits
+    /// `TaskTracker::wait()`, which resolves once every task the tracker
+    /// has ever seen has completed.
+    ///
+    /// This does **not** itself stop the pool from accepting new work —
+    /// closing the tracker doesn't touch the `running` flag, so a submit
+    /// that lands after `wait()` observes "empty" still runs (untracked by
+    /// this wait). Callers pair this with [`ProcessPool::drain`] (or
+    /// [`ProcessPool::shutdown`]) when they want "stop accepting work, then
+    /// wait for what's already running to finish".
+    pub async fn wait_drained(&self) {
+        self.tracker.close();
+        self.tracker.wait().await;
+    }
+
+    /// Number of worker/drain tasks the tracker currently considers
+    /// in-flight (spawned but not yet finished). Useful for stats/tests.
+    pub fn tracked_tasks(&self) -> usize {
+        self.tracker.len()
+    }
+
+    /// Shut down the pool: stop accepting new work and close the task
+    /// tracker. Same non-blocking semantics as [`ProcessPool::drain`] — see
+    /// its doc comment. Distinct method kept for call-site clarity (drain
+    /// vs. full shutdown) even though the bodies are currently identical;
+    /// callers needing to block until tasks finish should follow this with
+    /// [`ProcessPool::wait_drained`].
     pub async fn shutdown(&self) {
         info!(pool_code = %self.config.code, "Shutting down pool");
         self.running.store(false, Ordering::SeqCst);
+        self.tracker.close();
     }
 
     /// Get pool statistics

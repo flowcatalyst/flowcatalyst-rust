@@ -9,6 +9,7 @@ fc-queue = { path = "../fc-queue" }
 fc-standby = { path = "../fc-standby" }
 fc-stream = { path = "../fc-stream" }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

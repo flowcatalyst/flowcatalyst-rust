@@ -17,7 +17,7 @@ use fc_common::{
     MediationOutcome, MediationType, Message, PoolConfig, QueuedMessage, RouterConfig,
 };
 use fc_queue::{QueueConsumer, QueueError};
-use fc_router::{Mediator, QueueManager};
+use fc_router::{ConsumerFactory, HttpMediatorConfig, Mediator, QueueManager};
 
 /// Mock mediator for testing
 struct MockMediator {
@@ -462,4 +462,232 @@ async fn test_pool_codes() {
     assert!(codes.contains(&"A".to_string()));
     assert!(codes.contains(&"B".to_string()));
     assert!(codes.contains(&"C".to_string()));
+}
+
+// ============================================================================
+// CancellationToken migration tests
+// ============================================================================
+
+/// Mediator with a configurable, deliberately slow mediation delay — used to
+/// keep a pool's worker task busy long enough for `shutdown()` to observe
+/// real in-flight work instead of racing an already-idle pool.
+struct SlowMockMediator {
+    delay: Duration,
+    call_count: AtomicU32,
+}
+
+impl SlowMockMediator {
+    fn new(delay: Duration) -> Self {
+        Self {
+            delay,
+            call_count: AtomicU32::new(0),
+        }
+    }
+
+    fn call_count(&self) -> u32 {
+        self.call_count.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl Mediator for SlowMockMediator {
+    async fn mediate(&self, _message: &Message) -> MediationOutcome {
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(self.delay).await;
+        MediationOutcome::success()
+    }
+}
+
+/// `ConsumerFactory` whose `create_consumer` sleeps before returning, so a
+/// caller in the middle of `reload_config` is provably still in-flight for
+/// the sleep's duration — used to prove readers aren't blocked by it.
+struct SlowConsumerFactory {
+    delay: Duration,
+}
+
+#[async_trait]
+impl ConsumerFactory for SlowConsumerFactory {
+    async fn create_consumer(
+        &self,
+        config: &fc_common::QueueConfig,
+    ) -> fc_router::Result<Arc<dyn QueueConsumer + Send + Sync>> {
+        tokio::time::sleep(self.delay).await;
+        Ok(Arc::new(MockQueueConsumer::new(&config.name)) as Arc<dyn QueueConsumer + Send + Sync>)
+    }
+}
+
+/// `QueueManager::shutdown()` must not hang when there are no consumers and
+/// no pools — the `CancellationToken`-based signalling and the
+/// `wait_drained()` timeout logic should both resolve immediately on an
+/// empty manager.
+#[tokio::test]
+async fn shutdown_with_no_consumers_returns_promptly() {
+    let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
+
+    tokio::time::timeout(Duration::from_secs(2), manager.shutdown())
+        .await
+        .expect("shutdown should complete promptly with no consumers or pools");
+}
+
+/// `shutdown()` must wait for genuinely in-flight pool work to finish
+/// (via `ProcessPool::wait_drained`) rather than returning as soon as the
+/// cancellation signal is sent. Routes one message into a pool backed by a
+/// mediator that takes ~200ms, then asserts shutdown took at least roughly
+/// that long, every pool reports fully drained afterward, and the mock
+/// consumer recorded the ack.
+#[tokio::test]
+async fn shutdown_waits_for_in_flight_pool_work() {
+    let mediator = Arc::new(SlowMockMediator::new(Duration::from_millis(200)));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+
+    let config = RouterConfig {
+        processing_pools: vec![PoolConfig {
+            code: "DEFAULT".to_string(),
+            concurrency: 10,
+            rate_limit_per_minute: None,
+        }],
+        queues: vec![],
+    };
+    manager.apply_config(config).await.unwrap();
+
+    let messages = vec![create_queued_message("msg-1", "DEFAULT", "test-queue")];
+    let consumer = Arc::new(MockQueueConsumer::with_messages("test-queue", messages));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    // Give the pool worker a moment to actually pick up the message and
+    // start mediating, so shutdown() races real in-flight work rather than
+    // an already-idle pool.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let start = std::time::Instant::now();
+    manager.shutdown().await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed >= Duration::from_millis(150),
+        "shutdown should have waited for the ~200ms in-flight mediation, took {:?}",
+        elapsed
+    );
+    assert_eq!(mediator.call_count(), 1);
+
+    assert_eq!(
+        manager.is_pool_fully_drained("DEFAULT"),
+        Some(true),
+        "pool should report fully drained once shutdown returns"
+    );
+
+    assert_eq!(
+        consumer.acked.lock().len(),
+        1,
+        "mock consumer should have recorded the ack for the completed message"
+    );
+}
+
+/// A pool removed from config during `reload_config` is now cleaned up by a
+/// per-pool watcher task (spawned the moment it's moved into
+/// `draining_pools`) rather than only by the periodic `cleanup_draining_pools`
+/// sweep (which in production only runs on the lifecycle manager's 5-minute
+/// reaper interval). This asserts the watcher does the job on its own,
+/// without ever calling `cleanup_draining_pools`.
+#[tokio::test]
+async fn removed_pool_is_cleaned_up_by_drain_watcher_without_reaper() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
+
+    let config = RouterConfig {
+        processing_pools: vec![
+            PoolConfig {
+                code: "KEEP".to_string(),
+                concurrency: 5,
+                rate_limit_per_minute: None,
+            },
+            PoolConfig {
+                code: "REMOVE".to_string(),
+                concurrency: 5,
+                rate_limit_per_minute: None,
+            },
+        ],
+        queues: vec![],
+    };
+    manager.apply_config(config).await.unwrap();
+
+    let reload = RouterConfig {
+        processing_pools: vec![PoolConfig {
+            code: "KEEP".to_string(),
+            concurrency: 5,
+            rate_limit_per_minute: None,
+        }],
+        queues: vec![],
+    };
+    manager.reload_config(reload).await.unwrap();
+
+    // The watcher spawned by reload_config should remove "REMOVE" from
+    // draining_pools on its own — no cleanup_draining_pools() call here.
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while manager.draining_pool_count() > 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(
+        manager.draining_pool_count(),
+        0,
+        "drain watcher should have removed the draining pool within ~1s without a reaper sweep"
+    );
+    assert_eq!(manager.pool_codes(), vec!["KEEP".to_string()]);
+}
+
+/// `reload_config` restructures `sync_queue_consumers` to hold the
+/// `consumers`/`queue_configs` write locks only for brief synchronous
+/// sections, releasing them before awaiting `ConsumerFactory::create_consumer`.
+/// This proves a slow consumer-factory call during a reload does not block a
+/// concurrent reader (`consumer_ids()`) for the factory's full duration.
+#[tokio::test]
+async fn reload_config_with_consumer_factory_does_not_block_readers() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator)
+            .consumer_factory(Arc::new(SlowConsumerFactory {
+                delay: Duration::from_millis(300),
+            }))
+            .build(),
+    );
+
+    let config = RouterConfig {
+        processing_pools: vec![],
+        queues: vec![fc_common::QueueConfig {
+            name: "slow-queue".to_string(),
+            uri: "mock://slow-queue".to_string(),
+            connections: 1,
+            visibility_timeout: 30,
+        }],
+    };
+
+    let reload_handle = {
+        let manager = manager.clone();
+        tokio::spawn(async move {
+            manager.reload_config(config).await.unwrap();
+        })
+    };
+
+    // Give reload_config a moment to enter sync_queue_consumers and start
+    // the (locked-out) create_consumer call.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    tokio::time::timeout(Duration::from_millis(100), manager.consumer_ids())
+        .await
+        .expect(
+            "consumer_ids() should not be blocked by an in-flight, lock-released \
+             ConsumerFactory::create_consumer call",
+        );
+
+    reload_handle
+        .await
+        .expect("reload_config task should not panic");
+    assert_eq!(manager.consumer_ids().await, vec!["slow-queue".to_string()]);
 }

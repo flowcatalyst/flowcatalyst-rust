@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::manager::QueueManager;
@@ -169,20 +169,23 @@ impl QueueHealthMonitor {
 /// Spawn the queue-health monitoring background task.
 ///
 /// **Owns:** the supplied `Arc<QueueHealthMonitor>` and `Arc<QueueManager>`,
-/// plus a `broadcast::Receiver` derived from the shutdown sender.
-/// **Exits:** when the shutdown broadcast fires.
+/// plus a [`CancellationToken`] (typically a child of the lifecycle
+/// manager's shutdown token).
+/// **Exits:** when `shutdown.cancelled()` resolves — level-triggered, so an
+/// already-cancelled token still causes an immediate exit for a task
+/// spawned after the cancellation.
 /// **Joined by:** the caller via the returned `JoinHandle` (lifecycle
 /// manager awaits it on graceful shutdown).
 pub fn spawn_queue_health_monitor(
     monitor: Arc<QueueHealthMonitor>,
     manager: Arc<QueueManager>,
-    shutdown_tx: broadcast::Sender<()>,
+    shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
-    let mut shutdown_rx = shutdown_tx.subscribe();
     let interval = monitor.config.check_interval;
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -191,7 +194,7 @@ pub fn spawn_queue_health_monitor(
                     let metrics = manager.get_queue_metrics().await;
                     monitor.check_queue_health(&metrics);
                 }
-                _ = shutdown_rx.recv() => {
+                _ = shutdown.cancelled() => {
                     info!("Queue health monitor shutting down");
                     break;
                 }
@@ -203,6 +206,8 @@ pub fn spawn_queue_health_monitor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manager::QueueManager;
+    use crate::mediator::HttpMediatorConfig;
     use crate::warning::WarningServiceConfig;
 
     #[test]
@@ -253,5 +258,28 @@ mod tests {
         monitor.check_queue_growth("test-queue", 400); // Growth 100, period 3 - should warn
 
         assert_eq!(warning_service.warning_count(), 1);
+    }
+
+    /// A `CancellationToken` is level-triggered: a token cancelled *before*
+    /// the task subscribes to it must still cause an immediate exit — the
+    /// late-joiner case a `broadcast` channel could not handle.
+    #[tokio::test]
+    async fn spawn_queue_health_monitor_exits_immediately_on_already_cancelled_token() {
+        let warning_service = Arc::new(WarningService::new(WarningServiceConfig::default()));
+        let monitor = Arc::new(QueueHealthMonitor::new(
+            QueueHealthConfig::default(),
+            warning_service,
+        ));
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
+
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let handle = spawn_queue_health_monitor(monitor, manager, token);
+
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("queue health monitor should exit within 1s of an already-cancelled token")
+            .expect("task should not panic");
     }
 }

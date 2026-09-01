@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::manager::QueueManager;
@@ -638,16 +638,24 @@ pub fn merge_configs(sources: &[(String, RouterConfig)]) -> RouterConfig {
     }
 }
 
-/// Spawn the config sync background task
+/// Spawn the config sync background task.
+///
+/// **Owns:** the supplied `Arc<ConfigSyncService>` and a [`CancellationToken`]
+/// (typically a child of the lifecycle manager's shutdown token).
+/// **Exits:** when `shutdown.cancelled()` resolves — level-triggered, so this
+/// still exits immediately even if the token was already cancelled before
+/// this task started.
+/// **Joined by:** the caller via the returned `JoinHandle` (lifecycle
+/// manager awaits it on graceful shutdown).
 pub fn spawn_config_sync_task(
     config_sync: Arc<ConfigSyncService>,
-    shutdown_tx: broadcast::Sender<()>,
+    shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
-    let mut shutdown_rx = shutdown_tx.subscribe();
     let interval = config_sync.sync_interval();
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         // Skip the first tick (initial sync already done)
         ticker.tick().await;
@@ -664,7 +672,7 @@ pub fn spawn_config_sync_task(
                         );
                     }
                 }
-                _ = shutdown_rx.recv() => {
+                _ = shutdown.cancelled() => {
                     info!("Config sync task shutting down");
                     break;
                 }

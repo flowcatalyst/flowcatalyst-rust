@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use chrono::Utc;
@@ -44,6 +45,19 @@ use crate::Result;
 /// in `http_pool.rs`.
 type MediatorFactory =
     Arc<dyn Fn(&Arc<WarningService>) -> Arc<dyn Mediator + 'static> + Send + Sync>;
+
+/// `(queue_id, consumer)` pair — used by `sync_queue_consumers` to shuttle
+/// consumers created/removed outside the `consumers` map's lock.
+type ConsumerEntry = (String, Arc<dyn QueueConsumer + Send + Sync>);
+
+/// `(queue_id, consumer, queue_config)` triple — the "just created, not yet
+/// inserted" shape `sync_queue_consumers` collects before its brief insert
+/// write-lock.
+type NewConsumerEntry = (
+    String,
+    Arc<dyn QueueConsumer + Send + Sync>,
+    fc_common::QueueConfig,
+);
 
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
@@ -249,7 +263,18 @@ pub struct QueueManager {
     /// Queue consumers (RwLock for async-safe access)
     consumers: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
 
-    /// Current pool configurations (for detecting changes)
+    /// Current pool configurations (for detecting changes).
+    ///
+    /// Beyond storing per-pool config for diffing, this lock doubles as the
+    /// reload-serialisation lock: `apply_config`/`reload_config` hold
+    /// `pool_configs.write()` for the whole of their body, including the
+    /// up-to-60s wait inside `ProcessPool::update_concurrency` when a
+    /// pool's concurrency is decreased. That single write-held-for-the-
+    /// whole-call is what prevents two concurrent reloads from
+    /// interleaving — no hot-path reader (routing, monitoring, health
+    /// checks) ever takes this lock, only the two config-mutation entry
+    /// points do, so a slow in-flight reload blocks only a second
+    /// concurrent reload, never message routing or stats reads.
     pool_configs: RwLock<HashMap<String, PoolConfig>>,
 
     /// Current queue configurations (for detecting changes during sync)
@@ -268,8 +293,14 @@ pub struct QueueManager {
     /// Running state
     running: AtomicBool,
 
-    /// Shutdown signal sender
-    shutdown_tx: broadcast::Sender<()>,
+    /// Shutdown signal. Level-triggered, unlike the `broadcast` channel this
+    /// replaced: `shutdown()` calls `self.shutdown.cancel()`, which
+    /// immediately marks every child token — existing or future — as
+    /// cancelled. A consumer poll task hot-added (via `sync_queue_consumers`)
+    /// *after* shutdown began still observes the cancellation instantly on
+    /// its very first `token.cancelled()` poll, instead of missing a signal
+    /// it subscribed too late to see.
+    shutdown: CancellationToken,
 
     /// Batch ID counter for grouping messages
     batch_counter: std::sync::atomic::AtomicU64,
@@ -310,7 +341,6 @@ pub struct QueueManager {
 
     /// Health service for recording consumer poll times
     health_service: Option<Arc<crate::health::HealthService>>,
-
 }
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
@@ -395,7 +425,7 @@ impl QueueManagerBuilder {
     /// Finalise into an immutable, fully-wired [`QueueManager`]. This is the
     /// single struct-literal that all constructors funnel through.
     pub fn build(self) -> QueueManager {
-        let (shutdown_tx, _) = broadcast::channel(1);
+        let shutdown = CancellationToken::new();
 
         QueueManager {
             in_pipeline: Arc::new(DashMap::new()),
@@ -409,7 +439,7 @@ impl QueueManagerBuilder {
             mediator_factory: self.mediator_factory,
             default_pool_code: "DEFAULT-POOL".to_string(), // Java: DEFAULT_POOL_CODE
             running: AtomicBool::new(true),
-            shutdown_tx,
+            shutdown,
             batch_counter: std::sync::atomic::AtomicU64::new(0),
             pending_delete_broker_ids: Arc::new(Mutex::new(HashMap::new())),
             max_pools: self.max_pools,
@@ -422,14 +452,27 @@ impl QueueManagerBuilder {
     }
 }
 
+/// Sleep for `d`, but race it against `token`. Returns `true` if the token
+/// was cancelled before `d` elapsed (caller should stop looping), `false`
+/// if the sleep completed normally. Used for the pacing sleeps in the
+/// consumer poll loop (backpressure, empty-poll, partial-batch, and error
+/// pauses) so a shutdown that lands mid-pause exits promptly instead of
+/// waiting out the rest of the sleep — across many consumers those pauses
+/// would otherwise add real seconds to shutdown latency.
+async fn sleep_or_cancel(token: &CancellationToken, d: Duration) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep(d) => false,
+        _ = token.cancelled() => true,
+    }
+}
+
 impl QueueManager {
     /// Start building a manager that creates a **fresh** `HttpMediator` per
     /// pool (production path). Prefer this builder over `new` + `set_*`.
     pub fn builder(mediator_config: HttpMediatorConfig) -> QueueManagerBuilder {
         let factory: MediatorFactory = Arc::new(move |ws: &Arc<WarningService>| {
             Arc::new(
-                HttpMediator::with_config(mediator_config.clone())
-                    .with_warning_service(ws.clone()),
+                HttpMediator::with_config(mediator_config.clone()).with_warning_service(ws.clone()),
             ) as Arc<dyn Mediator + 'static>
         });
         QueueManagerBuilder::from_factory(factory)
@@ -482,6 +525,14 @@ impl QueueManager {
     /// Get warning service reference
     pub fn warning_service(&self) -> &Arc<WarningService> {
         &self.warning_service
+    }
+
+    /// Get a child cancellation token that resolves when this manager's
+    /// `shutdown()` is called. Binaries wanting to tie their own tasks to
+    /// the manager's shutdown lifecycle (rather than build a separate
+    /// signal) should hold onto one of these instead of polling `running`.
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.child_token()
     }
 
     /// Build a mediator instance for a pool via the configured factory,
@@ -595,9 +646,43 @@ impl QueueManager {
                         "Pool removed from config - draining asynchronously"
                     );
                     pool.drain().await;
-                    self.draining_pools.insert(code.clone(), pool);
+                    self.draining_pools.insert(code.clone(), pool.clone());
                     pool_configs.remove(&code);
                     pools_removed += 1;
+
+                    // Watcher: removes the pool from `draining_pools` the
+                    // moment its in-flight work finishes, instead of
+                    // waiting for the next `cleanup_draining_pools` sweep
+                    // (only run periodically by the lifecycle manager's
+                    // reaper — see that fn's doc comment, which is now the
+                    // backstop rather than the primary path).
+                    //
+                    // **Owns:** an `Arc<QueueManager>` clone (`self`), the
+                    // drained `Arc<ProcessPool>`, its code, and a child
+                    // cancellation token.
+                    // **Exits:** as soon as `pool.wait_drained()` resolves
+                    // (removes itself from `draining_pools` and calls
+                    // `pool.shutdown()`), or immediately if the manager's
+                    // shutdown token is cancelled first — `shutdown()`
+                    // already drains every pool in `draining_pools` itself,
+                    // so this task backs off rather than double-acting.
+                    // **Joined by:** nobody — self-terminating,
+                    // fire-and-forget, matching every other background task
+                    // in this file.
+                    let manager = self.clone();
+                    let watched_pool = pool;
+                    let watched_code = code.clone();
+                    let token = self.shutdown.child_token();
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            _ = watched_pool.wait_drained() => {
+                                watched_pool.shutdown().await;
+                                manager.draining_pools.remove(&watched_code);
+                                info!(pool_code = %watched_code, "Draining pool finished - removed");
+                            }
+                            _ = token.cancelled() => {}
+                        }
+                    });
                 }
             }
         }
@@ -674,15 +759,24 @@ impl QueueManager {
         Ok(true)
     }
 
-    /// Sync queue consumers based on configuration changes
-    /// Mirrors Java's queue consumer sync logic in syncConfig()
+    /// Sync queue consumers based on configuration changes.
+    /// Mirrors Java's queue consumer sync logic in syncConfig().
+    ///
+    /// `consumers`/`queue_configs` are only held write-locked for two brief,
+    /// synchronous sections (remove-stale, then insert-new) — never across
+    /// an `.await`. `consumer.stop().await` and `factory.create_consumer(..)
+    /// .await` both run with the locks released. `reload_config` holds
+    /// `pool_configs.write()` for its entire duration (see that field's doc
+    /// comment), which is what serialises concurrent reloads/syncs; releasing
+    /// `consumers`/`queue_configs` mid-sync here cannot let two syncs
+    /// interleave — it only stops this sync from stalling monitoring/health
+    /// readers (`get_queue_metrics`, `consumer_ids`, `is_consumer_healthy`)
+    /// or from blocking on a slow `stop()`/`create_consumer()` call while
+    /// holding a lock nobody else needs mid-sync.
     async fn sync_queue_consumers(
         self: &Arc<Self>,
         config: &RouterConfig,
     ) -> Result<(usize, usize)> {
-        let mut queues_created = 0;
-        let mut queues_removed = 0;
-
         // Build map of new queue configs
         let new_queue_configs: HashMap<String, fc_common::QueueConfig> = config
             .queues
@@ -698,44 +792,60 @@ impl QueueManager {
             })
             .collect();
 
-        let mut queue_configs = self.queue_configs.write().await;
-        let mut consumers = self.consumers.write().await;
+        // Step (a): brief write lock — remove entries no longer in the new
+        // config, collecting the removed consumers so `stop()` can run
+        // after the lock is dropped. Also snapshot the resulting key set
+        // so step (c) below can tell "genuinely new" queues apart without
+        // holding the lock across `create_consumer().await`.
+        let (removed_consumers, existing_ids): (
+            Vec<ConsumerEntry>,
+            std::collections::HashSet<String>,
+        ) = {
+            let mut consumers = self.consumers.write().await;
+            let mut queue_configs = self.queue_configs.write().await;
 
-        // Phase out consumers for queues that no longer exist
-        let existing_queues: Vec<String> = consumers.keys().cloned().collect();
-        for queue_id in existing_queues {
-            if !new_queue_configs.contains_key(&queue_id) {
-                info!(queue_id = %queue_id, "Phasing out consumer for removed queue");
-
-                if let Some(consumer) = consumers.remove(&queue_id) {
-                    // Stop consumer: sets running=false and initiates graceful
-                    // shutdown. The consumer's own poll task owns the Arc it
-                    // needs to finish any in-flight poll, so once we drop our
-                    // reference here there is nothing further for the manager
-                    // to track — the task drains and exits on its own.
-                    consumer.stop().await;
-                    queue_configs.remove(&queue_id);
-                    queues_removed += 1;
-
-                    info!(queue_id = %queue_id, "Consumer stopped and removed");
+            let existing_queues: Vec<String> = consumers.keys().cloned().collect();
+            let mut removed = Vec::new();
+            for queue_id in &existing_queues {
+                if !new_queue_configs.contains_key(queue_id) {
+                    if let Some(consumer) = consumers.remove(queue_id) {
+                        queue_configs.remove(queue_id);
+                        removed.push((queue_id.clone(), consumer));
+                    }
                 }
             }
+            let remaining_ids: std::collections::HashSet<String> =
+                consumers.keys().cloned().collect();
+            (removed, remaining_ids)
+        };
+
+        // Step (b): stop phased-out consumers — outside the lock.
+        let mut queues_removed = 0;
+        for (queue_id, consumer) in removed_consumers {
+            info!(queue_id = %queue_id, "Phasing out consumer for removed queue");
+            // Stop consumer: sets running=false and initiates graceful
+            // shutdown. The consumer's own poll task owns the Arc it needs
+            // to finish any in-flight poll, so once we drop our reference
+            // here there is nothing further for the manager to track — the
+            // task drains and exits on its own.
+            consumer.stop().await;
+            queues_removed += 1;
+            info!(queue_id = %queue_id, "Consumer stopped and removed");
         }
 
-        // Start consumers for new queues (if factory is available)
-        // Collect new consumers to spawn poll tasks after releasing locks
-        let mut new_consumers: Vec<Arc<dyn QueueConsumer + Send + Sync>> = Vec::new();
+        // Step (c): create consumers for genuinely new queues (if a factory
+        // is available) — outside the lock.
+        let mut queues_created = 0;
+        let mut new_consumers: Vec<NewConsumerEntry> = Vec::new();
 
         if let Some(ref factory) = self.consumer_factory {
             for (queue_id, queue_config) in &new_queue_configs {
-                if !consumers.contains_key::<String>(queue_id) {
+                if !existing_ids.contains(queue_id) {
                     info!(queue_id = %queue_id, "Creating new queue consumer");
 
                     match factory.create_consumer(queue_config).await {
                         Ok(consumer) => {
-                            consumers.insert(queue_id.clone(), consumer.clone());
-                            queue_configs.insert(queue_id.clone(), queue_config.clone());
-                            new_consumers.push(consumer);
+                            new_consumers.push((queue_id.clone(), consumer, queue_config.clone()));
                             queues_created += 1;
                             info!(queue_id = %queue_id, "Queue consumer created and ready");
                         }
@@ -757,7 +867,7 @@ impl QueueManager {
         } else {
             // No factory - just log new queues that couldn't be created
             for queue_id in new_queue_configs.keys() {
-                if !consumers.contains_key::<String>(queue_id) {
+                if !existing_ids.contains(queue_id) {
                     warn!(
                         queue_id = %queue_id,
                         "New queue in config but no consumer factory available - consumer will not be auto-created"
@@ -766,12 +876,19 @@ impl QueueManager {
             }
         }
 
-        // Release write locks before spawning tasks
-        drop(consumers);
-        drop(queue_configs);
+        // Step (d): brief write lock — insert the newly created consumers
+        // and their configs.
+        {
+            let mut consumers = self.consumers.write().await;
+            let mut queue_configs = self.queue_configs.write().await;
+            for (queue_id, consumer, queue_config) in &new_consumers {
+                consumers.insert(queue_id.clone(), consumer.clone());
+                queue_configs.insert(queue_id.clone(), queue_config.clone());
+            }
+        }
 
-        // Spawn poll tasks for newly created consumers.
-        for consumer in new_consumers {
+        // Step (e): spawn poll tasks for newly created consumers.
+        for (_, consumer, _) in new_consumers {
             info!(consumer_id = %consumer.identifier(), "Spawning poll task for hot-added consumer");
             self.spawn_consumer_poll_task(consumer);
         }
@@ -779,8 +896,16 @@ impl QueueManager {
         Ok((queues_created, queues_removed))
     }
 
-    /// Cleanup draining pools that have finished
-    /// Should be called periodically (e.g., every 10 seconds)
+    /// Cleanup draining pools that have finished.
+    ///
+    /// The primary path is now the per-pool watcher task spawned in
+    /// `reload_config` when a pool is moved into `draining_pools` — it
+    /// removes the pool the instant `wait_drained()` resolves. This method
+    /// is a belt-and-braces sweep for anything the watcher missed (e.g. a
+    /// pool inserted into `draining_pools` before this feature existed, or
+    /// a watcher task that never got scheduled). A double `remove` here is
+    /// a harmless no-op, so calling this periodically alongside the watcher
+    /// is safe.
     pub async fn cleanup_draining_pools(&self) {
         let mut cleaned = Vec::new();
 
@@ -1254,12 +1379,26 @@ impl QueueManager {
     /// `manager = self.clone()` so it can call back into the manager for
     /// the lifetime of the consumer. That clone needs the receiver to be
     /// an `Arc`, not `&Self`.
+    ///
+    /// **Shutdown signalling.** `token` is a child of `self.shutdown`
+    /// (`CancellationToken`), level-triggered: `QueueManager::shutdown()`
+    /// cancelling the parent marks this child cancelled immediately, even
+    /// if the token was created (i.e. this task was hot-added via
+    /// `sync_queue_consumers`) *after* shutdown had already begun — unlike
+    /// the old `broadcast` channel, there is no "subscribed too late to see
+    /// the signal" window. Every pacing sleep in the loop below
+    /// (backpressure, empty-poll, partial-batch, error) races the token via
+    /// [`sleep_or_cancel`] so a shutdown mid-pause exits promptly instead of
+    /// waiting out the full sleep. `route_batch` itself is deliberately
+    /// **not** raced against cancellation — once a batch is accepted for
+    /// processing it must run to completion so messages are acked/nacked
+    /// rather than abandoned mid-poll.
     fn spawn_consumer_poll_task(
         self: &Arc<Self>,
         consumer: Arc<dyn QueueConsumer + Send + Sync>,
     ) -> tokio::task::JoinHandle<()> {
         let manager = self.clone();
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let token = self.shutdown.child_token();
 
         tokio::spawn(async move {
             let mut last_poll_end = Instant::now();
@@ -1282,12 +1421,15 @@ impl QueueManager {
                 // Prevents hot poll-defer loop that wastes SQS API calls.
                 if !manager.has_pool_capacity() {
                     debug!(consumer = %consumer.identifier(), "All pools at capacity — pausing poll");
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if sleep_or_cancel(&token, Duration::from_secs(2)).await {
+                        info!(consumer = %consumer.identifier(), "Consumer shutting down");
+                        break;
+                    }
                     continue;
                 }
 
                 tokio::select! {
-                    _ = shutdown_rx.recv() => {
+                    _ = token.cancelled() => {
                         info!(consumer = %consumer.identifier(), "Consumer shutting down");
                         break;
                     }
@@ -1303,7 +1445,10 @@ impl QueueManager {
                             Ok(messages) if messages.is_empty() => {
                                 // No messages — SQS long poll already waited up to 20s.
                                 // Brief pause before re-polling.
-                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                if sleep_or_cancel(&token, Duration::from_secs(1)).await {
+                                    info!(consumer = %consumer.identifier(), "Consumer shutting down");
+                                    break;
+                                }
                             }
                             Ok(messages) => {
                                 let count = messages.len();
@@ -1312,13 +1457,19 @@ impl QueueManager {
                                 }
                                 // Full batch (10) — re-poll immediately, more messages likely waiting.
                                 // Partial batch (< 10) — brief pause, queue is draining.
-                                if count < 10 {
-                                    tokio::time::sleep(Duration::from_millis(500)).await;
+                                if count < 10
+                                    && sleep_or_cancel(&token, Duration::from_millis(500)).await
+                                {
+                                    info!(consumer = %consumer.identifier(), "Consumer shutting down");
+                                    break;
                                 }
                             }
                             Err(e) => {
                                 error!(error = %e, consumer = %consumer.identifier(), "Error polling");
-                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                if sleep_or_cancel(&token, Duration::from_secs(1)).await {
+                                    info!(consumer = %consumer.identifier(), "Consumer shutting down");
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1378,8 +1529,13 @@ impl QueueManager {
     /// `self`) and lives until shutdown — the receiver's Arc is consumed
     /// by the call site and the task becomes the new owner of the
     /// captured references.
+    /// **Shutdown signalling.** `token` is a child of `self.shutdown`
+    /// (`CancellationToken`), level-triggered: cancellation is observed
+    /// immediately by `token.cancelled()` even if this task were somehow
+    /// spawned after `shutdown()` had already run — there is no
+    /// subscribe-before-signal race like the old `broadcast` channel had.
     fn spawn_in_pipeline_reaper(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let token = self.shutdown.child_token();
         let in_pipeline = self.in_pipeline.clone();
         let app_index = self.app_message_to_pipeline_key.clone();
 
@@ -1447,7 +1603,7 @@ impl QueueManager {
                             );
                         }
                     }
-                    _ = shutdown_rx.recv() => {
+                    _ = token.cancelled() => {
                         info!("In-pipeline reaper shutting down");
                         break;
                     }
@@ -1456,33 +1612,66 @@ impl QueueManager {
         })
     }
 
-    /// Graceful shutdown
+    /// Graceful shutdown.
+    ///
+    /// Cancels [`Self::shutdown_token`]'s parent (level-triggered — every
+    /// consumer poll task and background watcher observes it immediately,
+    /// even one spawned after this call started), stops consumers, drains
+    /// every pool (active and already-draining), and waits — bounded by a
+    /// 60s timeout — for every pool's tracked tasks to actually finish via
+    /// [`ProcessPool::wait_drained`], instead of polling a "drained?" flag
+    /// on a fixed sleep interval.
     pub async fn shutdown(&self) {
         info!("QueueManager shutting down...");
         self.running.store(false, Ordering::SeqCst);
 
-        // Signal all consumer loops to stop
-        let _ = self.shutdown_tx.send(());
+        // Signal all consumer loops / background watchers to stop.
+        self.shutdown.cancel();
 
-        // Stop all consumers
-        {
-            let consumers = self.consumers.read().await;
-            for consumer in consumers.values() {
-                consumer.stop().await;
-            }
+        // Stop all consumers. Clone the Arcs and drop the read guard before
+        // awaiting `stop()` on each — never hold `consumers` across an
+        // `.await` (see the field's doc comment / item 4 of the manager
+        // shutdown convention).
+        let consumers: Vec<Arc<dyn QueueConsumer + Send + Sync>> = {
+            let guard = self.consumers.read().await;
+            guard.values().cloned().collect()
+        };
+        for consumer in consumers {
+            consumer.stop().await;
         }
 
-        // Drain all pools
-        for entry in self.pools.iter() {
-            entry.value().drain().await;
+        // Collect every pool — active and already-draining — before
+        // awaiting anything. DashMap `Ref`s must never be held across an
+        // `.await`; collecting the `Arc<ProcessPool>` clones into a `Vec`
+        // first and dropping the iterator does that.
+        let pools: Vec<Arc<ProcessPool>> = self
+            .pools
+            .iter()
+            .map(|e| e.value().clone())
+            .chain(self.draining_pools.iter().map(|e| e.value().clone()))
+            .collect();
+
+        // Drain all pools (non-blocking: flips `running`, closes the tracker).
+        for pool in &pools {
+            pool.drain().await;
         }
 
-        // Wait for pools to drain with timeout
+        // Wait for every pool's tracked tasks to finish, bounded by a timeout.
         let drain_timeout = Duration::from_secs(60);
-        let start = Instant::now();
+        let drained = tokio::time::timeout(
+            drain_timeout,
+            future::join_all(pools.iter().map(|p| p.wait_drained())),
+        )
+        .await;
 
-        while !self.all_pools_drained() && start.elapsed() < drain_timeout {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+        if drained.is_err() {
+            let still_busy = pools.iter().filter(|p| p.tracked_tasks() > 0).count();
+            warn!(
+                still_busy_pools = still_busy,
+                total_pools = pools.len(),
+                timeout_secs = drain_timeout.as_secs(),
+                "Shutdown drain timed out — some pools still had in-flight work"
+            );
         }
 
         // Log any remaining in-flight messages (they'll be NACKed when tasks are dropped)
@@ -1496,18 +1685,13 @@ impl QueueManager {
             self.app_message_to_pipeline_key.clear();
         }
 
-        // Shutdown pools
-        for entry in self.pools.iter() {
-            entry.value().shutdown().await;
+        // Shutdown pools (idempotent alongside the `drain()` above — same
+        // non-blocking flip-and-close semantics; kept for call-site clarity).
+        for pool in &pools {
+            pool.shutdown().await;
         }
 
         info!("QueueManager shutdown complete");
-    }
-
-    fn all_pools_drained(&self) -> bool {
-        self.pools
-            .iter()
-            .all(|entry| entry.value().is_fully_drained())
     }
 
     /// Check if any pool has capacity to accept messages.
@@ -1686,7 +1870,15 @@ impl QueueManager {
         // Force-NACK messages that have exceeded the force_nack_after_seconds threshold
         let force_threshold = self.stall_config.force_nack_after_seconds;
         let nack_delay = self.stall_config.nack_delay_seconds;
-        let consumers = self.consumers.read().await;
+
+        // Snapshot consumers before awaiting any nack — holding the read
+        // lock across `consumer.nack(...).await` for every stalled message
+        // would stall concurrent reloads/health reads for however long
+        // this whole loop takes.
+        let consumers: HashMap<String, Arc<dyn QueueConsumer + Send + Sync>> = {
+            let guard = self.consumers.read().await;
+            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
         let mut force_nacked = 0;
 
         for msg in &stalled {
@@ -1823,6 +2015,26 @@ impl QueueManager {
         self.pools.iter().map(|entry| entry.key().clone()).collect()
     }
 
+    /// Number of pools currently draining (removed from config, still
+    /// finishing in-flight work). Useful for stats/tests.
+    pub fn draining_pool_count(&self) -> usize {
+        self.draining_pools.len()
+    }
+
+    /// Non-blocking check of whether a specific pool (active or draining)
+    /// has finished draining — every worker/drain task it ever spawned has
+    /// exited (see [`ProcessPool::is_fully_drained`]). Returns `None` if no
+    /// pool with this code exists in either set.
+    pub fn is_pool_fully_drained(&self, code: &str) -> Option<bool> {
+        if let Some(pool) = self.pools.get(code) {
+            return Some(pool.is_fully_drained());
+        }
+        if let Some(pool) = self.draining_pools.get(code) {
+            return Some(pool.is_fully_drained());
+        }
+        None
+    }
+
     /// Get list of all consumer identifiers
     pub async fn consumer_ids(&self) -> Vec<String> {
         self.consumers.read().await.keys().cloned().collect()
@@ -1833,11 +2045,18 @@ impl QueueManager {
     /// NATS connection state, ActiveMQ test connection). Returns false if any consumer
     /// reports unhealthy, indicating the broker is unreachable.
     pub async fn check_broker_connectivity(&self) -> bool {
-        let consumers = self.consumers.read().await;
-        if consumers.is_empty() {
-            return true; // No consumers configured — nothing to check
-        }
-        for consumer in consumers.values() {
+        // Clone the Arcs and drop the read guard before iterating — keeps
+        // this consistent with every other consumers-read site in the file
+        // (see item 4 of the manager shutdown/lock convention), even though
+        // `is_healthy()` itself is synchronous today.
+        let consumers: Vec<Arc<dyn QueueConsumer + Send + Sync>> = {
+            let guard = self.consumers.read().await;
+            if guard.is_empty() {
+                return true; // No consumers configured — nothing to check
+            }
+            guard.values().cloned().collect()
+        };
+        for consumer in consumers {
             if !consumer.is_healthy() {
                 warn!(
                     consumer = %consumer.identifier(),
@@ -1852,20 +2071,26 @@ impl QueueManager {
     /// Restart a specific consumer by ID
     /// Returns true if consumer was found and restart was initiated
     pub async fn restart_consumer(&self, consumer_id: &str) -> bool {
-        let consumers = self.consumers.read().await;
-        if let Some(consumer) = consumers.get(consumer_id) {
-            info!(consumer_id = %consumer_id, "Restarting consumer");
+        let consumer = {
+            let guard = self.consumers.read().await;
+            guard.get(consumer_id).cloned()
+        };
+        match consumer {
+            Some(consumer) => {
+                info!(consumer_id = %consumer_id, "Restarting consumer");
 
-            // Stop the consumer first
-            consumer.stop().await;
+                // Stop the consumer first — outside the read lock.
+                consumer.stop().await;
 
-            // The consumer loop will detect the stop and exit
-            // A new poll loop will need to be started externally
-            // This is a signal that the consumer needs attention
-            true
-        } else {
-            warn!(consumer_id = %consumer_id, "Consumer not found for restart");
-            false
+                // The consumer loop will detect the stop and exit
+                // A new poll loop will need to be started externally
+                // This is a signal that the consumer needs attention
+                true
+            }
+            None => {
+                warn!(consumer_id = %consumer_id, "Consumer not found for restart");
+                false
+            }
         }
     }
 
@@ -1880,10 +2105,20 @@ impl QueueManager {
 
     /// Get queue metrics from all consumers
     pub async fn get_queue_metrics(&self) -> Vec<QueueMetrics> {
-        let consumers = self.consumers.read().await;
+        // Snapshot before awaiting `get_metrics()` per consumer — this can
+        // be an SQS API call, and holding the read lock across it would
+        // stall reloads / other readers for however long the whole sweep
+        // takes.
+        let consumers: Vec<(String, Arc<dyn QueueConsumer + Send + Sync>)> = {
+            let guard = self.consumers.read().await;
+            guard
+                .iter()
+                .map(|(id, c)| (id.clone(), c.clone()))
+                .collect()
+        };
         let mut metrics = Vec::with_capacity(consumers.len());
 
-        for (id, consumer) in consumers.iter() {
+        for (id, consumer) in consumers {
             match consumer.get_metrics().await {
                 Ok(Some(m)) => metrics.push(m),
                 Ok(None) => {
@@ -1903,7 +2138,7 @@ impl QueueManager {
         let consumers = self.consumers.read().await;
         let mut metrics = Vec::with_capacity(consumers.len());
 
-        for (_id, consumer) in consumers.iter() {
+        for consumer in consumers.values() {
             if let Some(m) = consumer.get_counters() {
                 metrics.push(m);
             }

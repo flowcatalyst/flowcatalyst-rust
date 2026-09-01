@@ -7,7 +7,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 pub use fc_standby::{
@@ -289,20 +290,22 @@ impl StandbyProcessor {
 
 /// Spawn a task that monitors leadership status and logs transitions.
 ///
-/// **Owns:** the `Arc<StandbyProcessor>` and a `broadcast::Receiver`
-/// derived from the supplied shutdown sender.
-/// **Exits:** when `shutdown_rx.recv()` resolves (the shutdown channel
-/// is fired by the lifecycle manager on Ctrl-C / SIGTERM).
+/// **Owns:** the `Arc<StandbyProcessor>` and a [`CancellationToken`]
+/// (typically a child of the lifecycle manager's shutdown token).
+/// **Exits:** when `shutdown.cancelled()` resolves. `CancellationToken` is
+/// level-triggered, so a token that was already cancelled *before* this
+/// task was spawned still causes an immediate exit — unlike a broadcast
+/// channel, where a late subscriber would never observe a signal sent
+/// before it subscribed.
 /// **Joined by:** the caller via the returned `JoinHandle`. Lifecycle
 /// manager awaits all such handles during graceful shutdown.
 pub fn spawn_leadership_monitor(
     processor: Arc<StandbyProcessor>,
-    shutdown_tx: broadcast::Sender<()>,
+    shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
-    let mut shutdown_rx = shutdown_tx.subscribe();
-
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(5));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -318,7 +321,7 @@ pub fn spawn_leadership_monitor(
                         );
                     }
                 }
-                _ = shutdown_rx.recv() => {
+                _ = shutdown.cancelled() => {
                     info!("Leadership monitor shutting down");
                     break;
                 }
@@ -355,5 +358,25 @@ mod tests {
         assert!(!processor.is_standby_enabled());
         assert!(processor.is_leader());
         assert!(processor.should_process());
+    }
+
+    /// A `CancellationToken` is level-triggered: a token cancelled *before*
+    /// the task subscribes to it must still cause an immediate exit. This
+    /// is exactly the case a `broadcast` channel could not handle (a
+    /// receiver that subscribes after `send()` never observes the signal).
+    #[tokio::test]
+    async fn spawn_leadership_monitor_exits_immediately_on_already_cancelled_token() {
+        let config = StandbyRouterConfig::default(); // enabled = false
+        let processor = Arc::new(StandbyProcessor::new(config).await.unwrap());
+
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let handle = spawn_leadership_monitor(processor, token);
+
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("leadership monitor should exit within 1s of an already-cancelled token")
+            .expect("task should not panic");
     }
 }

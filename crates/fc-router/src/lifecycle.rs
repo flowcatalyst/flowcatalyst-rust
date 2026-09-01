@@ -22,12 +22,17 @@
 //!
 //! All background tasks in this file follow the same pattern:
 //! - **Own:** an interval ticker plus Arc clones of the manager / health
-//!   / warning service drawn from the enclosing closure.
-//! - **Exit:** on `shutdown_rx.recv()` from the broadcast channel
-//!   stored in `self.shutdown_tx`. `LifecycleManager::shutdown()` fires
-//!   that channel and every task exits its `select!` loop.
+//!   / warning service drawn from the enclosing closure, plus a
+//!   [`CancellationToken`] child of `self.shutdown`.
+//! - **Exit:** on `token.cancelled()` resolving. `CancellationToken` is
+//!   **level-triggered**: `LifecycleManager::shutdown()` calls
+//!   `self.shutdown.cancel()`, which immediately marks every child token
+//!   (existing or future) cancelled. Unlike a `broadcast` channel, a task
+//!   spawned (or a token cloned) *after* `cancel()` still observes the
+//!   cancellation instantly — `cancelled()` resolves right away instead of
+//!   requiring the caller to have subscribed before the signal fired.
 //! - **Joined by:** nobody — these are detached, fire-and-forget tasks.
-//!   The broadcast channel is the only lifecycle signal.
+//!   The cancellation token is the only lifecycle signal.
 //!
 //! Each `tokio::select!` below selects between two arms: the ticker arm
 //! (do the work) and the shutdown arm (log and break). Per-arm intent is
@@ -36,7 +41,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "oidc-flow")]
@@ -90,9 +95,9 @@ impl Default for LifecycleConfig {
 
 /// Manages lifecycle tasks for the message router
 pub struct LifecycleManager {
-    shutdown_tx: broadcast::Sender<()>,
+    shutdown: CancellationToken,
     /// Handles for every background task spawned by this manager. `shutdown()`
-    /// signals the broadcast channel and then bounded-joins these so callers
+    /// cancels the token and then bounded-joins these so callers
     /// can observe that background work has actually stopped (previously the
     /// handles were dropped and shutdown only *signalled*, never waited). The
     /// join is time-boxed: a task stuck mid-`.await` is left to be reaped at
@@ -121,9 +126,8 @@ impl LifecycleManager {
 
     /// Create a new lifecycle manager without starting tasks
     pub fn new(warning_service: Arc<WarningService>, health_service: Arc<HealthService>) -> Self {
-        let (shutdown_tx, _) = broadcast::channel(1);
         Self {
-            shutdown_tx,
+            shutdown: CancellationToken::new(),
             tasks: Vec::new(),
             warning_service,
             health_service,
@@ -144,18 +148,19 @@ impl LifecycleManager {
         health_service: Arc<HealthService>,
         config: LifecycleConfig,
     ) -> Self {
-        let (shutdown_tx, _) = broadcast::channel(1);
+        let shutdown = CancellationToken::new();
         let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
         // Memory health monitor
         {
             let manager = manager.clone();
             let warning_service = warning_service.clone();
-            let mut shutdown_rx = shutdown_tx.subscribe();
+            let token = shutdown.child_token();
             let interval = config.memory_health_interval;
 
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 loop {
                     tokio::select! {
@@ -170,7 +175,7 @@ impl LifecycleManager {
                                 );
                             }
                         }
-                        _ = shutdown_rx.recv() => {
+                        _ = token.cancelled() => {
                             info!("Memory health monitor shutting down");
                             break;
                         }
@@ -184,12 +189,13 @@ impl LifecycleManager {
             let manager = manager.clone();
             let health_service = health_service.clone();
             let warning_service = warning_service.clone();
-            let mut shutdown_rx = shutdown_tx.subscribe();
+            let token = shutdown.child_token();
             let interval = config.consumer_health_interval;
             let restart_delay = config.consumer_restart_delay;
 
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 let mut restart_attempts: std::collections::HashMap<String, u32> =
                     std::collections::HashMap::new();
 
@@ -221,8 +227,16 @@ impl LifecycleManager {
                                     "LifecycleManager".to_string(),
                                 );
 
-                                // Wait before restart
-                                tokio::time::sleep(restart_delay).await;
+                                // Wait before restart — cancel-aware so several stalled
+                                // consumers back-to-back can't stack up N × restart_delay
+                                // of unresponsiveness to shutdown.
+                                tokio::select! {
+                                    _ = tokio::time::sleep(restart_delay) => {}
+                                    _ = token.cancelled() => {
+                                        info!("Consumer health monitor shutting down");
+                                        return;
+                                    }
+                                }
 
                                 // Attempt restart
                                 if manager.restart_consumer(&consumer_id).await {
@@ -240,7 +254,7 @@ impl LifecycleManager {
                                 restart_attempts.remove(&id);
                             }
                         }
-                        _ = shutdown_rx.recv() => {
+                        _ = token.cancelled() => {
                             info!("Consumer health monitor shutting down");
                             break;
                         }
@@ -252,11 +266,12 @@ impl LifecycleManager {
         // Warning service cleanup
         {
             let warning_service = warning_service.clone();
-            let mut shutdown_rx = shutdown_tx.subscribe();
+            let token = shutdown.child_token();
             let interval = config.warning_cleanup_interval;
 
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 loop {
                     tokio::select! {
@@ -264,7 +279,7 @@ impl LifecycleManager {
                             debug!("Running warning service cleanup");
                             warning_service.cleanup();
                         }
-                        _ = shutdown_rx.recv() => {
+                        _ = token.cancelled() => {
                             info!("Warning cleanup task shutting down");
                             break;
                         }
@@ -277,11 +292,12 @@ impl LifecycleManager {
         {
             let manager = manager.clone();
             let health_service = health_service.clone();
-            let mut shutdown_rx = shutdown_tx.subscribe();
+            let token = shutdown.child_token();
             let interval = config.health_report_interval;
 
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 loop {
                     tokio::select! {
@@ -299,7 +315,7 @@ impl LifecycleManager {
                                 debug!(status = ?report.status, "Health report: OK");
                             }
                         }
-                        _ = shutdown_rx.recv() => {
+                        _ = token.cancelled() => {
                             info!("Health report logger shutting down");
                             break;
                         }
@@ -312,13 +328,14 @@ impl LifecycleManager {
         {
             let manager = manager.clone();
             let health_service = health_service.clone();
-            let mut shutdown_rx = shutdown_tx.subscribe();
+            let token = shutdown.child_token();
             let interval = config.reaper_interval;
             let in_pipeline_max_age = config.in_pipeline_max_age;
             let pending_delete_max_age = config.pending_delete_max_age;
 
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 loop {
                     tokio::select! {
@@ -347,7 +364,7 @@ impl LifecycleManager {
                                 );
                             }
                         }
-                        _ = shutdown_rx.recv() => {
+                        _ = token.cancelled() => {
                             info!("Stale entry reaper shutting down");
                             break;
                         }
@@ -359,7 +376,7 @@ impl LifecycleManager {
         info!("Lifecycle manager started with all background tasks");
 
         Self {
-            shutdown_tx,
+            shutdown,
             tasks,
             warning_service,
             health_service,
@@ -390,7 +407,7 @@ impl LifecycleManager {
             if sync_service.is_enabled() {
                 info!("Starting configuration sync background task");
                 let handle =
-                    spawn_config_sync_task(sync_service.clone(), lifecycle.shutdown_tx.clone());
+                    spawn_config_sync_task(sync_service.clone(), lifecycle.shutdown.child_token());
                 lifecycle.tasks.push(handle);
             }
         }
@@ -399,8 +416,10 @@ impl LifecycleManager {
         if let Some(ref standby_proc) = standby {
             if standby_proc.is_standby_enabled() {
                 info!("Starting leadership monitor background task");
-                let handle =
-                    spawn_leadership_monitor(standby_proc.clone(), lifecycle.shutdown_tx.clone());
+                let handle = spawn_leadership_monitor(
+                    standby_proc.clone(),
+                    lifecycle.shutdown.child_token(),
+                );
                 lifecycle.tasks.push(handle);
             }
         }
@@ -449,11 +468,13 @@ impl LifecycleManager {
 
     /// Signal shutdown to all lifecycle tasks, then bounded-join them.
     ///
-    /// Sends the broadcast (every task breaks its `select!` loop), then waits
-    /// up to [`Self::SHUTDOWN_JOIN_TIMEOUT`] for the spawned tasks to actually
-    /// finish. A task stuck mid-`.await` past the timeout is left to be reaped
-    /// at process exit rather than blocking shutdown — so this is strictly more
-    /// graceful than the old fire-and-forget `send()`, never less.
+    /// Cancels the token (every task's `token.cancelled()` resolves immediately,
+    /// including tokens cloned after this call — level-triggered, unlike a
+    /// broadcast send), then waits up to [`Self::SHUTDOWN_JOIN_TIMEOUT`] for the
+    /// spawned tasks to actually finish. A task stuck mid-`.await` past the
+    /// timeout is left to be reaped at process exit rather than blocking
+    /// shutdown — so this is strictly more graceful than the old fire-and-forget
+    /// `send()`, never less.
     pub async fn shutdown(&mut self) {
         info!("Lifecycle manager shutting down...");
 
@@ -463,7 +484,7 @@ impl LifecycleManager {
         }
 
         // Signal all tasks to stop
-        let _ = self.shutdown_tx.send(());
+        self.shutdown.cancel();
 
         // Bounded-join: wait for the background loops to exit, but don't hang
         // shutdown on a task that's mid-flight past the deadline.
@@ -484,9 +505,10 @@ impl LifecycleManager {
         }
     }
 
-    /// Get the shutdown sender for spawning additional tasks
-    pub fn shutdown_sender(&self) -> broadcast::Sender<()> {
-        self.shutdown_tx.clone()
+    /// Get a child cancellation token for spawning additional tasks that
+    /// should stop when this lifecycle manager shuts down.
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.child_token()
     }
 
     /// Set the circuit breaker registry for periodic idle eviction.
@@ -498,12 +520,13 @@ impl LifecycleManager {
     ) {
         self.circuit_breaker_registry = Some(registry.clone());
 
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let token = self.shutdown.child_token();
         // Run at the same cadence as warning cleanup (5 min)
         let interval = Duration::from_secs(300);
 
         let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
                 tokio::select! {
@@ -513,7 +536,7 @@ impl LifecycleManager {
                             info!(evicted = evicted, "Evicted idle circuit breakers");
                         }
                     }
-                    _ = shutdown_rx.recv() => {
+                    _ = token.cancelled() => {
                         info!("Circuit breaker eviction task shutting down");
                         break;
                     }
@@ -534,12 +557,13 @@ impl LifecycleManager {
         self.session_store = Some(session_store.clone());
         self.pending_oidc_states = Some(pending_states.clone());
 
-        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let token = self.shutdown.child_token();
         // Clean up every 60 seconds
         let interval = Duration::from_secs(60);
 
         let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
                 tokio::select! {
@@ -547,7 +571,7 @@ impl LifecycleManager {
                         session_store.cleanup();
                         pending_states.cleanup();
                     }
-                    _ = shutdown_rx.recv() => {
+                    _ = token.cancelled() => {
                         info!("OIDC store cleanup task shutting down");
                         break;
                     }
@@ -561,10 +585,56 @@ impl LifecycleManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::circuit_breaker_registry::{CircuitBreakerConfig, CircuitBreakerRegistry};
+    use crate::health::{HealthService, HealthServiceConfig};
+    use crate::manager::QueueManager;
+    use crate::mediator::HttpMediatorConfig;
+    use crate::warning::WarningService;
 
     #[test]
     fn test_default_config() {
         let config = LifecycleConfig::default();
         assert_eq!(config.memory_health_interval, Duration::from_secs(60));
+    }
+
+    /// `CancellationToken` is level-triggered: shutdown must complete
+    /// promptly and leave `tasks` empty even though every ticker in this
+    /// config is set far longer than the test's timeout (so no tick ever
+    /// fires) — the only way tasks stop is via `token.cancelled()`.
+    #[tokio::test]
+    async fn shutdown_cancels_all_tasks_promptly() {
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
+        let warning_service = Arc::new(WarningService::noop());
+        let health_service = Arc::new(HealthService::new(
+            HealthServiceConfig::default(),
+            warning_service.clone(),
+        ));
+
+        let long = Duration::from_secs(60);
+        let config = LifecycleConfig {
+            memory_health_interval: long,
+            consumer_health_interval: long,
+            warning_cleanup_interval: long,
+            health_report_interval: long,
+            consumer_restart_delay: long,
+            reaper_interval: long,
+            in_pipeline_max_age: long,
+            pending_delete_max_age: long,
+            circuit_breaker_max_idle: long,
+        };
+
+        let mut lifecycle =
+            LifecycleManager::start(manager, warning_service, health_service, config);
+
+        lifecycle.set_circuit_breaker_registry(
+            Arc::new(CircuitBreakerRegistry::new(CircuitBreakerConfig::default())),
+            long,
+        );
+
+        tokio::time::timeout(Duration::from_secs(2), lifecycle.shutdown())
+            .await
+            .expect("shutdown should complete promptly via CancellationToken");
+
+        assert!(lifecycle.tasks.is_empty());
     }
 }
