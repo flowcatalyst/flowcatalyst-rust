@@ -4,6 +4,11 @@ use sqlx::{PgPool, Row};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::{debug, info, warn};
 
+/// Bound on the stored failure text (R-17). A pathological payload can
+/// produce an arbitrarily long parse error, and it would otherwise be stored
+/// verbatim once per quarantined row.
+const MAX_QUARANTINE_ERROR_LEN: usize = 1000;
+
 use crate::{EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, Result};
 use fc_common::{Message, QueuedMessage};
 
@@ -57,7 +62,75 @@ impl PostgresQueue {
         .execute(&self.pool)
         .await?;
 
+        // Quarantine for rows whose payload cannot be parsed (R-17). Without
+        // it a single malformed row stops its queue forever: the claiming
+        // UPDATE...RETURNING above commits before the payload is parsed, so a
+        // decode failure leaves the row claimed, it becomes visible again
+        // once the visibility window lapses, is re-claimed, and fails
+        // identically on every subsequent poll.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS queue_messages_failed (
+                id               TEXT NOT NULL,
+                queue_name       TEXT NOT NULL,
+                message_group_id TEXT,
+                payload          TEXT NOT NULL,
+                error_message    TEXT NOT NULL,
+                receive_count    INTEGER,
+                created_at       BIGINT,
+                failed_at        BIGINT NOT NULL,
+                PRIMARY KEY (queue_name, id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         info!(queue = %self.queue_name, "Postgres queue schema initialized");
+        Ok(())
+    }
+
+    /// Move one unparseable row out of `queue_messages` and into
+    /// `queue_messages_failed` in a single statement, so the row can never be
+    /// both places or neither (R-17).
+    ///
+    /// A repeat quarantine keeps the LATEST failure (A-07): a row that fails,
+    /// is requeued, and fails again is almost always being worked on —
+    /// someone changed the payload, the schema, or the consumer — so the most
+    /// recent failure is the one that describes what is wrong now.
+    async fn quarantine(&self, id: &str, reason: &str) -> Result<()> {
+        let mut reason = reason.to_string();
+        if reason.len() > MAX_QUARANTINE_ERROR_LEN {
+            reason.truncate(MAX_QUARANTINE_ERROR_LEN);
+        }
+        let failed_at = Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            WITH moved AS (
+                DELETE FROM queue_messages
+                 WHERE queue_name = $1 AND id = $2
+                RETURNING id, queue_name, message_group_id, payload, receive_count, created_at
+            )
+            INSERT INTO queue_messages_failed
+                (id, queue_name, message_group_id, payload, error_message, receive_count, created_at, failed_at)
+            SELECT id, queue_name, message_group_id, payload, $3, receive_count, created_at, $4
+              FROM moved
+            ON CONFLICT (queue_name, id) DO UPDATE SET
+                payload       = EXCLUDED.payload,
+                error_message = EXCLUDED.error_message,
+                receive_count = EXCLUDED.receive_count,
+                created_at    = EXCLUDED.created_at,
+                failed_at     = EXCLUDED.failed_at
+            "#,
+        )
+        .bind(&self.queue_name)
+        .bind(id)
+        .bind(&reason)
+        .bind(failed_at)
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -125,12 +198,29 @@ impl QueueConsumer for PostgresQueue {
         .await?;
 
         let mut messages = Vec::with_capacity(rows.len());
+        // Poison rows (payload failed to decode) are quarantined after the
+        // main loop below, once we're done matching on `rows` by value.
+        let mut poisoned: Vec<(String, String)> = Vec::new();
         for row in rows {
             let id: String = row.get("id");
             let _message_group_id: Option<String> = row.get("message_group_id");
             let payload: String = row.get("payload");
 
-            let message: Message = serde_json::from_str(&payload)?;
+            let message: Message = match serde_json::from_str(&payload) {
+                Ok(message) => message,
+                Err(err) => {
+                    // The claiming UPDATE above has already committed, so
+                    // propagating this error would abort the whole batch and
+                    // leave the row claimed — it becomes visible again after
+                    // the timeout, is re-claimed, and fails identically
+                    // forever, taking every healthy row in the same poll
+                    // down with it every time (R-17). Quarantine it instead
+                    // and keep going so the rest of this batch still
+                    // delivers.
+                    poisoned.push((id, err.to_string()));
+                    continue;
+                }
+            };
 
             messages.push(QueuedMessage {
                 message,
@@ -145,6 +235,32 @@ impl QueueConsumer for PostgresQueue {
                 broker_message_id: Some(id),
                 queue_identifier: self.queue_name.clone(),
             });
+        }
+
+        for (id, reason) in poisoned {
+            match self.quarantine(&id, &reason).await {
+                Ok(()) => {
+                    warn!(
+                        queue = %self.queue_name,
+                        message_id = %id,
+                        reason = %reason,
+                        "Malformed message moved to queue_messages_failed"
+                    );
+                }
+                Err(err) => {
+                    // Couldn't move it — log and leave it claimed. It comes
+                    // back on the next poll once its visibility lapses and
+                    // we try again; the rest of this batch is already
+                    // returned, so one unmovable row no longer costs the
+                    // whole queue.
+                    warn!(
+                        queue = %self.queue_name,
+                        message_id = %id,
+                        error = %err,
+                        "Could not quarantine malformed message"
+                    );
+                }
+            }
         }
 
         if !messages.is_empty() {

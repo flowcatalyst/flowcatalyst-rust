@@ -9,6 +9,11 @@ use tracing::{debug, info, warn};
 use crate::{EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, Result};
 use fc_common::{Message, QueuedMessage};
 
+/// Bound on the stored failure text (R-17). A pathological payload can
+/// produce an arbitrarily long parse error, and it would otherwise be stored
+/// verbatim once per quarantined row.
+const MAX_QUARANTINE_ERROR_LEN: usize = 1000;
+
 /// SQLite-based queue that mimics SQS FIFO semantics for local development
 pub struct SqliteQueue {
     pool: Pool<Sqlite>,
@@ -71,12 +76,106 @@ impl SqliteQueue {
         .execute(&self.pool)
         .await?;
 
+        // Quarantine for rows whose payload cannot be parsed (R-17). Without
+        // it a single malformed row stops its queue forever: the claiming
+        // UPDATE above commits before the payload is parsed, so a decode
+        // failure leaves the row claimed, it becomes visible again once the
+        // visibility window lapses, is re-claimed, and fails identically on
+        // every subsequent poll. Table name matches the Postgres backend's
+        // quarantine table on purpose (A-07 / R-17): one place for an
+        // operator to look regardless of which backend is deployed.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS queue_messages_failed (
+                id TEXT NOT NULL,
+                queue_name TEXT NOT NULL,
+                message_group_id TEXT,
+                payload TEXT NOT NULL,
+                error_message TEXT NOT NULL,
+                receive_count INTEGER,
+                created_at INTEGER,
+                failed_at INTEGER NOT NULL,
+                UNIQUE(queue_name, id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         info!(queue = %self.queue_name, "SQLite queue schema initialized");
         Ok(())
     }
 
     fn generate_receipt_handle(&self) -> String {
         uuid::Uuid::new_v4().to_string()
+    }
+
+    /// Move one unparseable row out of `queue_messages` and into
+    /// `queue_messages_failed`, so the row can never be both places or
+    /// neither (R-17).
+    ///
+    /// A repeat quarantine keeps the LATEST failure (A-07): a row that
+    /// fails, is requeued, and fails again is almost always being worked on
+    /// — someone changed the payload, the schema, or the consumer — so the
+    /// most recent failure is the one that describes what is wrong now.
+    ///
+    /// SQLite (unlike the Postgres backend) has no `DELETE ... RETURNING`
+    /// combined with an upsert in one statement across two tables, so this
+    /// runs as an explicit transaction: DELETE the poisoned row, then
+    /// upsert it into `queue_messages_failed` using the payload/group/
+    /// receive_count/created_at already read out of the row by the caller.
+    /// The transaction keeps the move atomic even though it's two
+    /// statements.
+    #[allow(clippy::too_many_arguments)]
+    async fn quarantine(
+        &self,
+        id: &str,
+        message_group_id: Option<&str>,
+        payload: &str,
+        reason: &str,
+        receive_count: i64,
+        created_at: i64,
+    ) -> Result<()> {
+        let mut reason = reason.to_string();
+        if reason.len() > MAX_QUARANTINE_ERROR_LEN {
+            reason.truncate(MAX_QUARANTINE_ERROR_LEN);
+        }
+        let failed_at = Utc::now().timestamp();
+
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM queue_messages WHERE queue_name = ? AND id = ?")
+            .bind(&self.queue_name)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO queue_messages_failed
+                (id, queue_name, message_group_id, payload, error_message, receive_count, created_at, failed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (queue_name, id) DO UPDATE SET
+                payload       = excluded.payload,
+                error_message = excluded.error_message,
+                receive_count = excluded.receive_count,
+                created_at    = excluded.created_at,
+                failed_at     = excluded.failed_at
+            "#,
+        )
+        .bind(id)
+        .bind(&self.queue_name)
+        .bind(message_group_id)
+        .bind(payload)
+        .bind(&reason)
+        .bind(receive_count)
+        .bind(created_at)
+        .bind(failed_at)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
     }
 }
 
@@ -99,12 +198,12 @@ impl QueueConsumer for SqliteQueue {
         let rows = sqlx::query(
             r#"
             WITH eligible AS (
-                SELECT id, message_group_id, payload,
+                SELECT id, message_group_id, payload, created_at,
                        ROW_NUMBER() OVER (PARTITION BY COALESCE(message_group_id, id) ORDER BY created_at) as rn
                 FROM queue_messages
                 WHERE queue_name = ? AND visible_at <= ?
             )
-            SELECT id, message_group_id, payload
+            SELECT id, message_group_id, payload, created_at
             FROM eligible
             WHERE rn = 1
             LIMIT ?
@@ -120,8 +219,9 @@ impl QueueConsumer for SqliteQueue {
 
         for row in rows {
             let id: String = row.get("id");
-            let _message_group_id: Option<String> = row.get("message_group_id");
+            let message_group_id: Option<String> = row.get("message_group_id");
             let payload: String = row.get("payload");
+            let created_at: i64 = row.get("created_at");
 
             // Generate receipt handle and update visibility
             let receipt_handle = self.generate_receipt_handle();
@@ -131,6 +231,7 @@ impl QueueConsumer for SqliteQueue {
                 UPDATE queue_messages
                 SET receipt_handle = ?, visible_at = ?, receive_count = receive_count + 1
                 WHERE id = ? AND queue_name = ? AND visible_at <= ?
+                RETURNING receive_count
                 "#,
             )
             .bind(&receipt_handle)
@@ -138,16 +239,63 @@ impl QueueConsumer for SqliteQueue {
             .bind(&id)
             .bind(&self.queue_name)
             .bind(now)
-            .execute(&self.pool)
+            .fetch_optional(&self.pool)
             .await?;
 
-            if updated.rows_affected() == 0 {
+            let Some(updated_row) = updated else {
                 // Another consumer grabbed this message
                 continue;
-            }
+            };
+            let receive_count: i64 = updated_row.get("receive_count");
 
-            // Parse the message
-            let message: Message = serde_json::from_str(&payload)?;
+            // Parse the message. The claiming UPDATE above has already
+            // committed, so propagating a decode error here would abort the
+            // whole batch (via `?`) and leave the row claimed — it becomes
+            // visible again once the timeout lapses, is re-claimed, and
+            // fails identically forever, taking every healthy row in the
+            // same poll down with it every time (R-17). Quarantine it
+            // instead and keep going so the rest of this batch still
+            // delivers.
+            let message: Message = match serde_json::from_str(&payload) {
+                Ok(message) => message,
+                Err(err) => {
+                    let reason = err.to_string();
+                    match self
+                        .quarantine(
+                            &id,
+                            message_group_id.as_deref(),
+                            &payload,
+                            &reason,
+                            receive_count,
+                            created_at,
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            warn!(
+                                queue = %self.queue_name,
+                                message_id = %id,
+                                reason = %reason,
+                                "Malformed message moved to queue_messages_failed"
+                            );
+                        }
+                        Err(quarantine_err) => {
+                            // Couldn't move it — log and leave it claimed. It
+                            // comes back on the next poll once its
+                            // visibility lapses and we try again; the rest
+                            // of this batch is already returned, so one
+                            // unmovable row no longer costs the whole queue.
+                            warn!(
+                                queue = %self.queue_name,
+                                message_id = %id,
+                                error = %quarantine_err,
+                                "Could not quarantine malformed message"
+                            );
+                        }
+                    }
+                    continue;
+                }
+            };
 
             messages.push(QueuedMessage {
                 message,
@@ -517,5 +665,134 @@ mod tests {
         // Should only have one message
         let messages = queue.poll(10).await.unwrap();
         assert_eq!(messages.len(), 1);
+    }
+
+    /// Insert a row directly with a payload that will not parse as a
+    /// `Message`, bypassing `publish()` (which can only ever produce valid
+    /// JSON). This is how a poison row actually gets into the table in
+    /// practice: a producer writing a stale/foreign schema, not this queue.
+    async fn insert_poison_row(queue: &SqliteQueue, id: &str, payload: &str) {
+        let now = Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO queue_messages (id, queue_name, message_group_id, visible_at, payload, created_at) \
+             VALUES (?, ?, NULL, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(&queue.queue_name)
+        .bind(now)
+        .bind(payload)
+        .bind(now)
+        .execute(&queue.pool)
+        .await
+        .unwrap();
+    }
+
+    struct FailedRow {
+        payload: String,
+        error_message: String,
+    }
+
+    async fn get_failed_rows(queue: &SqliteQueue, id: &str) -> Vec<FailedRow> {
+        sqlx::query("SELECT payload, error_message FROM queue_messages_failed WHERE queue_name = ? AND id = ?")
+            .bind(&queue.queue_name)
+            .bind(id)
+            .fetch_all(&queue.pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| FailedRow {
+                payload: row.get("payload"),
+                error_message: row.get("error_message"),
+            })
+            .collect()
+    }
+
+    // R-17 / A-07: a malformed payload must not abort the whole poll batch,
+    // and must not keep re-claiming forever — it is quarantined to
+    // `queue_messages_failed` and the poll continues.
+    #[tokio::test]
+    async fn test_poison_row_quarantined_healthy_row_still_delivers() {
+        let queue = create_test_queue().await;
+
+        // A healthy message alongside the poison row in the same poll batch.
+        let healthy = Message {
+            id: "healthy-1".to_string(),
+            pool_code: "TEST".to_string(),
+            auth_token: None,
+            signing_secret: None,
+            mediation_type: MediationType::HTTP,
+            mediation_target: "http://localhost:8080".to_string(),
+            message_group_id: None,
+            high_priority: false,
+            dispatch_mode: fc_common::DispatchMode::default(),
+        };
+        queue.publish(healthy).await.unwrap();
+        insert_poison_row(&queue, "poison-1", "not-valid-json-at-all").await;
+
+        // The healthy row still delivers; the poison row is silently
+        // dropped from this batch (it never fails the poll via `?`).
+        let messages = queue.poll(10).await.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].message.id, "healthy-1");
+
+        // The poison row landed in queue_messages_failed with its error.
+        let failed = get_failed_rows(&queue, "poison-1").await;
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].payload, "not-valid-json-at-all");
+        assert!(
+            !failed[0].error_message.is_empty(),
+            "expected a non-empty decode error to be recorded"
+        );
+
+        // It is gone from queue_messages, so it can never re-claim forever.
+        let remaining: i64 =
+            sqlx::query("SELECT COUNT(*) as count FROM queue_messages WHERE queue_name = ? AND id = ?")
+                .bind(&queue.queue_name)
+                .bind("poison-1")
+                .fetch_one(&queue.pool)
+                .await
+                .unwrap()
+                .get("count");
+        assert_eq!(remaining, 0);
+
+        // A second poll never sees the poison row again (it's not just
+        // invisible until its visibility timeout lapses — it's gone).
+        let messages = queue.poll(10).await.unwrap();
+        assert!(messages.is_empty());
+    }
+
+    // A-07: a second failure for the same id overwrites the first — the
+    // latest failure wins, not the first.
+    #[tokio::test]
+    async fn test_quarantine_latest_failure_wins() {
+        let queue = create_test_queue().await;
+
+        insert_poison_row(&queue, "poison-2", "totally not json").await;
+        let messages = queue.poll(10).await.unwrap();
+        assert!(messages.is_empty());
+
+        let failed = get_failed_rows(&queue, "poison-2").await;
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].payload, "totally not json");
+        let first_error = failed[0].error_message.clone();
+
+        // Requeue the same id with a payload that fails for a *different*
+        // reason (valid JSON, but missing required Message fields) so the
+        // two failure reasons are distinguishable.
+        insert_poison_row(&queue, "poison-2", "{}").await;
+        let messages = queue.poll(10).await.unwrap();
+        assert!(messages.is_empty());
+
+        let failed = get_failed_rows(&queue, "poison-2").await;
+        assert_eq!(
+            failed.len(),
+            1,
+            "a repeat failure must overwrite, not accumulate, rows for the same id"
+        );
+        assert_eq!(failed[0].payload, "{}");
+        assert_ne!(
+            failed[0].error_message, first_error,
+            "the latest failure's reason must replace the earlier one"
+        );
     }
 }

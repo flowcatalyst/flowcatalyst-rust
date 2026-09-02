@@ -212,6 +212,18 @@ impl NatsQueueConsumer {
             .ok()
             .map(|info| format!("{}:{}", stream_name, info.stream_sequence))
     }
+
+    /// Dedup id for a JetStream delivery (R-19).
+    ///
+    /// This MUST be the stream sequence only. The stream sequence is stable
+    /// across redeliveries of the same message; the consumer sequence
+    /// increments on every delivery attempt (including redeliveries), so
+    /// folding it in gave every redelivery a fresh id and the dedup layer
+    /// could never recognise a redelivery as the message it already saw —
+    /// turning at-least-once delivery into at-most-once.
+    fn broker_message_id_from_sequence(stream_sequence: u64, _consumer_sequence: u64) -> String {
+        stream_sequence.to_string()
+    }
 }
 
 #[async_trait]
@@ -263,8 +275,13 @@ impl QueueConsumer for NatsQueueConsumer {
                     // Parse the message body
                     match serde_json::from_slice::<Message>(&js_msg.payload) {
                         Ok(message) => {
+                            // Dedup id must be the stream sequence ONLY (R-19) — see
+                            // broker_message_id_from_sequence.
                             let broker_message_id = js_msg.info().ok().map(|info| {
-                                format!("{}:{}", info.stream_sequence, info.consumer_sequence)
+                                Self::broker_message_id_from_sequence(
+                                    info.stream_sequence,
+                                    info.consumer_sequence,
+                                )
                             });
 
                             // Store the JetStream message for later ack/nack
@@ -535,5 +552,25 @@ mod tests {
             _ => stream::StorageType::File,
         };
         assert!(matches!(memory_upper, stream::StorageType::Memory));
+    }
+
+    /// R-19: broker_message_id must be the stream sequence only, so that two
+    /// deliveries of the same message — which necessarily share a stream
+    /// sequence but carry different (incrementing) consumer sequences — are
+    /// recognised by the dedup layer as the same message.
+    #[test]
+    fn test_broker_message_id_ignores_consumer_sequence() {
+        let first_delivery = NatsQueueConsumer::broker_message_id_from_sequence(42, 1);
+        let redelivery = NatsQueueConsumer::broker_message_id_from_sequence(42, 7);
+
+        assert_eq!(first_delivery, redelivery);
+        assert_eq!(first_delivery, "42");
+    }
+
+    #[test]
+    fn test_broker_message_id_distinguishes_different_messages() {
+        let a = NatsQueueConsumer::broker_message_id_from_sequence(42, 1);
+        let b = NatsQueueConsumer::broker_message_id_from_sequence(43, 1);
+        assert_ne!(a, b);
     }
 }
