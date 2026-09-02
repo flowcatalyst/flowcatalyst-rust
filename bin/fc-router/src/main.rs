@@ -232,7 +232,25 @@ async fn main() -> Result<()> {
     }
 
     // 9. Start lifecycle manager with all features
-    let lifecycle_config = LifecycleConfig::default();
+    let mut lifecycle_config = LifecycleConfig::default();
+    // R-59: FC_ROUTER_SYNTH_POOL_IDLE_SECS — idle TTL for synthesised
+    // per-client fallback pools ({identifier}-DEFAULT-POOL). Mirrors Go's
+    // FC_ROUTER_SYNTH_POOL_IDLE_SECS / ServerConfig.SynthPoolIdleAge: absent,
+    // unparseable, or explicitly "0" all keep LifecycleConfig::default()'s
+    // 1h TTL (Go's envInt can't tell "unset" from "explicit 0" either, and
+    // both fall through to its own hour default). A negative value disables
+    // the sweep — Duration has no negative representation, so that maps to
+    // Duration::ZERO, which QueueManager::evict_idle_synth_pools treats as
+    // a no-op, the same as Go's `ttl <= 0`.
+    if let Ok(raw) = std::env::var("FC_ROUTER_SYNTH_POOL_IDLE_SECS") {
+        if let Ok(secs) = raw.parse::<i64>() {
+            lifecycle_config.synth_pool_idle_ttl = match secs {
+                s if s < 0 => Duration::ZERO,
+                0 => lifecycle_config.synth_pool_idle_ttl,
+                s => Duration::from_secs(s as u64),
+            };
+        }
+    }
     let cb_max_idle = lifecycle_config.circuit_breaker_max_idle;
     let mut lifecycle = LifecycleManager::start_with_features(
         queue_manager.clone(),

@@ -225,6 +225,37 @@ impl Drop for QueueMessageCallback {
     }
 }
 
+/// R-59: idle tracker for one synthesised per-client fallback pool. Only
+/// `last_routed` is mutated after creation — bumped on every route to the
+/// pool, including the pool-already-exists fast path (`touch_synth_pool`) —
+/// and read by the periodic `evict_idle_synth_pools` sweep. Mirrors the
+/// `parking_lot::RwLock<Instant>` `last_activity` pattern
+/// `CircuitBreakerRegistry` already uses for its own idle eviction
+/// (`evict_idle`), rather than Go's atomic-nanos `synthPoolState`: this
+/// crate's convention for "idle clock behind a lock, never held across an
+/// `.await`" is a `parking_lot` primitive, not a hand-rolled atomic.
+struct SynthPoolState {
+    last_routed: Mutex<Instant>,
+}
+
+impl SynthPoolState {
+    fn new() -> Self {
+        Self {
+            last_routed: Mutex::new(Instant::now()),
+        }
+    }
+
+    /// Reset the idle clock — a message was just routed to this pool.
+    fn touch(&self) {
+        *self.last_routed.lock() = Instant::now();
+    }
+
+    /// How long since this pool last had a message routed to it.
+    fn idle_for(&self) -> Duration {
+        self.last_routed.lock().elapsed()
+    }
+}
+
 /// Factory trait for creating queue consumers
 /// Implementations can create SQS, ActiveMQ, or other consumer types
 #[async_trait::async_trait]
@@ -259,6 +290,20 @@ pub struct QueueManager {
     /// owns the only `Arc` it needs to finish in flight — there's nothing for
     /// the manager to hold or periodically clean up.)
     draining_pools: DashMap<String, Arc<ProcessPool>>,
+
+    /// R-59: idle tracker for every per-client fallback pool
+    /// (`{identifier}-DEFAULT-POOL`) this manager synthesised on demand —
+    /// see [`Self::ensure_fallback_pool`]. Never holds an entry for a
+    /// config-defined pool (including the global `DEFAULT-POOL`):
+    /// `apply_config`/`reload_config` call [`Self::forget_synth_pool`] the
+    /// moment a code is config-defined, whether it was previously
+    /// synthesised or is brand new — config always wins. Read by the
+    /// periodic [`Self::evict_idle_synth_pools`] sweep and written on every
+    /// route to a fallback pool ([`Self::touch_synth_pool`]), so this is a
+    /// `DashMap` (per-entry locking) rather than living behind one shared
+    /// lock the hot routing path would contend on. Mirrors Go's
+    /// `Manager.synthPools`.
+    synth_pools: DashMap<String, SynthPoolState>,
 
     /// Queue consumers (RwLock for async-safe access)
     consumers: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
@@ -463,6 +508,7 @@ impl QueueManagerBuilder {
             app_message_to_pipeline_key: Arc::new(DashMap::new()),
             pools: DashMap::new(),
             draining_pools: DashMap::new(),
+            synth_pools: DashMap::new(),
             consumers: RwLock::new(HashMap::new()),
             pool_configs: RwLock::new(HashMap::new()),
             queue_configs: RwLock::new(HashMap::new()),
@@ -523,6 +569,10 @@ fn malformed_routing_reason(msg: &fc_common::Message) -> Option<&'static str> {
 }
 
 impl QueueManager {
+    /// R-59: suffix identifying a per-client fallback pool code
+    /// (`{identifier}-DEFAULT-POOL`). See `is_default_pool_code`.
+    const SYNTH_POOL_SUFFIX: &'static str = "-DEFAULT-POOL";
+
     /// Start building a manager that creates a **fresh** `HttpMediator` per
     /// pool (production path). Prefer this builder over `new` + `set_*`.
     pub fn builder(mediator_config: HttpMediatorConfig) -> QueueManagerBuilder {
@@ -657,6 +707,12 @@ impl QueueManager {
         let mut pool_configs = self.pool_configs.write().await;
         for pool_config in config.processing_pools {
             let code = pool_config.code.clone();
+            // R-59: config always wins — a code config now defines is never
+            // eviction-eligible, whether it was previously synthesised or is
+            // brand new. Normally a no-op here (apply_config only runs at
+            // startup, before anything could have been synthesised), but
+            // kept for symmetry with reload_config's equivalent call.
+            self.forget_synth_pool(&code);
             pool_configs.insert(code.clone(), pool_config.clone());
             self.get_or_create_pool(&code, Some(pool_config)).await?;
         }
@@ -699,43 +755,71 @@ impl QueueManager {
         let existing_codes: Vec<String> = self.pools.iter().map(|e| e.key().clone()).collect();
         for pool_code in existing_codes {
             if let Some(new_config) = new_pool_configs.get(&pool_code) {
-                // Pool exists in new config - check for changes
-                if let Some(old_config) = pool_configs.get(&pool_code) {
-                    let concurrency_changed = old_config.concurrency != new_config.concurrency;
-                    let rate_limit_changed =
-                        old_config.rate_limit_per_minute != new_config.rate_limit_per_minute;
+                // R-59: config always wins — a code config now defines is
+                // never eviction-eligible, whether it was previously
+                // synthesised (this is exactly the ownership-transfer case:
+                // the pool below is updated in place, never replaced) or a
+                // pool config has always owned.
+                self.forget_synth_pool(&pool_code);
+                // Pool exists in new config - check for changes.
+                //
+                // R-59: `old_config` is `None` exactly when this code has
+                // never gone through `pool_configs` before — which, since
+                // `apply_config`/this same branch are the only writers of
+                // that map, means the pool was synthesised
+                // (`ensure_fallback_pool`/`get_or_create_pool`'s
+                // default-config fallback) rather than config-defined. That
+                // must count as "changed": config just took ownership of a
+                // pool running on synthesised defaults, and the new
+                // settings have to actually apply — mirrors Go's
+                // Reconfigure, which calls `p.SetRateLimit`/
+                // `p.UpdateConcurrency` unconditionally for every pool code
+                // it owns, not only when a diff is detected against a prior
+                // config.
+                let old_config = pool_configs.get(&pool_code);
+                let concurrency_changed =
+                    old_config.map(|c| c.concurrency) != Some(new_config.concurrency);
+                let rate_limit_changed = old_config.map(|c| c.rate_limit_per_minute)
+                    != Some(new_config.rate_limit_per_minute);
 
-                    if concurrency_changed || rate_limit_changed {
-                        if let Some(pool) = self.pools.get(&pool_code) {
-                            // Update the pool in-place
-                            if concurrency_changed {
-                                info!(
-                                    pool_code = %pool_code,
-                                    old_concurrency = old_config.concurrency,
-                                    new_concurrency = new_config.concurrency,
-                                    "Updating pool concurrency"
-                                );
-                                pool.update_concurrency(new_config.concurrency).await;
-                            }
-
-                            if rate_limit_changed {
-                                info!(
-                                    pool_code = %pool_code,
-                                    old_rate_limit = ?old_config.rate_limit_per_minute,
-                                    new_rate_limit = ?new_config.rate_limit_per_minute,
-                                    "Updating pool rate limit"
-                                );
-                                pool.update_rate_limit(new_config.rate_limit_per_minute);
-                            }
-
-                            pools_updated += 1;
+                if concurrency_changed || rate_limit_changed {
+                    if let Some(pool) = self.pools.get(&pool_code) {
+                        // Update the pool in-place
+                        if concurrency_changed {
+                            info!(
+                                pool_code = %pool_code,
+                                old_concurrency = ?old_config.map(|c| c.concurrency),
+                                new_concurrency = new_config.concurrency,
+                                "Updating pool concurrency"
+                            );
+                            pool.update_concurrency(new_config.concurrency).await;
                         }
+
+                        if rate_limit_changed {
+                            info!(
+                                pool_code = %pool_code,
+                                old_rate_limit = ?old_config.and_then(|c| c.rate_limit_per_minute),
+                                new_rate_limit = ?new_config.rate_limit_per_minute,
+                                "Updating pool rate limit"
+                            );
+                            pool.update_rate_limit(new_config.rate_limit_per_minute);
+                        }
+
+                        pools_updated += 1;
                     }
                 }
                 // Update stored config
                 pool_configs.insert(pool_code, new_config.clone());
             } else {
-                // Pool removed from config - drain asynchronously
+                // Pool removed from config - drain asynchronously. R-59:
+                // this also catches a synthesised per-client fallback pool
+                // whenever a genuine config change lands (synth pools are
+                // never in `new_pool_configs` in steady state) — mirrors
+                // Go's Reconfigure exactly, which sweeps every pool not in
+                // `wantPools` the same way regardless of origin; idle-TTL
+                // eviction (`evict_idle_synth_pools`) is the mechanism R-59
+                // actually targets, this is just the pre-existing "any real
+                // config change resets pools it doesn't mention" behaviour.
                 if let Some((code, pool)) = self.pools.remove(&pool_code) {
                     info!(
                         pool_code = %code,
@@ -743,44 +827,21 @@ impl QueueManager {
                         active_workers = pool.active_workers(),
                         "Pool removed from config - draining asynchronously"
                     );
-                    pool.drain().await;
-                    self.draining_pools.insert(code.clone(), pool.clone());
+                    self.forget_synth_pool(&code);
                     pool_configs.remove(&code);
                     pools_removed += 1;
 
-                    // Watcher: removes the pool from `draining_pools` the
-                    // moment its in-flight work finishes, instead of
-                    // waiting for the next `cleanup_draining_pools` sweep
-                    // (only run periodically by the lifecycle manager's
-                    // reaper — see that fn's doc comment, which is now the
-                    // backstop rather than the primary path).
-                    //
-                    // **Owns:** an `Arc<QueueManager>` clone (`self`), the
-                    // drained `Arc<ProcessPool>`, its code, and a child
-                    // cancellation token.
-                    // **Exits:** as soon as `pool.wait_drained()` resolves
-                    // (removes itself from `draining_pools` and calls
-                    // `pool.shutdown()`), or immediately if the manager's
-                    // shutdown token is cancelled first — `shutdown()`
-                    // already drains every pool in `draining_pools` itself,
-                    // so this task backs off rather than double-acting.
-                    // **Joined by:** nobody — self-terminating,
-                    // fire-and-forget, matching every other background task
-                    // in this file.
-                    let manager = self.clone();
-                    let watched_pool = pool;
-                    let watched_code = code.clone();
-                    let token = self.shutdown.child_token();
-                    tokio::spawn(async move {
-                        tokio::select! {
-                            _ = watched_pool.wait_drained() => {
-                                watched_pool.shutdown().await;
-                                manager.draining_pools.remove(&watched_code);
-                                info!(pool_code = %watched_code, "Draining pool finished - removed");
-                            }
-                            _ = token.cancelled() => {}
-                        }
-                    });
+                    // begin_pool_drain: drains, inserts into
+                    // `draining_pools`, and spawns the watcher that removes
+                    // it and calls `pool.shutdown()` the moment its
+                    // in-flight work finishes — instead of waiting for the
+                    // next `cleanup_draining_pools` sweep (only run
+                    // periodically by the lifecycle manager's reaper — see
+                    // that fn's doc comment, which is now the backstop
+                    // rather than the primary path). Shared with
+                    // `evict_idle_synth_pools` — see that method's doc
+                    // comment for the full ownership/lifecycle writeup.
+                    self.begin_pool_drain(code, pool).await;
                 }
             }
         }
@@ -828,6 +889,13 @@ impl QueueManager {
                     );
                 }
 
+                // R-59: config always wins, even for a brand-new code (see
+                // the identical call in the update branch above) — usually
+                // a no-op here since a genuinely new code was never
+                // synthesised, but defensive against the code having been
+                // synthesised and evicted in the narrow window between this
+                // reload's Step 1 scan and here.
+                self.forget_synth_pool(&pool_config.code);
                 // Create new pool
                 self.get_or_create_pool(&pool_config.code, Some(pool_config.clone()))
                     .await?;
@@ -1069,6 +1137,209 @@ impl QueueManager {
         Ok(pool_arc)
     }
 
+    /// Returns the currently *active* pool for `code` (never one still
+    /// draining — see `draining_pools`), or `None`. Exposed mainly for
+    /// tests that need pool identity (`Arc::ptr_eq`) to distinguish "the
+    /// same pool, updated in place" from "a fresh pool" — mirrors Go's
+    /// `Manager.Pool`.
+    pub fn get_pool(&self, code: &str) -> Option<Arc<ProcessPool>> {
+        self.pools.get(code).map(|e| e.value().clone())
+    }
+
+    /// R-59: does `code` name a fallback pool — the global `DEFAULT-POOL`
+    /// or a per-client `{identifier}-DEFAULT-POOL`?
+    ///
+    /// A suffix test is the only safe structural read of a composed pool
+    /// code: the scheduler composes `{clientIdentifier}-{poolCode}` and
+    /// either half may itself contain hyphens, so the string can never be
+    /// split back into its parts. Mirrors Go's `isDefaultPoolCode`.
+    fn is_default_pool_code(&self, code: &str) -> bool {
+        code == self.default_pool_code || code.ends_with(Self::SYNTH_POOL_SUFFIX)
+    }
+
+    /// R-59: does `code` name a *synthesisable* per-client fallback pool —
+    /// eligible for on-demand creation (`ensure_fallback_pool`) and, if it
+    /// is one, for idle eviction (`evict_idle_synth_pools`)? Excludes the
+    /// global `DEFAULT-POOL` itself, which is always config-defined and
+    /// therefore never synthesised or evicted. Mirrors Go's
+    /// `isSynthPoolCode`.
+    fn is_synth_pool_code(&self, code: &str) -> bool {
+        code != self.default_pool_code && self.is_default_pool_code(code)
+    }
+
+    /// R-59: registers `code` as eviction-eligible (see
+    /// `evict_idle_synth_pools`), with its idle clock starting now. Called
+    /// only from `ensure_fallback_pool` at creation.
+    fn track_synth_pool(&self, code: &str) {
+        self.synth_pools
+            .insert(code.to_string(), SynthPoolState::new());
+    }
+
+    /// R-59: resets `code`'s idle clock — a message was just routed to it.
+    /// A no-op if `code` isn't currently tracked as synthesised: a
+    /// config-defined pool of the same code has had its entry removed by
+    /// `forget_synth_pool`, and traffic to it must not re-arm an eviction
+    /// that no longer applies.
+    fn touch_synth_pool(&self, code: &str) {
+        if let Some(state) = self.synth_pools.get(code) {
+            state.touch();
+        }
+    }
+
+    /// R-59: removes `code` from eviction tracking — called whenever config
+    /// takes ownership of the code (`apply_config`/`reload_config`) or the
+    /// pool is torn down outright (`shutdown`), so a stale entry never
+    /// points at a pool that is gone or no longer synthesised.
+    fn forget_synth_pool(&self, code: &str) {
+        self.synth_pools.remove(code);
+    }
+
+    /// R-59: returns the per-client fallback pool for `code`, synthesising
+    /// it on demand with the same default settings `get_or_create_pool`
+    /// uses when creating any other pool with no explicit config
+    /// (concurrency 20, no rate limit) — the router polls an external
+    /// config service and nothing emits `processing_pools` entries for
+    /// `{identifier}-DEFAULT-POOL` codes, so these only ever arrive from
+    /// the scheduler at routing time.
+    ///
+    /// Re-checks `self.pools` after the (non-atomic) creation work, same as
+    /// `get_or_create_pool` — see that method's doc comment; there is no
+    /// `poolMu`-equivalent single lock here to make the check-then-create
+    /// atomic (`pools` is a `DashMap` and pool creation is `async`, so a
+    /// lock can't be held across the `.await` in `pool.start()`). Two
+    /// concurrent first-messages for a brand-new client can therefore each
+    /// build and start a pool before either inserts; the loser's pool is
+    /// simply never referenced again from `pools`, but it *did* spawn
+    /// worker tasks via `start()` that nothing then stops — a small,
+    /// pre-existing class of leak shared with `get_or_create_pool`, not
+    /// introduced by this method. Flagged rather than fixed: closing it
+    /// needs an async-aware per-code lock, out of scope for R-59.
+    async fn ensure_fallback_pool(&self, code: &str) -> Result<Arc<ProcessPool>> {
+        if let Some(pool) = self.pools.get(code) {
+            self.touch_synth_pool(code);
+            return Ok(pool.clone());
+        }
+
+        let pool_config = PoolConfig {
+            code: code.to_string(),
+            concurrency: 20, // Go: defaultPoolConcurrency; Java: DEFAULT_POOL_CONCURRENCY
+            rate_limit_per_minute: None,
+        };
+        let pool = ProcessPool::with_dependencies(
+            pool_config.clone(),
+            self.build_mediator(),
+            self.circuit_breaker_registry.clone(),
+        );
+        let pool_arc = Arc::new(pool);
+        pool_arc.start().await;
+
+        self.pools.insert(code.to_string(), pool_arc.clone());
+        self.track_synth_pool(code);
+        info!(
+            pool_code = %code,
+            concurrency = pool_config.concurrency,
+            "Synthesised per-client fallback pool"
+        );
+
+        Ok(pool_arc)
+    }
+
+    /// Move `pool` (already removed from `self.pools`) into `draining_pools`
+    /// and spawn a watcher that removes it and calls `pool.shutdown()` the
+    /// moment its buffered work finishes (`wait_drained()`), or backs off if
+    /// the manager's own shutdown fires first (`shutdown()` already drains
+    /// every `draining_pools` entry itself, so this task would otherwise
+    /// double-act). Shared by `reload_config`'s removed-pool branch and
+    /// `evict_idle_synth_pools` (R-59) — both are "this code no longer
+    /// routes to this pool" events and must drain identically (R-26/R-49: a
+    /// removal drains, it never flushes).
+    async fn begin_pool_drain(self: &Arc<Self>, code: String, pool: Arc<ProcessPool>) {
+        pool.drain().await;
+        self.draining_pools.insert(code.clone(), pool.clone());
+
+        let manager = self.clone();
+        let watched_pool = pool;
+        let watched_code = code;
+        let token = self.shutdown.child_token();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = watched_pool.wait_drained() => {
+                    watched_pool.shutdown().await;
+                    manager.draining_pools.remove(&watched_code);
+                    info!(pool_code = %watched_code, "Draining pool finished - removed");
+                }
+                _ = token.cancelled() => {}
+            }
+        });
+    }
+
+    /// R-59: stops and removes every synthesised per-client fallback pool
+    /// (`ensure_fallback_pool`) idle for at least `ttl` — no message routed
+    /// to it, tracked by `synth_pools`/`touch_synth_pool`. `ttl ==
+    /// Duration::ZERO` disables the sweep entirely (see the call site in
+    /// `bin/fc-router/src/main.rs` for how `FC_ROUTER_SYNTH_POOL_IDLE_SECS`
+    /// maps onto this — `Duration` has no negative representation, so the
+    /// "negative disables" half of Go's `EvictIdleSynthPools`/`ttl <= 0`
+    /// check collapses to "zero disables" here).
+    ///
+    /// Configured pools are never candidates: only codes present in
+    /// `synth_pools` are, and `apply_config`/`reload_config` remove a code
+    /// from that map the instant config defines it (`forget_synth_pool`) —
+    /// see those methods' "config always wins" call sites. Uses the same
+    /// drain path a config-removed pool takes (`begin_pool_drain`), so
+    /// buffered work is flushed rather than dropped (R-26/R-49); the pool
+    /// is re-synthesised on demand by the next message naming its code.
+    /// Wired onto the lifecycle manager's reaper tick (mirrors Go, which
+    /// hangs this off the router's in-flight reaper tick). Returns the
+    /// number of pools evicted.
+    pub async fn evict_idle_synth_pools(self: &Arc<Self>, ttl: Duration) -> usize {
+        if ttl.is_zero() {
+            return 0;
+        }
+
+        let idle_codes: Vec<String> = self
+            .synth_pools
+            .iter()
+            .filter(|entry| entry.value().idle_for() >= ttl)
+            .map(|entry| entry.key().clone())
+            .collect();
+        if idle_codes.is_empty() {
+            return 0;
+        }
+
+        let mut evicted = 0usize;
+        for code in idle_codes {
+            // Re-check: a message may have routed to it (bumping the idle
+            // clock) since the scan above, or reload_config may have taken
+            // ownership of the code (forget_synth_pool) in the meantime.
+            let still_idle = self
+                .synth_pools
+                .get(&code)
+                .map(|state| state.idle_for() >= ttl)
+                .unwrap_or(false);
+            if !still_idle {
+                continue;
+            }
+            // Remove from tracking before the pool itself, so a message
+            // racing in right now sees "not tracked" (a harmless
+            // touch_synth_pool no-op) rather than resetting a clock about
+            // to be discarded anyway.
+            self.synth_pools.remove(&code);
+
+            if let Some((removed_code, pool)) = self.pools.remove(&code) {
+                info!(
+                    pool_code = %removed_code,
+                    queue_size = pool.queue_size(),
+                    active_workers = pool.active_workers(),
+                    "Synthesised fallback pool idle past TTL - draining and removing"
+                );
+                self.begin_pool_drain(removed_code, pool).await;
+                evicted += 1;
+            }
+        }
+        evicted
+    }
+
     /// Route a batch of messages from a consumer poll
     pub async fn route_batch(
         &self,
@@ -1241,7 +1512,7 @@ impl QueueManager {
         };
 
         // Phase 2: Group by pool and route
-        let by_pool = self.group_by_pool(well_formed);
+        let by_pool = self.group_by_pool(well_formed).await;
 
         for (pool_code, pool_messages) in by_pool {
             let pool = match self.get_or_create_pool(&pool_code, None).await {
@@ -1485,7 +1756,19 @@ impl QueueManager {
     /// same "papered over" anti-pattern strict routing exists to reject; a
     /// missing pool code is exactly as much a producer bug as a misspelled
     /// one).
-    fn group_by_pool(
+    ///
+    /// R-59: a code shaped like a per-client fallback
+    /// (`{identifier}-DEFAULT-POOL`, and not exactly the global
+    /// `DEFAULT-POOL`) is a *third* case, distinct from both the hit path
+    /// and the unknown-code warning path above: if it doesn't exist yet it
+    /// is synthesised on demand with default settings
+    /// (`ensure_fallback_pool`) and routed to — no ROUTING warning, unlike
+    /// a genuinely unknown code, because this is the expected shape for a
+    /// short-lived client's traffic, not a producer bug. An already-tracked
+    /// synthesised pool has its idle clock reset on every hit, not just at
+    /// creation (`touch_synth_pool`), so eviction judges recency of traffic,
+    /// not age since synthesis.
+    async fn group_by_pool(
         &self,
         messages: Vec<QueuedMessage>,
     ) -> std::collections::HashMap<String, Vec<QueuedMessage>> {
@@ -1495,9 +1778,33 @@ impl QueueManager {
         for msg in messages {
             let code = &msg.message.pool_code;
             let pool_code = if !code.is_empty() && self.pools.contains_key(code) {
+                // Existing pool — configured, or a fallback pool this
+                // manager previously synthesised. Only the latter is
+                // tracked in `synth_pools`, so this is a no-op for every
+                // other pool code.
+                if self.is_synth_pool_code(code) {
+                    self.touch_synth_pool(code);
+                }
                 code.clone()
+            } else if !code.is_empty() && self.is_synth_pool_code(code) {
+                // R-59: per-client fallback pool, not seen before —
+                // synthesise it rather than falling through to the
+                // unknown-code warning below.
+                match self.ensure_fallback_pool(code).await {
+                    Ok(_) => code.clone(),
+                    Err(e) => {
+                        error!(
+                            pool_code = %code,
+                            message_id = %msg.message.id,
+                            error = %e,
+                            "Failed to synthesise per-client fallback pool; falling back to DEFAULT-POOL"
+                        );
+                        self.default_pool_code.clone()
+                    }
+                }
             } else {
-                // Empty or unknown pool_code → log warning + route to DEFAULT-POOL.
+                // Empty or unknown (non-fallback-shaped) pool_code → log
+                // warning + route to DEFAULT-POOL.
                 warn!(
                     message_id = %msg.message.id,
                     pool_code = %code,
@@ -1978,6 +2285,10 @@ impl QueueManager {
             pool.shutdown().await;
         }
 
+        // R-59: clear synth-pool idle tracking alongside the pools
+        // themselves — every entry it could point to is now gone.
+        self.synth_pools.clear();
+
         info!("QueueManager shutdown complete");
     }
 
@@ -2366,6 +2677,13 @@ impl QueueManager {
     /// finishing in-flight work). Useful for stats/tests.
     pub fn draining_pool_count(&self) -> usize {
         self.draining_pools.len()
+    }
+
+    /// R-59: number of pool codes currently tracked as synthesised (see
+    /// `synth_pools`). Exposed for tests — mirrors Go's ability to inspect
+    /// `Manager.synthPools` indirectly via `EvictIdleSynthPools`.
+    pub fn synth_pool_count(&self) -> usize {
+        self.synth_pools.len()
     }
 
     /// Non-blocking check of whether a specific pool (active or draining)
@@ -3075,13 +3393,13 @@ mod routing_gate_tests {
 
     /// R-13: an empty pool_code must warn exactly like an unknown one — it
     /// used to fall silently to DEFAULT-POOL with no warning at all.
-    #[test]
-    fn group_by_pool_warns_identically_for_empty_and_unknown_pool_code() {
+    #[tokio::test]
+    async fn group_by_pool_warns_identically_for_empty_and_unknown_pool_code() {
         let manager = QueueManager::new(HttpMediatorConfig::dev());
         let empty = queued("a", "", DispatchMode::Immediate, true, None);
         let unknown = queued("b", "NOPE", DispatchMode::Immediate, true, None);
 
-        let by_pool = manager.group_by_pool(vec![empty, unknown]);
+        let by_pool = manager.group_by_pool(vec![empty, unknown]).await;
         assert_eq!(by_pool.len(), 1, "both fall back to the same default pool");
         assert_eq!(by_pool.values().next().unwrap().len(), 2);
         assert_eq!(

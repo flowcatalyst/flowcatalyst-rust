@@ -75,6 +75,14 @@ pub struct LifecycleConfig {
     pub pending_delete_max_age: Duration,
     /// Max idle time for circuit breakers before eviction
     pub circuit_breaker_max_idle: Duration,
+    /// R-59: idle TTL for synthesised per-client fallback pools
+    /// (`{identifier}-DEFAULT-POOL`, see `QueueManager::ensure_fallback_pool`),
+    /// swept on the same reaper tick as `in_pipeline_max_age` /
+    /// `circuit_breaker_max_idle`. `Duration::ZERO` disables the sweep — see
+    /// `QueueManager::evict_idle_synth_pools` and the
+    /// `FC_ROUTER_SYNTH_POOL_IDLE_SECS` wiring in `bin/fc-router/src/main.rs`.
+    /// Mirrors Go's `ServerConfig.SynthPoolIdleAge` default (1 hour).
+    pub synth_pool_idle_ttl: Duration,
 }
 
 impl Default for LifecycleConfig {
@@ -89,6 +97,7 @@ impl Default for LifecycleConfig {
             in_pipeline_max_age: Duration::from_secs(900), // 15 minutes
             pending_delete_max_age: Duration::from_secs(60), // 1 minute — short so deliberate resends are reprocessed
             circuit_breaker_max_idle: Duration::from_secs(3600), // 1 hour
+            synth_pool_idle_ttl: Duration::from_secs(3600), // 1 hour, matches Go's default
         }
     }
 }
@@ -332,6 +341,7 @@ impl LifecycleManager {
             let interval = config.reaper_interval;
             let in_pipeline_max_age = config.in_pipeline_max_age;
             let pending_delete_max_age = config.pending_delete_max_age;
+            let synth_pool_idle_ttl = config.synth_pool_idle_ttl;
 
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
@@ -350,6 +360,19 @@ impl LifecycleManager {
 
                             // Clean up draining pools that have finished
                             manager.cleanup_draining_pools().await;
+
+                            // R-59: evict synthesised per-client fallback pools
+                            // idle past their TTL (drains via the same path as
+                            // a config-removed pool; see
+                            // QueueManager::evict_idle_synth_pools).
+                            let evicted_synth_pools =
+                                manager.evict_idle_synth_pools(synth_pool_idle_ttl).await;
+                            if evicted_synth_pools > 0 {
+                                info!(
+                                    evicted = evicted_synth_pools,
+                                    "Evicted idle synthesised fallback pools"
+                                );
+                            }
 
                             // Remove stale health service entries for destroyed pools/consumers
                             let pool_codes = manager.pool_codes();
@@ -629,6 +652,7 @@ mod tests {
             in_pipeline_max_age: long,
             pending_delete_max_age: long,
             circuit_breaker_max_idle: long,
+            synth_pool_idle_ttl: long,
         };
 
         let mut lifecycle =
