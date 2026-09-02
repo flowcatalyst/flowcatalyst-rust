@@ -650,7 +650,20 @@ impl ProcessPool {
         // IMMEDIATE mode: no ordering needed — spawn a standalone task per message.
         // This avoids the sequential drain bottleneck where a slow HTTP call blocks
         // all other messages in the group.
-        if !batch_msg.message.dispatch_mode.requires_ordering() {
+        //
+        // R-13 (ledger): an ordered mode WITHOUT a message group id also takes
+        // this path — there is no group to order within, and funnelling all
+        // such messages through one shared drain queue would serialise
+        // unrelated producers behind each other (Go parity: the ungrouped-
+        // ordered branch). Under FC_ROUTER_STRICT_ROUTING the manager ACKs
+        // these before they ever reach the pool.
+        if !batch_msg.message.dispatch_mode.requires_ordering()
+            || batch_msg
+                .message
+                .message_group_id
+                .as_deref()
+                .is_none_or(str::is_empty)
+        {
             let task = PoolTask {
                 message: batch_msg.message,
                 receipt_handle: String::new(), // not used in standalone path

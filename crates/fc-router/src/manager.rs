@@ -1850,26 +1850,15 @@ impl QueueManager {
     /// arbitrarily long, past any drain budget, right up to the point the
     /// orchestrator's SIGKILL severs everything mid-flight anyway.
     ///
-    /// TODO(A-merge): `ProcessPool::drain`/`wait_drained` don't yet
-    /// distinguish "finish the in-hand message" from "drain the whole
-    /// buffer" — `pool.rs`'s `spawn_drain_task` loop keeps dequeuing and
-    /// mediating every buffered task in a group until the buffer is empty,
-    /// regardless of `running` (see that fn's own doc comment: "a drain
-    /// task already mid-loop for an ordered group keeps dequeuing until its
-    /// queue is empty"). `pool.rs` is off-limits to this lane (owned by the
-    /// pool/breaker lane, RB). What's needed there: a shutdown signal the
-    /// drain-task loop checks *after* finishing its current task — on
-    /// shutdown, break out and let the existing `PanicGuard` drain path
-    /// (which already drains+drops the remaining queued tasks, and relies
-    /// on `QueueMessageCallback::drop`'s fallback NACK to release them) run,
-    /// instead of dequeuing another task. Until that primitive exists, the
-    /// call below is the best available approximation: it stops *new*
-    /// submissions (`pool.drain()`) and bounds total shutdown latency to the
-    /// drain budget, but a deep buffer against a slow target is still
-    /// actively processed (not released) for the whole of that budget, and
-    /// on timeout the still-running tasks are orphaned (detached, not
-    /// cancelled) rather than having their buffers released — see the
-    /// `still_busy_pools` warning below.
+    /// R-49 (ledger): shutdown finishes the message currently in the air
+    /// and RELEASES each group's buffered remainder back to the broker —
+    /// it never drains a whole backlog against a slow target, and never
+    /// abandons buffered work to visibility-timeout limbo. The sequencing:
+    /// `pool.drain()` stops admission, then `pool.release_remainder()`
+    /// empties every group buffer with explicit NACKs, so a drain task
+    /// mid-loop finds its queue empty after the in-hand task and exits.
+    /// The bounded `wait_drained` below therefore only ever waits on
+    /// in-hand deliveries, not backlogs.
     pub async fn shutdown(&self) {
         info!("QueueManager shutting down...");
         self.running.store(false, Ordering::SeqCst);
@@ -1903,6 +1892,21 @@ impl QueueManager {
         // Drain all pools (non-blocking: flips `running`, closes the tracker).
         for pool in &pools {
             pool.drain().await;
+        }
+
+        // R-49: release each group's buffered remainder back to the broker
+        // (explicit NACKs). After this, the only work left is the in-hand
+        // message inside each live drain/immediate task — which is what the
+        // bounded wait below is for.
+        let mut released_total = 0usize;
+        for pool in &pools {
+            released_total += pool.release_remainder().await;
+        }
+        if released_total > 0 {
+            info!(
+                released = released_total,
+                "Shutdown released buffered messages back to the broker"
+            );
         }
 
         // Wait for every pool's tracked tasks to finish, bounded by a timeout.
