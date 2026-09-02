@@ -1,0 +1,416 @@
+//! Stall detection/reporting and the stale-entry reaper: messages stuck in
+//! `in_pipeline` past a threshold, once-per-episode warning dedup
+//! (`report_stall`/`forget_resolved_stalls`), optional force-NACK, and the
+//! periodic sweep that evicts stale `in_pipeline`/`pending_delete_broker_ids`
+//! entries.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::Utc;
+use tracing::{error, info, warn};
+
+use fc_common::{StallConfig, StalledMessageInfo, WarningCategory, WarningSeverity};
+use fc_queue::QueueConsumer;
+
+use super::QueueManager;
+
+impl QueueManager {
+    /// Check for potential memory leaks (large in-pipeline maps)
+    pub fn check_memory_health(&self) -> bool {
+        let in_pipeline_size = self.in_pipeline.len();
+        let threshold = 10000;
+
+        if in_pipeline_size > threshold {
+            warn!(
+                in_pipeline_size = in_pipeline_size,
+                threshold = threshold,
+                "Potential memory leak detected - in_pipeline map is large"
+            );
+            return false;
+        }
+
+        true
+    }
+
+    /// Reap stale entries from in-memory tracking maps.
+    ///
+    /// Evicts `in_pipeline` and `app_message_to_pipeline_key` entries older than
+    /// `max_age`, which indicates the ACK callback task is stuck or was dropped.
+    /// Also evicts `pending_delete_broker_ids` entries older than `pending_delete_max_age`
+    /// (messages that were processed but never re-polled for deletion).
+    pub fn reap_stale_entries(
+        &self,
+        max_age: Duration,
+        pending_delete_max_age: Duration,
+    ) -> (usize, usize) {
+        // Skip iteration when maps are empty (common case — zero cost)
+        if self.in_pipeline.is_empty() && self.pending_delete_broker_ids.is_empty() {
+            return (0, 0);
+        }
+
+        // Reap stale in_pipeline entries
+        let mut reaped_pipeline = 0;
+        if !self.in_pipeline.is_empty() {
+            let stale_keys: Vec<String> = self
+                .in_pipeline
+                .iter()
+                .filter(|entry| entry.value().started_at.elapsed() > max_age)
+                .map(|entry| entry.key().clone())
+                .collect();
+
+            for key in &stale_keys {
+                if let Some((_, entry)) = self.in_pipeline.remove(key) {
+                    self.app_message_to_pipeline_key.remove(&entry.message_id);
+                    reaped_pipeline += 1;
+                }
+            }
+
+            if reaped_pipeline > 0 {
+                warn!(
+                    reaped = reaped_pipeline,
+                    max_age_seconds = max_age.as_secs(),
+                    "Reaped stale in_pipeline entries (likely orphaned by dropped ACK tasks)"
+                );
+            }
+        }
+
+        // Reap stale pending_delete_broker_ids entries
+        let reaped_pending = if self.pending_delete_broker_ids.is_empty() {
+            0
+        } else {
+            let before = self.pending_delete_broker_ids.len();
+            self.pending_delete_broker_ids
+                .retain(|_, inserted_at| inserted_at.elapsed() < pending_delete_max_age);
+            before - self.pending_delete_broker_ids.len()
+        };
+
+        if reaped_pending > 0 {
+            info!(
+                reaped = reaped_pending,
+                max_age_seconds = pending_delete_max_age.as_secs(),
+                "Reaped stale pending_delete_broker_ids entries"
+            );
+        }
+
+        (reaped_pipeline, reaped_pending)
+    }
+
+    /// Detect stalled messages that have been processing beyond the threshold.
+    ///
+    /// Returns a list of stalled message information for monitoring/alerting.
+    pub fn detect_stalled_messages(&self) -> Vec<StalledMessageInfo> {
+        if !self.stall_config.enabled {
+            return Vec::new();
+        }
+
+        let threshold = self.stall_config.stall_threshold_seconds;
+        let now = Utc::now();
+
+        self.in_pipeline
+            .iter()
+            .filter(|entry| entry.value().elapsed_seconds() >= threshold)
+            .map(|entry| {
+                let msg = entry.value();
+                StalledMessageInfo {
+                    message_id: msg.message_id.clone(),
+                    message_group_id: msg.message_group_id.clone(),
+                    pool_code: msg.pool_code.clone(),
+                    queue_identifier: msg.queue_identifier.clone(),
+                    elapsed_seconds: msg.elapsed_seconds(),
+                    detected_at: now,
+                }
+            })
+            .collect()
+    }
+
+    /// X-04: emit a `Stall` warning through the shared `warning_service` for
+    /// `message_id`, but only once per stall episode (mirrors Go's
+    /// `StallDetector.report`). Returns `true` if a warning was actually
+    /// recorded (first report of this episode); `false` if `message_id` was
+    /// already reported and hasn't resolved since.
+    fn report_stall(&self, message_id: &str, severity: WarningSeverity, message: String) -> bool {
+        {
+            let mut warned = self.stall_warned.lock();
+            if !warned.insert(message_id.to_string()) {
+                return false;
+            }
+        }
+        self.warning_service.add_warning(
+            WarningCategory::Stall,
+            severity,
+            message,
+            "StallDetector".to_string(),
+        );
+        true
+    }
+
+    /// Drop dedup entries for message ids no longer present in `live` — once
+    /// a message truly leaves the pipeline (acked / nacked / force-NACKed),
+    /// a later stall of the same id must report again rather than being
+    /// silenced for the life of the process (mirrors Go's
+    /// `StallDetector.forgetResolved`).
+    fn forget_resolved_stalls(&self, live: &std::collections::HashSet<String>) {
+        let mut warned = self.stall_warned.lock();
+        warned.retain(|id| live.contains(id));
+    }
+
+    /// Check for stalled messages and optionally force-NACK them.
+    ///
+    /// This method should be called periodically (e.g., every 30 seconds).
+    /// It will:
+    /// 1. Detect messages that have exceeded the stall threshold
+    /// 2. Raise a `Stall` warning (store → notifier) for each, once per
+    ///    episode
+    /// 3. If force_nack_stalled is enabled, NACK messages exceeding the force_nack_after_seconds threshold
+    ///
+    /// Returns the number of messages that were force-NACKed.
+    pub async fn check_and_handle_stalled_messages(&self) -> usize {
+        if !self.stall_config.enabled {
+            return 0;
+        }
+
+        let stalled = self.detect_stalled_messages();
+
+        // X-04: forget dedup entries for messages no longer in the pipeline
+        // at all (acked/nacked since the last tick), so a later stall of the
+        // same id reports again instead of being silenced forever. Run this
+        // even when nothing is currently stalled, so resolved entries don't
+        // linger in `stall_warned`.
+        let live: std::collections::HashSet<String> = self
+            .in_pipeline
+            .iter()
+            .map(|entry| entry.value().message_id.clone())
+            .collect();
+        self.forget_resolved_stalls(&live);
+
+        if stalled.is_empty() {
+            return 0;
+        }
+
+        // Report stalled messages once per message per episode (X-04): both
+        // the operational log line and the WarningService entry (which now
+        // drives /warnings, health's active-warning count, and the
+        // notifier) are gated by `report_stall`, so a handful of
+        // long-running deliveries doing their job can't push the router
+        // into Warning/Degraded purely by being re-reported every tick.
+        for msg in &stalled {
+            let reported = self.report_stall(
+                &msg.message_id,
+                WarningSeverity::Warn,
+                format!(
+                    "Message {} stalled for {}s in pool {}",
+                    msg.message_id, msg.elapsed_seconds, msg.pool_code
+                ),
+            );
+            if reported {
+                warn!(
+                    message_id = %msg.message_id,
+                    message_group_id = ?msg.message_group_id,
+                    pool_code = %msg.pool_code,
+                    queue_identifier = %msg.queue_identifier,
+                    elapsed_seconds = msg.elapsed_seconds,
+                    "Stalled message detected - processing time exceeds threshold"
+                );
+            }
+        }
+
+        // If force-NACK is not enabled, just return the count of detected stalls
+        if !self.stall_config.force_nack_stalled {
+            info!(
+                stalled_count = stalled.len(),
+                threshold_seconds = self.stall_config.stall_threshold_seconds,
+                "Stalled messages detected (force-NACK disabled)"
+            );
+            return 0;
+        }
+
+        // Force-NACK messages that have exceeded the force_nack_after_seconds threshold
+        let force_threshold = self.stall_config.force_nack_after_seconds;
+        let nack_delay = self.stall_config.nack_delay_seconds;
+
+        // Snapshot consumers before awaiting any nack — holding the read
+        // lock across `consumer.nack(...).await` for every stalled message
+        // would stall concurrent reloads/health reads for however long
+        // this whole loop takes.
+        let consumers: HashMap<String, Arc<dyn QueueConsumer + Send + Sync>> = {
+            let guard = self.consumers.read().await;
+            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+        let mut force_nacked = 0;
+
+        for msg in &stalled {
+            if msg.elapsed_seconds >= force_threshold {
+                // Get the in-flight message to get the receipt handle
+                if let Some(in_flight) = self.in_pipeline.get(&msg.message_id) {
+                    let receipt_handle = in_flight.receipt_handle.clone();
+                    let queue_id = in_flight.queue_identifier.clone();
+                    drop(in_flight); // Release the lock before async call
+
+                    if let Some(consumer) = consumers.get(&queue_id) {
+                        warn!(
+                            message_id = %msg.message_id,
+                            elapsed_seconds = msg.elapsed_seconds,
+                            force_threshold_seconds = force_threshold,
+                            "Force-NACKing stalled message"
+                        );
+
+                        if let Err(e) = consumer.nack(&receipt_handle, Some(nack_delay)).await {
+                            error!(
+                                message_id = %msg.message_id,
+                                error = %e,
+                                "Failed to force-NACK stalled message"
+                            );
+                        } else {
+                            // Remove from pipeline since we've force-NACKed
+                            self.in_pipeline.remove(&msg.message_id);
+                            self.app_message_to_pipeline_key.remove(&msg.message_id);
+                            force_nacked += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        if force_nacked > 0 {
+            info!(
+                force_nacked = force_nacked,
+                total_stalled = stalled.len(),
+                "Force-NACKed stalled messages"
+            );
+        }
+
+        force_nacked
+    }
+
+    /// Get stall detection configuration
+    pub fn stall_config(&self) -> &StallConfig {
+        &self.stall_config
+    }
+
+    /// Update stall detection configuration at runtime
+    pub fn update_stall_config(&mut self, config: StallConfig) {
+        info!(
+            enabled = config.enabled,
+            stall_threshold_seconds = config.stall_threshold_seconds,
+            force_nack_stalled = config.force_nack_stalled,
+            force_nack_after_seconds = config.force_nack_after_seconds,
+            "Updating stall detection configuration"
+        );
+        self.stall_config = config;
+    }
+}
+
+/// X-04: `check_and_handle_stalled_messages` now raises `Stall` warnings
+/// through `warning_service` (store → notifier) instead of only
+/// `tracing::warn!`, so the once-per-episode dedup (`report_stall` /
+/// `forget_resolved_stalls`, mirroring Go's `StallDetector`) is what keeps a
+/// long-running-but-legitimate delivery from re-reporting every tick and
+/// pushing the router into Warning/Degraded on warning volume alone.
+#[cfg(test)]
+mod stall_warning_tests {
+    use super::*;
+    use crate::mediator::HttpMediatorConfig;
+    use fc_common::{DispatchMode, InFlightMessage, MediationType, Message};
+    use std::time::Instant;
+
+    fn stalled_in_flight(message_id: &str) -> InFlightMessage {
+        let msg = Message {
+            id: message_id.to_string(),
+            pool_code: "POOL".to_string(),
+            auth_token: None,
+            signing_secret: None,
+            mediation_type: MediationType::HTTP,
+            mediation_target: "http://localhost/x".to_string(),
+            message_group_id: None,
+            high_priority: false,
+            dispatch_mode: DispatchMode::Immediate,
+            dispatch_mode_specified: true,
+        };
+        let mut in_flight = InFlightMessage::new(
+            &msg,
+            Some(format!("bh-{message_id}")),
+            "queue".to_string(),
+            None,
+            "rh".to_string(),
+        );
+        // Backdate well past any threshold used below.
+        in_flight.started_at = Instant::now() - Duration::from_secs(10);
+        in_flight
+    }
+
+    fn manager_with_stall_threshold(secs: u64) -> super::QueueManager {
+        super::QueueManager::builder(HttpMediatorConfig::dev())
+            .stall_config(StallConfig {
+                enabled: true,
+                stall_threshold_seconds: secs,
+                force_nack_stalled: false,
+                ..StallConfig::default()
+            })
+            .build()
+    }
+
+    #[tokio::test]
+    async fn stall_warning_reported_once_per_episode() {
+        let manager = manager_with_stall_threshold(5);
+        manager
+            .in_pipeline
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+
+        // Simulate several detector ticks against the same still-stalled message.
+        manager.check_and_handle_stalled_messages().await;
+        manager.check_and_handle_stalled_messages().await;
+        manager.check_and_handle_stalled_messages().await;
+
+        let stall_warnings = manager
+            .warning_service()
+            .get_warnings_by_category(WarningCategory::Stall);
+        assert_eq!(
+            stall_warnings.len(),
+            1,
+            "the same stalled message must raise exactly one Stall warning across repeated ticks"
+        );
+        assert_eq!(stall_warnings[0].severity, WarningSeverity::Warn);
+    }
+
+    #[tokio::test]
+    async fn stall_warning_reports_again_after_resolving_and_restalling() {
+        let manager = manager_with_stall_threshold(5);
+        manager
+            .in_pipeline
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+
+        manager.check_and_handle_stalled_messages().await;
+        assert_eq!(
+            manager
+                .warning_service()
+                .get_warnings_by_category(WarningCategory::Stall)
+                .len(),
+            1
+        );
+
+        // Message resolves (acked/nacked/force-NACKed) — leaves the
+        // pipeline entirely. A tick with nothing stalled must still prune
+        // the dedup entry.
+        manager.in_pipeline.remove("bh-msg-1");
+        manager.check_and_handle_stalled_messages().await;
+
+        // The same message id stalls again later (e.g. redelivered) — this
+        // must report again rather than staying silenced for the life of
+        // the process.
+        manager
+            .in_pipeline
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+        manager.check_and_handle_stalled_messages().await;
+
+        assert_eq!(
+            manager
+                .warning_service()
+                .get_warnings_by_category(WarningCategory::Stall)
+                .len(),
+            2,
+            "a fresh stall of a previously-resolved message id must report again"
+        );
+    }
+}

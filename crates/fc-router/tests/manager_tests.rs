@@ -1633,3 +1633,180 @@ async fn manager_clear_group_flush_lifts_suppression_and_reports_in_snapshot() {
     // Already cleared: nothing left to lift.
     assert!(!manager.clear_group_flush("FLUSHPOOL", "g1"));
 }
+
+// ============================================================================
+// Concurrency-audit consolidation #2: orphaned draining predecessors
+// ============================================================================
+
+/// A pool code removed from config and re-added *before its predecessor
+/// finishes draining* displaces the predecessor from the `pools` map into
+/// `orphaned_draining` (see that field's doc comment in `manager/mod.rs`)
+/// rather than losing the manager's only reference to it. This pins the
+/// whole lifecycle end to end:
+/// - the successor pool serves traffic under the same code immediately;
+/// - the displaced predecessor's in-flight work stays visible through the
+///   manager's public dashboard surface (`mediating_snapshot`, built on the
+///   private `all_pools`) even though it's no longer `pools`' entry for
+///   this code;
+/// - `shutdown()` still releases the predecessor's buffered remainder
+///   (NACK) rather than abandoning it — the router specification's §5.3
+///   shutdown MUST (release every pool's buffered remainder back to the
+///   broker, never abandon it).
+#[tokio::test]
+async fn displaced_draining_predecessor_stays_visible_and_gets_released_at_shutdown() {
+    // Slow enough that m1 is still mid-mediation through the remove/re-add
+    // below, and still mid-mediation when shutdown() is called a moment
+    // later.
+    let mediator = Arc::new(SlowMockMediator::new(Duration::from_millis(300)));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "REBORN".to_string(),
+                concurrency: 1, // force strictly serial delivery within the group
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let predecessor = manager.get_pool("REBORN").expect("pool must exist");
+
+    // m1/m2 share an ordered group: with concurrency 1, m1 is popped and
+    // starts mediating (300ms sleep) while m2 sits buffered behind it —
+    // the "gated in-flight ordered message" that drains slowly.
+    let m1 = message_with(
+        "m1",
+        "REBORN",
+        fc_common::DispatchMode::NextOnError,
+        true,
+        Some("g1"),
+    );
+    let m2 = message_with(
+        "m2",
+        "REBORN",
+        fc_common::DispatchMode::NextOnError,
+        true,
+        Some("g1"),
+    );
+    let consumer = Arc::new(MockQueueConsumer::with_messages(
+        "reborn-queue",
+        vec![queued_with(m1), queued_with(m2)],
+    ));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    // Give the drain task time to pop m1 and start mediating it so m2 is
+    // still buffered when the pool is removed below.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+
+    // Remove REBORN from config — begins draining the predecessor.
+    // `pool.drain()` only stops new admission; m1 keeps mediating and m2
+    // stays buffered (draining alone releases nothing — only shutdown's
+    // release_remainder does).
+    manager
+        .reload_config(RouterConfig {
+            processing_pools: vec![],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+    assert!(
+        manager.get_pool("REBORN").is_none(),
+        "REBORN must not be active immediately after removal"
+    );
+
+    // Re-add REBORN before the predecessor has finished draining (m1 is
+    // still ~270ms from finishing) — the coexistence case: a fresh Active
+    // pool for the same code while the old one is still Draining.
+    manager
+        .reload_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "REBORN".to_string(),
+                concurrency: 1,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let successor = manager
+        .get_pool("REBORN")
+        .expect("REBORN must be active again");
+    assert!(
+        !Arc::ptr_eq(&predecessor, &successor),
+        "reload must have created a fresh pool instance, not resurrected the predecessor"
+    );
+
+    // The new pool actively serves traffic under the same code.
+    let m3 = message_with(
+        "m3",
+        "REBORN",
+        fc_common::DispatchMode::Immediate,
+        true,
+        None,
+    );
+    let consumer3 = Arc::new(MockQueueConsumer::with_messages(
+        "reborn-queue-2",
+        vec![queued_with(m3)],
+    ));
+    let poll3 = consumer3.poll(10).await.unwrap();
+    manager
+        .route_batch(poll3, consumer3.clone())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert!(
+        manager
+            .mediating_snapshot()
+            .iter()
+            .any(|e| e.message_id == "m3"),
+        "the successor pool must be actively mediating the fresh message"
+    );
+
+    // The displaced predecessor's in-flight message is still discoverable
+    // through the manager's public dashboard surface (`all_pools`) even
+    // though it's no longer `pools`' entry for "REBORN" — this is the fix:
+    // without `orphaned_draining`, m1 would have vanished from every
+    // manager-level view the instant the successor was created.
+    assert!(
+        manager
+            .mediating_snapshot()
+            .iter()
+            .any(|e| e.message_id == "m1"),
+        "the displaced predecessor's in-flight message must still be visible"
+    );
+
+    // Shut down while m1 is still in-flight and m2 is still buffered on the
+    // orphaned predecessor.
+    manager.shutdown().await;
+
+    // m2 was never started — shutdown's release_remainder must NACK it,
+    // not abandon it (router-specification.md §5.3).
+    let nacked = consumer.nacked.lock();
+    assert!(
+        nacked.iter().any(|(handle, _)| handle.as_str() == "receipt-m2"),
+        "the orphaned predecessor's buffered remainder must be released (NACKed), not abandoned; nacked = {:?}",
+        *nacked
+    );
+    drop(nacked);
+
+    // m1 was already in flight — shutdown waits for it, and it resolves
+    // normally (ACK), same as any other pool's in-hand delivery.
+    assert!(
+        consumer
+            .acked
+            .lock()
+            .iter()
+            .any(|h| h.as_str() == "receipt-m1"),
+        "the orphaned predecessor's in-flight message must finish and be ACKed, not abandoned"
+    );
+}
