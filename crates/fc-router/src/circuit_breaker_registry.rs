@@ -12,6 +12,42 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use utoipa::ToSchema;
 
+/// Derive the circuit-breaker key for a mediation target (ledger R-12):
+/// `scheme://host[:port]/path`, with the query string and fragment
+/// stripped. Used at every breaker call site (`allow_request`,
+/// `record_success`, `record_failure`) so a target is keyed by endpoint,
+/// not by the exact URL string.
+///
+/// The query string is per-message data (e.g. a webhook signature nonce,
+/// a message id) — keying on the raw URL would fragment the failure
+/// signal across as many "endpoints" as there are distinct query strings,
+/// so a genuinely dead endpoint might never trip its breaker. Two targets
+/// that differ only by query therefore share one breaker; two that differ
+/// by path do not — the path is part of what the target considers "this
+/// endpoint".
+///
+/// An unparseable URL falls back to the raw string unchanged: still a
+/// valid (if degenerate) key, and callers that reach this far already
+/// treat an unparseable target as its own pre-flight rejection elsewhere
+/// (see `mediator.rs`) — this helper never fails.
+pub fn breaker_key(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) => {
+            let scheme = parsed.scheme();
+            let host = parsed.host_str().unwrap_or("");
+            let mut key = format!("{scheme}://{host}");
+            if let Some(port) = parsed.port() {
+                key.push(':');
+                key.push_str(&port.to_string());
+            }
+            let path = parsed.path();
+            key.push_str(path);
+            key
+        }
+        Err(_) => url.to_string(),
+    }
+}
+
 /// Circuit breaker state (matches Java Resilience4j states)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -560,6 +596,67 @@ mod tests {
         let api2_stats = stats.get("http://api2.com").unwrap();
         assert_eq!(api2_stats.successful_calls, 1);
         assert_eq!(api2_stats.failed_calls, 1);
+    }
+
+    // ------------------------------------------------------------------
+    // R-12: breaker key = origin + path, query stripped
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn breaker_key_strips_query_string() {
+        let a = breaker_key("https://example.com/webhook?x=1");
+        let b = breaker_key("https://example.com/webhook?x=2");
+        assert_eq!(a, b, "distinct query strings must share one breaker key");
+        assert_eq!(a, "https://example.com/webhook");
+    }
+
+    #[test]
+    fn breaker_key_strips_fragment() {
+        let a = breaker_key("https://example.com/webhook#a");
+        let b = breaker_key("https://example.com/webhook#b");
+        assert_eq!(a, b);
+        assert_eq!(a, "https://example.com/webhook");
+    }
+
+    #[test]
+    fn breaker_key_distinguishes_paths() {
+        let a = breaker_key("https://example.com/webhook-a");
+        let b = breaker_key("https://example.com/webhook-b");
+        assert_ne!(a, b, "distinct paths must NOT share one breaker key");
+    }
+
+    #[test]
+    fn breaker_key_distinguishes_hosts_and_ports() {
+        let a = breaker_key("https://a.example.com/webhook");
+        let b = breaker_key("https://b.example.com/webhook");
+        assert_ne!(a, b);
+
+        let c = breaker_key("https://example.com:8443/webhook");
+        let d = breaker_key("https://example.com:9443/webhook");
+        assert_ne!(c, d);
+    }
+
+    #[test]
+    fn breaker_key_falls_back_to_raw_string_on_parse_failure() {
+        // No authority at all — `url::Url::parse` fails.
+        let key = breaker_key("http://");
+        assert_eq!(key, "http://");
+    }
+
+    #[test]
+    fn distinct_query_strings_share_one_registered_breaker() {
+        let registry = CircuitBreakerRegistry::default();
+        let key_a = breaker_key("https://example.com/webhook?msg=1");
+        let key_b = breaker_key("https://example.com/webhook?msg=2");
+
+        registry.record_success(&key_a);
+        registry.record_failure(&key_b);
+
+        // Both calls landed on the SAME breaker entry.
+        let stats = registry.get_stats(&key_a).unwrap();
+        assert_eq!(stats.successful_calls, 1);
+        assert_eq!(stats.failed_calls, 1);
+        assert_eq!(registry.get_all_stats().len(), 1);
     }
 
     #[test]

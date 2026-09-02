@@ -128,7 +128,9 @@ async fn test_ack_false_with_custom_delay() {
 
     let outcome = mediator.mediate(&message).await;
 
-    assert_eq!(outcome.result, MediationResult::ErrorProcess);
+    // Ledger 22b: ack:false is a deferral, not a failure — breaker-neutral,
+    // distinct from a real ErrorProcess transient failure.
+    assert_eq!(outcome.result, MediationResult::Deferred);
     assert_eq!(outcome.delay_seconds, Some(60));
 }
 
@@ -157,7 +159,7 @@ async fn test_ack_false_without_delay_seconds_has_no_floor() {
 
     let outcome = mediator.mediate(&message).await;
 
-    assert_eq!(outcome.result, MediationResult::ErrorProcess);
+    assert_eq!(outcome.result, MediationResult::Deferred);
     assert_eq!(outcome.delay_seconds, Some(0));
 }
 

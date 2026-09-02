@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use fc_common::{MediationOutcome, MediationType, Message};
+use fc_common::{MediationOutcome, MediationType, Message, WarningCategory, WarningSeverity};
 use tracing::{debug, error, info, warn};
 
 use crate::http_pool::{HostKey, HostPoolSizing};
@@ -197,26 +197,47 @@ impl HttpMediator {
     }
 
     async fn mediate_once(&self, message: &Message) -> MediationOutcome {
+        // Ledger R-06/A-11: a pre-flight rejection — no network call was
+        // made — must raise a CONFIGURATION warning (same class as a real
+        // 400/404) and must not credit the breaker with a success for a
+        // call that never happened. `MediationOutcome::pre_flight_rejected`
+        // carries the `pre_flight` flag the pool needs to skip the breaker
+        // entirely; see `pool.rs`'s `breaker_effect`.
         if message.mediation_type != MediationType::HTTP {
-            return MediationOutcome::error_config(
-                0,
-                format!("Unsupported mediation type: {:?}", message.mediation_type),
+            let detail = format!("Unsupported mediation type: {:?}", message.mediation_type);
+            warn!(message_id = %message.id, detail = %detail, "Pre-flight rejection");
+            self.inner.warning_service.add_warning(
+                WarningCategory::Configuration,
+                WarningSeverity::Error,
+                format!(
+                    "{} for message {}: target {}",
+                    detail, message.id, message.mediation_target
+                ),
+                "HttpMediator".to_string(),
             );
+            return MediationOutcome::pre_flight_rejected(detail);
         }
 
         let host_key = match HostKey::from_url(&message.mediation_target) {
             Ok(k) => k,
             Err(e) => {
+                let detail = format!("Invalid mediation target URL: {}", e);
                 warn!(
                     message_id = %message.id,
                     target = %message.mediation_target,
                     error = %e,
                     "Invalid mediation target URL"
                 );
-                return MediationOutcome::error_config(
-                    0,
-                    format!("Invalid mediation target URL: {}", e),
+                self.inner.warning_service.add_warning(
+                    WarningCategory::Configuration,
+                    WarningSeverity::Error,
+                    format!(
+                        "{} for message {}: target {}",
+                        detail, message.id, message.mediation_target
+                    ),
+                    "HttpMediator".to_string(),
                 );
+                return MediationOutcome::pre_flight_rejected(detail);
             }
         };
         let slot = self.inner.host_pools.acquire(host_key);

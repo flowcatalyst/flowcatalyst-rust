@@ -11,11 +11,19 @@
 //! ## Scope (Phase 1, per the Go handover doc's phasing)
 //!
 //! Asserts `outcome`, `statusCode`, `delaySeconds`, `flushGroup`,
-//! `breaker`, `warning`, `httpCallMade`. Skips `disposition` — see the
-//! `TODO(A-27)` at the bottom: extracting a pure `disposition_of(outcome)`
-//! is pool-side work for a later lane, same as Go's `dispositionOf`.
-//! `metric` is parsed but not asserted (not requested by this lane's
-//! brief).
+//! `breaker`, `warning`, `httpCallMade`. Still skips `disposition` — see
+//! the `TODO(A-27)` at the bottom. `pool::disposition_of` now exists
+//! (ledger A-27, pinned directly by `pool.rs`'s own `disposition_tests`
+//! module) but the corpus's `disposition` vocabulary (`DELIVERED` /
+//! `RETRY_IN_PLACE` / `RETURN_TO_BROKER` / `REJECTED` / `UNDELIVERABLE`)
+//! is finer than `Disposition`'s `BrokerAction`/`GroupEffect` shape can
+//! recover from a `MediationOutcome` alone — e.g. `process-error-500` and
+//! `config-error-400` both classify as `ErrorConfig` -> `BrokerAction::Ack`
+//! here, but the corpus calls one `REJECTED` and the other
+//! `UNDELIVERABLE`. Mapping that distinction is a naming exercise for
+//! whichever lane wires the conformance runner to disposition, not
+//! something this lane invents unprompted. `metric` is parsed but not
+//! asserted (not requested by this lane's brief).
 //!
 //! ## Corpus path
 //!
@@ -31,9 +39,10 @@
 //! this codebase — breaker admission and recording live in `pool.rs`
 //! (`spawn_immediate_task` / the group-drain path), entangled with nack
 //! delays and metrics, outside this lane's file scope. This runner
-//! mirrors `pool.rs`'s exact recording match (`Success | ErrorConfig` ->
-//! success, `ErrorProcess | ErrorConnection` -> failure, `RateLimited` ->
-//! neither) and its pre-flight `allow_request` gate for the
+//! mirrors `pool.rs`'s exact recording function (`breaker_effect`:
+//! pre-flight -> neither; else `Success | ErrorConfig` -> success,
+//! `ErrorProcess | ErrorConnection` -> failure, `RateLimited | Deferred`
+//! -> neither) and its pre-flight `allow_request` gate for the
 //! `breakerOpen` precondition, rather than changing pool.rs to expose it
 //! directly. If pool.rs's mapping ever changes, this mirror needs to
 //! change with it.
@@ -281,23 +290,53 @@ fn outcome_name(result: MediationResult) -> &'static str {
         MediationResult::ErrorProcess => "ErrorProcess",
         MediationResult::ErrorConnection => "ErrorConnection",
         MediationResult::RateLimited => "RateLimited",
+        MediationResult::Deferred => "Deferred",
     }
 }
 
 // ---------------------------------------------------------------------
-// Breaker mirror (pool.rs's match, duplicated here — see module doc)
+// Breaker mirror (pool.rs's `breaker_effect`, duplicated here — see
+// module doc)
 // ---------------------------------------------------------------------
 
-fn record_breaker_outcome(breakers: &CircuitBreakerRegistry, endpoint: &str, result: MediationResult) {
-    match result {
+fn record_breaker_outcome(
+    breakers: &CircuitBreakerRegistry,
+    endpoint: &str,
+    outcome: &fc_common::MediationOutcome,
+) {
+    if outcome.pre_flight {
+        // Ledger R-06/A-11: a call that never happened is no evidence
+        // about the target's health in either direction.
+        return;
+    }
+    match outcome.result {
         MediationResult::Success | MediationResult::ErrorConfig => {
             breakers.record_success(endpoint)
         }
         MediationResult::ErrorProcess | MediationResult::ErrorConnection => {
             breakers.record_failure(endpoint)
         }
-        MediationResult::RateLimited => {}
+        // RateLimited (a healthy target throttling) and Deferred (ledger
+        // 22b: a healthy target declining the work) are both breaker-
+        // neutral.
+        MediationResult::RateLimited | MediationResult::Deferred => {}
     }
+}
+
+/// The corpus uses two different words for "neither breaker outcome
+/// happened": `"neither"` when a call WAS attempted but the outcome
+/// doesn't move the breaker either way (RateLimited, Deferred), and
+/// `"none"` when NO call was made at all (a pre-flight rejection, or the
+/// breaker-open precondition). Both correspond to a `(0, 0)` delta from
+/// `breaker_effect`'s point of view — `breaker_word` is the caller's job
+/// of picking the right corpus word for a `(0, 0)` delta, driven by
+/// `outcome.pre_flight` (the breaker-open case is handled separately, see
+/// `run_case`'s special-cased block).
+fn breaker_word(outcome: &fc_common::MediationOutcome, before: (u64, u64), after: (u64, u64)) -> &'static str {
+    if outcome.pre_flight {
+        return "none";
+    }
+    breaker_delta(before, after)
 }
 
 fn breaker_delta(before: (u64, u64), after: (u64, u64)) -> &'static str {
@@ -331,36 +370,23 @@ fn warning_level(warnings: &WarningService) -> &'static str {
 
 /// Fields a given case id is allowed to mismatch on, and why. Checked
 /// before treating any single-field mismatch as a hard failure.
+///
+/// Both `deferred-ack-false*` (ledger 22b — `MediationResult::Deferred`
+/// now exists and is breaker-neutral) and `config-error-other-4xx` /
+/// `malformed-target-url` (ledger R-06/A-11 — pre-flight rejections now
+/// raise a CONFIGURATION warning and skip the breaker) pass outright as of
+/// this lane; nothing is tolerated for them any more. `warning` on
+/// `unsupported-mediation-type` stays tolerated only because that case is
+/// skipped outright before any field check runs (`fc_common::MediationType`
+/// has no non-HTTP variant to construct — see `set_up`'s `Setup::Skip`) —
+/// there is no mismatch to tolerate here either, but the entry is left in
+/// case that skip is ever lifted by a future lane owning `Message`.
 fn tolerated_mismatch(case_id: &str, field: &str) -> Option<&'static str> {
     match (case_id, field) {
-        // "unexpected-status-1xx" is skipped outright before reaching any
-        // field check (see the pre-loop skip for `given.kind == "response"`
-        // with a 1xx status) — wiremock can't deliver a genuine 1xx at
-        // all, so there is no mismatch to tolerate here.
-        ("deferred-ack-false", "outcome") | ("deferred-ack-false-with-delay", "outcome") => Some(
-            "fc_common::MediationResult has no Deferred variant distinct from ErrorProcess \
-             (adding one would require touching pool.rs's exhaustive match, out of this \
-             lane's file scope) — ack:false and a real transient 5xx both report ErrorProcess",
-        ),
-        ("deferred-ack-false", "breaker") | ("deferred-ack-false-with-delay", "breaker") => Some(
-            "consequence of the outcome-name gap above: pool.rs's breaker mirror can't tell \
-             ack:false apart from a real ErrorProcess failure, so it records failure where \
-             the corpus wants neither — same underlying gap, not a second bug",
-        ),
-        ("config-error-other-4xx", "warning") => Some(
-            "ledger R-61: \"three warning gaps found by the conformance corpus\" — deferred \
-             2026-09-02, no ruling yet, standing convention keeps current (Go) behaviour: no \
-             warning on the generic 4xx fallback",
-        ),
-        ("malformed-target-url", "warning") | ("unsupported-mediation-type", "warning") => Some(
-            "ledger R-61 (same deferred ruling, the other two of the \"three warning gaps\")",
-        ),
-        ("malformed-target-url", "breaker") => Some(
-            "corpus divergence block: Go records breaker SUCCESS for a pre-flight rejection \
-             that never touched the network (bug, tracked); Java's \"none\" is correct but \
-             R-61 hasn't ruled on this path yet, so Rust still mirrors pool.rs's ErrorConfig \
-             -> success mapping uniformly, matching current (Go) behaviour per the standing \
-             convention",
+        ("unsupported-mediation-type", "warning") => Some(
+            "unreachable in practice: this case is Setup::Skip'd before any field check runs \
+             (fc_common::MediationType has no non-HTTP variant to construct) — left as \
+             documentation for when that skip is lifted, not an active tolerance",
         ),
         _ => None,
     }
@@ -477,14 +503,14 @@ async fn mediation_conformance() {
             .unwrap_or((0, 0));
 
         let outcome = fixture.mediator.mediate(&fixture.message).await;
-        record_breaker_outcome(&fixture.breakers, &endpoint, outcome.result);
+        record_breaker_outcome(&fixture.breakers, &endpoint, &outcome);
 
         let after = fixture
             .breakers
             .get_stats(&endpoint)
             .map(|s| (s.successful_calls, s.failed_calls))
             .unwrap_or((0, 0));
-        let actual_breaker = breaker_delta(before, after);
+        let actual_breaker = breaker_word(&outcome, before, after);
         let actual_warning = warning_level(&fixture.warnings);
 
         check_field(
@@ -636,10 +662,12 @@ fn finish_case(
     }
 }
 
-// TODO(A-27): assert `disposition` once a pure `disposition_of(outcome)`
-// exists. It currently lives nowhere callable — the equivalent decision
-// is inline in pool.rs's delivery loop (see the `nack`/`ack` calls
-// around `pool.rs`'s `spawn_immediate_task` and the group-drain path),
-// entangled with metrics and group-flush bookkeeping. That extraction is
-// pool-side work for a later lane, same as the Go handover doc's Phase 2
-// (`func dispositionOf(out common.MediationOutcome) Disposition`).
+// TODO(A-27): assert `disposition` here too. `pool::disposition_of(outcome,
+// attempts, mode)` exists now (ledger A-27) and both pool.rs call sites
+// (`spawn_immediate_task`, the group-drain path) go through it — see its
+// own `disposition_tests` module in `pool.rs` for outcome-by-outcome
+// pins. What's still missing is a mapping from `Disposition` to the
+// corpus's finer `DELIVERED`/`RETRY_IN_PLACE`/`RETURN_TO_BROKER`/
+// `REJECTED`/`UNDELIVERABLE` vocabulary (see this file's module doc for
+// why that mapping isn't recoverable from a `MediationOutcome` alone) —
+// that naming exercise is for whichever lane wires this runner to it.

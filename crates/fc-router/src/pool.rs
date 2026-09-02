@@ -31,17 +31,317 @@ use tokio::sync::Semaphore;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn};
 
+use crate::circuit_breaker_registry::breaker_key;
+use crate::group_flush::GroupFlushRegistry;
 use crate::mediator::Mediator;
 use crate::metrics::PoolMetricsCollector;
 use crate::Result;
 use fc_common::{
-    BatchMessage, EnhancedPoolMetrics, MediationResult, Message, MessageCallback, PoolConfig,
-    PoolStats,
+    BatchMessage, DispatchMode, EnhancedPoolMetrics, MediationOutcome, MediationResult, Message,
+    MessageCallback, PoolConfig, PoolStats,
 };
 
 const DEFAULT_GROUP: &str = "__DEFAULT__";
 const QUEUE_CAPACITY_MULTIPLIER: u32 = 20; // Java: QUEUE_CAPACITY_MULTIPLIER = 20
 const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
+
+// ============================================================================
+// Disposition — ledger A-27
+// ============================================================================
+//
+// `disposition_of` is the single, pure decision that used to live twice as
+// near-identical inline `match outcome.result { ... }` blocks in
+// `spawn_immediate_task` and `spawn_drain_task` — one deciding the circuit
+// breaker's ledger, one deciding the ack/nack/metric/cascade side effects.
+// Extracting it means both call sites make the exact same decision by
+// construction, and a test can assert the decision without spinning up a
+// pool, a mediator, or a broker.
+//
+// Shaped after Go's `pool.go` `DispositionOf` (ledger A-27's reference
+// shape — see `docs/router-gap-analysis.md`), adapted to what Rust's pool
+// actually does today:
+//
+// - Go's `BrokerRetry` is an IN-PIPELINE retry (re-front the message on the
+//   group's own buffer, no broker round-trip) gated by a per-message
+//   attempts budget (`maxInPipelineAttempts`). Rust's pool has no such
+//   path: every retryable outcome already nacks back to the broker for
+//   redelivery. `BrokerAction::Retry` and the `attempts` parameter stay in
+//   this shape for interface parity and so a future in-pipeline retry
+//   budget has somewhere to land, but nothing produces `Retry` today.
+// - Go's BLOCK_ON_ERROR ACKs untried siblings off the broker (its `A-01`
+//   recovery path — a settled-message hook + platform reaper that does not
+//   exist in this port yet). Ledger A-01 forbids shipping that branch here
+//   before the platform half exists, so `GroupEffect::Block` here still
+//   means "cascade a NACK to the buffered siblings as they're dequeued"
+//   (the pre-existing `failed_batch_groups` mechanism), never an ACK.
+
+/// What a [`Disposition`] does to a message at the broker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrokerAction {
+    /// Ack the message — delivered, or a permanent rejection that retrying
+    /// cannot fix.
+    Ack,
+    /// Retry in place, without touching the broker. Reserved for a future
+    /// in-pipeline retry budget — see the module doc above. Nothing
+    /// produces this today; a call site that receives it treats it the
+    /// same as `Release`.
+    Retry,
+    /// Nack the message back to the broker for redelivery — the target is
+    /// unreachable, unavailable, or throttling.
+    Release,
+}
+
+/// What a [`Disposition`] means for the rest of an ordered message group.
+/// Meaningless for IMMEDIATE dispatch, which has no group buffer to affect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupEffect {
+    /// The drainer moves on to the next buffered message (or exits idle if
+    /// there is none). Covers a success and a discarded failure that
+    /// doesn't cascade — either because the mode doesn't call for it
+    /// (NEXT_ON_ERROR / IMMEDIATE) or because the outcome itself doesn't
+    /// (RateLimited, Deferred — the target is healthy, just asking to
+    /// wait).
+    Continue,
+    /// BLOCK_ON_ERROR's defining behaviour: the head failed terminally (a
+    /// permanent, non-retryable rejection), so every message still
+    /// buffered behind it is cascaded — NACKed as it's dequeued, never
+    /// mediated — rather than delivered past the failure. Only ever
+    /// produced when `mode == DispatchMode::BlockOnError`.
+    Block,
+    /// The target is unreachable/unavailable: this message AND everything
+    /// still buffered behind it are cascaded back to the broker, under
+    /// EVERY dispatch mode — an unreachable target says nothing about
+    /// whether the message itself was wrong, so ordering must be
+    /// preserved by returning the whole group rather than skipping ahead.
+    Release,
+}
+
+/// Which [`PoolMetricsCollector`] method a [`Disposition`]'s outcome
+/// records, as data rather than a call — the reason `disposition_of` can
+/// stay pure. The call site applies it via `apply_metric`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispositionMetric {
+    /// Nothing recorded — no mediation was attempted (a suppressed-group
+    /// ACK, a circuit-open release), so there is nothing to measure.
+    None,
+    Success,
+    Failure,
+    Transient,
+    RateLimited,
+}
+
+/// `processOne`'s (here: the drain/immediate task's) pure verdict for a
+/// mediation outcome: what happens to THIS message at the broker
+/// ([`Self::action`]), what that means for the rest of an ordered group
+/// ([`Self::group`]), the metric to record, and the nack delay to apply.
+///
+/// Produced by [`disposition_of`], which is pure — no I/O, no metrics
+/// calls, no ack/nack calls. Every side effect stays at the call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Disposition {
+    pub action: BrokerAction,
+    pub group: GroupEffect,
+    pub metric: DispositionMetric,
+    /// Seconds to pass to `MessageCallback::nack` when `action` is
+    /// `Release` (or `Retry`). `None` for `Ack` (irrelevant) and for a
+    /// `Release` with no specific delay (the call site's own default
+    /// applies — see `disposition_of`'s `ErrorConnection` arm).
+    pub retry_after_secs: Option<u32>,
+}
+
+/// Pure mapping from a mediation outcome to its [`Disposition`] (ledger
+/// A-27 / A-01). No I/O, no metrics, no ack/nack/flush calls — everything
+/// needed is passed in, so a test can call it directly instead of
+/// re-deriving the decision from the delivery loop.
+///
+/// `attempts` is accepted for interface parity with Go's `DispositionOf`
+/// (which gates an in-pipeline retry budget on it) but is not consulted
+/// here — see the module doc above for why. It stays in the signature so a
+/// future retry budget has somewhere to land without a second breaking
+/// signature change.
+///
+/// `mode` only changes the `Group` effect of a permanent rejection
+/// (`ErrorConfig`): ledger A-01 says BLOCK_ON_ERROR must stop the group at
+/// a terminally failed head rather than deliver successors past it (the
+/// pre-existing NACK cascade — see the module doc for why not the
+/// ACK-the-siblings branch); every other mode continues past it.
+pub fn disposition_of(
+    outcome: &MediationOutcome,
+    _attempts: u32,
+    mode: DispatchMode,
+) -> Disposition {
+    match outcome.result {
+        MediationResult::Success => Disposition {
+            action: BrokerAction::Ack,
+            group: GroupEffect::Continue,
+            metric: DispositionMetric::Success,
+            retry_after_secs: None,
+        },
+
+        MediationResult::ErrorConfig => {
+            // Permanent ACK-drop: a 4xx, an unfollowed 3xx, a pre-flight
+            // rejection, or (R-57) a 5xx the mediator has already
+            // classified as "the app answered" rather than "unavailable".
+            // BLOCK_ON_ERROR must stop the group at this failure rather
+            // than deliver successors past it; every other mode moves on.
+            let group = if mode == DispatchMode::BlockOnError {
+                GroupEffect::Block
+            } else {
+                GroupEffect::Continue
+            };
+            Disposition {
+                action: BrokerAction::Ack,
+                group,
+                metric: DispositionMetric::Failure,
+                retry_after_secs: None,
+            }
+        }
+
+        MediationResult::ErrorProcess => {
+            // Pre-classified by the mediator (R-57): reaching this case at
+            // all means "target unavailable" (502/503/504, or the
+            // generic-failure fallback) — release rather than discard, and
+            // release the WHOLE group (not just this message) so ordering
+            // survives redelivery. Applies under every dispatch mode.
+            Disposition {
+                action: BrokerAction::Release,
+                group: GroupEffect::Release,
+                metric: DispositionMetric::Transient,
+                retry_after_secs: outcome.delay_seconds,
+            }
+        }
+
+        MediationResult::ErrorConnection => Disposition {
+            // Transport failure / unreachable host / timeout — the target
+            // is down. Same whole-group release as ErrorProcess, fixed 30s
+            // delay (the mediator's own default for this outcome).
+            action: BrokerAction::Release,
+            group: GroupEffect::Release,
+            metric: DispositionMetric::Failure,
+            retry_after_secs: Some(30),
+        },
+
+        MediationResult::RateLimited => Disposition {
+            // 429 — healthy destination asking us to slow down. NOT a
+            // breaker failure (see `breaker_effect`) and does NOT cascade:
+            // a rate limit says nothing about the rest of the group.
+            action: BrokerAction::Release,
+            group: GroupEffect::Continue,
+            metric: DispositionMetric::RateLimited,
+            retry_after_secs: Some(outcome.delay_seconds.unwrap_or(30)),
+        },
+
+        MediationResult::Deferred => Disposition {
+            // 2xx + ack=false (ledger 22b) — the target explicitly
+            // deferred this message. Not a failure: breaker-neutral, same
+            // as RateLimited, and does not cascade either — requeue with
+            // the target's requested delay (already floored to 0 by the
+            // mediator when absent).
+            action: BrokerAction::Release,
+            group: GroupEffect::Continue,
+            metric: DispositionMetric::Transient,
+            retry_after_secs: outcome.delay_seconds,
+        },
+    }
+}
+
+/// Whether a mediation outcome counts toward the circuit breaker, and how.
+/// `None` when the call never happened (pre-flight rejection, ledger
+/// R-06/A-11 — no evidence about the target's health in either direction)
+/// or shouldn't move the breaker either way (RateLimited, Deferred — the
+/// target is healthy, just throttling/deferring).
+fn breaker_effect(outcome: &MediationOutcome) -> Option<bool> {
+    if outcome.pre_flight {
+        return None;
+    }
+    match outcome.result {
+        MediationResult::Success | MediationResult::ErrorConfig => Some(true),
+        MediationResult::ErrorProcess | MediationResult::ErrorConnection => Some(false),
+        MediationResult::RateLimited | MediationResult::Deferred => None,
+    }
+}
+
+/// Apply a [`DispositionMetric`] to a [`PoolMetricsCollector`] — the single
+/// place a `Disposition`'s metric turns into an actual `record_*` call, so
+/// `disposition_of` itself never touches the collector.
+fn apply_metric(collector: &PoolMetricsCollector, metric: DispositionMetric, duration_ms: u64) {
+    match metric {
+        DispositionMetric::None => {}
+        DispositionMetric::Success => collector.record_success(duration_ms),
+        DispositionMetric::Failure => collector.record_failure(duration_ms),
+        DispositionMetric::Transient => collector.record_transient(duration_ms),
+        DispositionMetric::RateLimited => collector.record_rate_limited(),
+    }
+}
+
+// ============================================================================
+// Group-flush suppression wiring (ledger A-05/R-52/R-53)
+// ============================================================================
+
+/// Check `task`'s message group against `flush_registry`; if the group is
+/// currently suppressed, ACK it without ever calling the mediator and
+/// record the suppressed-ACK metric. Returns `true` when the task was
+/// fully handled this way — the caller must not mediate, rate-limit, or
+/// otherwise touch it further (queue-size/batch-group bookkeeping is still
+/// the caller's job, same as any other terminal path).
+///
+/// A message with no group id (or an empty one) is never suppressed —
+/// suppression is a per-group concept.
+async fn ack_if_suppressed(
+    flush_registry: &GroupFlushRegistry,
+    metrics_collector: &PoolMetricsCollector,
+    task: &PoolTask,
+) -> bool {
+    let Some(group) = task
+        .message
+        .message_group_id
+        .as_deref()
+        .filter(|g| !g.is_empty())
+    else {
+        return false;
+    };
+    if !flush_registry.suppressed(group) {
+        return false;
+    }
+    debug!(
+        message_id = %task.message.id,
+        group = %group,
+        "Message group flushed; ACKing without delivery"
+    );
+    metrics_collector.record_suppressed();
+    task.callback.ack().await;
+    true
+}
+
+/// After a successful delivery, honour a `flushGroup: true` request on the
+/// response (ledger A-05) by suppressing the rest of the message's group.
+/// A no-op unless `outcome` is `Success` with `flush_group` set. Warns
+/// (rather than suppressing nothing silently) when the target asked to
+/// flush a message that has no group id — there is nothing to suppress.
+fn maybe_flush_group(flush_registry: &GroupFlushRegistry, message: &Message, outcome: &MediationOutcome) {
+    if outcome.result != MediationResult::Success || !outcome.flush_group {
+        return;
+    }
+    match message
+        .message_group_id
+        .as_deref()
+        .filter(|g| !g.is_empty())
+    {
+        Some(group) => {
+            if flush_registry.flush(group, outcome.delay_seconds) {
+                info!(
+                    group = %group,
+                    message_id = %message.id,
+                    delay_seconds = ?outcome.delay_seconds,
+                    "Message group flushed by target"
+                );
+            }
+        }
+        None => {
+            warn!(message_id = %message.id, "flushGroup ignored: message has no message group");
+        }
+    }
+}
 
 /// Pool-wide rate limiter state shared across all message groups in a pool.
 ///
@@ -193,6 +493,14 @@ pub struct ProcessPool {
     /// Per-endpoint circuit breaker registry — shared across pools, keyed by mediation target URL.
     circuit_breaker_registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
 
+    /// Per-message-group delivery suppression registry (ledger A-05/R-52/R-53).
+    /// Pool-private — unlike the circuit breaker registry, flushGroup
+    /// suppression is scoped per pool (ledger R-55: same group id in two
+    /// pools suppresses independently, deferred but current-behaviour-is-
+    /// correct-by-construction here since there is no sharing to begin
+    /// with).
+    flush_registry: Arc<GroupFlushRegistry>,
+
     /// Tracks every worker/drain task spawned by this pool (`spawn_immediate_task`,
     /// `spawn_drain_task`). Tasks spawned through it are always tracked, before
     /// or after `close()` — closing only arms `wait()`, which then resolves as
@@ -254,6 +562,7 @@ impl ProcessPool {
             active_workers: Arc::new(AtomicU32::new(0)),
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
             circuit_breaker_registry,
+            flush_registry: Arc::new(GroupFlushRegistry::new()),
             tracker: TaskTracker::new(),
         }
     }
@@ -410,10 +719,27 @@ impl ProcessPool {
         let rate_limiter = self.rate_limiter.clone();
         let metrics_collector = self.metrics_collector.clone();
         let cb_registry = self.circuit_breaker_registry.clone();
+        let flush_registry = self.flush_registry.clone();
         let failed_batch_groups = self.failed_batch_groups.clone();
         let batch_group_message_count = self.batch_group_message_count.clone();
 
         self.tracker.spawn(async move {
+            // Group-flush suppression (ledger A-05/R-52/R-53), checked
+            // BEFORE the semaphore/rate limiter so a suppressed group
+            // spends neither a concurrency slot nor a rate-limit token —
+            // that saving is the whole point of suppression.
+            if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
+                queue_size.fetch_sub(1, Ordering::Relaxed);
+                if let Some(ref key) = task.batch_group_key {
+                    Self::decrement_and_cleanup_batch_group_static(
+                        key,
+                        &batch_group_message_count,
+                        &failed_batch_groups,
+                    );
+                }
+                return;
+            }
+
             // Acquire a concurrency slot FIRST, then pace on the rate
             // limiter while holding it — see `wait_for_rate_limit_permit`
             // for why this order matters.
@@ -439,9 +765,11 @@ impl ProcessPool {
             active_workers.fetch_add(1, Ordering::Relaxed);
             queue_size.fetch_sub(1, Ordering::Relaxed);
 
-            // Check per-endpoint circuit breaker
-            let endpoint = &task.message.mediation_target;
-            if !cb_registry.allow_request(endpoint) {
+            // Check per-endpoint circuit breaker (keyed by origin+path,
+            // ledger R-12 — query string stripped so per-message query
+            // data can't fragment the failure signal).
+            let endpoint = breaker_key(&task.message.mediation_target);
+            if !cb_registry.allow_request(&endpoint) {
                 debug!(message_id = %task.message.id, endpoint = %endpoint, "Endpoint circuit breaker open");
                 metrics_collector.record_failure(0);
                 task.callback.nack(Some(5)).await;
@@ -450,41 +778,25 @@ impl ProcessPool {
                 let outcome = mediator.mediate(&task.message).await;
                 let duration_ms = start.elapsed().as_millis() as u64;
 
-                match outcome.result {
-                    MediationResult::Success | MediationResult::ErrorConfig => {
-                        cb_registry.record_success(endpoint)
-                    }
-                    MediationResult::ErrorProcess | MediationResult::ErrorConnection => {
-                        cb_registry.record_failure(endpoint)
-                    }
-                    // RateLimited is destination throttling, not a real failure —
-                    // do not affect the circuit breaker either way.
-                    MediationResult::RateLimited => {}
+                match breaker_effect(&outcome) {
+                    Some(true) => cb_registry.record_success(&endpoint),
+                    Some(false) => cb_registry.record_failure(&endpoint),
+                    None => {}
                 }
 
-                match outcome.result {
-                    MediationResult::Success => {
-                        metrics_collector.record_success(duration_ms);
+                // IMMEDIATE mode has no group buffer, so `disposition.group`
+                // is never consulted here — DispatchMode at this call site
+                // is always `Immediate`.
+                let disposition = disposition_of(&outcome, 0, task.message.dispatch_mode);
+                apply_metric(&metrics_collector, disposition.metric, duration_ms);
+
+                match disposition.action {
+                    BrokerAction::Ack => {
+                        maybe_flush_group(&flush_registry, &task.message, &outcome);
                         task.callback.ack().await;
                     }
-                    MediationResult::ErrorConfig => {
-                        metrics_collector.record_failure(duration_ms);
-                        task.callback.ack().await;
-                    }
-                    MediationResult::ErrorProcess => {
-                        metrics_collector.record_transient(duration_ms);
-                        task.callback.nack(outcome.delay_seconds).await;
-                    }
-                    MediationResult::ErrorConnection => {
-                        metrics_collector.record_failure(duration_ms);
-                        task.callback.nack(Some(30)).await;
-                    }
-                    MediationResult::RateLimited => {
-                        // Nack with Retry-After so SQS redelivers after the
-                        // destination's requested delay. Not counted as a
-                        // delivery attempt or a failure.
-                        metrics_collector.record_rate_limited();
-                        task.callback.nack(outcome.delay_seconds.or(Some(30))).await;
+                    BrokerAction::Release | BrokerAction::Retry => {
+                        task.callback.nack(disposition.retry_after_secs).await;
                     }
                 }
             }
@@ -530,6 +842,7 @@ impl ProcessPool {
         let group_handlers = self.group_handlers.clone();
         let metrics_collector = self.metrics_collector.clone();
         let cb_registry = self.circuit_breaker_registry.clone();
+        let flush_registry = self.flush_registry.clone();
 
         self.tracker.spawn(async move {
             debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task started");
@@ -667,6 +980,20 @@ impl ProcessPool {
                 // Decrement queue size
                 queue_size.fetch_sub(1, Ordering::Relaxed);
 
+                // Group-flush suppression (ledger A-05/R-52/R-53), checked
+                // BEFORE the semaphore/rate limiter so a suppressed group
+                // spends neither a concurrency slot nor a rate-limit token.
+                if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
+                    if let Some(ref key) = task.batch_group_key {
+                        Self::decrement_and_cleanup_batch_group_static(
+                            key,
+                            &batch_group_message_count,
+                            &failed_batch_groups,
+                        );
+                    }
+                    continue;
+                }
+
                 // Acquire a concurrency slot FIRST, then pace on the rate
                 // limiter while holding it — see `wait_for_rate_limit_permit`
                 // for why this order matters.
@@ -697,9 +1024,10 @@ impl ProcessPool {
                 active_workers.fetch_add(1, Ordering::Relaxed);
                 panic_guard.holding_permit = true;
 
-                // Check per-endpoint circuit breaker before attempting mediation
-                let endpoint = &task.message.mediation_target;
-                if !cb_registry.allow_request(endpoint) {
+                // Check per-endpoint circuit breaker before attempting
+                // mediation (keyed by origin+path, ledger R-12).
+                let endpoint = breaker_key(&task.message.mediation_target);
+                if !cb_registry.allow_request(&endpoint) {
                     debug!(
                         message_id = %task.message.id,
                         endpoint = %endpoint,
@@ -718,94 +1046,67 @@ impl ProcessPool {
                     let outcome = mediator.mediate(&task.message).await;
                     let duration_ms = start.elapsed().as_millis() as u64;
 
-                    // Record outcome on per-endpoint circuit breaker
-                    match outcome.result {
-                        MediationResult::Success | MediationResult::ErrorConfig => {
-                            cb_registry.record_success(endpoint);
-                        }
-                        MediationResult::ErrorProcess | MediationResult::ErrorConnection => {
-                            cb_registry.record_failure(endpoint);
-                        }
-                        // RateLimited is destination throttling, not a real failure —
-                        // do not affect the circuit breaker either way.
-                        MediationResult::RateLimited => {}
+                    match breaker_effect(&outcome) {
+                        Some(true) => cb_registry.record_success(&endpoint),
+                        Some(false) => cb_registry.record_failure(&endpoint),
+                        None => {}
                     }
 
-                    // Handle outcome: record metrics, call callback directly
-                    match outcome.result {
-                        MediationResult::Success => {
-                            debug!(
-                                message_id = %task.message.id,
-                                duration_ms = duration_ms,
-                                "Message processed successfully"
-                            );
-                            metrics_collector.record_success(duration_ms);
-                            task.callback.ack().await;
-                        }
-                        MediationResult::ErrorConfig => {
-                            warn!(
-                                message_id = %task.message.id,
-                                error = ?outcome.error_message,
-                                "Configuration error, ACKing to prevent retry"
-                            );
-                            metrics_collector.record_failure(duration_ms);
-                            task.callback.ack().await;
-                        }
-                        MediationResult::ErrorProcess => {
-                            warn!(
-                                message_id = %task.message.id,
-                                error = ?outcome.error_message,
-                                "Transient error, NACKing for retry"
-                            );
-                            metrics_collector.record_transient(duration_ms);
+                    let disposition =
+                        disposition_of(&outcome, 0, task.message.dispatch_mode);
+                    apply_metric(&metrics_collector, disposition.metric, duration_ms);
 
+                    // GroupEffect::Block (BLOCK_ON_ERROR's terminally-failed
+                    // head) and GroupEffect::Release (an unreachable target,
+                    // under every mode) both cascade the same way today:
+                    // mark the batch+group failed so every message still
+                    // buffered behind this one is NACKed as it's dequeued,
+                    // never mediated — see the module's disposition_of doc
+                    // for why this isn't the ACK-the-siblings branch.
+                    match disposition.group {
+                        GroupEffect::Continue => {}
+                        GroupEffect::Block | GroupEffect::Release => {
                             if let Some(ref key) = task.batch_group_key {
                                 let was_new = failed_batch_groups.insert(key.clone());
                                 if was_new {
                                     warn!(
                                         batch_group = %key,
+                                        group_effect = ?disposition.group,
                                         "Batch+group marked as failed - remaining messages will be NACKed"
                                     );
                                 }
                             }
-
-                            task.callback.nack(outcome.delay_seconds).await;
                         }
-                        MediationResult::ErrorConnection => {
+                    }
+
+                    match disposition.action {
+                        BrokerAction::Ack => {
+                            if outcome.result == MediationResult::Success {
+                                debug!(
+                                    message_id = %task.message.id,
+                                    duration_ms = duration_ms,
+                                    "Message processed successfully"
+                                );
+                                maybe_flush_group(&flush_registry, &task.message, &outcome);
+                            } else {
+                                warn!(
+                                    message_id = %task.message.id,
+                                    error = ?outcome.error_message,
+                                    "Permanent error, ACKing to prevent retry"
+                                );
+                            }
+                            task.callback.ack().await;
+                        }
+                        BrokerAction::Release | BrokerAction::Retry => {
                             warn!(
                                 message_id = %task.message.id,
                                 error = ?outcome.error_message,
-                                "Connection error, NACKing for retry"
+                                retry_after = ?disposition.retry_after_secs,
+                                "NACKing for retry"
                             );
-                            metrics_collector.record_failure(duration_ms);
-
-                            if let Some(ref key) = task.batch_group_key {
-                                let was_new = failed_batch_groups.insert(key.clone());
-                                if was_new {
-                                    warn!(
-                                        batch_group = %key,
-                                        "Batch+group marked as failed - remaining messages will be NACKed"
-                                    );
-                                }
-                            }
-
-                            task.callback.nack(Some(30)).await;
+                            task.callback.nack(disposition.retry_after_secs).await;
                         }
-                        MediationResult::RateLimited => {
-                            // Destination throttled us — nack with Retry-After.
-                            // NOT counted as a delivery attempt or failure, and
-                            // we deliberately do NOT mark the batch+group as
-                            // failed: a 429 means "try again later", not "this
-                            // group is broken".
-                            warn!(
-                                message_id = %task.message.id,
-                                retry_after = ?outcome.delay_seconds,
-                                "Rate limited by destination, NACKing for retry"
-                            );
-                            metrics_collector.record_rate_limited();
-                            task.callback.nack(outcome.delay_seconds.or(Some(30))).await;
-                        }
-                    };
+                    }
                 }
 
                 // Decrement batch+group count and cleanup if done
@@ -988,6 +1289,78 @@ impl ProcessPool {
         self.tracker.close();
     }
 
+    /// Release every group's buffered remainder back to the broker (ledger
+    /// R-49): stop admitting new work (the same `running` flag
+    /// `drain`/`shutdown` use), then NACK every not-yet-started task still
+    /// queued behind an in-flight message in each ordered group's handler.
+    ///
+    /// In-flight deliveries — already popped off a group's buffer and
+    /// inside a drain/immediate task's `mediator.mediate()` call — are
+    /// left completely alone; this touches only what's still buffered and
+    /// waiting.
+    ///
+    /// This is the mechanical primitive R-49 asks for ("finish what's in
+    /// the air, release the rest of the buffer") — not the full shutdown
+    /// sequence. R-49's own rationale: draining a deep buffer against a
+    /// slow target could take arbitrarily long, and the orchestrator's
+    /// SIGTERM→SIGKILL window would sever in-flight deliveries mid-call
+    /// anyway, so the broker holding the remainder (rather than this
+    /// process trying to work through it) is the safe place for it.
+    /// Sequencing this with the drain budget — finish what's in flight,
+    /// THEN call this once the budget expires or at hard shutdown — is the
+    /// manager lane's job; this method only guarantees every
+    /// buffered-but-unstarted message gets a NACK (no fixed delay — the
+    /// broker's own redelivery timing applies) rather than being drained
+    /// to completion or silently abandoned.
+    ///
+    /// Returns how many buffered messages were released. Safe to call more
+    /// than once — later calls find every group buffer already empty and
+    /// are cheap no-ops. Does NOT close the task tracker or affect
+    /// `wait_drained()`/`is_fully_drained()` — pair with
+    /// [`ProcessPool::drain`] or [`ProcessPool::shutdown`] for that half.
+    pub async fn release_remainder(&self) -> usize {
+        self.running.store(false, Ordering::SeqCst);
+
+        let group_ids: Vec<Arc<str>> = self
+            .group_handlers
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        let mut released = 0usize;
+        for group_id in group_ids {
+            let drained: Vec<PoolTask> = match self.group_handlers.get(&group_id) {
+                Some(entry) => {
+                    let mut handler = entry.lock();
+                    let mut tasks = Vec::new();
+                    while let Some(task) = handler.dequeue() {
+                        tasks.push(task);
+                    }
+                    tasks
+                }
+                None => Vec::new(),
+            };
+
+            for task in drained {
+                released += 1;
+                self.queue_size.fetch_sub(1, Ordering::Relaxed);
+                if let Some(ref key) = task.batch_group_key {
+                    self.decrement_and_cleanup_batch_group(key);
+                }
+                task.callback.nack(None).await;
+            }
+        }
+
+        if released > 0 {
+            info!(
+                pool_code = %self.config.code,
+                released,
+                "Released buffered group remainder to broker"
+            );
+        }
+        released
+    }
+
     /// Get pool statistics
     pub fn get_stats(&self) -> PoolStats {
         let current_concurrency = self.concurrency.load(Ordering::SeqCst);
@@ -1027,6 +1400,14 @@ impl ProcessPool {
         &self,
     ) -> &Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry> {
         &self.circuit_breaker_registry
+    }
+
+    /// Get the group-flush suppression registry (ledger R-52: for
+    /// monitoring/operator APIs — listing active suppressions and clearing
+    /// one early. Wiring that into an actual HTTP endpoint is a later
+    /// lane's work; this exposes the primitive).
+    pub fn group_flush_registry(&self) -> &Arc<GroupFlushRegistry> {
+        &self.flush_registry
     }
 
     /// Get current concurrency setting
@@ -1170,5 +1551,166 @@ impl PoolConfigUpdate {
 impl Default for PoolConfigUpdate {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod disposition_tests {
+    //! Pins `disposition_of` per outcome (ledger A-27). Pure/synchronous —
+    //! no pool, mediator, or broker needed. Integration-level cascade
+    //! behaviour (does BLOCK_ON_ERROR actually NACK the siblings end to
+    //! end?) is pinned separately in
+    //! `tests/cascade_dispatch_mode_test.rs`.
+    use super::*;
+    use fc_common::MediationOutcome;
+
+    #[test]
+    fn success_acks_and_continues() {
+        let d = disposition_of(&MediationOutcome::success(200), 0, DispatchMode::Immediate);
+        assert_eq!(d.action, BrokerAction::Ack);
+        assert_eq!(d.group, GroupEffect::Continue);
+        assert_eq!(d.metric, DispositionMetric::Success);
+        assert_eq!(d.retry_after_secs, None);
+    }
+
+    #[test]
+    fn error_config_acks_and_continues_under_immediate_and_next_on_error() {
+        let outcome = MediationOutcome::error_config(400, "bad request".to_string());
+        for m in [DispatchMode::Immediate, DispatchMode::NextOnError] {
+            let d = disposition_of(&outcome, 0, m);
+            assert_eq!(d.action, BrokerAction::Ack, "mode {m:?}");
+            assert_eq!(d.group, GroupEffect::Continue, "mode {m:?}");
+            assert_eq!(d.metric, DispositionMetric::Failure, "mode {m:?}");
+        }
+    }
+
+    #[test]
+    fn error_config_blocks_group_under_block_on_error() {
+        let outcome = MediationOutcome::error_config(500, "rejected".to_string());
+        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError);
+        assert_eq!(d.action, BrokerAction::Ack, "the head is still ACKed away");
+        assert_eq!(
+            d.group,
+            GroupEffect::Block,
+            "BLOCK_ON_ERROR must stop the group at a terminally failed head"
+        );
+        assert_eq!(d.metric, DispositionMetric::Failure);
+    }
+
+    #[test]
+    fn error_process_releases_whole_group_under_every_mode() {
+        let outcome = MediationOutcome::error_process(Some(30), "unavailable".to_string());
+        for m in [
+            DispatchMode::Immediate,
+            DispatchMode::NextOnError,
+            DispatchMode::BlockOnError,
+        ] {
+            let d = disposition_of(&outcome, 0, m);
+            assert_eq!(d.action, BrokerAction::Release, "mode {m:?}");
+            assert_eq!(
+                d.group,
+                GroupEffect::Release,
+                "a retryable head failure releases the whole group under every mode; mode {m:?}"
+            );
+            assert_eq!(d.metric, DispositionMetric::Transient, "mode {m:?}");
+            assert_eq!(d.retry_after_secs, Some(30), "mode {m:?}");
+        }
+    }
+
+    #[test]
+    fn error_connection_releases_whole_group_with_fixed_30s_delay() {
+        let outcome = MediationOutcome::error_connection("connection refused".to_string());
+        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError);
+        assert_eq!(d.action, BrokerAction::Release);
+        assert_eq!(d.group, GroupEffect::Release);
+        assert_eq!(d.metric, DispositionMetric::Failure);
+        assert_eq!(d.retry_after_secs, Some(30));
+    }
+
+    #[test]
+    fn rate_limited_releases_without_cascading() {
+        let outcome = MediationOutcome::rate_limited(12);
+        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError);
+        assert_eq!(d.action, BrokerAction::Release);
+        assert_eq!(
+            d.group,
+            GroupEffect::Continue,
+            "429 is breaker-neutral and must not cascade to the rest of the group"
+        );
+        assert_eq!(d.metric, DispositionMetric::RateLimited);
+        assert_eq!(d.retry_after_secs, Some(12));
+    }
+
+    #[test]
+    fn rate_limited_defaults_delay_to_30s_when_absent() {
+        // `rate_limited()` always sets a delay, but disposition_of's own
+        // `.unwrap_or(30)` is pinned directly against a hand-built outcome
+        // in case that constructor's default ever changes independently.
+        let outcome = MediationOutcome {
+            result: MediationResult::RateLimited,
+            delay_seconds: None,
+            status_code: Some(429),
+            error_message: None,
+            flush_group: false,
+            pre_flight: false,
+        };
+        let d = disposition_of(&outcome, 0, DispatchMode::Immediate);
+        assert_eq!(d.retry_after_secs, Some(30));
+    }
+
+    #[test]
+    fn deferred_releases_without_cascading_and_retains_delay() {
+        let outcome = MediationOutcome::deferred(200, Some(15));
+        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError);
+        assert_eq!(d.action, BrokerAction::Release);
+        assert_eq!(
+            d.group,
+            GroupEffect::Continue,
+            "ack:false is not a failure and must not cascade to the rest of the group"
+        );
+        assert_eq!(d.metric, DispositionMetric::Transient);
+        assert_eq!(d.retry_after_secs, Some(15));
+    }
+
+    // ------------------------------------------------------------------
+    // breaker_effect (ledger 22b / R-06 / A-11)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn breaker_effect_success_and_error_config_are_success() {
+        assert_eq!(breaker_effect(&MediationOutcome::success(200)), Some(true));
+        assert_eq!(
+            breaker_effect(&MediationOutcome::error_config(404, "nf".to_string())),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn breaker_effect_error_process_and_connection_are_failure() {
+        assert_eq!(
+            breaker_effect(&MediationOutcome::error_process(Some(30), "x".to_string())),
+            Some(false)
+        );
+        assert_eq!(
+            breaker_effect(&MediationOutcome::error_connection("x".to_string())),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn breaker_effect_rate_limited_and_deferred_are_neutral() {
+        assert_eq!(breaker_effect(&MediationOutcome::rate_limited(30)), None);
+        assert_eq!(breaker_effect(&MediationOutcome::deferred(200, Some(0))), None);
+    }
+
+    #[test]
+    fn breaker_effect_pre_flight_is_neutral_even_though_result_is_error_config() {
+        let outcome = MediationOutcome::pre_flight_rejected("no host".to_string());
+        assert_eq!(outcome.result, MediationResult::ErrorConfig);
+        assert_eq!(
+            breaker_effect(&outcome),
+            None,
+            "a call that never happened is no evidence about the target's health"
+        );
     }
 }

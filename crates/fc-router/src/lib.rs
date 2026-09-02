@@ -17,6 +17,7 @@ pub mod api;
 pub mod circuit_breaker_registry;
 pub mod config_sync;
 pub mod error;
+pub mod group_flush;
 pub mod health;
 pub mod http_pool;
 pub mod lifecycle;
@@ -36,12 +37,14 @@ pub use api::oidc_flow::{
     oidc_flow_routes, OidcFlowConfig, OidcFlowState, PendingOidcStateStore, SessionStore,
 };
 pub use circuit_breaker_registry::{
-    CircuitBreakerConfig, CircuitBreakerRegistry, CircuitBreakerState, CircuitBreakerStats,
+    breaker_key, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitBreakerState,
+    CircuitBreakerStats,
 };
 pub use config_sync::{
     spawn_config_sync_task, ConfigSyncConfig, ConfigSyncError, ConfigSyncResult, ConfigSyncService,
 };
 pub use error::RouterError;
+pub use group_flush::{GroupFlushRegistry, GroupFlushStats, DEFAULT_FLUSH_TTL, MAX_FLUSH_TTL};
 pub use health::{HealthService, HealthServiceConfig};
 pub use http_pool::{HostConnectionPool, HostKey, HostKeyError, HostPoolRegistry, HostPoolSizing};
 pub use lifecycle::{LifecycleConfig, LifecycleManager};
@@ -55,7 +58,10 @@ pub use notification::{
 };
 #[cfg(feature = "email")]
 pub use notification::{EmailConfig, EmailNotificationService};
-pub use pool::{PoolConfigUpdate, ProcessPool};
+pub use pool::{
+    disposition_of, BrokerAction, Disposition, DispositionMetric, GroupEffect, PoolConfigUpdate,
+    ProcessPool,
+};
 pub use queue_health_monitor::{spawn_queue_health_monitor, QueueHealthConfig, QueueHealthMonitor};
 pub use standby::{
     spawn_leadership_monitor, LeadershipStatus, StandbyAwareProcessor, StandbyProcessor,
