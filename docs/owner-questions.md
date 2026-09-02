@@ -730,3 +730,8 @@ Counts: **Part A** 27 rulings already taken · **Part B** ~290 open questions in
 - **IMP-1** Auth-code replay does not revoke the refresh family (A-21).
 - **IMP-2** Secret-rotation UI: grace control on rotate (0 = "cut over now"), revoke-previous action, and a "still authenticating on the old secret" signal.
 - **IMP-3** `flushGroup` safety condition unenforced (A-05).
+
+## Addendum — latent defects found during implementation (2026-09-02)
+
+- **fc-router stall force-NACK key mismatch (INERT today):** `check_and_handle_stalled_messages`'s force-NACK path looks up `in_pipeline` by application `message_id`, but the map is keyed by pipeline key — the lookup never matches in production. Inert because `force_nack_stalled` defaults to `false`. Fix before ever enabling that flag.
+- **fc-router pool warning emission prerequisites:** CircuitBreaker/RateLimiting warnings need `warning_service` threaded into `ProcessPool` (three documented one-liner sites in the RF report / commit message).
