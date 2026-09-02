@@ -55,3 +55,75 @@ pub fn env_bool_alias(primary: &str, alias: &str, default: bool) -> bool {
 pub fn env_required(key: &str) -> anyhow::Result<String> {
     std::env::var(key).map_err(|_| anyhow::anyhow!("{} environment variable is required", key))
 }
+
+// ── env_first: N-way priority alias resolution ─────────────────────────────
+//
+// Mirrors Go's `envFirst`/`envBoolAlias`/`envIntAlias` pattern
+// (flowcatalyst-go `internal/server/envcfg.go`): a single table of names in
+// priority order, canonical `FC_*` name first, legacy/deployment-specific
+// names as fallbacks. An empty value is treated the same as unset — a var
+// present-but-empty in the environment does NOT win over a later, populated
+// alias — so callers get the same "first *non-empty* value wins" behaviour
+// Go's envFirst has. Every drop-in env-compat shim (standby, router auth,
+// notify webhook, ports, …) should route through this family rather than
+// hand-rolling its own `std::env::var(...).or_else(...)` chain, so the
+// table of aliases lives in one place.
+
+/// Return the first non-empty value among `keys` (priority order), or
+/// `default` if none are set. `keys` is typically a `&[&str]` array literal
+/// with the canonical `FC_*` name first.
+pub fn env_first(keys: &[&str], default: &str) -> String {
+    for key in keys {
+        if let Ok(v) = std::env::var(key) {
+            if !v.is_empty() {
+                return v;
+            }
+        }
+    }
+    default.to_string()
+}
+
+/// Like [`env_first`], but returns `None` instead of a default when no key
+/// is set — for callers that need to distinguish "unset" from "empty
+/// string default" (e.g. an optional webhook URL).
+pub fn env_first_opt(keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Ok(v) = std::env::var(key) {
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// [`env_first`] + boolean parsing (`"true"`/`"1"` → true, anything else
+/// non-empty → false — same truthy rule as [`env_bool`]).
+pub fn env_first_bool(keys: &[&str], default: bool) -> bool {
+    for key in keys {
+        if let Ok(v) = std::env::var(key) {
+            if !v.is_empty() {
+                return v == "true" || v == "1";
+            }
+        }
+    }
+    default
+}
+
+/// [`env_first`] + numeric/typed parsing. An unparseable non-empty value
+/// is treated as unset and falls through to the next key, matching Go's
+/// `envIntAlias` (a malformed value doesn't win over a good one further
+/// down the alias chain).
+pub fn env_first_parse<T: FromStr>(keys: &[&str], default: T) -> T {
+    for key in keys {
+        if let Ok(v) = std::env::var(key) {
+            if v.is_empty() {
+                continue;
+            }
+            if let Ok(parsed) = v.parse() {
+                return parsed;
+            }
+        }
+    }
+    default
+}

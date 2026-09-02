@@ -1,5 +1,57 @@
 # FlowCatalyst Message Router - Rust
 # Multi-stage build with cargo-chef for cached dependency builds
+#
+# ── Drop-in compat with the Go ECS task definition ─────────────────────────
+#
+# This image is built to be a literal drop-in for the ECS task definition
+# that currently runs the Go router (fc-server with RouterEnabled=true) —
+# same env vars, same health-check path, same ports. It reads Go's FC_*
+# env var names FIRST, falling back to this binary's own historical names
+# (see fc-common's `env_first` family, crates/fc-common/src/config.rs, and
+# its callers in bin/fc-router/src/main.rs / crates/fc-router/src/api/auth.rs).
+# Full reference: docs/router-specification.md §10 (Configuration reference).
+#
+#   FC_API_PORT              (fallback API_PORT, default 8080)
+#   FC_METRICS_PORT           accepted and logged as a no-op — metrics are
+#                             always served on the API port at /metrics
+#                             (no separate metrics listener exists here)
+#   FC_ROUTER_HTTP_PREFIX     unset (default) = root-only, as always; when
+#                             set, the whole route tree is ALSO nested under
+#                             the prefix (e.g. /router/health/live), so a
+#                             Go-dialect task definition's /router/... probes
+#                             and operator URLs work unchanged
+#   FC_ROUTER_AUTH_USER/PASS  (fallback AUTH_BASIC_USERNAME/PASSWORD)
+#                             AUTH_MODE=NONE disables auth regardless of
+#                             credentials, matching Go
+#   FC_STANDBY_ENABLED        SAFETY-CRITICAL — fallback FLOWCATALYST_STANDBY_ENABLED,
+#                             then Go's legacy STANDBY_ENABLED. Getting this
+#                             wrong means an instance silently runs WITHOUT
+#                             leader election.
+#   FC_STANDBY_REDIS_URL      fallback FLOWCATALYST_STANDBY_REDIS_URL,
+#                             FLOWCATALYST_REDIS_URL, then Go's legacy REDIS_URL
+#   FC_STANDBY_LOCK_KEY       fallback FLOWCATALYST_STANDBY_LOCK_KEY
+#   FC_NOTIFY_WEBHOOK_URL     (fallback NOTIFICATION_TEAMS_WEBHOOK_URL) — a
+#                             non-empty URL alone enables notifications,
+#                             matching Go (no separate enabled flag needed)
+#   FC_DRAIN_TIMEOUT_SECONDS  shutdown pool-drain budget, default 60
+#   FLOWCATALYST_CONFIG_URL, FC_ROUTER_STRICT_ROUTING,
+#   FC_ROUTER_SYNTH_POOL_IDLE_SECS, FC_NOTIFY_MIN_SEVERITY  already share
+#                             Go's exact names — no aliasing needed
+#
+# ── Multi-arch builds ────────────────────────────────────────────────────
+#
+# This Dockerfile builds for the host's native architecture only. To
+# publish both linux/amd64 and linux/arm64 (Graviton ECS tasks included),
+# build with buildx instead of plain `docker build`:
+#
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     -f Dockerfile.router -t <registry>/fc-router:<tag> --push .
+#
+# cargo-chef's cook/build layers are per-platform under buildx (QEMU
+# emulation for the non-native arch unless native builders are set up in
+# a `docker buildx create` builder pool) — expect the cross-arch leg to be
+# noticeably slower than the native one. Not run as part of this change;
+# documented here for the next person who needs to publish a multi-arch tag.
 
 # Stage 1: Plan dependencies
 FROM lukemathwalker/cargo-chef:latest-rust-1.92-bookworm AS chef

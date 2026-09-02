@@ -100,23 +100,47 @@ impl AuthConfig {
         }
     }
 
-    /// Create config from environment variables
+    /// Create config from environment variables.
+    ///
+    /// BasicAuth credentials accept `FC_ROUTER_AUTH_USER`/`FC_ROUTER_AUTH_PASS`
+    /// (the canonical Go-dialect names — `internal/router/api` `resolveRouterAuth`)
+    /// first, falling back to the historical `AUTH_BASIC_USERNAME`/`AUTH_BASIC_PASSWORD`.
+    /// `AUTH_MODE=NONE` (case-insensitive) always disables auth, matching Go.
+    /// When `AUTH_MODE` is unset (or unrecognized) and credentials are present,
+    /// mode is inferred as `Basic` — a Go-dialect ECS task definition sets the
+    /// credentials but never sets `AUTH_MODE=BASIC` explicitly, so requiring it
+    /// here would silently leave auth off for a drop-in deployment. An explicit
+    /// `AUTH_MODE=OIDC`/`OIDC_FLOW` still wins over inferred Basic.
     pub fn from_env() -> Self {
-        let mode = std::env::var("AUTH_MODE")
-            .ok()
-            .and_then(|m| match m.to_uppercase().as_str() {
-                "BASIC" => Some(AuthMode::Basic),
-                "OIDC" => Some(AuthMode::Oidc),
-                "OIDC_FLOW" => Some(AuthMode::OidcFlow),
-                "NONE" | "" => Some(AuthMode::None),
-                _ => None,
-            })
-            .unwrap_or(AuthMode::None);
+        let basic_username = fc_common::config::env_first_opt(&[
+            "FC_ROUTER_AUTH_USER",
+            "AUTH_BASIC_USERNAME",
+        ]);
+        let basic_password = fc_common::config::env_first_opt(&[
+            "FC_ROUTER_AUTH_PASS",
+            "AUTH_BASIC_PASSWORD",
+        ]);
+
+        let mode = match std::env::var("AUTH_MODE").ok().as_deref().map(str::to_uppercase) {
+            Some(ref m) if m == "NONE" => AuthMode::None,
+            Some(ref m) if m == "BASIC" => AuthMode::Basic,
+            Some(ref m) if m == "OIDC" => AuthMode::Oidc,
+            Some(ref m) if m == "OIDC_FLOW" => AuthMode::OidcFlow,
+            _ => {
+                // AUTH_MODE unset or unrecognized: infer Basic when credentials
+                // are present (Go-dialect drop-in), else stay fully open.
+                if basic_username.as_deref().is_some_and(|u| !u.is_empty()) {
+                    AuthMode::Basic
+                } else {
+                    AuthMode::None
+                }
+            }
+        };
 
         Self {
             mode,
-            basic_username: std::env::var("AUTH_BASIC_USERNAME").ok(),
-            basic_password: std::env::var("AUTH_BASIC_PASSWORD").ok(),
+            basic_username,
+            basic_password,
             oidc_issuer: std::env::var("OIDC_ISSUER").ok(),
             oidc_client_id: std::env::var("OIDC_CLIENT_ID").ok(),
             oidc_audience: std::env::var("OIDC_AUDIENCE").ok(),

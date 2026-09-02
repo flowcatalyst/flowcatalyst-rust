@@ -348,6 +348,7 @@ pub fn create_router(
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -360,6 +361,19 @@ pub fn create_router(
 /// If the `oidc-flow` feature is enabled and auth mode is `OidcFlow`, the
 /// `/auth/login`, `/auth/callback`, and `/auth/logout` routes are automatically
 /// merged into the router.
+///
+/// `router_http_prefix`, when `Some`, additionally nests the *entire* route
+/// tree — public and protected alike — under that path prefix, so it answers
+/// at both root (today's default behaviour) and `<prefix>/...`. This mirrors
+/// Go's `internal/server.MountRouterHTTP`, which mounts the router HTTP
+/// surface under `FC_ROUTER_HTTP_PREFIX` (default `/router`) inside the
+/// unified `fc-server` binary; a Go-dialect ECS task definition health-checks
+/// and operates against `<prefix>/...` URLs, while this crate's own
+/// `bin/fc-router` deployments and tests keep hitting root paths unchanged.
+/// Auth is unaffected by nesting: the public/protected split above already
+/// happened before nesting runs, so the nested public routes (health,
+/// metrics, swagger, …) stay auth-free under the prefix too — nesting only
+/// adds path-prefix matching, it never re-applies (or removes) a layer.
 // Router wiring requires every component as an explicit param so the caller
 // can swap individual pieces (different queue, no-op health service, etc.)
 // in tests. A builder would just be a rename of the same surface.
@@ -376,6 +390,7 @@ pub fn create_router_with_options(
     traffic_strategy: Option<Arc<dyn crate::traffic::TrafficStrategy>>,
     metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
     auth_state: Option<AuthState>,
+    router_http_prefix: Option<String>,
 ) -> Router {
     let cached_broker_stats = Arc::new(CachedBrokerStats::new(queue_manager.clone()));
 
@@ -601,7 +616,71 @@ pub fn create_router_with_options(
         }
     }
 
+    // FC_ROUTER_HTTP_PREFIX (R-XX / drop-in compat with Go's MountRouterHTTP):
+    // when set, serve the whole route tree BOTH at root and nested under the
+    // prefix. `router` at this point already has auth applied only to the
+    // protected half (see above), so `nest`-ing it changes nothing about
+    // which paths require credentials — the nested public routes stay public.
+    if let Some(prefix) = normalize_router_http_prefix(router_http_prefix.as_deref()) {
+        info!(prefix = %prefix, "Router HTTP surface additionally nested under prefix");
+        router = Router::new().merge(router.clone()).nest(&prefix, router);
+    }
+
     router
+}
+
+/// Normalizes `FC_ROUTER_HTTP_PREFIX` into a `Router::nest`-able path:
+/// `None`/empty/whitespace-only/`"/"` all mean "no nesting" (today's
+/// root-only behaviour, and axum's `nest` rejects an empty or root path
+/// outright); otherwise the value is coerced to a leading `/` and no
+/// trailing `/`.
+fn normalize_router_http_prefix(raw: Option<&str>) -> Option<String> {
+    let trimmed = raw?.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return None;
+    }
+    let mut prefix = if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    };
+    while prefix.len() > 1 && prefix.ends_with('/') {
+        prefix.pop();
+    }
+    if prefix == "/" {
+        None
+    } else {
+        Some(prefix)
+    }
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::normalize_router_http_prefix;
+
+    #[test]
+    fn none_and_blank_and_root_disable_nesting() {
+        assert_eq!(normalize_router_http_prefix(None), None);
+        assert_eq!(normalize_router_http_prefix(Some("")), None);
+        assert_eq!(normalize_router_http_prefix(Some("   ")), None);
+        assert_eq!(normalize_router_http_prefix(Some("/")), None);
+    }
+
+    #[test]
+    fn adds_leading_slash_and_strips_trailing_slash() {
+        assert_eq!(
+            normalize_router_http_prefix(Some("router")),
+            Some("/router".to_string())
+        );
+        assert_eq!(
+            normalize_router_http_prefix(Some("/router/")),
+            Some("/router".to_string())
+        );
+        assert_eq!(
+            normalize_router_http_prefix(Some("/router")),
+            Some("/router".to_string())
+        );
+    }
 }
 
 /// Simple state for simple router

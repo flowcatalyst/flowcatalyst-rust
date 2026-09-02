@@ -946,7 +946,7 @@ existence as fixed by the ledger rather than left to implementation taste; colum
 | Concern | Reference name | Default | Ruled? | Notes |
 |---|---|---|---|---|
 | Enable the subsystem | `FC_ROUTER_ENABLED` | `false` | — | |
-| Monitoring/API mount prefix | `FC_ROUTER_HTTP_PREFIX` | `/router` | — | |
+| Monitoring/API mount prefix | `FC_ROUTER_HTTP_PREFIX` | unset | — | unset means "root only" (an implementation MAY instead default to mounting exclusively under `/router`, as the Go reference does inside its unified `fc-server` binary); when set, an implementation MUST continue serving the full route tree — public and protected alike — at root AND additionally nest the same tree under the prefix, so a deployment that health-checks/operates against `<prefix>/...` and one that hits root paths directly both work unmodified. Nesting MUST NOT change which routes are public: the public/protected split is decided before nesting, never re-derived from the mount-relative path (contrast Go's `internal/router/api` `IsPublicPath`/`mountRelativePath`, which computes the split *at* the mount point and had to fix a real bug there — [R-43], see §11.3 — that a "split first, nest after" design is not exposed to). |
 | Config source URL(s) | `FLOWCATALYST_CONFIG_URL` | unset | — | comma-separated; each fetched independently and merged first-source-wins by key |
 | Default/bootstrap broker | `FC_DEFAULT_BROKER` | unset (no pools start) | — | e.g. `postgres` synthesises a single bootstrap pool/queue when no config URL is set |
 | Config poll interval | (code constant) | 5 min | **[A-10]** | env-tunability itself is open [R-31, deferred] |
@@ -969,6 +969,57 @@ observed using `NOTIFICATION_MIN_SEVERITY` where the reference above uses
 a single variable name, only the existence and default of the concern; an
 implementation MUST document its own naming in its own configuration reference and
 MAY differ from the reference implementation's spelling.
+
+### 10.1 Go-dialect env-name aliases (ECS drop-in compat)
+
+An implementation intended to be a drop-in replacement for an ECS task
+definition currently running the Go reference implementation (`fc-server` with
+`RouterEnabled=true`) MUST read the Go-dialect canonical name FIRST, falling
+back to its own historical name(s) — same env vars, same health-check path,
+same ports; only the image tag changes. The table below is the alias set the
+Rust implementation resolves through a single N-way "first non-empty value
+wins, priority order" helper (`fc_common::config::env_first` and its
+`_bool`/`_parse`/`_opt` siblings — mirrors the Go reference's own
+`envFirst`/`envBoolAlias`/`envIntAlias` pattern in
+`internal/server/envcfg.go`), so the alias table lives in exactly one place
+rather than being reimplemented at each call site.
+
+| Concern | Canonical (Go-dialect) name | Fallback names, in priority order | Safety-critical? |
+|---|---|---|---|
+| Leader election toggle | `FC_STANDBY_ENABLED` | `FLOWCATALYST_STANDBY_ENABLED`, then the Go reference's own legacy `STANDBY_ENABLED` | **Yes** — resolving this to `false` when the deployer intended `true` means the instance runs with NO leader election, actively delivering the same messages another "leader" instance is also delivering |
+| Leader election backend URL | `FC_STANDBY_REDIS_URL` | `FLOWCATALYST_STANDBY_REDIS_URL`, `FLOWCATALYST_REDIS_URL`, then legacy `REDIS_URL` | Yes, jointly with the toggle above — a wrong/unreachable URL with the toggle correctly resolved fails loudly (the processor can't acquire a lock); a wrong URL is a *quieter* failure mode than the toggle resolving to `false`, but still routes traffic without the coordination the deployer configured |
+| Election lock key | `FC_STANDBY_LOCK_KEY` | `FLOWCATALYST_STANDBY_LOCK_KEY` | No — both names are already implementation-local; not a Go/Rust naming split |
+| Auth for the operator/monitoring surface | `FC_ROUTER_AUTH_USER` / `FC_ROUTER_AUTH_PASS` | `AUTH_BASIC_USERNAME` / `AUTH_BASIC_PASSWORD` | No, but see the mode-inference note below — silently leaving auth *off* on a monitoring surface that MUST be reachable from inside the deployment's own network is a lower-severity miss than the standby case, not a zero-severity one |
+| API listener port | `FC_API_PORT` | implementation's own historical `API_PORT` | No |
+| Metrics port | `FC_METRICS_PORT` | — (no fallback; there is nothing to fall back to) | No — accepted and logged as a no-op where metrics are always served on the API listener at `/metrics`; MUST NOT fail startup just because the var is set |
+| Notifier target | `FC_NOTIFY_WEBHOOK_URL` | implementation's own historical `NOTIFICATION_TEAMS_WEBHOOK_URL` | No |
+| Graceful drain budget | `FC_DRAIN_TIMEOUT_SECONDS` | — (no fallback; was a hardcoded constant before this ruling) | No |
+
+Two behaviours ride along with this table and are not simple name aliasing:
+
+- **Auth mode inference.** The Go reference enables BasicAuth on the router
+  surface whenever a username is configured, with no separate "mode" switch —
+  only an explicit `AUTH_MODE=NONE` (case-insensitive) turns it off regardless
+  of credentials. An implementation that instead requires an explicit
+  `AUTH_MODE=BASIC` before honouring `FC_ROUTER_AUTH_USER`/`AUTH_BASIC_USERNAME`
+  is not a drop-in: a Go-dialect task definition sets the credentials but never
+  sets `AUTH_MODE=BASIC` (it doesn't need to), so auth would silently stay off.
+  MUST: when `AUTH_MODE` is unset or unrecognized and a username is present,
+  infer Basic auth; an explicit `AUTH_MODE=OIDC`/`OIDC_FLOW` still wins over
+  the inference for an implementation that supports those modes.
+- **Notify-enabled semantics.** The Go reference has no separate
+  "notifications enabled" flag — a non-empty webhook URL alone means notify.
+  An implementation with its own historical separate enabled flag MUST derive
+  "enabled" as *at least* "the resolved webhook URL is non-empty" (the
+  historical flag, if kept, may only ever widen this, never narrow it) so a
+  Go-dialect task definition that sets only the URL still gets notified.
+
+Every other var in the §10 table already shares the Go reference's exact
+name (`FLOWCATALYST_CONFIG_URL`, `FC_ROUTER_STRICT_ROUTING`,
+`FC_ROUTER_SYNTH_POOL_IDLE_SECS`, `FC_NOTIFY_MIN_SEVERITY`,
+`FC_ROUTER_HTTP_PREFIX`) and needs no aliasing — only, for the mount prefix,
+the default-value and dual-serving behaviour described in the §10 table row
+above.
 
 ---
 

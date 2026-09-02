@@ -269,10 +269,33 @@ async fn main() -> Result<()> {
     );
 
     // 10. Setup HTTP API server
-    let api_port: u16 = std::env::var("API_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8080);
+    // FC_API_PORT is the canonical Go-dialect name (internal/server/envcfg.go
+    // EnvCfg.APIPort); API_PORT is this binary's historical name and stays a
+    // fallback so nothing already deployed against it breaks.
+    let api_port: u16 =
+        fc_common::config::env_first_parse(&["FC_API_PORT", "API_PORT"], 8080u16);
+
+    // FC_METRICS_PORT: Go's unified fc-server can bind metrics on a separate
+    // listener, but this binary always serves Prometheus metrics on the same
+    // API port under /metrics (and /q/metrics) — there is no second listener
+    // to bind. Accept-and-log the var as a no-op rather than failing a
+    // drop-in deployment that sets it out of habit.
+    if let Some(metrics_port) = fc_common::config::env_first_opt(&["FC_METRICS_PORT"]) {
+        info!(
+            fc_metrics_port = %metrics_port,
+            api_port,
+            "FC_METRICS_PORT is a no-op here — metrics are served on the API port at /metrics"
+        );
+    }
+
+    // FC_ROUTER_HTTP_PREFIX: unset (default) keeps today's root-only route
+    // tree; when set, the same route tree is additionally nested under the
+    // prefix (see create_router_with_options doc comment) so a Go-dialect
+    // deployment's /router/... probes and operator URLs answer too.
+    let router_http_prefix = fc_common::config::env_first_opt(&["FC_ROUTER_HTTP_PREFIX"]);
+    if let Some(ref prefix) = router_http_prefix {
+        info!(prefix = %prefix, "FC_ROUTER_HTTP_PREFIX set — route tree also nested under prefix");
+    }
 
     // Create a simple publisher that publishes to the first queue
     let publisher_queue_url = first_queue_url.expect("At least one queue must be configured");
@@ -309,6 +332,7 @@ async fn main() -> Result<()> {
         None, // traffic_strategy
         Some(metrics_handle),
         auth_state,
+        router_http_prefix,
     )
     .layer(TraceLayer::new_for_http())
     .layer(
@@ -384,7 +408,14 @@ async fn main() -> Result<()> {
     let _ = manager_shutdown_tx.send(());
 
     lifecycle.shutdown().await;
-    queue_manager.shutdown().await;
+    // FC_DRAIN_TIMEOUT_SECONDS makes the pool-drain budget operator/env
+    // tunable instead of the crate's hardcoded 60s default
+    // (QueueManager::DEFAULT_DRAIN_TIMEOUT).
+    let drain_timeout_secs: u64 =
+        fc_common::config::env_first_parse(&["FC_DRAIN_TIMEOUT_SECONDS"], 60u64);
+    queue_manager
+        .shutdown_with_timeout(Duration::from_secs(drain_timeout_secs))
+        .await;
 
     server_task.abort();
 
@@ -403,16 +434,35 @@ async fn main() -> Result<()> {
 
 /// Load standby configuration from environment variables
 fn load_standby_config() -> StandbyRouterConfig {
-    let enabled = std::env::var("FLOWCATALYST_STANDBY_ENABLED")
-        .map(|v| v.parse().unwrap_or(false))
-        .unwrap_or(false);
+    // Safety-critical: standby/leader-election is how HA is enforced. A Go
+    // task definition sets the canonical FC_STANDBY_* names (see
+    // internal/server/envcfg.go EnvCfg.StandbyEnabled/StandbyRedisURL); this
+    // binary previously read ONLY FLOWCATALYST_STANDBY_* / FLOWCATALYST_REDIS_URL,
+    // so a Go-dialect env would silently resolve enabled=false and this
+    // instance would run WITHOUT leader election — active/active against the
+    // same queues. FC_STANDBY_* is read first, FLOWCATALYST_STANDBY_* stays
+    // as this binary's own historical name, and Go's legacy (pre-FC_*)
+    // STANDBY_ENABLED / REDIS_URL are honoured too so every previously-working
+    // name keeps working.
+    let enabled = fc_common::config::env_first_bool(
+        &["FC_STANDBY_ENABLED", "FLOWCATALYST_STANDBY_ENABLED", "STANDBY_ENABLED"],
+        false,
+    );
 
-    let redis_url = std::env::var("FLOWCATALYST_STANDBY_REDIS_URL")
-        .or_else(|_| std::env::var("FLOWCATALYST_REDIS_URL"))
-        .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let redis_url = fc_common::config::env_first(
+        &[
+            "FC_STANDBY_REDIS_URL",
+            "FLOWCATALYST_STANDBY_REDIS_URL",
+            "FLOWCATALYST_REDIS_URL",
+            "REDIS_URL",
+        ],
+        "redis://127.0.0.1:6379",
+    );
 
-    let lock_key = std::env::var("FLOWCATALYST_STANDBY_LOCK_KEY")
-        .unwrap_or_else(|_| "fc:router:leader".to_string());
+    let lock_key = fc_common::config::env_first(
+        &["FC_STANDBY_LOCK_KEY", "FLOWCATALYST_STANDBY_LOCK_KEY"],
+        "fc:router:leader",
+    );
 
     let lock_ttl = std::env::var("FLOWCATALYST_STANDBY_LOCK_TTL")
         .ok()
@@ -440,11 +490,17 @@ fn load_standby_config() -> StandbyRouterConfig {
 
 /// Load notification configuration from environment variables
 fn load_notification_config() -> NotificationConfig {
-    let teams_enabled = std::env::var("NOTIFICATION_TEAMS_ENABLED")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
-
-    let teams_webhook_url = std::env::var("NOTIFICATION_TEAMS_WEBHOOK_URL").ok();
+    // FC_NOTIFY_WEBHOOK_URL is the canonical Go-dialect name
+    // (internal/server/envcfg.go EnvCfg.RouterNotifyWebhookURL); this
+    // binary's own historical NOTIFICATION_TEAMS_WEBHOOK_URL stays as a
+    // fallback. Go has no separate "enabled" flag — a non-empty webhook URL
+    // alone means notify — so teams_enabled is derived the same way here;
+    // the legacy NOTIFICATION_TEAMS_ENABLED flag is still honoured too (it
+    // can only ever widen — not narrow — whether a configured URL fires).
+    let teams_webhook_url =
+        fc_common::config::env_first_opt(&["FC_NOTIFY_WEBHOOK_URL", "NOTIFICATION_TEAMS_WEBHOOK_URL"]);
+    let teams_enabled = teams_webhook_url.as_deref().is_some_and(|u| !u.is_empty())
+        || fc_common::config::env_first_bool(&["NOTIFICATION_TEAMS_ENABLED"], false);
 
     // X-04: the ruled name is FC_NOTIFY_MIN_SEVERITY. Read it first, falling
     // back to the legacy NOTIFICATION_MIN_SEVERITY (with a deprecation note)

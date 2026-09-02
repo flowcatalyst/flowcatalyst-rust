@@ -179,8 +179,26 @@ impl QueueManager {
     /// mid-loop finds its queue empty after the in-hand task and exits.
     /// The bounded `wait_drained` below therefore only ever waits on
     /// in-hand deliveries, not backlogs.
+    ///
+    /// Uses the default 60s drain budget ([`Self::DEFAULT_DRAIN_TIMEOUT`]).
+    /// Callers that want the budget to be operator/env-tunable (`bin/fc-router`
+    /// honours `FC_DRAIN_TIMEOUT_SECONDS`) should call
+    /// [`Self::shutdown_with_timeout`] directly instead.
     pub async fn shutdown(&self) {
-        info!("QueueManager shutting down...");
+        self.shutdown_with_timeout(Self::DEFAULT_DRAIN_TIMEOUT).await
+    }
+
+    /// Default drain budget for [`Self::shutdown`] — 60s, matching the
+    /// value this crate has always used. `bin/fc-router`'s
+    /// `FC_DRAIN_TIMEOUT_SECONDS` also defaults to this.
+    pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// Same as [`Self::shutdown`], but with an explicit drain budget instead
+    /// of the [`Self::DEFAULT_DRAIN_TIMEOUT`] default — the bounded wait for
+    /// every pool's tracked (in-hand) tasks to finish before shutdown gives
+    /// up and lets the process exit anyway.
+    pub async fn shutdown_with_timeout(&self, drain_timeout: Duration) {
+        info!(drain_timeout_secs = drain_timeout.as_secs(), "QueueManager shutting down...");
         self.running.store(false, std::sync::atomic::Ordering::SeqCst);
 
         // Signal all consumer loops / background watchers to stop.
@@ -233,7 +251,6 @@ impl QueueManager {
         }
 
         // Wait for every pool's tracked tasks to finish, bounded by a timeout.
-        let drain_timeout = Duration::from_secs(60);
         let drained = tokio::time::timeout(
             drain_timeout,
             future::join_all(pools.iter().map(|p| p.wait_drained())),
