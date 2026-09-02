@@ -428,7 +428,20 @@ fn load_notification_config() -> NotificationConfig {
 
     let teams_webhook_url = std::env::var("NOTIFICATION_TEAMS_WEBHOOK_URL").ok();
 
-    let min_severity = std::env::var("NOTIFICATION_MIN_SEVERITY")
+    // X-04: the ruled name is FC_NOTIFY_MIN_SEVERITY. Read it first, falling
+    // back to the legacy NOTIFICATION_MIN_SEVERITY (with a deprecation note)
+    // so existing deployments don't silently lose their override.
+    let min_severity_raw = std::env::var("FC_NOTIFY_MIN_SEVERITY").or_else(|_| {
+        let legacy = std::env::var("NOTIFICATION_MIN_SEVERITY");
+        if legacy.is_ok() {
+            warn!(
+                "NOTIFICATION_MIN_SEVERITY is deprecated — set FC_NOTIFY_MIN_SEVERITY instead"
+            );
+        }
+        legacy
+    });
+
+    let min_severity = min_severity_raw
         .map(|s| match s.to_uppercase().as_str() {
             "INFO" => WarningSeverity::Info,
             "WARN" | "WARNING" => WarningSeverity::Warn,

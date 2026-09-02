@@ -874,6 +874,10 @@ pub enum WarningCategory {
     ConsumerHealth,
     /// Memory/resource issues
     Resource,
+    /// X-04: a message/consumer has stalled beyond the configured threshold
+    Stall,
+    /// X-04: a per-endpoint circuit breaker has tripped open
+    CircuitBreaker,
 }
 
 /// Warning severity levels

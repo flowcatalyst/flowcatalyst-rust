@@ -324,6 +324,18 @@ pub struct QueueManager {
     /// Stall detection configuration
     stall_config: StallConfig,
 
+    /// X-04: message ids already reported as stalled in the current
+    /// episode (mirrors Go's `StallDetector.warned`). Without this,
+    /// `check_and_handle_stalled_messages` would re-report the same
+    /// still-stalled message on every tick — harmless while it only hit
+    /// `tracing::warn!`, but now that stall reports go through
+    /// `warning_service` (X-04) that would push `active_warnings` past the
+    /// Warning/Degraded thresholds purely from a handful of long-running
+    /// deliveries still doing their job. Entries are dropped once a message
+    /// leaves `in_pipeline` (see `forget_resolved_stalls`), so a later
+    /// stall of the same id reports again.
+    stall_warned: Mutex<std::collections::HashSet<String>>,
+
     /// Warning service for generating operational warnings
     warning_service: Arc<WarningService>,
 
@@ -464,6 +476,7 @@ impl QueueManagerBuilder {
             max_pools: self.max_pools,
             pool_warning_threshold: self.pool_warning_threshold,
             stall_config: self.stall_config,
+            stall_warned: Mutex::new(std::collections::HashSet::new()),
             warning_service: self.warning_service,
             circuit_breaker_registry: self.circuit_breaker_registry,
             health_service: self.health_service,
@@ -1574,6 +1587,19 @@ impl QueueManager {
         let token = self.shutdown.child_token();
 
         tokio::spawn(async move {
+            // R-36: this task is the SOURCE of consumer liveness — the
+            // health service only ever reads a snapshot of what's recorded
+            // here (`record_consumer_poll` below stamps last-seen; this
+            // flag says "meant to be polling"), so there is exactly one
+            // heartbeat, not a second copy that can drift from it. Flip on
+            // before the loop starts, and back off once it exits for any
+            // reason (shutdown, `QueueError::Stopped`, or a replacement
+            // spawned by `restart_consumer`) so a dead poll task is never
+            // reported as still running.
+            if let Some(ref health_service) = manager.health_service {
+                health_service.set_consumer_running(consumer.identifier(), true);
+            }
+
             let mut last_poll_end = Instant::now();
             const STARVATION_THRESHOLD: Duration = Duration::from_secs(30);
 
@@ -1693,6 +1719,14 @@ impl QueueManager {
                         }
                     }
                 }
+            }
+
+            // R-36: every exit path above falls out of the loop here — flip
+            // the liveness flag off so a stopped/replaced consumer stops
+            // reading as "meant to be polling" (see the doc comment above
+            // the `true` set at task start).
+            if let Some(ref health_service) = manager.health_service {
+                health_service.set_consumer_running(consumer.identifier(), false);
             }
         })
     }
@@ -2079,12 +2113,44 @@ impl QueueManager {
             .collect()
     }
 
+    /// X-04: emit a `Stall` warning through the shared `warning_service` for
+    /// `message_id`, but only once per stall episode (mirrors Go's
+    /// `StallDetector.report`). Returns `true` if a warning was actually
+    /// recorded (first report of this episode); `false` if `message_id` was
+    /// already reported and hasn't resolved since.
+    fn report_stall(&self, message_id: &str, severity: WarningSeverity, message: String) -> bool {
+        {
+            let mut warned = self.stall_warned.lock();
+            if !warned.insert(message_id.to_string()) {
+                return false;
+            }
+        }
+        self.warning_service.add_warning(
+            WarningCategory::Stall,
+            severity,
+            message,
+            "StallDetector".to_string(),
+        );
+        true
+    }
+
+    /// Drop dedup entries for message ids no longer present in `live` — once
+    /// a message truly leaves the pipeline (acked / nacked / force-NACKed),
+    /// a later stall of the same id must report again rather than being
+    /// silenced for the life of the process (mirrors Go's
+    /// `StallDetector.forgetResolved`).
+    fn forget_resolved_stalls(&self, live: &std::collections::HashSet<String>) {
+        let mut warned = self.stall_warned.lock();
+        warned.retain(|id| live.contains(id));
+    }
+
     /// Check for stalled messages and optionally force-NACK them.
     ///
     /// This method should be called periodically (e.g., every 30 seconds).
     /// It will:
     /// 1. Detect messages that have exceeded the stall threshold
-    /// 2. Log warnings for stalled messages
+    /// 2. Raise a `Stall` warning (store → notifier) for each, once per
+    ///    episode
     /// 3. If force_nack_stalled is enabled, NACK messages exceeding the force_nack_after_seconds threshold
     ///
     /// Returns the number of messages that were force-NACKed.
@@ -2094,20 +2160,48 @@ impl QueueManager {
         }
 
         let stalled = self.detect_stalled_messages();
+
+        // X-04: forget dedup entries for messages no longer in the pipeline
+        // at all (acked/nacked since the last tick), so a later stall of the
+        // same id reports again instead of being silenced forever. Run this
+        // even when nothing is currently stalled, so resolved entries don't
+        // linger in `stall_warned`.
+        let live: std::collections::HashSet<String> = self
+            .in_pipeline
+            .iter()
+            .map(|entry| entry.value().message_id.clone())
+            .collect();
+        self.forget_resolved_stalls(&live);
+
         if stalled.is_empty() {
             return 0;
         }
 
-        // Log warnings for all stalled messages
+        // Report stalled messages once per message per episode (X-04): both
+        // the operational log line and the WarningService entry (which now
+        // drives /warnings, health's active-warning count, and the
+        // notifier) are gated by `report_stall`, so a handful of
+        // long-running deliveries doing their job can't push the router
+        // into Warning/Degraded purely by being re-reported every tick.
         for msg in &stalled {
-            warn!(
-                message_id = %msg.message_id,
-                message_group_id = ?msg.message_group_id,
-                pool_code = %msg.pool_code,
-                queue_identifier = %msg.queue_identifier,
-                elapsed_seconds = msg.elapsed_seconds,
-                "Stalled message detected - processing time exceeds threshold"
+            let reported = self.report_stall(
+                &msg.message_id,
+                WarningSeverity::Warn,
+                format!(
+                    "Message {} stalled for {}s in pool {}",
+                    msg.message_id, msg.elapsed_seconds, msg.pool_code
+                ),
             );
+            if reported {
+                warn!(
+                    message_id = %msg.message_id,
+                    message_group_id = ?msg.message_group_id,
+                    pool_code = %msg.pool_code,
+                    queue_identifier = %msg.queue_identifier,
+                    elapsed_seconds = msg.elapsed_seconds,
+                    "Stalled message detected - processing time exceeds threshold"
+                );
+            }
         }
 
         // If force-NACK is not enabled, just return the count of detected stalls
@@ -2994,6 +3088,230 @@ mod routing_gate_tests {
             manager.warning_service().warning_count(),
             2,
             "both the empty and the unknown pool_code should have warned identically"
+        );
+    }
+}
+
+/// X-04: `check_and_handle_stalled_messages` now raises `Stall` warnings
+/// through `warning_service` (store → notifier) instead of only
+/// `tracing::warn!`, so the once-per-episode dedup (`report_stall` /
+/// `forget_resolved_stalls`, mirroring Go's `StallDetector`) is what keeps a
+/// long-running-but-legitimate delivery from re-reporting every tick and
+/// pushing the router into Warning/Degraded on warning volume alone.
+#[cfg(test)]
+mod stall_warning_tests {
+    use super::*;
+    use fc_common::{DispatchMode, MediationType, Message};
+
+    fn stalled_in_flight(message_id: &str) -> InFlightMessage {
+        let msg = Message {
+            id: message_id.to_string(),
+            pool_code: "POOL".to_string(),
+            auth_token: None,
+            signing_secret: None,
+            mediation_type: MediationType::HTTP,
+            mediation_target: "http://localhost/x".to_string(),
+            message_group_id: None,
+            high_priority: false,
+            dispatch_mode: DispatchMode::Immediate,
+            dispatch_mode_specified: true,
+        };
+        let mut in_flight = InFlightMessage::new(
+            &msg,
+            Some(format!("bh-{message_id}")),
+            "queue".to_string(),
+            None,
+            "rh".to_string(),
+        );
+        // Backdate well past any threshold used below.
+        in_flight.started_at = Instant::now() - Duration::from_secs(10);
+        in_flight
+    }
+
+    fn manager_with_stall_threshold(secs: u64) -> QueueManager {
+        QueueManager::builder(HttpMediatorConfig::dev())
+            .stall_config(StallConfig {
+                enabled: true,
+                stall_threshold_seconds: secs,
+                force_nack_stalled: false,
+                ..StallConfig::default()
+            })
+            .build()
+    }
+
+    #[tokio::test]
+    async fn stall_warning_reported_once_per_episode() {
+        let manager = manager_with_stall_threshold(5);
+        manager
+            .in_pipeline
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+
+        // Simulate several detector ticks against the same still-stalled message.
+        manager.check_and_handle_stalled_messages().await;
+        manager.check_and_handle_stalled_messages().await;
+        manager.check_and_handle_stalled_messages().await;
+
+        let stall_warnings = manager
+            .warning_service()
+            .get_warnings_by_category(WarningCategory::Stall);
+        assert_eq!(
+            stall_warnings.len(),
+            1,
+            "the same stalled message must raise exactly one Stall warning across repeated ticks"
+        );
+        assert_eq!(stall_warnings[0].severity, WarningSeverity::Warn);
+    }
+
+    #[tokio::test]
+    async fn stall_warning_reports_again_after_resolving_and_restalling() {
+        let manager = manager_with_stall_threshold(5);
+        manager
+            .in_pipeline
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+
+        manager.check_and_handle_stalled_messages().await;
+        assert_eq!(
+            manager
+                .warning_service()
+                .get_warnings_by_category(WarningCategory::Stall)
+                .len(),
+            1
+        );
+
+        // Message resolves (acked/nacked/force-NACKed) — leaves the
+        // pipeline entirely. A tick with nothing stalled must still prune
+        // the dedup entry.
+        manager.in_pipeline.remove("bh-msg-1");
+        manager.check_and_handle_stalled_messages().await;
+
+        // The same message id stalls again later (e.g. redelivered) — this
+        // must report again rather than staying silenced for the life of
+        // the process.
+        manager
+            .in_pipeline
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+        manager.check_and_handle_stalled_messages().await;
+
+        assert_eq!(
+            manager
+                .warning_service()
+                .get_warnings_by_category(WarningCategory::Stall)
+                .len(),
+            2,
+            "a fresh stall of a previously-resolved message id must report again"
+        );
+    }
+}
+
+/// R-36: consumer liveness is fed into the health service from the single
+/// place that actually knows it — the manager's poll loop
+/// (`spawn_consumer_poll_task`) — not a second heartbeat. `record_consumer_poll`
+/// is already stamped on every branch (leadership-paused, backpressure-paused,
+/// and real polls); these tests pin that `set_consumer_running` brackets the
+/// task's lifetime and that a deliberate pause never reads as a stall.
+#[cfg(test)]
+mod consumer_liveness_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use fc_common::QueuedMessage;
+    use fc_queue::Result as QueueResult;
+
+    /// Never returns messages; `poll` just proves the task is alive.
+    struct IdleConsumer {
+        id: &'static str,
+    }
+
+    #[async_trait]
+    impl QueueConsumer for IdleConsumer {
+        fn identifier(&self) -> &str {
+            self.id
+        }
+        async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+            Ok(vec![])
+        }
+        async fn ack(&self, _: &str) -> QueueResult<()> {
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {}
+    }
+
+    fn manager_with_health() -> (Arc<QueueManager>, Arc<crate::health::HealthService>) {
+        let health_service = Arc::new(crate::health::HealthService::new(
+            crate::health::HealthServiceConfig {
+                consumer_stall_threshold_secs: 60,
+                ..crate::health::HealthServiceConfig::default()
+            },
+            Arc::new(WarningService::default()),
+        ));
+        let manager = Arc::new(
+            QueueManager::builder(HttpMediatorConfig::dev())
+                .health_service(health_service.clone())
+                .build(),
+        );
+        (manager, health_service)
+    }
+
+    /// A leadership-paused consumer must never read as stalled: the poll
+    /// loop's "not leader" branch keeps calling `record_consumer_poll`
+    /// (manager.rs, `spawn_consumer_poll_task`) specifically so this holds.
+    #[tokio::test]
+    async fn leadership_paused_consumer_is_not_reported_as_stalled() {
+        let (manager, health_service) = manager_with_health();
+        manager.set_leader(false);
+
+        let consumer = Arc::new(IdleConsumer { id: "paused" });
+        let handle = manager.spawn_consumer_poll_task(consumer);
+
+        // Give the task a couple of "not leader" iterations to run.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        assert!(
+            health_service.is_consumer_healthy("paused"),
+            "a leadership-paused consumer is deliberately idle, not stalled"
+        );
+        assert!(
+            !health_service.get_stalled_consumers().contains(&"paused".to_string()),
+            "a leadership-paused consumer must not show up as stalled"
+        );
+
+        manager.shutdown().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+        assert!(
+            !health_service.is_consumer_healthy("paused"),
+            "set_consumer_running(false) must run once the poll task exits"
+        );
+    }
+
+    /// The full lifecycle: `set_consumer_running` flips true when the poll
+    /// task starts and false once it exits, bracketing the task exactly —
+    /// this is what lets `is_consumer_healthy`/`get_stalled_consumers`
+    /// reflect a real consumer instead of an empty map (R-36's "zero
+    /// production call sites" gap).
+    #[tokio::test]
+    async fn consumer_running_flag_brackets_the_poll_tasks_lifetime() {
+        let (manager, health_service) = manager_with_health();
+
+        let consumer = Arc::new(IdleConsumer { id: "lifecycle" });
+        let handle = manager.spawn_consumer_poll_task(consumer);
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(health_service.is_consumer_healthy("lifecycle"));
+
+        manager.shutdown().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+
+        assert!(
+            !health_service.is_consumer_healthy("lifecycle"),
+            "an exited poll task must no longer read as running"
         );
     }
 }

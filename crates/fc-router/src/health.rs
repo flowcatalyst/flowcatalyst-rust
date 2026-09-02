@@ -242,10 +242,19 @@ impl HealthService {
     }
 
     /// Calculate overall health status
+    ///
+    /// R-36 (2026-09-02): pool success rate is **out of readiness** — a
+    /// failing target is not a failing router. `pools_healthy` /
+    /// `pools_unhealthy` and their `issues` entries are still computed and
+    /// returned below (warning + metric only, for `/monitoring` and the
+    /// dashboard), but deliberately do **not** feed into `status`. Only
+    /// consumer liveness and warning volume/severity can move `status`.
     pub fn get_health_report(&self, pool_stats: &[PoolStats]) -> HealthReport {
         let mut issues = Vec::new();
 
-        // Check pool health based on success rates
+        // Check pool health based on success rates. Metric/warning surface
+        // only (R-36) — see the doc comment above; these counts never
+        // factor into `status`.
         let mut pools_healthy = 0u32;
         let mut pools_unhealthy = 0u32;
 
@@ -289,15 +298,16 @@ impl HealthService {
             issues.push(format!("{} critical warnings", critical_warnings));
         }
 
-        // Determine overall status (matches Java warning-count thresholds)
+        // Determine overall status (matches Java warning-count thresholds).
+        // R-36: pool success rate is deliberately excluded — see this
+        // method's doc comment. Consumer liveness and warning volume are
+        // the only readiness inputs besides critical warnings.
         let status = if critical_warnings > 0
-            || (pools_unhealthy > 0 && pools_healthy == 0)
             || (consumers_unhealthy > 0 && consumers_healthy == 0)
             || active_warnings_count > self.config.max_warnings_warning
         {
             HealthStatus::Degraded
-        } else if pools_unhealthy > 0
-            || consumers_unhealthy > 0
+        } else if consumers_unhealthy > 0
             || active_warnings_count > self.config.max_warnings_healthy
         {
             HealthStatus::Warning
@@ -494,5 +504,88 @@ mod tests {
         }
         let report = service.get_health_report(&stats);
         assert_eq!(report.status, HealthStatus::Degraded);
+    }
+
+    /// R-36: a failing target is not a failing router. Every pool below the
+    /// healthy threshold (including 0% success) must still report
+    /// `Healthy` overall — pool success rate is metric/warning-surface only
+    /// and must never move `status`, which is what `/health/ready` reads.
+    #[test]
+    fn unhealthy_pools_never_degrade_status() {
+        let service = create_test_service();
+        service.set_consumer_running("consumer-1", true);
+        service.record_consumer_poll("consumer-1");
+
+        // 100% failure on every recorded pool.
+        for _ in 0..10 {
+            service.record_pool_result("POOL-A", false);
+            service.record_pool_result("POOL-B", false);
+        }
+
+        let stats = vec![
+            PoolStats {
+                pool_code: "POOL-A".to_string(),
+                concurrency: 10,
+                active_workers: 0,
+                queue_size: 0,
+                queue_capacity: 100,
+                message_group_count: 0,
+                rate_limit_per_minute: None,
+                is_rate_limited: false,
+                metrics: None,
+            },
+            PoolStats {
+                pool_code: "POOL-B".to_string(),
+                concurrency: 10,
+                active_workers: 0,
+                queue_size: 0,
+                queue_capacity: 100,
+                message_group_count: 0,
+                rate_limit_per_minute: None,
+                is_rate_limited: false,
+                metrics: None,
+            },
+        ];
+
+        let report = service.get_health_report(&stats);
+        assert_eq!(
+            report.status,
+            HealthStatus::Healthy,
+            "an unhealthy pool must not move status off Healthy"
+        );
+        // Still surfaced as metric/issue, just not as a status input.
+        assert_eq!(report.pools_unhealthy, 2);
+        assert_eq!(report.pools_healthy, 0);
+        assert!(report.issues.iter().any(|i| i.contains("POOL-A")));
+    }
+
+    /// R-36: the flip side — a consumer that stops polling (stalled, not
+    /// paused) must degrade status, since `/health/ready` reads it and a
+    /// non-polling router genuinely cannot work.
+    #[test]
+    fn stalled_consumer_degrades_status() {
+        let cfg = HealthServiceConfig {
+            consumer_stall_threshold_secs: 0, // instantly "stale" once any time passes
+            ..HealthServiceConfig::default()
+        };
+        let service = HealthService::new(cfg, Arc::new(WarningService::default()));
+
+        service.set_consumer_running("consumer-1", true);
+        service.record_consumer_poll("consumer-1");
+        // With a 0s threshold, `elapsed() < threshold` is false as soon as
+        // any time passes — force it deterministically either way.
+        std::thread::sleep(Duration::from_millis(5));
+
+        assert!(!service.is_consumer_healthy("consumer-1"));
+        assert!(service
+            .get_stalled_consumers()
+            .contains(&"consumer-1".to_string()));
+
+        let report = service.get_health_report(&[]);
+        assert_eq!(
+            report.status,
+            HealthStatus::Degraded,
+            "the only consumer stalling must degrade status (all consumers unhealthy)"
+        );
     }
 }

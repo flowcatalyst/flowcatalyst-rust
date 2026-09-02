@@ -19,21 +19,34 @@ use fc_common::{Warning, WarningCategory, WarningSeverity};
 /// Configuration for warning service
 #[derive(Debug, Clone)]
 pub struct WarningServiceConfig {
-    /// Maximum age of warnings in hours before auto-cleanup
+    /// Maximum age of warnings in hours before auto-cleanup (hard removal;
+    /// see [`Self::info_max_age_minutes`] for INFO's shorter override)
     pub max_warning_age_hours: i64,
     /// Maximum number of warnings to keep
     pub max_warnings: usize,
-    /// Auto-acknowledge warnings older than this (hours)
+    /// Auto-acknowledge warnings older than this (hours). A-08
+    /// (2026-09-02): `AUTO_ACKNOWLEDGE_AGE` = 1 hour (was Java's 8 hours).
     pub auto_acknowledge_hours: i64,
+    /// X-04: INFO-severity warnings are purged after this many minutes
+    /// instead of `max_warning_age_hours`. INFO covers routine/expected
+    /// conditions that recur far more often than real WARNING+ signals;
+    /// without a shorter TTL a chatty INFO source can crowd the bounded
+    /// `max_warnings` store via the oldest-10% eviction on overflow
+    /// ("INFO must not crowd the store"). Kept meaningfully shorter than
+    /// `auto_acknowledge_hours` (now 1h under A-08), so this defaults to
+    /// 15 minutes. See `WarningService::clear_aged_warnings`.
+    pub info_max_age_minutes: i64,
 }
 
 impl Default for WarningServiceConfig {
     fn default() -> Self {
         Self {
-            // Java: warnings auto-expire after 8 hours
+            // Hard-delete ceiling for non-INFO warnings; unaffected by A-08.
             max_warning_age_hours: 8,
             max_warnings: 1000,
-            auto_acknowledge_hours: 8,
+            // A-08 (2026-09-02): AUTO_ACKNOWLEDGE_AGE = 1 hour.
+            auto_acknowledge_hours: 1,
+            info_max_age_minutes: 15,
         }
     }
 }
@@ -225,6 +238,40 @@ impl WarningService {
         self.acknowledge_matching(|w| w.age_minutes() > threshold_hours * 60)
     }
 
+    /// X-04: severity-aware sweep — removes every warning past its own
+    /// retention window. INFO-severity warnings are removed once older than
+    /// `info_max_age_minutes`; every other severity keeps the general
+    /// `max_warning_age_hours` window. This is what [`Self::cleanup`] runs
+    /// (replacing a flat `clear_old_warnings` call) so a chatty INFO source
+    /// can't sit in the bounded store for the full general age.
+    ///
+    /// Distinct from [`Self::clear_old_warnings`], which stays a blunt
+    /// uniform-cutoff tool (used by the `/warnings/old` admin endpoint).
+    pub fn clear_aged_warnings(&self) -> usize {
+        let mut warnings = self.warnings.write();
+        let general_limit_minutes = self.config.max_warning_age_hours * 60;
+        let info_limit_minutes = self.config.info_max_age_minutes;
+        let before_count = warnings.len();
+
+        warnings.retain(|_, w| {
+            let limit = if w.severity == WarningSeverity::Info {
+                info_limit_minutes
+            } else {
+                general_limit_minutes
+            };
+            w.age_minutes() <= limit
+        });
+
+        let removed = before_count - warnings.len();
+        if removed > 0 {
+            info!(
+                removed = removed,
+                "Cleared aged warnings (severity-aware sweep)"
+            );
+        }
+        removed
+    }
+
     /// Clear warnings older than specified hours
     pub fn clear_old_warnings(&self, hours_old: i64) -> usize {
         let mut warnings = self.warnings.write();
@@ -291,8 +338,9 @@ impl WarningService {
         // Auto-acknowledge old warnings
         self.auto_acknowledge_old_warnings();
 
-        // Clear very old warnings
-        self.clear_old_warnings(self.config.max_warning_age_hours);
+        // X-04: severity-aware sweep — INFO ages out sooner than everything
+        // else so it can't crowd the bounded store.
+        self.clear_aged_warnings();
     }
 
     /// Internal helper to remove oldest warnings
@@ -394,5 +442,50 @@ mod tests {
         let critical = service.get_critical_warnings();
         assert_eq!(critical.len(), 1);
         assert_eq!(critical[0].message, "Critical");
+    }
+
+    /// X-04: INFO must not crowd the store — it ages out (is actually
+    /// removed) on a shorter TTL than every other severity. Backdate both
+    /// an INFO and a WARN warning by the same amount (20 minutes: past
+    /// INFO's 15-minute default, well under the 8h general window) and
+    /// confirm the sweep only removes the INFO one.
+    #[test]
+    fn clear_aged_warnings_purges_info_sooner_than_other_severities() {
+        let service = WarningService::default();
+        assert_eq!(service.config.info_max_age_minutes, 15);
+
+        let info_id = service.add_warning(
+            WarningCategory::Processing,
+            WarningSeverity::Info,
+            "info warning".to_string(),
+            "test".to_string(),
+        );
+        let warn_id = service.add_warning(
+            WarningCategory::Processing,
+            WarningSeverity::Warn,
+            "warn warning".to_string(),
+            "test".to_string(),
+        );
+
+        let backdate = Utc::now() - chrono::Duration::minutes(20);
+        {
+            let mut warnings = service.warnings.write();
+            warnings.get_mut(&info_id).unwrap().created_at = backdate;
+            warnings.get_mut(&warn_id).unwrap().created_at = backdate;
+        }
+
+        let removed = service.clear_aged_warnings();
+        assert_eq!(removed, 1, "only the aged INFO warning should be swept");
+
+        let remaining_ids: Vec<String> =
+            service.get_all_warnings().into_iter().map(|w| w.id).collect();
+        assert!(
+            !remaining_ids.contains(&info_id),
+            "aged INFO warning must be gone"
+        );
+        assert!(
+            remaining_ids.contains(&warn_id),
+            "equally-aged WARNING must remain"
+        );
     }
 }
