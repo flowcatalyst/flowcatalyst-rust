@@ -4,6 +4,7 @@
 //! to the router without restart. Mirrors the Java QueueManager.scheduledSync() behavior.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -11,7 +12,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::manager::QueueManager;
 use crate::warning::WarningService;
-use fc_common::{PoolConfig, QueueConfig, RouterConfig};
+use fc_common::{PoolConfig, QueueConfig, RouterConfig, WarningCategory, WarningSeverity};
 
 /// Configuration for the config sync service
 #[derive(Debug, Clone)]
@@ -197,6 +198,15 @@ pub struct ConfigSyncService {
     queue_manager: Arc<QueueManager>,
     warning_service: Arc<WarningService>,
     last_config_hash: parking_lot::Mutex<Option<u64>>,
+    /// R-30: the last successfully-fetched config per source URL, kept so a
+    /// source that starts failing can still contribute its last-known-good
+    /// config to the merge instead of dropping its pools/queues outright.
+    source_cache: parking_lot::Mutex<HashMap<String, RouterConfig>>,
+    /// R-30: the active "source failing" warning id per source URL, if any —
+    /// raised once per failure streak (not once per tick) and acknowledged
+    /// the moment the source recovers. Absence of an entry means the source
+    /// is currently healthy (or has never been warned about).
+    source_warnings: parking_lot::Mutex<HashMap<String, String>>,
 }
 
 impl ConfigSyncService {
@@ -216,14 +226,51 @@ impl ConfigSyncService {
             queue_manager,
             warning_service,
             last_config_hash: parking_lot::Mutex::new(None),
+            source_cache: parking_lot::Mutex::new(HashMap::new()),
+            source_warnings: parking_lot::Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// R-30: source recovered — clear (acknowledge) its active "failing"
+    /// warning, if any. A no-op for a source that was never warned about.
+    fn clear_source_warning(&self, url: &str) {
+        if let Some(id) = self.source_warnings.lock().remove(url) {
+            self.warning_service.acknowledge_warning(&id);
+            info!(source_url = %url, "Config source recovered");
+        }
+    }
+
+    /// R-30: source is failing but has a cached last-known-good config —
+    /// raise a CONFIGURATION warning once per failure streak (skip if one is
+    /// already active for this source) rather than once per sync tick.
+    fn raise_source_warning(&self, url: &str, err: &ConfigSyncError) {
+        let mut warnings = self.source_warnings.lock();
+        if !warnings.contains_key(url) {
+            let id = self.warning_service.add_warning(
+                WarningCategory::Configuration,
+                WarningSeverity::Warn,
+                format!(
+                    "Config source [{}] is failing; serving its last-known-good configuration ({})",
+                    url, err
+                ),
+                "ConfigSyncService".to_string(),
+            );
+            warnings.insert(url.to_string(), id);
         }
     }
 
     /// Fetch configuration from all configured URLs in parallel and merge.
     ///
     /// Per-URL failures are tolerated — the merge proceeds with whatever
-    /// sources succeeded. Only fails if **all** sources fail (matches TS
-    /// `MultiConfigFetcher`).
+    /// sources succeeded, plus (R-30) the last-known-good cached config of
+    /// any failing source that has previously succeeded at least once: a
+    /// small bad change on one source must not tear down that source's
+    /// pools/queues, so consumers keep running on the stale-but-good config
+    /// while a CONFIGURATION warning stays active for that source (cleared
+    /// on recovery). Only fails outright if **every** source both fails
+    /// *and* has no cache to fall back on — i.e. first boot with nothing up
+    /// yet (matches TS `MultiConfigFetcher`'s "fails if all sources fail",
+    /// extended with the last-known-good fallback).
     ///
     /// Merge strategy (union, first-wins; matches `multi-config-client.ts`):
     /// - Pools deduped by `code`; warn on conflicting duplicates.
@@ -249,36 +296,54 @@ impl ConfigSyncService {
             .collect();
         let results = futures::future::join_all(tasks).await;
 
-        let mut successes: Vec<(String, RouterConfig)> = Vec::new();
-        let mut failures: Vec<(String, ConfigSyncError)> = Vec::new();
+        let mut contributions: Vec<(String, RouterConfig)> = Vec::new();
+        let mut succeeded = 0usize;
+        let mut served_from_cache = 0usize;
+        let mut hard_failures: Vec<(String, ConfigSyncError)> = Vec::new();
         for (url, result) in results {
             match result {
-                Ok(cfg) => successes.push((url, cfg)),
+                Ok(cfg) => {
+                    self.source_cache.lock().insert(url.clone(), cfg.clone());
+                    self.clear_source_warning(&url);
+                    succeeded += 1;
+                    contributions.push((url, cfg));
+                }
                 Err(e) => {
                     warn!(source_url = %url, error = %e, "Config source failed; continuing with remaining sources");
-                    failures.push((url, e));
+                    let cached = self.source_cache.lock().get(&url).cloned();
+                    match cached {
+                        Some(cfg) => {
+                            self.raise_source_warning(&url, &e);
+                            served_from_cache += 1;
+                            contributions.push((url, cfg));
+                        }
+                        None => {
+                            hard_failures.push((url, e));
+                        }
+                    }
                 }
             }
         }
 
-        if successes.is_empty() {
-            let summary = failures
+        if contributions.is_empty() {
+            let summary = hard_failures
                 .iter()
                 .map(|(u, e)| format!("{}: {}", u, e))
                 .collect::<Vec<_>>()
                 .join("; ");
             return Err(ConfigSyncError::AllSourcesFailed {
-                attempted: failures.len(),
+                attempted: hard_failures.len(),
                 summary,
             });
         }
 
-        let merged = merge_configs(&successes);
+        let merged = merge_configs(&contributions);
 
         info!(
             sources_attempted = self.config.config_urls.len(),
-            sources_succeeded = successes.len(),
-            sources_failed = failures.len(),
+            sources_succeeded = succeeded,
+            sources_served_from_cache = served_from_cache,
+            sources_hard_failed = hard_failures.len(),
             pools = merged.processing_pools.len(),
             queues = merged.queues.len(),
             "Merged configuration from all sources"
@@ -818,5 +883,148 @@ mod tests {
         let hash2 = ConfigSyncService::compute_config_hash(&config);
 
         assert_eq!(hash1, hash2);
+    }
+
+    // ========================================================================
+    // R-30: last-known-good per source
+    // ========================================================================
+
+    fn test_service(config_url: String) -> ConfigSyncService {
+        let manager = Arc::new(QueueManager::new(crate::mediator::HttpMediatorConfig::dev()));
+        let warning_service = Arc::new(WarningService::noop());
+        let mut config = ConfigSyncConfig::new(config_url);
+        // Keep the per-URL retry loop fast and short — these tests exercise
+        // the fetch_config-level cache/warning logic, not the retry policy.
+        config.max_retry_attempts = 1;
+        config.retry_delay = Duration::from_millis(1);
+        ConfigSyncService::new(config, manager, warning_service)
+    }
+
+    fn good_config_body(pool_code: &str) -> serde_json::Value {
+        serde_json::json!({
+            "processingPools": [{"code": pool_code, "concurrency": 5}],
+            "queues": [],
+        })
+    }
+
+    /// R-30: a source that fails after a prior success keeps contributing
+    /// its last-known-good config to the merge (consumers keep running on
+    /// it) and raises exactly one CONFIGURATION warning for the failure
+    /// streak — not one per failed tick.
+    #[tokio::test]
+    async fn failing_source_serves_last_known_good_and_warns_once_per_streak() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+
+        Mock::given(method("GET"))
+            .respond_with(move |_req: &wiremock::Request| {
+                let call = calls_clone.fetch_add(1, Ordering::SeqCst);
+                if call == 0 {
+                    // First tick: succeeds.
+                    ResponseTemplate::new(200).set_body_json(good_config_body("P1"))
+                } else {
+                    // Every tick after that fails.
+                    ResponseTemplate::new(500)
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let service = test_service(server.uri());
+
+        // Tick 1: succeeds, populates the cache.
+        let cfg1 = service.fetch_config().await.expect("first fetch succeeds");
+        assert_eq!(cfg1.processing_pools[0].code, "P1");
+        assert_eq!(service.warning_service.warning_count(), 0);
+
+        // Tick 2: source fails, but the cache still contributes P1 — the
+        // merge must not come back empty/erroring.
+        let cfg2 = service
+            .fetch_config()
+            .await
+            .expect("a cached source must not fail fetch_config outright");
+        assert_eq!(cfg2.processing_pools[0].code, "P1");
+        assert_eq!(
+            service.warning_service.warning_count(),
+            1,
+            "first failure in the streak raises a CONFIGURATION warning"
+        );
+
+        // Tick 3: still failing — must NOT raise a second warning for the
+        // same streak.
+        let cfg3 = service.fetch_config().await.expect("still served from cache");
+        assert_eq!(cfg3.processing_pools[0].code, "P1");
+        assert_eq!(
+            service.warning_service.warning_count(),
+            1,
+            "a still-failing source must not accumulate a warning per tick"
+        );
+    }
+
+    /// R-30: once a previously-failing source recovers, its active warning
+    /// is acknowledged (resolved) rather than left open forever.
+    #[tokio::test]
+    async fn recovered_source_clears_its_warning() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+
+        Mock::given(method("GET"))
+            .respond_with(move |_req: &wiremock::Request| {
+                let call = calls_clone.fetch_add(1, Ordering::SeqCst);
+                match call {
+                    0 => ResponseTemplate::new(200).set_body_json(good_config_body("P1")),
+                    1 => ResponseTemplate::new(500),
+                    _ => ResponseTemplate::new(200).set_body_json(good_config_body("P1")),
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let service = test_service(server.uri());
+
+        service.fetch_config().await.unwrap(); // tick 1: success
+        service.fetch_config().await.unwrap(); // tick 2: fails, served from cache, warns
+        assert_eq!(service.warning_service.warning_count(), 1);
+        assert_eq!(service.warning_service.get_unacknowledged_warnings().len(), 1);
+
+        service.fetch_config().await.unwrap(); // tick 3: recovers
+        assert_eq!(
+            service.warning_service.get_unacknowledged_warnings().len(),
+            0,
+            "the source's warning must be acknowledged once it recovers"
+        );
+    }
+
+    /// R-30: a source that has never succeeded (no cache yet — first boot)
+    /// contributes nothing when it fails; if every configured source is in
+    /// that state, `fetch_config` still fails outright rather than
+    /// pretending an empty merge is a success.
+    #[tokio::test]
+    async fn first_boot_all_failing_with_no_cache_is_still_an_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let service = test_service(server.uri());
+        let result = service.fetch_config().await;
+        assert!(
+            result.is_err(),
+            "first-boot failure with no last-known-good cache must still be an error"
+        );
     }
 }

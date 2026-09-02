@@ -877,6 +877,7 @@ async fn queue_metrics_handler(State(state): State<AppState>) -> Json<Vec<QueueM
     request_body = ConfigReloadRequest,
     responses(
         (status = 200, description = "Configuration reloaded", body = ConfigReloadResponse),
+        (status = 409, description = "Not the leader — reload refused", body = ConfigReloadResponse),
         (status = 503, description = "Service unavailable", body = ConfigReloadResponse),
         (status = 500, description = "Internal error", body = ConfigReloadResponse)
     )
@@ -886,6 +887,27 @@ async fn reload_config(
     Json(req): Json<ConfigReloadRequest>,
 ) -> Response {
     use fc_common::RouterConfig;
+
+    // R-33: gate on leadership, before any fetch/reconfigure. A follower
+    // must never start/reconfigure consumers or pools. When standby is
+    // disabled (state.standby_enabled == false) this is unchanged —
+    // QueueManager::is_leader defaults `true` and nothing ever flips it, so
+    // every instance is its own leader in that mode.
+    if state.standby_enabled && !state.queue_manager.is_leader() {
+        warn!("Configuration reload refused — this instance is not the leader");
+        return (
+            StatusCode::CONFLICT,
+            Json(ConfigReloadResponse {
+                success: false,
+                pools_updated: 0,
+                pools_created: 0,
+                pools_removed: 0,
+                total_active_pools: 0,
+                total_draining_pools: 0,
+            }),
+        )
+            .into_response();
+    }
 
     let router_config = RouterConfig {
         processing_pools: req
@@ -1828,6 +1850,7 @@ async fn publish_message(
         message_group_id: req.message_group_id,
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     };
 
     match state.publisher.publish(message).await {
@@ -1866,6 +1889,7 @@ async fn simple_publish_message(
         message_group_id: req.message_group_id,
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     };
 
     match state.publisher.publish(message).await {
@@ -2523,6 +2547,7 @@ async fn seed_messages(
             message_group_id,
             high_priority: false,
             dispatch_mode: fc_common::DispatchMode::default(),
+            dispatch_mode_specified: true,
         };
 
         if state.publisher.publish(message).await.is_ok() {
@@ -2726,6 +2751,100 @@ async fn reset_test_stats() -> Json<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mediator::HttpMediatorConfig;
+
+    /// Publisher that never actually sends anywhere — `reload_config` never
+    /// touches the publisher, but `AppState` requires one.
+    struct NoopPublisher;
+
+    #[async_trait::async_trait]
+    impl fc_queue::QueuePublisher for NoopPublisher {
+        fn identifier(&self) -> &str {
+            "noop"
+        }
+        async fn publish(&self, message: Message) -> fc_queue::Result<String> {
+            Ok(message.id)
+        }
+        async fn publish_batch(&self, messages: Vec<Message>) -> fc_queue::Result<Vec<String>> {
+            Ok(messages.into_iter().map(|m| m.id).collect())
+        }
+    }
+
+    /// Minimal `AppState` for handler-level tests — everything but
+    /// `queue_manager`/`standby_enabled` (the two the R-33 gate reads) is a
+    /// bare default/noop instance.
+    fn test_app_state(queue_manager: Arc<QueueManager>, standby_enabled: bool) -> AppState {
+        let warning_service = Arc::new(WarningService::noop());
+        let health_service = Arc::new(HealthService::new(
+            crate::health::HealthServiceConfig::default(),
+            warning_service.clone(),
+        ));
+        AppState {
+            publisher: Arc::new(NoopPublisher) as Arc<dyn fc_queue::QueuePublisher>,
+            queue_manager: queue_manager.clone(),
+            warning_service,
+            health_service,
+            circuit_breaker_registry: Arc::new(CircuitBreakerRegistry::default()),
+            standby_enabled,
+            instance_id: "test-instance".to_string(),
+            stream_health_service: None,
+            traffic_strategy: None,
+            metrics_handle: None,
+            cached_broker_stats: Arc::new(CachedBrokerStats::new(queue_manager)),
+        }
+    }
+
+    fn reload_request() -> ConfigReloadRequest {
+        ConfigReloadRequest {
+            processing_pools: vec![PoolConfigRequest {
+                code: "DEFAULT".to_string(),
+                concurrency: 5,
+                rate_limit_per_minute: None,
+            }],
+        }
+    }
+
+    /// R-33: standby enabled + not leader ⇒ reload refused (409), and —
+    /// critically — before any fetch/reconfigure: pool_codes() must be
+    /// unchanged.
+    #[tokio::test]
+    async fn reload_config_refused_when_standby_enabled_and_not_leader() {
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
+        manager.set_leader(false);
+        let state = test_app_state(manager.clone(), true);
+
+        let response = reload_config(State(state), Json(reload_request())).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(
+            manager.pool_codes().is_empty(),
+            "no pool should have been created — the gate must run before any reconfigure"
+        );
+    }
+
+    /// R-33: standby enabled + leader ⇒ reload proceeds normally (200).
+    #[tokio::test]
+    async fn reload_config_allowed_when_standby_enabled_and_leader() {
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
+        manager.set_leader(true);
+        let state = test_app_state(manager.clone(), true);
+
+        let response = reload_config(State(state), Json(reload_request())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(manager.pool_codes(), vec!["DEFAULT".to_string()]);
+    }
+
+    /// R-33: standby disabled ⇒ unchanged, even though `QueueManager` was
+    /// never told it's the leader — `is_leader()` defaults `true` but the
+    /// gate must not even consult it when standby is off.
+    #[tokio::test]
+    async fn reload_config_unaffected_by_leadership_when_standby_disabled() {
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
+        let state = test_app_state(manager.clone(), false);
+
+        let response = reload_config(State(state), Json(reload_request())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(manager.pool_codes(), vec!["DEFAULT".to_string()]);
+    }
 
     #[test]
     fn test_severity_parsing() {

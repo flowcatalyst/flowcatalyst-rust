@@ -399,6 +399,10 @@ impl LifecycleManager {
         config_sync: Option<Arc<ConfigSyncService>>,
         standby: Option<Arc<StandbyProcessor>>,
     ) -> Self {
+        // Kept for the leadership monitor below — `Self::start` consumes
+        // `manager` (moved into its own background tasks).
+        let manager_for_leadership = manager.clone();
+
         // Start the base lifecycle manager
         let mut lifecycle = Self::start(manager, warning_service, health_service, config);
 
@@ -412,12 +416,16 @@ impl LifecycleManager {
             }
         }
 
-        // Start leadership monitor if standby is enabled
+        // Start leadership monitor if standby is enabled. R-26/R-34: this is
+        // what actually pauses/resumes consumer polling on leadership
+        // loss/regain — `spawn_leadership_monitor` drives
+        // `QueueManager::set_leader` every tick.
         if let Some(ref standby_proc) = standby {
             if standby_proc.is_standby_enabled() {
                 info!("Starting leadership monitor background task");
                 let handle = spawn_leadership_monitor(
                     standby_proc.clone(),
+                    manager_for_leadership,
                     lifecycle.shutdown.child_token(),
                 );
                 lifecycle.tasks.push(handle);

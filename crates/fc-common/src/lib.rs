@@ -53,7 +53,11 @@ pub use tsid::{EntityType, TsidGenerator};
 /// The core message structure that flows through the system.
 ///
 /// This struct is compatible with Java's MessagePointer using camelCase field names.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Serialize` is derived (wire output is unchanged), but `Deserialize` is
+/// hand-written below so it can capture whether the wire payload actually
+/// carried a `dispatchMode` value — see [`Message::dispatch_mode_specified`].
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: String,
@@ -71,9 +75,67 @@ pub struct Message {
     #[serde(default)]
     pub high_priority: bool,
     /// Dispatch mode — controls ordering behavior within message groups.
-    /// Default is Immediate (no ordering, concurrent processing allowed).
-    #[serde(default)]
+    /// Ledger A-09/X-01: an absent/unrecognised wire value resolves to
+    /// [`DispatchMode::default`] (`NEXT_ON_ERROR`) here, so every ordinary
+    /// reader (pool, mediator, disposition logic, …) can keep using this
+    /// field directly without re-deriving the default itself.
     pub dispatch_mode: DispatchMode,
+    /// Ledger R-13/R-16: `true` unless this `Message` was decoded from the
+    /// wire with `dispatchMode` absent or `null`. The router's strict
+    /// routing gate (`FC_ROUTER_STRICT_ROUTING`) needs to tell "producer
+    /// omitted the field" apart from "producer sent a value that happens to
+    /// equal the default" — information the collapsed `dispatch_mode` field
+    /// above cannot carry once the A-09 default has been applied.
+    ///
+    /// Always `true` for a `Message` built directly in Rust code (tests, the
+    /// scheduler, admin/publish endpoints, …) — only [`Message`]'s
+    /// `Deserialize` impl can produce `false`. Never serialized; not part of
+    /// the wire contract.
+    #[serde(skip)]
+    pub dispatch_mode_specified: bool,
+}
+
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Wire-shape twin of `Message`, differing only in `dispatch_mode`:
+        // `Option<DispatchMode>` here so `None` unambiguously means "the key
+        // was absent (or null)" rather than "resolved to the default".
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct MessageWire {
+            id: String,
+            #[serde(default)]
+            pool_code: String,
+            auth_token: Option<String>,
+            #[serde(default)]
+            signing_secret: Option<String>,
+            mediation_type: MediationType,
+            mediation_target: String,
+            #[serde(default)]
+            message_group_id: Option<String>,
+            #[serde(default)]
+            high_priority: bool,
+            #[serde(default)]
+            dispatch_mode: Option<DispatchMode>,
+        }
+
+        let wire = MessageWire::deserialize(deserializer)?;
+        Ok(Message {
+            id: wire.id,
+            pool_code: wire.pool_code,
+            auth_token: wire.auth_token,
+            signing_secret: wire.signing_secret,
+            mediation_type: wire.mediation_type,
+            mediation_target: wire.mediation_target,
+            message_group_id: wire.message_group_id,
+            high_priority: wire.high_priority,
+            dispatch_mode_specified: wire.dispatch_mode.is_some(),
+            dispatch_mode: wire.dispatch_mode.unwrap_or_default(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -87,9 +149,17 @@ pub enum MediationType {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DispatchMode {
     /// Process independently, no ordering guarantee within group
-    #[default]
     Immediate,
-    /// If this message fails, skip it and continue with next in group
+    /// If this message fails, skip it and continue with next in group.
+    ///
+    /// Ledger A-09/X-01: this is what an unspecified/unrecognised mode
+    /// means, everywhere. It was `Immediate` — the only mode with no
+    /// ordering at all — so a producer that omitted the field silently gave
+    /// up sequencing, and the loss showed only under load. A default that
+    /// quietly weakens a guarantee is the wrong way round: ordering is cheap
+    /// to opt out of (set `IMMEDIATE`) and expensive to discover you never
+    /// had.
+    #[default]
     NextOnError,
     /// If this message fails, block all subsequent messages in group
     BlockOnError,
@@ -104,16 +174,20 @@ impl DispatchMode {
         }
     }
 
-    // Lenient: unknown input maps to Immediate by design (legacy
-    // databases contain free-form values). FromStr's `Result` shape
-    // would force callers to handle a parse failure that this API
-    // intentionally swallows — hence the allow.
+    /// Maps a wire/stored value to a mode. Empty/unrecognised means
+    /// unspecified, which is [`DispatchMode::default`] (`NEXT_ON_ERROR` —
+    /// ledger A-09/X-01). Lenient by design: legacy databases and free-form
+    /// callers may hand this an empty or garbled string, and this API
+    /// intentionally swallows that rather than forcing every caller to
+    /// handle a parse failure — hence the allow. FromStr's `Result` shape
+    /// doesn't match, so it's not the trait method.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_uppercase().as_str() {
+            "IMMEDIATE" => Self::Immediate,
             "NEXT_ON_ERROR" => Self::NextOnError,
             "BLOCK_ON_ERROR" => Self::BlockOnError,
-            _ => Self::Immediate,
+            _ => Self::default(),
         }
     }
 
@@ -1042,3 +1116,110 @@ pub enum FlowCatalystError {
 }
 
 pub type Result<T> = std::result::Result<T, FlowCatalystError>;
+
+#[cfg(test)]
+mod message_tests {
+    use super::*;
+
+    fn wire_message(body: serde_json::Value) -> Message {
+        serde_json::from_value(body).expect("valid Message JSON")
+    }
+
+    fn base_message_json() -> serde_json::Value {
+        serde_json::json!({
+            "id": "msg-1",
+            "mediationType": "HTTP",
+            "mediationTarget": "http://localhost/webhook",
+        })
+    }
+
+    // --- A-09/X-01: DispatchMode default and from_str fallback ---
+
+    #[test]
+    fn dispatch_mode_default_is_next_on_error() {
+        assert_eq!(DispatchMode::default(), DispatchMode::NextOnError);
+    }
+
+    #[test]
+    fn dispatch_mode_from_str_unknown_falls_back_to_next_on_error() {
+        assert_eq!(DispatchMode::from_str("garbage"), DispatchMode::NextOnError);
+        assert_eq!(DispatchMode::from_str(""), DispatchMode::NextOnError);
+    }
+
+    #[test]
+    fn dispatch_mode_from_str_recognises_every_named_value() {
+        assert_eq!(DispatchMode::from_str("IMMEDIATE"), DispatchMode::Immediate);
+        assert_eq!(
+            DispatchMode::from_str("immediate"),
+            DispatchMode::Immediate,
+            "case-insensitive"
+        );
+        assert_eq!(
+            DispatchMode::from_str("NEXT_ON_ERROR"),
+            DispatchMode::NextOnError
+        );
+        assert_eq!(
+            DispatchMode::from_str("BLOCK_ON_ERROR"),
+            DispatchMode::BlockOnError
+        );
+    }
+
+    // --- R-13/R-16: Message wire absence vs presence of dispatchMode ---
+
+    #[test]
+    fn message_missing_dispatch_mode_defaults_and_is_unspecified() {
+        let msg = wire_message(base_message_json());
+        assert_eq!(msg.dispatch_mode, DispatchMode::NextOnError);
+        assert!(
+            !msg.dispatch_mode_specified,
+            "an absent wire dispatchMode must be distinguishable from a present one"
+        );
+    }
+
+    #[test]
+    fn message_null_dispatch_mode_is_treated_as_unspecified() {
+        let mut body = base_message_json();
+        body["dispatchMode"] = serde_json::Value::Null;
+        let msg = wire_message(body);
+        assert_eq!(msg.dispatch_mode, DispatchMode::NextOnError);
+        assert!(!msg.dispatch_mode_specified);
+    }
+
+    #[test]
+    fn message_present_dispatch_mode_is_specified_even_if_it_equals_the_default() {
+        let mut body = base_message_json();
+        body["dispatchMode"] = serde_json::Value::String("NEXT_ON_ERROR".to_string());
+        let msg = wire_message(body);
+        assert_eq!(msg.dispatch_mode, DispatchMode::NextOnError);
+        assert!(
+            msg.dispatch_mode_specified,
+            "a producer that explicitly sent NEXT_ON_ERROR must not look like it sent nothing"
+        );
+    }
+
+    #[test]
+    fn message_present_immediate_dispatch_mode_is_specified() {
+        let mut body = base_message_json();
+        body["dispatchMode"] = serde_json::Value::String("IMMEDIATE".to_string());
+        let msg = wire_message(body);
+        assert_eq!(msg.dispatch_mode, DispatchMode::Immediate);
+        assert!(msg.dispatch_mode_specified);
+    }
+
+    #[test]
+    fn message_dispatch_mode_specified_is_never_serialized() {
+        let mut body = base_message_json();
+        body["dispatchMode"] = serde_json::Value::String("BLOCK_ON_ERROR".to_string());
+        let msg = wire_message(body);
+        let out = serde_json::to_value(&msg).unwrap();
+        assert!(out.get("dispatchModeSpecified").is_none());
+        assert!(out.get("dispatch_mode_specified").is_none());
+        assert_eq!(out["dispatchMode"], "BLOCK_ON_ERROR");
+    }
+
+    #[test]
+    fn message_empty_pool_code_defaults_and_is_distinguishable() {
+        let msg = wire_message(base_message_json());
+        assert_eq!(msg.pool_code, "");
+    }
+}

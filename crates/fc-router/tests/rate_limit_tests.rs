@@ -126,6 +126,7 @@ fn create_test_message(id: &str, pool_code: &str) -> Message {
         message_group_id: None,
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 

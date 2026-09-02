@@ -288,10 +288,22 @@ impl StandbyProcessor {
     }
 }
 
-/// Spawn a task that monitors leadership status and logs transitions.
+/// Spawn a task that monitors leadership status, logs transitions, and
+/// drives the [`QueueManager`](crate::manager::QueueManager)'s leadership
+/// flag (R-26/R-34).
 ///
-/// **Owns:** the `Arc<StandbyProcessor>` and a [`CancellationToken`]
-/// (typically a child of the lifecycle manager's shutdown token).
+/// Every tick this pushes the election's current `is_leader()` value into
+/// `manager.set_leader(..)` — not just on transitions — so the manager
+/// always converges to the true status even if a tick were ever missed.
+/// `QueueManager::set_leader` does the edge-detected logging and is the
+/// single source of truth the consumer poll loop (pause/resume new intake)
+/// and the config-reload handler (R-33, refuse on a non-leader instance)
+/// both read. Losing leadership never cancels in-flight or buffered work —
+/// see `QueueManager::set_leader`'s doc comment.
+///
+/// **Owns:** the `Arc<StandbyProcessor>`, an `Arc<QueueManager>`, and a
+/// [`CancellationToken`] (typically a child of the lifecycle manager's
+/// shutdown token).
 /// **Exits:** when `shutdown.cancelled()` resolves. `CancellationToken` is
 /// level-triggered, so a token that was already cancelled *before* this
 /// task was spawned still causes an immediate exit — unlike a broadcast
@@ -301,6 +313,7 @@ impl StandbyProcessor {
 /// manager awaits all such handles during graceful shutdown.
 pub fn spawn_leadership_monitor(
     processor: Arc<StandbyProcessor>,
+    manager: Arc<crate::manager::QueueManager>,
     shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -311,6 +324,7 @@ pub fn spawn_leadership_monitor(
             tokio::select! {
                 _ = ticker.tick() => {
                     processor.check_and_log_transition();
+                    manager.set_leader(processor.is_leader());
 
                     if let StandbyProcessor::Enabled(ref p) = *processor {
                         debug!(
@@ -372,7 +386,10 @@ mod tests {
         let token = CancellationToken::new();
         token.cancel();
 
-        let handle = spawn_leadership_monitor(processor, token);
+        let manager = Arc::new(crate::manager::QueueManager::new(
+            crate::mediator::HttpMediatorConfig::dev(),
+        ));
+        let handle = spawn_leadership_monitor(processor, manager, token);
 
         tokio::time::timeout(Duration::from_secs(1), handle)
             .await

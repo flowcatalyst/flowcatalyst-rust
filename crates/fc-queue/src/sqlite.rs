@@ -559,6 +559,7 @@ mod tests {
             message_group_id: None,
             high_priority: false,
             dispatch_mode: fc_common::DispatchMode::default(),
+            dispatch_mode_specified: true,
         };
 
         // Publish
@@ -592,6 +593,7 @@ mod tests {
             message_group_id: None,
             high_priority: false,
             dispatch_mode: fc_common::DispatchMode::default(),
+            dispatch_mode_specified: true,
         };
 
         queue.publish(message).await.unwrap();
@@ -624,6 +626,7 @@ mod tests {
                 message_group_id: Some("group-1".to_string()),
                 high_priority: false,
                 dispatch_mode: fc_common::DispatchMode::default(),
+                dispatch_mode_specified: true,
             };
             queue.publish(message).await.unwrap();
         }
@@ -656,6 +659,7 @@ mod tests {
             message_group_id: None,
             high_priority: false,
             dispatch_mode: fc_common::DispatchMode::default(),
+            dispatch_mode_specified: true,
         };
 
         // Publish same message twice
@@ -725,6 +729,7 @@ mod tests {
             message_group_id: None,
             high_priority: false,
             dispatch_mode: fc_common::DispatchMode::default(),
+            dispatch_mode_specified: true,
         };
         queue.publish(healthy).await.unwrap();
         insert_poison_row(&queue, "poison-1", "not-valid-json-at-all").await;

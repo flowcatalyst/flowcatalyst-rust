@@ -55,6 +55,7 @@ fn healthy_message(id: &str) -> Message {
         message_group_id: None,
         high_priority: false,
         dispatch_mode: DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 

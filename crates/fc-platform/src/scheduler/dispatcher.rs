@@ -56,6 +56,7 @@ impl JobDispatcher {
             message_group_id: job.message_group.clone(),
             high_priority: false,
             dispatch_mode: job.dispatch_mode(),
+            dispatch_mode_specified: true,
         };
 
         metrics::counter!("scheduler.jobs.dispatched_total").increment(1);
@@ -138,6 +139,7 @@ mod tests {
             message_group_id: job.message_group.clone(),
             high_priority: false,
             dispatch_mode: job.dispatch_mode(),
+            dispatch_mode_specified: true,
         };
 
         assert_eq!(message.pool_code, "MY-POOL");
@@ -163,6 +165,7 @@ mod tests {
             message_group_id: job.message_group.clone(),
             high_priority: false,
             dispatch_mode: job.dispatch_mode(),
+            dispatch_mode_specified: true,
         };
 
         assert_eq!(message.pool_code, "DISPATCH-POOL");
@@ -191,6 +194,7 @@ mod tests {
             message_group_id: job.message_group.clone(),
             high_priority: false,
             dispatch_mode: job.dispatch_mode(),
+            dispatch_mode_specified: true,
         };
 
         assert_eq!(message.mediation_target, "https://custom.host/dispatch");
@@ -208,6 +212,7 @@ mod tests {
             message_group_id: Some("grp_1".to_string()),
             high_priority: false,
             dispatch_mode: DispatchMode::NextOnError,
+            dispatch_mode_specified: true,
         };
 
         let json = serde_json::to_string(&message).unwrap();
@@ -258,9 +263,10 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_job_unknown_mode_defaults_to_immediate() {
+    fn dispatch_job_unknown_mode_defaults_to_next_on_error() {
+        // Ledger A-09/X-01: unspecified/unrecognised dispatch mode ⇒ NEXT_ON_ERROR.
         let job = make_job("j_unk", None, None, "SOME_RANDOM_VALUE");
-        assert_eq!(job.dispatch_mode(), DispatchMode::Immediate);
+        assert_eq!(job.dispatch_mode(), DispatchMode::NextOnError);
     }
 
     #[test]

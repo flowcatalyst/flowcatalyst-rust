@@ -263,6 +263,7 @@ impl MessageGroupDispatcher {
             message_group_id: job.message_group.clone(),
             high_priority: false,
             dispatch_mode: job.dispatch_mode(),
+            dispatch_mode_specified: true,
         };
 
         metrics::counter!("scheduler.jobs.dispatched_total").increment(1);
@@ -495,7 +496,8 @@ mod tests {
             DispatchMode::from_str("BLOCK_ON_ERROR"),
             DispatchMode::BlockOnError
         );
-        assert_eq!(DispatchMode::from_str("unknown"), DispatchMode::Immediate);
+        // Ledger A-09/X-01: unspecified/unrecognised ⇒ NEXT_ON_ERROR.
+        assert_eq!(DispatchMode::from_str("unknown"), DispatchMode::NextOnError);
     }
 
     #[test]
