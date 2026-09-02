@@ -162,6 +162,7 @@ fn create_test_message(id: &str, pool_code: &str) -> Message {
         message_group_id: None,
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 
@@ -363,6 +364,387 @@ async fn test_default_pool_for_empty_pool_code() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     assert_eq!(mediator.call_count(), 1);
+}
+
+// ============================================================================
+// R-13/R-16: FC_ROUTER_STRICT_ROUTING gate — route_batch integration
+// ============================================================================
+
+fn message_with(
+    id: &str,
+    pool_code: &str,
+    dispatch_mode: fc_common::DispatchMode,
+    dispatch_mode_specified: bool,
+    group: Option<&str>,
+) -> Message {
+    Message {
+        id: id.to_string(),
+        pool_code: pool_code.to_string(),
+        auth_token: None,
+        signing_secret: None,
+        mediation_type: MediationType::HTTP,
+        mediation_target: "http://localhost:8080/test".to_string(),
+        message_group_id: group.map(|s| s.to_string()),
+        high_priority: false,
+        dispatch_mode,
+        dispatch_mode_specified,
+    }
+}
+
+fn queued_with(msg: Message) -> QueuedMessage {
+    QueuedMessage {
+        receipt_handle: format!("receipt-{}", msg.id),
+        broker_message_id: Some(format!("broker-{}", msg.id)),
+        queue_identifier: "test-queue".to_string(),
+        message: msg,
+    }
+}
+
+/// Strict routing is off by default — `QueueManager::strict_routing()`
+/// must read `false` on a freshly built manager.
+#[tokio::test]
+async fn strict_routing_off_by_default() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = QueueManager::with_shared_mediator_for_testing(mediator);
+    assert!(!manager.strict_routing());
+}
+
+/// Strict on: a message with an empty pool_code is ACKed, never delivered,
+/// and never NACKed.
+#[tokio::test]
+async fn strict_routing_acks_empty_pool_code_without_delivery() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager.set_strict_routing(true);
+
+    let msg = message_with(
+        "m1",
+        "",
+        fc_common::DispatchMode::Immediate,
+        true,
+        None,
+    );
+    let consumer = Arc::new(MockQueueConsumer::with_messages(
+        "q",
+        vec![queued_with(msg)],
+    ));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(mediator.call_count(), 0, "malformed message must never be delivered");
+    assert_eq!(consumer.acked.lock().len(), 1, "malformed message must be ACKed");
+    assert_eq!(consumer.nacked.lock().len(), 0, "malformed message must never be NACKed");
+}
+
+/// Strict on: a message with no wire dispatchMode (unspecified) is ACKed,
+/// never delivered — even though it would otherwise resolve to a valid
+/// default (NEXT_ON_ERROR, A-09).
+#[tokio::test]
+async fn strict_routing_acks_unspecified_dispatch_mode_without_delivery() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager.set_strict_routing(true);
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "DEFAULT".to_string(),
+                concurrency: 10,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let msg = message_with(
+        "m1",
+        "DEFAULT",
+        fc_common::DispatchMode::NextOnError,
+        false, // wire-unspecified
+        None,
+    );
+    let consumer = Arc::new(MockQueueConsumer::with_messages(
+        "q",
+        vec![queued_with(msg)],
+    ));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(mediator.call_count(), 0);
+    assert_eq!(consumer.acked.lock().len(), 1);
+    assert_eq!(consumer.nacked.lock().len(), 0);
+}
+
+/// Strict on: an ordered-mode message with no message_group_id is ACKed,
+/// never delivered.
+#[tokio::test]
+async fn strict_routing_acks_ordered_mode_without_group_id() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager.set_strict_routing(true);
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "DEFAULT".to_string(),
+                concurrency: 10,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let msg = message_with(
+        "m1",
+        "DEFAULT",
+        fc_common::DispatchMode::BlockOnError,
+        true,
+        None, // no group id
+    );
+    let consumer = Arc::new(MockQueueConsumer::with_messages(
+        "q",
+        vec![queued_with(msg)],
+    ));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert_eq!(mediator.call_count(), 0);
+    assert_eq!(consumer.acked.lock().len(), 1);
+    assert_eq!(consumer.nacked.lock().len(), 0);
+}
+
+/// Strict on: a fully well-formed message (pool code known, dispatch mode
+/// specified, ordered mode carries a group id) is delivered normally — the
+/// gate must not false-positive on valid traffic.
+#[tokio::test]
+async fn strict_routing_delivers_well_formed_message() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager.set_strict_routing(true);
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "DEFAULT".to_string(),
+                concurrency: 10,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let msg = message_with(
+        "m1",
+        "DEFAULT",
+        fc_common::DispatchMode::NextOnError,
+        true,
+        Some("grp-1"),
+    );
+    let consumer = Arc::new(MockQueueConsumer::with_messages(
+        "q",
+        vec![queued_with(msg)],
+    ));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(mediator.call_count(), 1, "well-formed message must be delivered");
+    assert_eq!(consumer.acked.lock().len(), 1);
+}
+
+/// Strict off (default): the same malformed shapes that strict mode would
+/// reject instead route through the non-strict fallbacks and are delivered
+/// — proving the gate is genuinely opt-in.
+#[tokio::test]
+async fn non_strict_routing_still_delivers_malformed_shapes() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    assert!(!manager.strict_routing());
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "DEFAULT".to_string(),
+                concurrency: 10,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let messages = vec![
+        // Empty pool code -> falls back to DEFAULT-POOL... but the manager's
+        // configured pool here is literally "DEFAULT", not the manager's
+        // internal fallback constant "DEFAULT-POOL" — use "DEFAULT" as the
+        // pool_code directly and instead exercise the other two shapes,
+        // which don't depend on the fallback pool's name.
+        queued_with(message_with(
+            "m1",
+            "DEFAULT",
+            fc_common::DispatchMode::NextOnError,
+            false, // wire-unspecified — still resolves to NEXT_ON_ERROR (A-09)
+            None,
+        )),
+        queued_with(message_with(
+            "m2",
+            "DEFAULT",
+            fc_common::DispatchMode::BlockOnError,
+            true,
+            None, // ordered, no group id -> non-strict IMMEDIATE-path fallback
+        )),
+    ];
+    let consumer = Arc::new(MockQueueConsumer::with_messages("q", messages));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(
+        mediator.call_count(),
+        2,
+        "non-strict routing must still deliver both messages via fallback"
+    );
+}
+
+// ============================================================================
+// R-26/R-34: leadership loss pauses new polling; regain resumes it.
+// In-flight/buffered work is never aborted by a leadership transition.
+// ============================================================================
+
+/// Losing leadership stops the consumer poll loop from calling `poll()` at
+/// all; regaining it resumes polling (and delivery) without any consumer
+/// rebuild.
+#[tokio::test]
+async fn leadership_loss_pauses_polling_and_regain_resumes_it() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "DEFAULT".to_string(),
+                concurrency: 10,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let messages = vec![create_queued_message("msg-1", "DEFAULT", "leader-queue")];
+    let consumer = Arc::new(MockQueueConsumer::with_messages("leader-queue", messages));
+    manager.add_consumer(consumer.clone()).await;
+
+    // Not the leader from the start.
+    manager.set_leader(false);
+    assert!(!manager.is_leader());
+
+    let manager_for_start = manager.clone();
+    let start_handle = tokio::spawn(async move {
+        let _ = manager_for_start.start().await;
+    });
+
+    // Give the poll loop several iterations' worth of time — it must never
+    // call poll() while not leader, so the message sitting in the mock
+    // consumer must never be delivered.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        consumer.poll_count(),
+        0,
+        "consumer must not be polled while this instance is not the leader"
+    );
+    assert_eq!(mediator.call_count(), 0);
+
+    // Regain leadership — polling (and delivery) must resume on its own,
+    // with no consumer rebuild and no reload_config call.
+    manager.set_leader(true);
+    wait_until(|| mediator.call_count() >= 1).await;
+    assert_eq!(mediator.call_count(), 1);
+    assert!(consumer.poll_count() > 0);
+
+    manager.shutdown().await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), start_handle).await;
+}
+
+/// A delivery already in flight when leadership is lost must run to
+/// completion and still ack — losing leadership pauses new *polling* only,
+/// it never cancels in-flight work (R-26).
+#[tokio::test]
+async fn leadership_loss_does_not_abort_in_flight_delivery() {
+    let mediator = Arc::new(SlowMockMediator::new(Duration::from_millis(200)));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "DEFAULT".to_string(),
+                concurrency: 10,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let messages = vec![create_queued_message("msg-1", "DEFAULT", "test-queue")];
+    let consumer = Arc::new(MockQueueConsumer::with_messages("test-queue", messages));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    // Let the pool worker actually start mediating (SlowMockMediator sleeps
+    // 200ms) before pulling leadership out from under it.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    manager.set_leader(false);
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    assert_eq!(
+        mediator.call_count(),
+        1,
+        "the in-flight delivery must have run to completion despite losing leadership mid-call"
+    );
+    assert_eq!(
+        consumer.acked.lock().len(),
+        1,
+        "the completed in-flight delivery must still ack"
+    );
 }
 
 #[tokio::test]

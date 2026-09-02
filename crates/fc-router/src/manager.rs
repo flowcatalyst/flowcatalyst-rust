@@ -341,6 +341,25 @@ pub struct QueueManager {
 
     /// Health service for recording consumer poll times
     health_service: Option<Arc<crate::health::HealthService>>,
+
+    /// R-13/R-16: `FC_ROUTER_STRICT_ROUTING`. When `true`, `route_batch`
+    /// ACKs (never delivers, never NACKs) a message with an empty
+    /// `pool_code`, an unspecified `dispatch_mode`, or an ordered mode with
+    /// no `message_group_id`, instead of silently falling back
+    /// (`DEFAULT-POOL` / the A-09 dispatch-mode default / a shared ordered
+    /// group). Off by default — see [`Self::set_strict_routing`].
+    strict_routing: AtomicBool,
+
+    /// R-26/R-33/R-34: whether this instance currently holds leadership.
+    /// Always `true` when standby is disabled (see the builder default).
+    /// When standby is enabled, [`crate::standby::spawn_leadership_monitor`]
+    /// keeps this in sync with the election result every tick; the consumer
+    /// poll loop (`spawn_consumer_poll_task`) reads it to pause/resume
+    /// intake, and the config-reload handler reads it to refuse a reload on
+    /// a non-leader instance (R-33). Losing leadership never cancels
+    /// in-flight or buffered work — it only stops *new* polling — so no
+    /// other state needs to change on a transition.
+    is_leader: AtomicBool,
 }
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
@@ -448,6 +467,8 @@ impl QueueManagerBuilder {
             warning_service: self.warning_service,
             circuit_breaker_registry: self.circuit_breaker_registry,
             health_service: self.health_service,
+            strict_routing: AtomicBool::new(false),
+            is_leader: AtomicBool::new(true),
         }
     }
 }
@@ -464,6 +485,28 @@ async fn sleep_or_cancel(token: &CancellationToken, d: Duration) -> bool {
         _ = tokio::time::sleep(d) => false,
         _ = token.cancelled() => true,
     }
+}
+
+/// Reports why `msg` is malformed under strict routing
+/// (`FC_ROUTER_STRICT_ROUTING`; see [`QueueManager::set_strict_routing`]),
+/// or `None` if well-formed. Checked once per message at route time, before
+/// pool resolution — every condition here is exactly what non-strict routing
+/// papers over with a fallback (`DEFAULT-POOL`, the A-09 dispatch-mode
+/// default, or a shared ordered group), so under strict routing none of them
+/// may be silently repaired.
+fn malformed_routing_reason(msg: &fc_common::Message) -> Option<&'static str> {
+    if msg.pool_code.is_empty() {
+        return Some("empty pool_code");
+    }
+    if !msg.dispatch_mode_specified {
+        return Some("empty dispatch_mode");
+    }
+    if msg.dispatch_mode.requires_ordering()
+        && msg.message_group_id.as_deref().unwrap_or("").is_empty()
+    {
+        return Some("ordered dispatch_mode with no message_group_id");
+    }
+    None
 }
 
 impl QueueManager {
@@ -535,6 +578,41 @@ impl QueueManager {
         self.shutdown.child_token()
     }
 
+    /// Toggle `FC_ROUTER_STRICT_ROUTING` (R-13/R-16): when `true`,
+    /// `route_batch` ACKs a malformed message (empty `pool_code`, an
+    /// unspecified `dispatch_mode`, or an ordered mode with no
+    /// `message_group_id`) instead of routing it through a fallback. Off by
+    /// default.
+    pub fn set_strict_routing(&self, enabled: bool) {
+        self.strict_routing.store(enabled, Ordering::SeqCst);
+        info!(strict_routing = enabled, "Strict routing gate set");
+    }
+
+    /// Current value of the strict-routing gate (see [`Self::set_strict_routing`]).
+    pub fn strict_routing(&self) -> bool {
+        self.strict_routing.load(Ordering::SeqCst)
+    }
+
+    /// Whether this instance currently holds leadership (always `true` when
+    /// standby is disabled). See [`Self::set_leader`].
+    pub fn is_leader(&self) -> bool {
+        self.is_leader.load(Ordering::SeqCst)
+    }
+
+    /// R-26/R-34: record this instance's current leadership status. Called
+    /// every tick by [`crate::standby::spawn_leadership_monitor`] so the
+    /// consumer poll loop and the config-reload handler (R-33) always see a
+    /// fresh value. Losing leadership pauses new polling only — in-flight
+    /// deliveries and buffered group work are never touched (R-26).
+    pub fn set_leader(&self, leader: bool) {
+        let was_leader = self.is_leader.swap(leader, Ordering::SeqCst);
+        if leader && !was_leader {
+            info!("This instance became the LEADER — resuming message consumption");
+        } else if !leader && was_leader {
+            warn!("This instance lost leadership — pausing message consumption (in-flight work continues)");
+        }
+    }
+
     /// Build a mediator instance for a pool via the configured factory,
     /// passing the manager's current warning service so per-pool mediators
     /// emit through the real sink (see [`MediatorFactory`]).
@@ -577,6 +655,13 @@ impl QueueManager {
     /// - Removed pools: drain asynchronously
     /// - Updated pools: update concurrency/rate limit in-place
     /// - New pools: create and start
+    ///
+    /// X-11 (verified, no change needed): a pool present in both the old and
+    /// new config with only `concurrency`/`rate_limit_per_minute` changed is
+    /// updated in place via `Pool::update_concurrency`/`update_rate_limit`
+    /// (below) — it is never removed-and-recreated for a parameter-only
+    /// change. A pool is only ever torn down when its code drops out of the
+    /// new config entirely (the "removed pools" branch).
     pub async fn reload_config(self: &Arc<Self>, config: RouterConfig) -> Result<bool> {
         if !self.running.load(Ordering::SeqCst) {
             warn!("Cannot reload config - QueueManager is shutting down");
@@ -820,6 +905,19 @@ impl QueueManager {
         };
 
         // Step (b): stop phased-out consumers — outside the lock.
+        //
+        // X-11 (verified, no `draining_consumers` map needed): removing a
+        // consumer from `self.consumers` here does not strand any buffered
+        // message's ability to ack/nack. Every `BatchMessage`'s callback
+        // (`QueueMessageCallback`, built in `route_batch`) captures its own
+        // `Arc<dyn QueueConsumer>` clone at route time, independent of this
+        // map — so a message already buffered in a pool when its queue is
+        // removed here still holds a live, working consumer handle. And
+        // `stop()` (every backend: sqs/postgres/sqlite/nats/activemq) only
+        // flips a `running` flag that gates *polling*; `ack`/`nack` never
+        // check it. So "stays addressable for ack/nack until buffers empty"
+        // already holds via ordinary `Arc` ownership; there is nothing left
+        // for the manager to track once this map entry is removed.
         let mut queues_removed = 0;
         for (queue_id, consumer) in removed_consumers {
             info!(queue_id = %queue_id, "Phasing out consumer for removed queue");
@@ -1072,8 +1170,65 @@ impl QueueManager {
             future::join_all(requeue_futs).await;
         }
 
+        // Phase 1.5: R-13/R-16 strict routing gate. Only active under
+        // FC_ROUTER_STRICT_ROUTING (off by default). A malformed message
+        // (empty pool_code, unspecified dispatch_mode, or an ordered mode
+        // with no message_group_id) is never fixable by the usual fallback
+        // (DEFAULT-POOL, the A-09 default, a shared group) — under strict
+        // routing that's a producer bug, not something to paper over. ACK
+        // only: it must never be delivered, and never NACKed either, since
+        // nothing about a retry would fix a malformed message. `unique`
+        // messages here were never registered in `in_pipeline` (that
+        // happens later, per-group, just before `pool.submit`), so there is
+        // no tracker entry to release.
+        let well_formed = if self.strict_routing.load(Ordering::SeqCst) {
+            let mut well_formed = Vec::with_capacity(filtered.unique.len());
+            let mut malformed_futs = Vec::new();
+            for msg in filtered.unique {
+                if let Some(reason) = malformed_routing_reason(&msg.message) {
+                    warn!(
+                        message_id = %msg.message.id,
+                        queue = %consumer.identifier(),
+                        reason = reason,
+                        "Strict routing: malformed message; ACKing without delivery"
+                    );
+                    self.warning_service.add_warning(
+                        WarningCategory::Configuration,
+                        WarningSeverity::Warn,
+                        format!(
+                            "Malformed message {} on queue {}: {}",
+                            msg.message.id,
+                            consumer.identifier(),
+                            reason
+                        ),
+                        "QueueManager".to_string(),
+                    );
+                    let consumer = consumer.clone();
+                    let handle = msg.receipt_handle.clone();
+                    let app_id = msg.message.id.clone();
+                    let broker_id = msg.broker_message_id.clone();
+                    malformed_futs.push(async move {
+                        if let Err(e) = consumer.ack(&handle).await {
+                            warn!(
+                                message_id = %app_id,
+                                broker_message_id = ?broker_id,
+                                error = %e,
+                                "ack (strict routing malformed) failed"
+                            );
+                        }
+                    });
+                } else {
+                    well_formed.push(msg);
+                }
+            }
+            future::join_all(malformed_futs).await;
+            well_formed
+        } else {
+            filtered.unique
+        };
+
         // Phase 2: Group by pool and route
-        let by_pool = self.group_by_pool(filtered.unique);
+        let by_pool = self.group_by_pool(well_formed);
 
         for (pool_code, pool_messages) in by_pool {
             let pool = match self.get_or_create_pool(&pool_code, None).await {
@@ -1311,6 +1466,12 @@ impl QueueManager {
     /// Group messages by pool code.
     /// Mirrors Java's pool routing logic: if a pool code is not found in processPools,
     /// log a ROUTING warning and fall back to DEFAULT-POOL.
+    ///
+    /// R-13: an empty `pool_code` warns exactly like an unknown one (this
+    /// used to fall silently to DEFAULT-POOL with no warning at all — the
+    /// same "papered over" anti-pattern strict routing exists to reject; a
+    /// missing pool code is exactly as much a producer bug as a misspelled
+    /// one).
     fn group_by_pool(
         &self,
         messages: Vec<QueuedMessage>,
@@ -1319,13 +1480,14 @@ impl QueueManager {
             std::collections::HashMap::new();
 
         for msg in messages {
-            let pool_code = if msg.message.pool_code.is_empty() {
-                self.default_pool_code.clone()
-            } else if self.pools.get(&msg.message.pool_code).is_none() {
-                // No pool found → log warning + route to DEFAULT-POOL
+            let code = &msg.message.pool_code;
+            let pool_code = if !code.is_empty() && self.pools.contains_key(code) {
+                code.clone()
+            } else {
+                // Empty or unknown pool_code → log warning + route to DEFAULT-POOL.
                 warn!(
                     message_id = %msg.message.id,
-                    pool_code = %msg.message.pool_code,
+                    pool_code = %code,
                     default_pool = %self.default_pool_code,
                     "No pool found for pool_code, routing to DEFAULT-POOL"
                 );
@@ -1334,13 +1496,11 @@ impl QueueManager {
                     WarningSeverity::Warn,
                     format!(
                         "No pool found for code [{}] on message [{}] — routed to {}",
-                        msg.message.pool_code, msg.message.id, self.default_pool_code
+                        code, msg.message.id, self.default_pool_code
                     ),
                     "QueueManager".to_string(),
                 );
                 self.default_pool_code.clone()
-            } else {
-                msg.message.pool_code.clone()
             };
 
             by_pool.entry(pool_code).or_default().push(msg);
@@ -1350,7 +1510,19 @@ impl QueueManager {
     }
 
     /// Group messages by message_group_id for FIFO ordering enforcement
-    /// Mirrors Java's messagesByGroup logic in routeMessageBatch
+    /// (the per-batch NACK-cascade below: if one message in a group fails
+    /// `pool.submit`, the rest of the group is NACKed for FIFO). Mirrors
+    /// Java's messagesByGroup logic in routeMessageBatch.
+    ///
+    /// R-13: messages with no real ordered group (IMMEDIATE mode, or an
+    /// ordered mode with no `message_group_id`) each get their own unique
+    /// pseudo-group keyed by message id, rather than sharing one
+    /// `"__DEFAULT__"` bucket. The shared bucket was the exact anti-pattern
+    /// R-13 exists to delete: unrelated IMMEDIATE/groupless messages that
+    /// happened to land in the same poll batch would NACK-cascade off each
+    /// other on a submit failure, even though nothing actually links them.
+    /// With strict routing off, this is the "ordered mode with no group id
+    /// routes down the IMMEDIATE path" behaviour (Go parity, deliberate).
     fn group_by_message_group(
         &self,
         messages: Vec<QueuedMessage>,
@@ -1360,11 +1532,12 @@ impl QueueManager {
             indexmap::IndexMap::new();
 
         for msg in messages {
-            let group_id = msg
-                .message
-                .message_group_id
-                .clone()
-                .unwrap_or_else(|| "__DEFAULT__".to_string());
+            let group_id = match &msg.message.message_group_id {
+                Some(g) if !g.is_empty() && msg.message.dispatch_mode.requires_ordering() => {
+                    g.clone()
+                }
+                _ => format!("__ungrouped__:{}", msg.message.id),
+            };
             by_group.entry(group_id).or_default().push(msg);
         }
 
@@ -1415,6 +1588,26 @@ impl QueueManager {
                         loop_gap.as_secs(),
                         STARVATION_THRESHOLD.as_secs()
                     );
+                }
+
+                // R-26/R-34: not the leader (standby losing/regaining
+                // leadership) — pause polling. In-flight deliveries and
+                // buffered group work are untouched; this only stops *new*
+                // messages from being pulled off the broker. Resumes as soon
+                // as `manager.is_leader()` flips back via
+                // `spawn_leadership_monitor`, no consumer rebuild needed.
+                if !manager.is_leader() {
+                    debug!(consumer = %consumer.identifier(), "Not leader — pausing poll");
+
+                    if let Some(ref health_service) = manager.health_service {
+                        health_service.record_consumer_poll(consumer.identifier());
+                    }
+
+                    if sleep_or_cancel(&token, Duration::from_secs(2)).await {
+                        info!(consumer = %consumer.identifier(), "Consumer shutting down");
+                        break;
+                    }
+                    continue;
                 }
 
                 // Backpressure: if all pools are full, wait instead of polling.
@@ -1644,9 +1837,39 @@ impl QueueManager {
     /// consumer poll task and background watcher observes it immediately,
     /// even one spawned after this call started), stops consumers, drains
     /// every pool (active and already-draining), and waits — bounded by a
-    /// 60s timeout — for every pool's tracked tasks to actually finish via
+    /// 60s drain budget — for tracked pool work to finish via
     /// [`ProcessPool::wait_drained`], instead of polling a "drained?" flag
     /// on a fixed sleep interval.
+    ///
+    /// **R-49 (ruled 2026-09-02):** the intended semantic is narrower than
+    /// what this currently does. A worker should finish only the message
+    /// it's in the middle of (its in-hand delivery), then immediately
+    /// release the rest of its group's *buffered* backlog back to the
+    /// broker (NACK, undelivered) rather than continuing to drain it —
+    /// draining the whole backlog against a slow target could take
+    /// arbitrarily long, past any drain budget, right up to the point the
+    /// orchestrator's SIGKILL severs everything mid-flight anyway.
+    ///
+    /// TODO(A-merge): `ProcessPool::drain`/`wait_drained` don't yet
+    /// distinguish "finish the in-hand message" from "drain the whole
+    /// buffer" — `pool.rs`'s `spawn_drain_task` loop keeps dequeuing and
+    /// mediating every buffered task in a group until the buffer is empty,
+    /// regardless of `running` (see that fn's own doc comment: "a drain
+    /// task already mid-loop for an ordered group keeps dequeuing until its
+    /// queue is empty"). `pool.rs` is off-limits to this lane (owned by the
+    /// pool/breaker lane, RB). What's needed there: a shutdown signal the
+    /// drain-task loop checks *after* finishing its current task — on
+    /// shutdown, break out and let the existing `PanicGuard` drain path
+    /// (which already drains+drops the remaining queued tasks, and relies
+    /// on `QueueMessageCallback::drop`'s fallback NACK to release them) run,
+    /// instead of dequeuing another task. Until that primitive exists, the
+    /// call below is the best available approximation: it stops *new*
+    /// submissions (`pool.drain()`) and bounds total shutdown latency to the
+    /// drain budget, but a deep buffer against a slow target is still
+    /// actively processed (not released) for the whole of that budget, and
+    /// on timeout the still-running tasks are orphaned (detached, not
+    /// cancelled) rather than having their buffers released — see the
+    /// `still_busy_pools` warning below.
     pub async fn shutdown(&self) {
         info!("QueueManager shutting down...");
         self.running.store(false, Ordering::SeqCst);
@@ -2472,6 +2695,7 @@ mod callback_drop_tests {
             message_group_id: None,
             high_priority: false,
             dispatch_mode: fc_common::DispatchMode::Immediate,
+            dispatch_mode_specified: true,
         };
         let in_flight = InFlightMessage::new(
             &msg,
@@ -2613,6 +2837,159 @@ mod callback_drop_tests {
         assert!(
             !pool_b.circuit_breaker_registry().allow_request(endpoint),
             "pool B must observe the breaker opened by pool A's failures"
+        );
+    }
+}
+
+/// R-13/R-16: `FC_ROUTER_STRICT_ROUTING` gate — `malformed_routing_reason`
+/// and the private grouping helpers it depends on
+/// (`group_by_pool`/`group_by_message_group`) are unit-tested directly here
+/// since they're not `pub`.
+#[cfg(test)]
+mod routing_gate_tests {
+    use super::*;
+    use fc_common::{DispatchMode, MediationType, Message, QueuedMessage};
+
+    fn msg(
+        id: &str,
+        pool_code: &str,
+        mode: DispatchMode,
+        mode_specified: bool,
+        group: Option<&str>,
+    ) -> Message {
+        Message {
+            id: id.to_string(),
+            pool_code: pool_code.to_string(),
+            auth_token: None,
+            signing_secret: None,
+            mediation_type: MediationType::HTTP,
+            mediation_target: "http://localhost/x".to_string(),
+            message_group_id: group.map(|s| s.to_string()),
+            high_priority: false,
+            dispatch_mode: mode,
+            dispatch_mode_specified: mode_specified,
+        }
+    }
+
+    fn queued(
+        id: &str,
+        pool_code: &str,
+        mode: DispatchMode,
+        mode_specified: bool,
+        group: Option<&str>,
+    ) -> QueuedMessage {
+        QueuedMessage {
+            message: msg(id, pool_code, mode, mode_specified, group),
+            receipt_handle: format!("rh-{id}"),
+            broker_message_id: Some(format!("bh-{id}")),
+            queue_identifier: "q".to_string(),
+        }
+    }
+
+    #[test]
+    fn malformed_reason_flags_empty_pool_code() {
+        let m = msg("1", "", DispatchMode::Immediate, true, None);
+        assert_eq!(malformed_routing_reason(&m), Some("empty pool_code"));
+    }
+
+    #[test]
+    fn malformed_reason_flags_unspecified_dispatch_mode() {
+        let m = msg("1", "POOL", DispatchMode::NextOnError, false, None);
+        assert_eq!(malformed_routing_reason(&m), Some("empty dispatch_mode"));
+    }
+
+    #[test]
+    fn malformed_reason_flags_ordered_mode_with_no_group() {
+        let m = msg("1", "POOL", DispatchMode::NextOnError, true, None);
+        assert_eq!(
+            malformed_routing_reason(&m),
+            Some("ordered dispatch_mode with no message_group_id")
+        );
+        let m2 = msg("1", "POOL", DispatchMode::BlockOnError, true, Some(""));
+        assert_eq!(
+            malformed_routing_reason(&m2),
+            Some("ordered dispatch_mode with no message_group_id")
+        );
+    }
+
+    #[test]
+    fn malformed_reason_none_for_well_formed_messages() {
+        assert_eq!(
+            malformed_routing_reason(&msg("1", "POOL", DispatchMode::Immediate, true, None)),
+            None
+        );
+        assert_eq!(
+            malformed_routing_reason(&msg(
+                "1",
+                "POOL",
+                DispatchMode::NextOnError,
+                true,
+                Some("grp")
+            )),
+            None
+        );
+        // pool_code empty check runs first, but a fully well-formed ordered
+        // message must not trip on the group check either.
+        assert_eq!(
+            malformed_routing_reason(&msg(
+                "1",
+                "POOL",
+                DispatchMode::BlockOnError,
+                true,
+                Some("grp")
+            )),
+            None
+        );
+    }
+
+    /// R-13: two messages with no real ordered group (IMMEDIATE, or ordered
+    /// with no group id) in the same batch must never land in the same
+    /// NACK-cascade bucket — the deleted shared `"__DEFAULT__"` group
+    /// anti-pattern would have merged them.
+    #[test]
+    fn group_by_message_group_never_shares_a_bucket_for_groupless_messages() {
+        let manager = QueueManager::new(HttpMediatorConfig::dev());
+        let a = queued("a", "POOL", DispatchMode::Immediate, true, None);
+        let b = queued("b", "POOL", DispatchMode::NextOnError, true, None);
+        let c = queued("c", "POOL", DispatchMode::BlockOnError, true, Some(""));
+
+        let grouped = manager.group_by_message_group(vec![a, b, c]);
+        assert_eq!(
+            grouped.len(),
+            3,
+            "each groupless message must get its own bucket, not share one"
+        );
+    }
+
+    /// A real ordered group (dispatch mode requires ordering + non-empty
+    /// group id) is unaffected: messages sharing a real group id still land
+    /// in the same bucket, preserving legitimate FIFO NACK-cascade behaviour.
+    #[test]
+    fn group_by_message_group_keeps_real_ordered_groups_together() {
+        let manager = QueueManager::new(HttpMediatorConfig::dev());
+        let a = queued("a", "POOL", DispatchMode::NextOnError, true, Some("g1"));
+        let b = queued("b", "POOL", DispatchMode::NextOnError, true, Some("g1"));
+
+        let grouped = manager.group_by_message_group(vec![a, b]);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped.get("g1").map(|v| v.len()), Some(2));
+    }
+
+    /// R-13: an empty pool_code must warn exactly like an unknown one — it
+    /// used to fall silently to DEFAULT-POOL with no warning at all.
+    #[test]
+    fn group_by_pool_warns_identically_for_empty_and_unknown_pool_code() {
+        let manager = QueueManager::new(HttpMediatorConfig::dev());
+        let empty = queued("a", "", DispatchMode::Immediate, true, None);
+        let unknown = queued("b", "NOPE", DispatchMode::Immediate, true, None);
+
+        let by_pool = manager.group_by_pool(vec![empty, unknown]);
+        assert_eq!(by_pool.len(), 1, "both fall back to the same default pool");
+        assert_eq!(by_pool.values().next().unwrap().len(), 2);
+        assert_eq!(
+            manager.warning_service().warning_count(),
+            2,
+            "both the empty and the unknown pool_code should have warned identically"
         );
     }
 }

@@ -133,6 +133,7 @@ fn create_message_with_group(id: &str, pool_code: &str, group_id: Option<&str>) 
         message_group_id: group_id.map(|s| s.to_string()),
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 

@@ -100,6 +100,15 @@ async fn main() -> Result<()> {
             .build(),
     );
 
+    // 4b. R-13/R-16: FC_ROUTER_STRICT_ROUTING (default false). Operational
+    // decision, not a code change — flip on once every producer is
+    // confirmed to send poolCode/dispatchMode/messageGroupId on every
+    // message.
+    let strict_routing = std::env::var("FC_ROUTER_STRICT_ROUTING")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    queue_manager.set_strict_routing(strict_routing);
+
     // 5. Initialize Standby Processor (Active/Passive HA)
     let standby_config = load_standby_config();
     let standby = if standby_config.enabled {

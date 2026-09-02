@@ -160,6 +160,7 @@ fn base_message(target: &str) -> Message {
         message_group_id: None,
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 

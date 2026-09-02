@@ -140,6 +140,7 @@ fn create_test_message(id: &str, group_id: Option<&str>) -> Message {
         message_group_id: group_id.map(|s| s.to_string()),
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 

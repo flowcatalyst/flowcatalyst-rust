@@ -26,6 +26,7 @@ fn create_test_message(target: &str) -> Message {
         message_group_id: None,
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 
@@ -40,6 +41,7 @@ fn create_test_message_with_auth(target: &str, token: &str) -> Message {
         message_group_id: None,
         high_priority: false,
         dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 
