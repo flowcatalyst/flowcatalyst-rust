@@ -44,7 +44,9 @@ pub use config_sync::{
     spawn_config_sync_task, ConfigSyncConfig, ConfigSyncError, ConfigSyncResult, ConfigSyncService,
 };
 pub use error::RouterError;
-pub use group_flush::{GroupFlushRegistry, GroupFlushStats, DEFAULT_FLUSH_TTL, MAX_FLUSH_TTL};
+pub use group_flush::{
+    GroupFlushRegistry, GroupFlushStats, GroupSuppression, DEFAULT_FLUSH_TTL, MAX_FLUSH_TTL,
+};
 pub use health::{HealthService, HealthServiceConfig};
 pub use http_pool::{HostConnectionPool, HostKey, HostKeyError, HostPoolRegistry, HostPoolSizing};
 pub use lifecycle::{LifecycleConfig, LifecycleManager};
@@ -59,8 +61,8 @@ pub use notification::{
 #[cfg(feature = "email")]
 pub use notification::{EmailConfig, EmailNotificationService};
 pub use pool::{
-    disposition_of, BrokerAction, Disposition, DispositionMetric, GroupEffect, PoolConfigUpdate,
-    ProcessPool,
+    disposition_of, BrokerAction, Disposition, DispositionMetric, GroupEffect, GroupInfo,
+    MediatingEntry, PoolConfigUpdate, ProcessPool,
 };
 pub use queue_health_monitor::{spawn_queue_health_monitor, QueueHealthConfig, QueueHealthMonitor};
 pub use standby::{

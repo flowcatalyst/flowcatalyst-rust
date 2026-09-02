@@ -943,3 +943,118 @@ async fn release_remainder_stops_new_admission() {
         "submit after release_remainder must nack promptly, same as after drain()"
     );
 }
+
+/// `mediating_snapshot` reflects a message while it is actually inside a
+/// worker (the operator "Mediating" dashboard view — ledger: operator-
+/// surface parity work). A slow mediator keeps the delivery in flight long
+/// enough to observe the snapshot mid-call, then the entry must disappear
+/// once the delivery finishes (never reaped, but not left behind either).
+#[tokio::test]
+async fn mediating_snapshot_reflects_in_flight_delivery_then_clears() {
+    let config = PoolConfig {
+        code: "MEDIATING-POOL".to_string(),
+        concurrency: 5,
+        rate_limit_per_minute: None,
+    };
+    let mediator = Arc::new(MockMediator::with_delay(200));
+    let pool = Arc::new(ProcessPool::new(config, mediator.clone()));
+    pool.start().await;
+
+    assert!(
+        pool.mediating_snapshot().is_empty(),
+        "nothing mediating before any submit"
+    );
+
+    let (batch_msg, rx) = create_batch_message("mediating-msg-1", Some("group-mediating"));
+    pool.submit(batch_msg).await.unwrap();
+
+    // Give the worker time to acquire its permit and start mediating, but
+    // well inside the mock's 200ms delay.
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let snap = pool.mediating_snapshot();
+    assert_eq!(snap.len(), 1, "the in-flight delivery must be visible");
+    let entry = &snap[0];
+    assert_eq!(entry.message_id, "mediating-msg-1");
+    assert_eq!(entry.pool_code, "MEDIATING-POOL");
+    assert_eq!(entry.group, "group-mediating");
+    assert_eq!(entry.queue, "test-queue");
+    assert_eq!(entry.target, "http://localhost:8080/test");
+    assert_eq!(
+        entry.attempts, 0,
+        "this port has no in-pipeline retry counter — always 0, see MediatingEntry::attempts's doc"
+    );
+    assert!(entry.mediated_at.elapsed() < Duration::from_millis(200));
+
+    let result = tokio::time::timeout(Duration::from_secs(2), rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result, AckNack::Ack));
+
+    assert!(
+        pool.mediating_snapshot().is_empty(),
+        "the entry must clear once the delivery finishes"
+    );
+}
+
+/// `group_snapshot` reflects a gated ordered group: with concurrency
+/// pinned to 1, a slow first message keeps the drainer busy while a second
+/// message of the same group sits buffered — exactly the operator
+/// "blocked groups" view's `buffered`/`working` pair.
+#[tokio::test]
+async fn group_snapshot_reflects_a_gated_ordered_group() {
+    let config = PoolConfig {
+        code: "BLOCKED-GROUPS-POOL".to_string(),
+        concurrency: 1,
+        rate_limit_per_minute: None,
+    };
+    let mediator = Arc::new(MockMediator::with_delay(200));
+    let pool = Arc::new(ProcessPool::new(config, mediator.clone()));
+    pool.start().await;
+
+    assert!(
+        pool.group_snapshot().is_empty(),
+        "no groups before any submit"
+    );
+
+    let (batch_msg_1, rx1) = create_batch_message("blocked-msg-1", Some("group-blocked"));
+    let (batch_msg_2, rx2) = create_batch_message("blocked-msg-2", Some("group-blocked"));
+    pool.submit(batch_msg_1).await.unwrap();
+    pool.submit(batch_msg_2).await.unwrap();
+
+    // The drainer has picked up msg-1 (mediating, 200ms delay) and msg-2 is
+    // still buffered behind it — the group is "gated".
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let snap = pool.group_snapshot();
+    assert_eq!(snap.len(), 1, "exactly one live group");
+    let row = &snap[0];
+    assert_eq!(row.group, "group-blocked");
+    assert_eq!(row.pool_code, "BLOCKED-GROUPS-POOL");
+    assert_eq!(
+        row.buffered, 1,
+        "msg-2 is buffered behind msg-1, which the drainer already popped"
+    );
+    assert!(row.working, "a drainer owns this group right now");
+    assert!(
+        row.parked_at.is_none(),
+        "working=true means never parked (or not since it started)"
+    );
+    assert!(!row.suppressed);
+
+    for rx in [rx1, rx2] {
+        let result = tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(result, AckNack::Ack));
+    }
+
+    // Give the drainer's final idle-exit tick a moment, then the fully
+    // drained group must be gone (drainGroup's empty-buffer exit removes
+    // it from group_handlers entirely — see GroupInfo's own doc comment).
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        pool.group_snapshot().is_empty(),
+        "a fully-drained group must not show up in the snapshot"
+    );
+}

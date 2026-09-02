@@ -43,8 +43,17 @@ use crate::Result;
 /// the same instance every call. This replaces the old `MediatorSource` enum
 /// with the boxed-factory idiom already used for the per-host client builder
 /// in `http_pool.rs`.
-type MediatorFactory =
-    Arc<dyn Fn(&Arc<WarningService>) -> Arc<dyn Mediator + 'static> + Send + Sync>;
+///
+/// Also receives the manager's shared `CircuitBreakerRegistry` (ledger:
+/// breaker admission/recording is centralised inside the mediator now, not
+/// at the pool call site — see `mediator.rs`'s `Mediator::mediate` impl),
+/// so the production factory can wire it into every pool's fresh
+/// `HttpMediator` via `with_circuit_breakers`.
+type MediatorFactory = Arc<
+    dyn Fn(&Arc<WarningService>, &Arc<CircuitBreakerRegistry>) -> Arc<dyn Mediator + 'static>
+        + Send
+        + Sync,
+>;
 
 /// `(queue_id, consumer)` pair — used by `sync_queue_consumers` to shuttle
 /// consumers created/removed outside the `consumers` map's lock.
@@ -576,20 +585,31 @@ impl QueueManager {
     /// Start building a manager that creates a **fresh** `HttpMediator` per
     /// pool (production path). Prefer this builder over `new` + `set_*`.
     pub fn builder(mediator_config: HttpMediatorConfig) -> QueueManagerBuilder {
-        let factory: MediatorFactory = Arc::new(move |ws: &Arc<WarningService>| {
-            Arc::new(
-                HttpMediator::with_config(mediator_config.clone()).with_warning_service(ws.clone()),
-            ) as Arc<dyn Mediator + 'static>
-        });
+        let factory: MediatorFactory =
+            Arc::new(move |ws: &Arc<WarningService>, breakers: &Arc<CircuitBreakerRegistry>| {
+                Arc::new(
+                    HttpMediator::with_config(mediator_config.clone())
+                        .with_warning_service(ws.clone())
+                        .with_circuit_breakers(breakers.clone()),
+                ) as Arc<dyn Mediator + 'static>
+            });
         QueueManagerBuilder::from_factory(factory)
     }
 
     /// Start building a manager where every pool shares one mediator instance
-    /// (test seam for injecting mocks / instrumenting mediator calls).
+    /// (test seam for injecting mocks / instrumenting mediator calls). The
+    /// mock is handed neither the warning service nor the breaker registry —
+    /// same as before breaker centralisation — since a shared-mediator test
+    /// mock models its own delivery outcomes directly and doesn't consult
+    /// either collaborator.
     pub fn builder_with_shared_mediator(
         mediator: Arc<dyn Mediator + 'static>,
     ) -> QueueManagerBuilder {
-        let factory: MediatorFactory = Arc::new(move |_ws: &Arc<WarningService>| mediator.clone());
+        let factory: MediatorFactory = Arc::new(
+            move |_ws: &Arc<WarningService>, _breakers: &Arc<CircuitBreakerRegistry>| {
+                mediator.clone()
+            },
+        );
         QueueManagerBuilder::from_factory(factory)
     }
 
@@ -680,7 +700,7 @@ impl QueueManager {
     /// passing the manager's current warning service so per-pool mediators
     /// emit through the real sink (see [`MediatorFactory`]).
     fn build_mediator(&self) -> Arc<dyn Mediator + 'static> {
-        (self.mediator_factory)(&self.warning_service)
+        (self.mediator_factory)(&self.warning_service, &self.circuit_breaker_registry)
     }
 
     /// Test-only constructor: every pool shares the supplied mediator. Use
@@ -1118,15 +1138,11 @@ impl QueueManager {
             rate_limit_per_minute: None,
         });
 
-        // Share the manager's single registry so breaker state is shared
-        // across pools and surfaced to monitoring (not a fresh private default).
-        // The per-pool mediator already carries the real warning service via
-        // `build_mediator`.
-        let pool = ProcessPool::with_dependencies(
-            pool_config.clone(),
-            self.build_mediator(),
-            self.circuit_breaker_registry.clone(),
-        );
+        // `build_mediator` already wires in the manager's single breaker
+        // registry (and the real warning service) — see `MediatorFactory`'s
+        // doc — so breaker state is shared across pools and surfaced to
+        // monitoring without the pool itself touching a registry at all.
+        let pool = ProcessPool::with_dependencies(pool_config.clone(), self.build_mediator());
 
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;
@@ -1225,11 +1241,7 @@ impl QueueManager {
             concurrency: 20, // Go: defaultPoolConcurrency; Java: DEFAULT_POOL_CONCURRENCY
             rate_limit_per_minute: None,
         };
-        let pool = ProcessPool::with_dependencies(
-            pool_config.clone(),
-            self.build_mediator(),
-            self.circuit_breaker_registry.clone(),
-        );
+        let pool = ProcessPool::with_dependencies(pool_config.clone(), self.build_mediator());
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;
 
@@ -2310,6 +2322,135 @@ impl QueueManager {
             .collect()
     }
 
+    /// Every pool this manager is tracking — active AND still draining
+    /// after removal. Mirrors Go's `Manager.AllPools`: a pool still
+    /// finishing an asynchronous removal-drain (X-11) can still be holding
+    /// buffered groups, live group-flush suppressions, or in-worker
+    /// deliveries worth showing on the operator dashboard, so the
+    /// "Mediating"/"blocked groups"/"group flushes" views traverse this
+    /// instead of the routing-only `self.pools`. Same collect-before-await
+    /// discipline as `shutdown`'s local `pools` — a `DashMap::Ref` must
+    /// never be held across an `.await`, though nothing here awaits today.
+    fn all_pools(&self) -> Vec<Arc<ProcessPool>> {
+        self.pools
+            .iter()
+            .map(|e| e.value().clone())
+            .chain(self.draining_pools.iter().map(|e| e.value().clone()))
+            .collect()
+    }
+
+    /// Every message currently inside a worker, across every pool this
+    /// manager is tracking — the operator "Mediating" dashboard view.
+    pub fn mediating_snapshot(&self) -> Vec<crate::pool::MediatingEntry> {
+        self.all_pools()
+            .iter()
+            .flat_map(|p| p.mediating_snapshot())
+            .collect()
+    }
+
+    /// Every live message group across every pool this manager is
+    /// tracking — the operator "blocked groups" view (ledger R-04).
+    pub fn blocked_groups(&self) -> Vec<crate::pool::GroupInfo> {
+        self.all_pools()
+            .iter()
+            .flat_map(|p| p.group_snapshot())
+            .collect()
+    }
+
+    /// One pool's group-flush suppression snapshot for
+    /// [`QueueManager::group_flush_snapshots`]: every group currently
+    /// suppressed on it, plus its lifetime flush/suppressed counters.
+    /// Reshaped into the wire DTO by the API layer.
+    pub fn group_flush_snapshots(&self) -> Vec<GroupFlushSnapshot> {
+        self.all_pools()
+            .iter()
+            .map(|p| {
+                let stats = p.group_flush_registry().stats();
+                GroupFlushSnapshot {
+                    pool_code: p.code().to_string(),
+                    active_count: stats.active,
+                    total_flushes: stats.flushes,
+                    total_suppressed: stats.suppressed,
+                    groups: p.group_flush_registry().active_suppressions(),
+                }
+            })
+            .collect()
+    }
+
+    /// Lift an active group-flush suppression early (operator override,
+    /// ledger R-52/R-53). Reports whether a currently-active suppression
+    /// existed to lift on the named pool — `false` for an unknown pool
+    /// code too, so the API layer can 404 either way.
+    pub fn clear_group_flush(&self, pool_code: &str, group: &str) -> bool {
+        self.all_pools()
+            .iter()
+            .find(|p| p.code() == pool_code)
+            .is_some_and(|p| p.group_flush_registry().clear(group))
+    }
+
+    /// The operator force-ACK override behind the dashboard's in-flight
+    /// detail view: deletes the broker copy of a tracked message (using
+    /// the freshest receipt handle in `in_pipeline`, which may have been
+    /// swapped by a redelivery since the entry was first tracked) and
+    /// releases the tracker entry so future redeliveries/external
+    /// requeues re-enter the pipeline fresh instead of being ACK-dropped
+    /// as duplicates of a stuck/phantom owner.
+    ///
+    /// The broker ack is best-effort — an expired receipt handle or a
+    /// deregistered queue still clears the tracker entry, which is the
+    /// part that actually unblocks a phantom (mirrors Go's
+    /// `Manager.ForceAckInFlight`). Does NOT abort a worker that is
+    /// currently mediating the message — that delivery runs to its own
+    /// terminal state; its eventual ack/nack against the now-stale
+    /// receipt handle is logged as a warning by the normal callback path,
+    /// same as Go's doc says. Returns `None` if the message isn't
+    /// currently tracked.
+    pub async fn force_ack_in_flight(&self, message_id: &str) -> Option<ForceAckResult> {
+        let pipeline_key = self
+            .app_message_to_pipeline_key
+            .get(message_id)
+            .map(|e| e.value().clone())?;
+        let entry = self.in_pipeline.get(&pipeline_key).map(|e| e.value().clone())?;
+
+        let consumer = self
+            .consumers
+            .read()
+            .await
+            .get(&entry.queue_identifier)
+            .cloned();
+        let (broker_acked, broker_ack_error) = match consumer {
+            Some(c) => match c.ack(&entry.receipt_handle).await {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e.to_string())),
+            },
+            None => (
+                false,
+                Some(format!("no consumer for queue {:?}", entry.queue_identifier)),
+            ),
+        };
+
+        self.in_pipeline.remove(&pipeline_key);
+        self.app_message_to_pipeline_key.remove(message_id);
+
+        warn!(
+            message_id = %entry.message_id,
+            queue = %entry.queue_identifier,
+            elapsed_s = entry.elapsed_seconds(),
+            broker_acked,
+            broker_ack_error = ?broker_ack_error,
+            "force-acked in-flight message (operator request)"
+        );
+
+        Some(ForceAckResult {
+            message_id: entry.message_id.clone(),
+            queue_id: entry.queue_identifier.clone(),
+            pool_code: entry.pool_code.clone(),
+            elapsed_ms: entry.started_at.elapsed().as_millis() as u64,
+            broker_acked,
+            broker_ack_error,
+        })
+    }
+
     /// Check for potential memory leaks (large in-pipeline maps)
     pub fn check_memory_health(&self) -> bool {
         let in_pipeline_size = self.in_pipeline.len();
@@ -2639,14 +2780,10 @@ impl QueueManager {
         if pool_exists {
             // For now, we recreate the pool with new config
             // In production, you might want to drain first
-            // Share the manager's single registry (see get_or_create_pool) — a
-            // reconfigured pool must keep recording into the shared breaker, not
-            // a fresh private default.
-            let new_pool = ProcessPool::with_dependencies(
-                config.clone(),
-                self.build_mediator(),
-                self.circuit_breaker_registry.clone(),
-            );
+            // `build_mediator` shares the manager's single registry (see
+            // `get_or_create_pool`) — a reconfigured pool's fresh mediator
+            // keeps recording into it, not a private default.
+            let new_pool = ProcessPool::with_dependencies(config.clone(), self.build_mediator());
             let pool_arc = Arc::new(new_pool);
             pool_arc.start().await;
 
@@ -2946,6 +3083,8 @@ impl QueueManager {
                 elapsed_time_ms: elapsed.as_millis() as u64,
                 added_to_in_pipeline_at: chrono::Utc::now()
                     - chrono::Duration::milliseconds(elapsed.as_millis() as i64),
+                message_group: msg.message_group_id.clone().unwrap_or_default(),
+                attempts: 0,
             }
         })
     }
@@ -2991,6 +3130,8 @@ impl QueueManager {
                         - chrono::Duration::milliseconds(
                             msg.started_at.elapsed().as_millis() as i64
                         ),
+                    message_group: msg.message_group_id.clone().unwrap_or_default(),
+                    attempts: 0,
                 }
             })
             .collect();
@@ -3041,6 +3182,43 @@ pub struct InFlightMessageInfo {
     pub elapsed_time_ms: u64,
     #[serde(rename = "addedToInPipelineAt")]
     pub added_to_in_pipeline_at: chrono::DateTime<chrono::Utc>,
+    /// FIFO message-group id, empty string for ungrouped. Additive field,
+    /// matches Go's `InFlightMessageInfo.MessageGroup`.
+    #[serde(rename = "messageGroup")]
+    pub message_group: String,
+    /// In-pipeline retry count. **Always 0 in this port** — see
+    /// `MediatingEntry::attempts`'s doc for why: this Rust port's pool has
+    /// no in-pipeline retry-with-front-reinsertion concept at all, unlike
+    /// Go's `InFlightTracker.MarkRetrying`. Additive field, matches Go's
+    /// `InFlightMessageInfo.Attempts`.
+    pub attempts: u32,
+}
+
+/// Reports what [`QueueManager::force_ack_in_flight`] did: the entry as it
+/// stood when acked, and the outcome of the best-effort broker delete.
+/// Mirrors Go's `ForceAckResult` — reshaped into the wire `ForceAckResponse`
+/// DTO by the API layer, same as Go's `handlers_mutations.go` does.
+#[derive(Debug, Clone)]
+pub struct ForceAckResult {
+    pub message_id: String,
+    pub queue_id: String,
+    pub pool_code: String,
+    pub elapsed_ms: u64,
+    pub broker_acked: bool,
+    pub broker_ack_error: Option<String>,
+}
+
+/// One pool's group-flush suppression snapshot, as
+/// [`QueueManager::group_flush_snapshots`] reports it — reshaped into the
+/// wire `GroupFlushPoolInfo` DTO by the API layer. Mirrors Go's
+/// (unexported) `GroupFlushSnapshot`.
+#[derive(Debug, Clone)]
+pub struct GroupFlushSnapshot {
+    pub pool_code: String,
+    pub active_count: usize,
+    pub total_flushes: u64,
+    pub total_suppressed: u64,
+    pub groups: Vec<crate::group_flush::GroupSuppression>,
 }
 
 #[cfg(test)]
@@ -3200,59 +3378,66 @@ mod callback_drop_tests {
         );
     }
 
-    /// Regression: every pool the manager creates must record into the
-    /// manager's single shared circuit breaker registry — not a private
-    /// `CircuitBreakerRegistry::default()` per pool. Otherwise a breaker
-    /// tripping for an endpoint in one pool wouldn't protect other pools
-    /// targeting the same endpoint, and the monitoring API (which reads the
-    /// manager's registry) would show empty stats. Mirrors Java's single
-    /// `circuitBreakers` shared by every `ProcessPool`.
+    /// Regression: every pool's mediator the manager builds must record
+    /// into the manager's single shared circuit breaker registry — not a
+    /// private `CircuitBreakerRegistry::default()` per mediator. Otherwise
+    /// a breaker tripping for an endpoint reached via one pool wouldn't
+    /// protect other pools targeting the same endpoint, and the monitoring
+    /// API (which reads the manager's registry) would show empty stats.
+    /// Mirrors Java's single `circuitBreakers` shared by every
+    /// `ProcessPool`.
+    ///
+    /// A `ProcessPool` itself no longer holds a circuit breaker registry at
+    /// all (breaker admission/recording moved entirely into the mediator —
+    /// see `mediator.rs`'s `Mediator::mediate` impl), so this test checks
+    /// sharing at the mediator level: every mediator `build_mediator`
+    /// produces (one per pool, on the production `PerPool` factory path)
+    /// must expose the SAME registry Arc as `manager.circuit_breaker_registry()`.
     #[tokio::test]
     async fn pools_share_managers_circuit_breaker_registry() {
         // PerPool mediator path; no network occurs (we only record breaker
         // failures directly and never mediate a message).
         let manager = QueueManager::new(HttpMediatorConfig::production());
 
-        let pool_a = manager
-            .get_or_create_pool("POOL-A", None)
-            .await
-            .expect("create pool A");
-        let pool_b = manager
-            .get_or_create_pool("POOL-B", None)
-            .await
-            .expect("create pool B");
+        // One `build_mediator()` call per pool the manager would create —
+        // `get_or_create_pool` calls this internally for each new pool, so
+        // calling it directly here pins the same wiring without needing a
+        // live pool.
+        let mediator_a = manager.build_mediator();
+        let mediator_b = manager.build_mediator();
 
-        // Pointer identity: both pools and the manager hold the same Arc.
+        let breakers_a = mediator_a
+            .circuit_breaker_registry()
+            .expect("HttpMediator must expose its circuit breaker registry");
+        let breakers_b = mediator_b
+            .circuit_breaker_registry()
+            .expect("HttpMediator must expose its circuit breaker registry");
+
+        // Pointer identity: both mediators and the manager hold the same Arc.
         assert!(
-            Arc::ptr_eq(
-                pool_a.circuit_breaker_registry(),
-                manager.circuit_breaker_registry()
-            ),
-            "pool A must share the manager's circuit breaker registry"
+            Arc::ptr_eq(breakers_a, manager.circuit_breaker_registry()),
+            "pool A's mediator must share the manager's circuit breaker registry"
         );
         assert!(
-            Arc::ptr_eq(
-                pool_b.circuit_breaker_registry(),
-                manager.circuit_breaker_registry()
-            ),
-            "pool B must share the manager's circuit breaker registry"
+            Arc::ptr_eq(breakers_b, manager.circuit_breaker_registry()),
+            "pool B's mediator must share the manager's circuit breaker registry"
         );
 
-        // Behavioural cross-pool protection: failures recorded while pool A
-        // mediates an endpoint trip the breaker, and pool B targeting the same
-        // endpoint immediately sees it open.
+        // Behavioural cross-pool protection: failures recorded while pool A's
+        // mediator mediates an endpoint trip the breaker, and pool B's
+        // mediator targeting the same endpoint immediately sees it open.
         let endpoint = "http://shared.example/api";
         for _ in 0..20 {
-            pool_a.circuit_breaker_registry().record_failure(endpoint);
+            breakers_a.record_failure(endpoint);
         }
         assert_eq!(
             manager.circuit_breaker_registry().get_state(endpoint),
             Some(crate::CircuitBreakerState::Open),
-            "failures recorded via a pool must be visible through the manager's registry"
+            "failures recorded via one mediator must be visible through the manager's registry"
         );
         assert!(
-            !pool_b.circuit_breaker_registry().allow_request(endpoint),
-            "pool B must observe the breaker opened by pool A's failures"
+            !breakers_b.allow_request(endpoint),
+            "pool B's mediator must observe the breaker opened by pool A's failures"
         );
     }
 }

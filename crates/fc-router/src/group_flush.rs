@@ -144,9 +144,17 @@ impl GroupFlushRegistry {
     }
 
     /// Lift suppression for `group` immediately (operator override, ledger
-    /// R-52). A no-op if the group wasn't suppressed.
-    pub fn clear(&self, group: &str) {
-        self.until.lock().remove(group);
+    /// R-52). Returns whether a currently-active suppression existed to
+    /// lift — an already-expired or unknown group returns `false`, so the
+    /// operator endpoint can 404 rather than claim success for nothing
+    /// (mirrors Go's `GroupFlushRegistry.Clear`).
+    pub fn clear(&self, group: &str) -> bool {
+        let mut until = self.until.lock();
+        let active = until
+            .get(group)
+            .is_some_and(|&expiry| Instant::now() < expiry);
+        until.remove(group);
+        active
     }
 
     /// The live suppression set plus lifetime counters.
@@ -160,6 +168,37 @@ impl GroupFlushRegistry {
             suppressed: self.suppressed.load(Ordering::Relaxed),
         }
     }
+
+    /// Every group currently suppressed (`until` still in the future) —
+    /// the operator listing for GET `/monitoring/group-flushes` (ledger
+    /// R-52). Like [`Self::suppressed_until`], this is a read-only
+    /// operator view: it counts nothing and evicts nothing, unlike
+    /// [`Self::suppressed`].
+    pub fn active_suppressions(&self) -> Vec<GroupSuppression> {
+        let now = Instant::now();
+        let until = self.until.lock();
+        until
+            .iter()
+            .filter(|&(_, &expiry)| now < expiry)
+            .map(|(group, &expiry)| GroupSuppression {
+                group: group.clone(),
+                until: expiry,
+            })
+            .collect()
+    }
+}
+
+/// One active suppression entry — an operator-facing snapshot row for GET
+/// `/monitoring/group-flushes` (ledger R-52). Mirrors Go's
+/// `GroupSuppression`.
+#[derive(Debug, Clone)]
+pub struct GroupSuppression {
+    pub group: String,
+    /// When this suppression lapses on its own. Monotonic (`Instant`,
+    /// consistent with the registry's internal clock); the API layer
+    /// converts this to a wall-clock timestamp for the wire, same
+    /// technique as `ProcessPool::group_snapshot`'s `parked_at`.
+    pub until: Instant,
 }
 
 impl Default for GroupFlushRegistry {
@@ -207,8 +246,50 @@ mod tests {
         let r = GroupFlushRegistry::new();
         assert!(r.flush("g1", Some(3600)));
         assert!(r.suppressed("g1"));
-        r.clear("g1");
+        assert!(
+            r.clear("g1"),
+            "an active suppression existed to lift, so clear must report true"
+        );
         assert!(!r.suppressed("g1"), "clear must lift suppression immediately");
+    }
+
+    #[test]
+    fn clear_reports_false_for_no_active_suppression() {
+        let r = GroupFlushRegistry::new();
+        assert!(
+            !r.clear("never-flushed"),
+            "an unknown group has nothing to lift"
+        );
+
+        assert!(r.flush("g1", Some(1)));
+        std::thread::sleep(Duration::from_millis(1100));
+        assert!(
+            !r.clear("g1"),
+            "an already-expired suppression has nothing active to lift"
+        );
+    }
+
+    #[test]
+    fn active_suppressions_lists_only_live_groups() {
+        let r = GroupFlushRegistry::new();
+        assert!(r.flush("g1", Some(1)));
+        assert!(r.flush("g2", Some(3600)));
+
+        let active = r.active_suppressions();
+        assert_eq!(active.len(), 2);
+        assert!(active.iter().any(|s| s.group == "g1"));
+        assert!(active.iter().any(|s| s.group == "g2"));
+
+        std::thread::sleep(Duration::from_millis(1100));
+        // Unlike `suppressed`, this must not evict — g1 is expired but the
+        // eviction only happens on the next `suppressed` probe.
+        let active = r.active_suppressions();
+        assert_eq!(
+            active.len(),
+            1,
+            "expired g1 must be excluded without needing eviction first"
+        );
+        assert_eq!(active[0].group, "g2");
     }
 
     #[test]

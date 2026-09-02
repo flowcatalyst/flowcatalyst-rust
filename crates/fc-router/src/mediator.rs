@@ -30,7 +30,9 @@ use async_trait::async_trait;
 use fc_common::{MediationOutcome, MediationType, Message, WarningCategory, WarningSeverity};
 use tracing::{debug, error, info, warn};
 
+use crate::circuit_breaker_registry::{breaker_key, CircuitBreakerRegistry};
 use crate::http_pool::{HostKey, HostPoolSizing};
+use crate::pool::breaker_effect;
 use crate::warning::WarningService;
 
 use inner::{make_client_builder, spawn_sweep_task, MediatorInner};
@@ -44,6 +46,17 @@ use signing::{sign_webhook, MediationPayload};
 #[async_trait]
 pub trait Mediator: Send + Sync {
     async fn mediate(&self, message: &Message) -> MediationOutcome;
+
+    /// The breaker registry this mediator consults/records into, when it
+    /// has one. `None` by default so test mocks (which don't model a
+    /// breaker at all) need no changes; [`HttpMediator`] overrides this to
+    /// expose the real registry — used to pin that every pool's mediator
+    /// really does share the manager's single registry (see
+    /// `manager.rs`'s `pools_share_managers_circuit_breaker_registry`
+    /// test) rather than each getting a private default.
+    fn circuit_breaker_registry(&self) -> Option<&Arc<CircuitBreakerRegistry>> {
+        None
+    }
 }
 
 /// HTTP version to use for mediation requests.
@@ -142,10 +155,18 @@ impl HttpMediator {
     }
 
     pub fn with_config(config: HttpMediatorConfig) -> Self {
-        Self::build(config, Arc::new(WarningService::noop()))
+        Self::build(
+            config,
+            Arc::new(WarningService::noop()),
+            Arc::new(CircuitBreakerRegistry::default()),
+        )
     }
 
-    fn build(config: HttpMediatorConfig, warning_service: Arc<WarningService>) -> Self {
+    fn build(
+        config: HttpMediatorConfig,
+        warning_service: Arc<WarningService>,
+        breakers: Arc<CircuitBreakerRegistry>,
+    ) -> Self {
         let builder = make_client_builder(&config);
         // Warm up the global rustls / native-certs init before any per-host
         // slot is built. The first reqwest::Client::build() in a process
@@ -175,6 +196,7 @@ impl HttpMediator {
             config,
             host_pools,
             warning_service,
+            breakers,
         });
 
         spawn_sweep_task(&inner);
@@ -184,16 +206,43 @@ impl HttpMediator {
 
     /// Attach the warning service. Rebuilds the inner state so the
     /// per-host pools created later report saturation to *this* service
-    /// rather than the noop default.
+    /// rather than the noop default. Preserves whatever circuit breaker
+    /// registry was already wired in (a private default unless
+    /// `with_circuit_breakers` ran first).
     pub fn with_warning_service(self, warning_service: Arc<WarningService>) -> Self {
-        Self::build(self.inner.config.clone(), warning_service)
+        Self::build(
+            self.inner.config.clone(),
+            warning_service,
+            self.inner.breakers.clone(),
+        )
     }
 
     /// Replace the warning service post-construction. Rebuilds the
     /// per-host pool registry; existing slots and their open connections
     /// are dropped, so prefer `with_warning_service` at construction time.
     pub fn set_warning_service(&mut self, warning_service: Arc<WarningService>) {
-        *self = Self::build(self.inner.config.clone(), warning_service);
+        *self = Self::build(
+            self.inner.config.clone(),
+            warning_service,
+            self.inner.breakers.clone(),
+        );
+    }
+
+    /// Attach the shared circuit breaker registry every pool's mediator
+    /// must record into (ledger: breaker admission/recording centralised
+    /// here rather than at the pool call site — see [`Mediator::mediate`]'s
+    /// impl on this type). Rebuilds the inner state the same way
+    /// `with_warning_service` does; preserves whatever warning service was
+    /// already wired in. Production wiring is `QueueManager`'s
+    /// `MediatorFactory`, which calls this with the manager's single
+    /// registry for every pool's mediator so a breaker tripped by one pool
+    /// protects every other pool targeting the same endpoint.
+    pub fn with_circuit_breakers(self, breakers: Arc<CircuitBreakerRegistry>) -> Self {
+        Self::build(
+            self.inner.config.clone(),
+            self.inner.warning_service.clone(),
+            breakers,
+        )
     }
 
     async fn mediate_once(&self, message: &Message) -> MediationOutcome {
@@ -316,7 +365,37 @@ impl HttpMediator {
 
 #[async_trait]
 impl Mediator for HttpMediator {
+    /// Circuit breaker admission and recording live HERE, in one place, so
+    /// nothing that calls a mediator can forget to arm the breaker for a
+    /// new call path (ledger: the Go port's `3c3ec7a` lesson — a
+    /// forgotten-arm bug class killed by having exactly one call site).
+    /// Moved verbatim from `pool.rs`'s two former call sites
+    /// (`spawn_immediate_task` / the group-drain path), which no longer
+    /// touch `CircuitBreakerRegistry` at all:
+    ///
+    /// - Checked BEFORE the retry burst, once per `mediate()` call — not
+    ///   once per internal retry attempt — exactly as the pool checked it
+    ///   once before calling `mediate` at all.
+    /// - Not admitted: no network call is made and `breaker_effect` isn't
+    ///   even consulted — see `MediationOutcome::circuit_open`'s doc for
+    ///   why this returns its own outcome rather than reusing an existing
+    ///   classification, and the known gap it carries forward unchanged.
+    /// - Admitted: recorded via `breaker_effect` on the outcome the retry
+    ///   burst finally settles on — pre-flight rejections record neither,
+    ///   `Success`/`ErrorConfig` record a success, `ErrorProcess`/
+    ///   `ErrorConnection` record a failure, `RateLimited`/`Deferred`
+    ///   record neither. Exactly `pool.rs`'s old rule table, unchanged.
     async fn mediate(&self, message: &Message) -> MediationOutcome {
+        let endpoint = breaker_key(&message.mediation_target);
+        if !self.inner.breakers.allow_request(&endpoint) {
+            debug!(
+                message_id = %message.id,
+                endpoint = %endpoint,
+                "Endpoint circuit breaker open"
+            );
+            return MediationOutcome::circuit_open();
+        }
+
         // `HttpMediatorConfig`'s `max_retries` / `retry_delays` fields stay
         // as they were — collapsing them into `RetryPolicy` here (rather
         // than renaming the config fields) keeps every existing config
@@ -327,7 +406,19 @@ impl Mediator for HttpMediator {
             self.inner.config.max_retries,
             self.inner.config.retry_delays.clone(),
         );
-        retry::run(&message.id, &policy, || self.mediate_once(message)).await
+        let outcome = retry::run(&message.id, &policy, || self.mediate_once(message)).await;
+
+        match breaker_effect(&outcome) {
+            Some(true) => self.inner.breakers.record_success(&endpoint),
+            Some(false) => self.inner.breakers.record_failure(&endpoint),
+            None => {}
+        }
+
+        outcome
+    }
+
+    fn circuit_breaker_registry(&self) -> Option<&Arc<CircuitBreakerRegistry>> {
+        Some(&self.inner.breakers)
     }
 }
 

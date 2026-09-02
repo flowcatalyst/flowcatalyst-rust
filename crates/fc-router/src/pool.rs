@@ -24,14 +24,13 @@ use governor::{
 };
 use std::collections::VecDeque;
 use std::num::NonZeroU32;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn};
 
-use crate::circuit_breaker_registry::breaker_key;
 use crate::group_flush::GroupFlushRegistry;
 use crate::mediator::Mediator;
 use crate::metrics::PoolMetricsCollector;
@@ -242,15 +241,61 @@ pub fn disposition_of(
             metric: DispositionMetric::Transient,
             retry_after_secs: outcome.delay_seconds,
         },
+
+        MediationResult::CircuitOpen => Disposition {
+            // The mediator's own breaker was open — no network call was
+            // attempted (`MediationOutcome::circuit_open`). Ported
+            // VERBATIM from the pool's two pre-existing inline
+            // short-circuits (now deleted — see `mediator.rs`'s
+            // `Mediator::mediate` impl for where this check moved to),
+            // which actually differed from each other before this port
+            // unified them behind one pure function:
+            //
+            // - `spawn_immediate_task` (IMMEDIATE mode, no group buffer at
+            //   all): short fixed nack, `Failure` metric. `disposition.group`
+            //   is never consulted on that path, so `Release` here is a
+            //   no-op for it — verbatim.
+            // - the group-drain path (ordered modes): the SAME nack +
+            //   metric, but it ALSO inserted the batch+group key into
+            //   `failed_batch_groups`, cascading a NACK to every message
+            //   still buffered behind it — i.e. exactly `GroupEffect::Release`.
+            //   `Release` here reproduces that cascade verbatim (this is
+            //   also what `docs/router-architecture.md`'s "circuit open ->
+            //   release group" row and the conformance corpus's
+            //   `breaker-open-makes-no-call` case's `RETURN_TO_BROKER`
+            //   expectation call for — so unifying the two prior call sites
+            //   behind this one arm happens to land on the corpus's answer
+            //   for `disposition`, not away from it).
+            //
+            // **Known gap, not fixed here:** the corpus's `metric` for this
+            // case is `"none"` (no call was made, nothing to say about the
+            // target). Both prior call sites recorded `Failure` anyway;
+            // this port preserves that unchanged rather than silently
+            // reclassifying it. `metric` also isn't asserted by the
+            // conformance runner yet (see its own `TODO(A-27)`), so this
+            // gap is currently invisible to it either way.
+            action: BrokerAction::Release,
+            group: GroupEffect::Release,
+            metric: DispositionMetric::None /* R-08 kept-as-Go + corpus: no delivery attempted, no pool metric */,
+            retry_after_secs: Some(5),
+        },
     }
 }
 
 /// Whether a mediation outcome counts toward the circuit breaker, and how.
 /// `None` when the call never happened (pre-flight rejection, ledger
-/// R-06/A-11 — no evidence about the target's health in either direction)
-/// or shouldn't move the breaker either way (RateLimited, Deferred — the
+/// R-06/A-11 — no evidence about the target's health in either direction;
+/// or a `CircuitOpen` rejection — no evidence either, and in any case the
+/// breaker that just rejected the call is not itself re-recorded into) or
+/// shouldn't move the breaker either way (RateLimited, Deferred — the
 /// target is healthy, just throttling/deferring).
-fn breaker_effect(outcome: &MediationOutcome) -> Option<bool> {
+///
+/// Called from exactly one place now: `HttpMediator::mediate`. Kept in
+/// this module (rather than moved into `mediator.rs`) because it is a pure
+/// function of `MediationOutcome`/`MediationResult` that `disposition_of`
+/// right above it already documents and tests against — duplicating it
+/// would risk the two silently drifting apart.
+pub(crate) fn breaker_effect(outcome: &MediationOutcome) -> Option<bool> {
     if outcome.pre_flight {
         return None;
     }
@@ -258,6 +303,11 @@ fn breaker_effect(outcome: &MediationOutcome) -> Option<bool> {
         MediationResult::Success | MediationResult::ErrorConfig => Some(true),
         MediationResult::ErrorProcess | MediationResult::ErrorConnection => Some(false),
         MediationResult::RateLimited | MediationResult::Deferred => None,
+        // No call was made at all — nothing to credit or blame the
+        // endpoint for, and the breaker that rejected this call already
+        // recorded the rejection itself (`allow_request`'s own
+        // `rejected_calls` counter), not via this function.
+        MediationResult::CircuitOpen => None,
     }
 }
 
@@ -405,6 +455,14 @@ pub struct PoolTask {
     pub batch_id: Option<Arc<str>>,
     /// Pre-computed batch+group key for FIFO tracking
     pub batch_group_key: Option<BatchGroupKey>,
+    /// The message's SOURCE queue (mirrors `common.InFlightMessage.QueueIdentifier`
+    /// in the Go port). A `Message`/mediation target carries no queue
+    /// information of its own — this is the one place a `PoolTask` still
+    /// remembers which queue it arrived on, purely for the operator
+    /// "Mediating" dashboard view (`MediatingEntry::queue`); nothing in the
+    /// delivery/ack/nack path reads it (that resolves the source consumer
+    /// via `QueueManager`'s own `in_pipeline` map, keyed independently).
+    pub queue_identifier: String,
 }
 
 /// Lightweight per-message-group handler.
@@ -414,6 +472,14 @@ struct MessageGroupHandler {
     high_priority: VecDeque<PoolTask>,
     regular: VecDeque<PoolTask>,
     processing: bool,
+    /// When this group was last left with no drainer running (mirrors Go's
+    /// `groupQueue.parkedAt`) — `None` while `processing` is `true`, or if
+    /// the group has never been idle since creation. Set by
+    /// `set_processing(false)`/cleared by `set_processing(true)`, the two
+    /// call sites that flip `processing`. A `parked_at` that keeps ageing
+    /// while `processing` stays `false` is the operator "blocked groups"
+    /// signature: nothing has come back to resume the group.
+    parked_at: Option<std::time::Instant>,
 }
 
 impl MessageGroupHandler {
@@ -422,6 +488,7 @@ impl MessageGroupHandler {
             high_priority: VecDeque::new(),
             regular: VecDeque::new(),
             processing: false,
+            parked_at: None,
         }
     }
 
@@ -444,10 +511,88 @@ impl MessageGroupHandler {
         self.high_priority.is_empty() && self.regular.is_empty()
     }
 
-    #[allow(dead_code)]
     fn len(&self) -> usize {
         self.high_priority.len() + self.regular.len()
     }
+
+    /// The single mutator of `processing` — every call site that used to
+    /// write the field directly goes through this instead, so `parked_at`
+    /// can never drift out of sync with it (ledger: the R-04 "blocked
+    /// groups" view's `parkedAt`/`working` pair).
+    fn set_processing(&mut self, processing: bool) {
+        self.processing = processing;
+        self.parked_at = if processing {
+            None
+        } else {
+            Some(std::time::Instant::now())
+        };
+    }
+}
+
+/// One message currently inside a pool worker (awaiting a rate-limit token
+/// or actively being delivered, inside `mediator.mediate`) — mirrors Go's
+/// `MediatingEntry`. Snapshotted for the operator "Mediating" dashboard
+/// view: the live, never-reaped set (`ProcessPool::mediating_snapshot`),
+/// distinct from the manager's `in_pipeline` dedup tracker.
+#[derive(Debug, Clone)]
+pub struct MediatingEntry {
+    pub message_id: String,
+    pub pool_code: String,
+    /// FIFO message-group id, empty string for ungrouped — matches Go's
+    /// `MediatingEntry.Group`.
+    pub group: String,
+    /// The message's source queue identifier (see `PoolTask::queue_identifier`'s
+    /// doc for why a `PoolTask` carries this at all).
+    pub queue: String,
+    pub target: String,
+    /// In-pipeline retry count. **Always 0 in this port, a genuine
+    /// semantic gap versus Go, not a stub to fill in later:** Go's
+    /// `Attempts` counts a bounded in-pipeline retry-with-front-reinsertion
+    /// (`BrokerAction::Retry`) that this Rust port's pool never performs —
+    /// `disposition_of`'s own doc says "Nothing produces `Retry` today":
+    /// every retryable outcome nacks straight back to the broker instead.
+    /// `HttpMediator::mediate`'s bounded retry burst happens entirely
+    /// inside one `mediate()` call and is invisible at this layer, so
+    /// there is no pipeline-level attempt count to report. Field kept for
+    /// wire-shape parity with Go's `MediatingInfo.attempts` (same
+    /// reasoning as `InFlightMessageInfo`'s own `attempts`, added
+    /// alongside this).
+    pub attempts: u32,
+    /// When this message entered the worker (started waiting on the rate
+    /// limiter, immediately before `mediator.mediate` is called) — mirrors
+    /// Go's `MediatingEntry.MediatedAt`. Monotonic; converted to an
+    /// elapsed-ms figure at snapshot time rather than exposed as a wall
+    /// clock timestamp (matches `MediatingInfo`'s wire shape, which is
+    /// `elapsedTimeMs` only — no absolute-time field).
+    pub mediated_at: std::time::Instant,
+}
+
+/// One live message group a pool is currently holding — the operator
+/// "blocked groups" view (ledger R-04). Mirrors Go's `GroupInfo`; see its
+/// doc comment for what "live" means (buffered awaiting a drainer, being
+/// drained, or parked with none running — a fully-drained group is deleted
+/// from `group_handlers`, so it never shows up here).
+#[derive(Debug, Clone)]
+pub struct GroupInfo {
+    pub group: String,
+    pub pool_code: String,
+    /// Messages sitting in this group's FIFO right now — not counting one
+    /// a drainer currently holds mid-delivery (already popped off the
+    /// buffer by `dequeue`).
+    pub buffered: usize,
+    /// `true` while a drain task owns this group; `false` means buffered
+    /// with no drainer running (freshly enqueued, or parked — see
+    /// `parked_at`).
+    pub working: bool,
+    /// When the group was last left with no drainer (`None` while
+    /// `working` is `true`, or if it has never been parked). Converted
+    /// from the handler's monotonic `Instant` to a wall-clock timestamp at
+    /// snapshot time — see `ProcessPool::group_snapshot`'s doc for the
+    /// conversion.
+    pub parked_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Whether `GroupFlushRegistry` currently suppresses this group.
+    pub suppressed: bool,
+    pub suppressed_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Process pool with FIFO ordering and rate limiting
@@ -487,11 +632,24 @@ pub struct ProcessPool {
     /// Active workers counter (Arc for sharing across tasks)
     active_workers: Arc<AtomicU32>,
 
+    /// Every message currently inside a worker — mirrors Go's
+    /// `Pool.mediating map[uint64]MediatingEntry`. Keyed per WORKER (via
+    /// `mediating_seq`), not per message id, for the same reason as Go: the
+    /// process-time dedup backstop means two copies of one message id can
+    /// briefly sit in two workers, and keying by id would under-report the
+    /// count and let the loser's exit delete the owner's entry. Inserted/
+    /// removed in the exact same critical section as `active_workers`'
+    /// increment/decrement, so `mediating.len() == active_workers.load()`
+    /// always holds — the operator "Mediating" dashboard view's count is
+    /// meant to match the pool stats' active-workers figure. Never reaped
+    /// (unlike the manager's `in_pipeline` tracker), so a long-running
+    /// delivery stays listed for its whole duration.
+    mediating: Arc<DashMap<u64, MediatingEntry>>,
+    /// Monotonic id source for `mediating`'s keys.
+    mediating_seq: Arc<AtomicU64>,
+
     /// Enhanced metrics collector
     metrics_collector: Arc<PoolMetricsCollector>,
-
-    /// Per-endpoint circuit breaker registry — shared across pools, keyed by mediation target URL.
-    circuit_breaker_registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
 
     /// Per-message-group delivery suppression registry (ledger A-05/R-52/R-53).
     /// Pool-private — unlike the circuit breaker registry, flushGroup
@@ -511,29 +669,23 @@ pub struct ProcessPool {
 }
 
 impl ProcessPool {
-    /// Construct a pool with a private circuit breaker registry.
-    /// **Test/standalone use only** — production pools are created by the
-    /// `QueueManager` via [`ProcessPool::with_dependencies`] so they share the
-    /// manager's single registry. Keeping this thin constructor lets unit tests
-    /// build a pool without plumbing collaborators they don't exercise.
+    /// Construct a pool. Circuit breaker admission/recording lives entirely
+    /// in the mediator now (see `mediator.rs`'s `Mediator::mediate` impl on
+    /// `HttpMediator`) — a pool has no breaker registry of its own to wire
+    /// up, private or shared. `with_dependencies` is kept as the one
+    /// production/test constructor name (previously distinct from this
+    /// thin `new` only by the registry argument) so existing call sites
+    /// that already say `with_dependencies` don't need to change.
     pub fn new(config: PoolConfig, mediator: Arc<dyn Mediator>) -> Self {
-        Self::with_dependencies(
-            config,
-            mediator,
-            Arc::new(crate::circuit_breaker_registry::CircuitBreakerRegistry::default()),
-        )
+        Self::with_dependencies(config, mediator)
     }
 
-    /// Construct a fully-wired pool. The `QueueManager` passes its shared
-    /// circuit breaker registry here, so breaker state is shared across all
-    /// pools (and visible to monitoring). Requiring the registry up front makes
-    /// the previously-possible "pool created without the shared registry" bug
-    /// unrepresentable on the production path.
-    pub fn with_dependencies(
-        config: PoolConfig,
-        mediator: Arc<dyn Mediator>,
-        circuit_breaker_registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
-    ) -> Self {
+    /// Construct a fully-wired pool. `mediator` is expected to already
+    /// carry the manager's shared circuit breaker registry (via
+    /// `HttpMediator::with_circuit_breakers`, wired by `QueueManager`'s
+    /// `MediatorFactory`) — the pool itself neither checks nor records
+    /// breaker state.
+    pub fn with_dependencies(config: PoolConfig, mediator: Arc<dyn Mediator>) -> Self {
         // Java: effectiveConcurrency() — if concurrency is 0, fall back to max(rateLimitPerMinute/60, 1)
         let concurrency_val = if config.concurrency == 0 {
             config
@@ -560,8 +712,9 @@ impl ProcessPool {
             running: AtomicBool::new(false),
             queue_size: Arc::new(AtomicU32::new(0)),
             active_workers: Arc::new(AtomicU32::new(0)),
+            mediating: Arc::new(DashMap::new()),
+            mediating_seq: Arc::new(AtomicU64::new(0)),
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
-            circuit_breaker_registry,
             flush_registry: Arc::new(GroupFlushRegistry::new()),
             tracker: TaskTracker::new(),
         }
@@ -670,6 +823,7 @@ impl ProcessPool {
                 callback: batch_msg.callback,
                 batch_id: batch_msg.batch_id,
                 batch_group_key,
+                queue_identifier: batch_msg.queue_identifier,
             };
             self.spawn_immediate_task(task);
             return Ok(());
@@ -683,6 +837,7 @@ impl ProcessPool {
             callback: batch_msg.callback,
             batch_id: batch_msg.batch_id,
             batch_group_key,
+            queue_identifier: batch_msg.queue_identifier,
         };
 
         // Ordered mode: enqueue to group handler and spawn drain task if idle
@@ -696,7 +851,7 @@ impl ProcessPool {
             handler.enqueue(task, is_high_priority);
 
             if !handler.processing {
-                handler.processing = true;
+                handler.set_processing(true);
                 true
             } else {
                 false
@@ -729,9 +884,11 @@ impl ProcessPool {
         let mediator = self.mediator.clone();
         let queue_size = self.queue_size.clone();
         let active_workers = self.active_workers.clone();
+        let mediating = self.mediating.clone();
+        let mediating_seq = self.mediating_seq.clone();
+        let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
         let rate_limiter = self.rate_limiter.clone();
         let metrics_collector = self.metrics_collector.clone();
-        let cb_registry = self.circuit_breaker_registry.clone();
         let flush_registry = self.flush_registry.clone();
         let failed_batch_groups = self.failed_batch_groups.clone();
         let batch_group_message_count = self.batch_group_message_count.clone();
@@ -776,41 +933,34 @@ impl ProcessPool {
             Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
 
             active_workers.fetch_add(1, Ordering::Relaxed);
+            let mediating_key =
+                Self::begin_mediating(&mediating, &mediating_seq, &pool_code, &task);
             queue_size.fetch_sub(1, Ordering::Relaxed);
 
-            // Check per-endpoint circuit breaker (keyed by origin+path,
-            // ledger R-12 — query string stripped so per-message query
-            // data can't fragment the failure signal).
-            let endpoint = breaker_key(&task.message.mediation_target);
-            if !cb_registry.allow_request(&endpoint) {
-                debug!(message_id = %task.message.id, endpoint = %endpoint, "Endpoint circuit breaker open");
-                metrics_collector.record_failure(0);
-                task.callback.nack(Some(5)).await;
-            } else {
-                let start = std::time::Instant::now();
-                let outcome = mediator.mediate(&task.message).await;
-                let duration_ms = start.elapsed().as_millis() as u64;
+            // Circuit breaker admission/recording now lives entirely
+            // inside `mediator.mediate` (ledger: centralised so no call
+            // site can forget to arm it — see `mediator.rs`'s
+            // `Mediator::mediate` doc). An open breaker comes back as
+            // `MediationResult::CircuitOpen`, handled by `disposition_of`
+            // like any other outcome below.
+            let start = std::time::Instant::now();
+            let outcome = mediator.mediate(&task.message).await;
+            let duration_ms = start.elapsed().as_millis() as u64;
+            Self::end_mediating(&mediating, mediating_key);
 
-                match breaker_effect(&outcome) {
-                    Some(true) => cb_registry.record_success(&endpoint),
-                    Some(false) => cb_registry.record_failure(&endpoint),
-                    None => {}
+            // IMMEDIATE mode has no group buffer, so `disposition.group`
+            // is never consulted here — DispatchMode at this call site
+            // is always `Immediate`.
+            let disposition = disposition_of(&outcome, 0, task.message.dispatch_mode);
+            apply_metric(&metrics_collector, disposition.metric, duration_ms);
+
+            match disposition.action {
+                BrokerAction::Ack => {
+                    maybe_flush_group(&flush_registry, &task.message, &outcome);
+                    task.callback.ack().await;
                 }
-
-                // IMMEDIATE mode has no group buffer, so `disposition.group`
-                // is never consulted here — DispatchMode at this call site
-                // is always `Immediate`.
-                let disposition = disposition_of(&outcome, 0, task.message.dispatch_mode);
-                apply_metric(&metrics_collector, disposition.metric, duration_ms);
-
-                match disposition.action {
-                    BrokerAction::Ack => {
-                        maybe_flush_group(&flush_registry, &task.message, &outcome);
-                        task.callback.ack().await;
-                    }
-                    BrokerAction::Release | BrokerAction::Retry => {
-                        task.callback.nack(disposition.retry_after_secs).await;
-                    }
+                BrokerAction::Release | BrokerAction::Retry => {
+                    task.callback.nack(disposition.retry_after_secs).await;
                 }
             }
 
@@ -849,12 +999,13 @@ impl ProcessPool {
         let mediator = self.mediator.clone();
         let queue_size = self.queue_size.clone();
         let active_workers = self.active_workers.clone();
+        let mediating = self.mediating.clone();
+        let mediating_seq = self.mediating_seq.clone();
         let failed_batch_groups = self.failed_batch_groups.clone();
         let batch_group_message_count = self.batch_group_message_count.clone();
         let rate_limiter = self.rate_limiter.clone();
         let group_handlers = self.group_handlers.clone();
         let metrics_collector = self.metrics_collector.clone();
-        let cb_registry = self.circuit_breaker_registry.clone();
         let flush_registry = self.flush_registry.clone();
 
         self.tracker.spawn(async move {
@@ -867,7 +1018,11 @@ impl ProcessPool {
             //     the trigger for `QueueMessageCallback::drop` to clear
             //     `in_pipeline` and fire fallback nacks, releasing SQS
             //     redelivery for those messages,
-            // (c) decrement active_workers if a permit was held.
+            // (c) decrement active_workers if a permit was held, and
+            //     remove the abandoned `mediating` entry if one was live —
+            //     without this a panicked drain task would leave a
+            //     phantom entry in the never-reaped "Mediating" view
+            //     forever.
             //
             // Without (b), abandoned tasks would sit in the VecDeque
             // indefinitely (the handler is only freed when its queue is
@@ -877,8 +1032,13 @@ impl ProcessPool {
                 group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
                 group_id: Arc<str>,
                 active_workers: Arc<AtomicU32>,
+                mediating: Arc<DashMap<u64, MediatingEntry>>,
                 /// Whether a semaphore permit was held when panic occurred
                 holding_permit: bool,
+                /// The `mediating` key to remove, if `begin_mediating` ran
+                /// for the task in flight when the panic/early-break
+                /// happened and `end_mediating` hasn't run yet.
+                mediating_key: Option<u64>,
                 active: bool,
             }
             impl Drop for PanicGuard {
@@ -897,7 +1057,7 @@ impl ProcessPool {
                             abandoned += 1;
                         }
                         if handler.processing {
-                            handler.processing = false;
+                            handler.set_processing(false);
                         }
                     }
                     if abandoned > 0 {
@@ -912,13 +1072,18 @@ impl ProcessPool {
                     if self.holding_permit {
                         self.active_workers.fetch_sub(1, Ordering::Relaxed);
                     }
+                    if let Some(key) = self.mediating_key {
+                        ProcessPool::end_mediating(&self.mediating, key);
+                    }
                 }
             }
             let mut panic_guard = PanicGuard {
                 group_handlers: group_handlers.clone(),
                 group_id: group_id.clone(),
                 active_workers: active_workers.clone(),
+                mediating: mediating.clone(),
                 holding_permit: false,
+                mediating_key: None,
                 active: true,
             };
 
@@ -932,7 +1097,7 @@ impl ProcessPool {
                             match handler.dequeue() {
                                 Some(task) => Some(task),
                                 None => {
-                                    handler.processing = false;
+                                    handler.set_processing(false);
                                     None
                                 }
                             }
@@ -1036,89 +1201,81 @@ impl ProcessPool {
 
                 active_workers.fetch_add(1, Ordering::Relaxed);
                 panic_guard.holding_permit = true;
+                panic_guard.mediating_key = Some(ProcessPool::begin_mediating(
+                    &mediating,
+                    &mediating_seq,
+                    &pool_code,
+                    &task,
+                ));
 
-                // Check per-endpoint circuit breaker before attempting
-                // mediation (keyed by origin+path, ledger R-12).
-                let endpoint = breaker_key(&task.message.mediation_target);
-                if !cb_registry.allow_request(&endpoint) {
-                    debug!(
-                        message_id = %task.message.id,
-                        endpoint = %endpoint,
-                        "Endpoint circuit breaker open — NACKing for retry"
-                    );
-                    metrics_collector.record_failure(0);
+                // Circuit breaker admission/recording now lives entirely
+                // inside `mediator.mediate` (ledger: centralised so no
+                // call site can forget to arm it — see `mediator.rs`'s
+                // `Mediator::mediate` doc). An open breaker comes back as
+                // `MediationResult::CircuitOpen`, which `disposition_of`
+                // maps to `GroupEffect::Release` — reproducing this call
+                // site's pre-existing `failed_batch_groups.insert` cascade
+                // below verbatim, just driven by the outcome instead of a
+                // local breaker check.
+                let start = std::time::Instant::now();
+                let outcome = mediator.mediate(&task.message).await;
+                if let Some(key) = panic_guard.mediating_key.take() {
+                    ProcessPool::end_mediating(&mediating, key);
+                }
+                let duration_ms = start.elapsed().as_millis() as u64;
 
-                    if let Some(ref key) = task.batch_group_key {
-                        failed_batch_groups.insert(key.clone());
-                    }
+                let disposition = disposition_of(&outcome, 0, task.message.dispatch_mode);
+                apply_metric(&metrics_collector, disposition.metric, duration_ms);
 
-                    task.callback.nack(Some(5)).await;
-                } else {
-                    // Process the message
-                    let start = std::time::Instant::now();
-                    let outcome = mediator.mediate(&task.message).await;
-                    let duration_ms = start.elapsed().as_millis() as u64;
-
-                    match breaker_effect(&outcome) {
-                        Some(true) => cb_registry.record_success(&endpoint),
-                        Some(false) => cb_registry.record_failure(&endpoint),
-                        None => {}
-                    }
-
-                    let disposition =
-                        disposition_of(&outcome, 0, task.message.dispatch_mode);
-                    apply_metric(&metrics_collector, disposition.metric, duration_ms);
-
-                    // GroupEffect::Block (BLOCK_ON_ERROR's terminally-failed
-                    // head) and GroupEffect::Release (an unreachable target,
-                    // under every mode) both cascade the same way today:
-                    // mark the batch+group failed so every message still
-                    // buffered behind this one is NACKed as it's dequeued,
-                    // never mediated — see the module's disposition_of doc
-                    // for why this isn't the ACK-the-siblings branch.
-                    match disposition.group {
-                        GroupEffect::Continue => {}
-                        GroupEffect::Block | GroupEffect::Release => {
-                            if let Some(ref key) = task.batch_group_key {
-                                let was_new = failed_batch_groups.insert(key.clone());
-                                if was_new {
-                                    warn!(
-                                        batch_group = %key,
-                                        group_effect = ?disposition.group,
-                                        "Batch+group marked as failed - remaining messages will be NACKed"
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    match disposition.action {
-                        BrokerAction::Ack => {
-                            if outcome.result == MediationResult::Success {
-                                debug!(
-                                    message_id = %task.message.id,
-                                    duration_ms = duration_ms,
-                                    "Message processed successfully"
-                                );
-                                maybe_flush_group(&flush_registry, &task.message, &outcome);
-                            } else {
+                // GroupEffect::Block (BLOCK_ON_ERROR's terminally-failed
+                // head) and GroupEffect::Release (an unreachable target,
+                // under every mode) both cascade the same way today:
+                // mark the batch+group failed so every message still
+                // buffered behind this one is NACKed as it's dequeued,
+                // never mediated — see the module's disposition_of doc
+                // for why this isn't the ACK-the-siblings branch.
+                match disposition.group {
+                    GroupEffect::Continue => {}
+                    GroupEffect::Block | GroupEffect::Release => {
+                        if let Some(ref key) = task.batch_group_key {
+                            let was_new = failed_batch_groups.insert(key.clone());
+                            if was_new {
                                 warn!(
-                                    message_id = %task.message.id,
-                                    error = ?outcome.error_message,
-                                    "Permanent error, ACKing to prevent retry"
+                                    batch_group = %key,
+                                    group_effect = ?disposition.group,
+                                    "Batch+group marked as failed - remaining messages will be NACKed"
                                 );
                             }
-                            task.callback.ack().await;
                         }
-                        BrokerAction::Release | BrokerAction::Retry => {
+                    }
+                }
+
+                match disposition.action {
+                    BrokerAction::Ack => {
+                        if outcome.result == MediationResult::Success {
+                            debug!(
+                                message_id = %task.message.id,
+                                duration_ms = duration_ms,
+                                "Message processed successfully"
+                            );
+                            maybe_flush_group(&flush_registry, &task.message, &outcome);
+                        } else {
                             warn!(
                                 message_id = %task.message.id,
                                 error = ?outcome.error_message,
-                                retry_after = ?disposition.retry_after_secs,
-                                "NACKing for retry"
+                                "Permanent error, ACKing to prevent retry"
                             );
-                            task.callback.nack(disposition.retry_after_secs).await;
                         }
+                        task.callback.ack().await;
+                    }
+                    BrokerAction::Release | BrokerAction::Retry => {
+                        warn!(
+                            message_id = %task.message.id,
+                            error = ?outcome.error_message,
+                            retry_after = ?disposition.retry_after_secs,
+                            "NACKing for retry"
+                        );
+                        task.callback.nack(disposition.retry_after_secs).await;
                     }
                 }
 
@@ -1169,6 +1326,104 @@ impl ProcessPool {
             failed_batch_groups.remove(batch_group_key);
             debug!(batch_group = %batch_group_key, "Batch+group fully processed, cleaned up");
         }
+    }
+
+    /// Record `task` as entering a worker — the operator "Mediating" view's
+    /// single write path (both `spawn_immediate_task` and the group-drain
+    /// path call this, in the same critical section as their
+    /// `active_workers.fetch_add`). Returns the key `end_mediating` needs
+    /// to remove it again. Static (takes the Arc clones directly) so it
+    /// can run inside a spawned task that only owns clones, not `&self` —
+    /// same pattern as `decrement_and_cleanup_batch_group_static`.
+    fn begin_mediating(
+        mediating: &DashMap<u64, MediatingEntry>,
+        mediating_seq: &AtomicU64,
+        pool_code: &str,
+        task: &PoolTask,
+    ) -> u64 {
+        let key = mediating_seq.fetch_add(1, Ordering::Relaxed);
+        mediating.insert(
+            key,
+            MediatingEntry {
+                message_id: task.message.id.clone(),
+                pool_code: pool_code.to_string(),
+                group: task.message.message_group_id.clone().unwrap_or_default(),
+                queue: task.queue_identifier.clone(),
+                target: task.message.mediation_target.clone(),
+                attempts: 0,
+                mediated_at: std::time::Instant::now(),
+            },
+        );
+        key
+    }
+
+    /// Remove the entry `begin_mediating` returned the key for. Call this
+    /// in the same critical section as `active_workers.fetch_sub` — see
+    /// `mediating`'s own doc comment for why the two must stay in lockstep.
+    fn end_mediating(mediating: &DashMap<u64, MediatingEntry>, key: u64) {
+        mediating.remove(&key);
+    }
+
+    /// Every message currently inside a worker of this pool — the operator
+    /// "Mediating" dashboard view (never reaped; see `mediating`'s own doc
+    /// comment). Order is unspecified; callers sort as needed (the API
+    /// layer sorts longest-mediating first, matching Go's dashboard).
+    pub fn mediating_snapshot(&self) -> Vec<MediatingEntry> {
+        self.mediating.iter().map(|e| e.value().clone()).collect()
+    }
+
+    /// A point-in-time view of every live message group this pool is
+    /// holding, for the operator "blocked groups" view (ledger R-04).
+    /// Thread-safe and allocation-light, same shape as Go's
+    /// `Pool.GroupSnapshot`: `group_handlers`' lock is held only long
+    /// enough to copy each `MessageGroupHandler`'s group/working/
+    /// parked_at/buffered-length; the `GroupFlushRegistry` lookup (which
+    /// takes its OWN lock) happens after that lock is released, so the two
+    /// locks are never nested.
+    pub fn group_snapshot(&self) -> Vec<GroupInfo> {
+        let now_instant = std::time::Instant::now();
+        let now_utc = chrono::Utc::now();
+        // Convert a monotonic `Instant` to an approximate wall-clock
+        // `DateTime<Utc>` by measuring its signed offset from "now" and
+        // applying the same offset to "now" on the wall clock — used both
+        // for `parked_at` (always in the past) and `GroupFlushRegistry`'s
+        // suppression expiry (always in the future) below. Good enough for
+        // operator display; never used for anything needing clock-accurate
+        // arithmetic.
+        let to_wall_clock = |instant: std::time::Instant| {
+            if instant >= now_instant {
+                let delta = instant - now_instant;
+                now_utc + chrono::Duration::from_std(delta).unwrap_or_default()
+            } else {
+                let delta = now_instant - instant;
+                now_utc - chrono::Duration::from_std(delta).unwrap_or_default()
+            }
+        };
+
+        let mut rows: Vec<GroupInfo> = self
+            .group_handlers
+            .iter()
+            .map(|entry| {
+                let handler = entry.value().lock();
+                GroupInfo {
+                    group: entry.key().to_string(),
+                    pool_code: self.config.code.clone(),
+                    buffered: handler.len(),
+                    working: handler.processing,
+                    parked_at: handler.parked_at.map(to_wall_clock),
+                    suppressed: false,
+                    suppressed_until: None,
+                }
+            })
+            .collect();
+
+        for row in &mut rows {
+            if let Some(until) = self.flush_registry.suppressed_until(&row.group) {
+                row.suppressed = true;
+                row.suppressed_until = Some(to_wall_clock(until));
+            }
+        }
+        rows
     }
 
     /// Check available capacity
@@ -1406,13 +1661,6 @@ impl ProcessPool {
     /// Get the pool code
     pub fn code(&self) -> &str {
         &self.config.code
-    }
-
-    /// Get the circuit breaker registry (for monitoring APIs)
-    pub fn circuit_breaker_registry(
-        &self,
-    ) -> &Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry> {
-        &self.circuit_breaker_registry
     }
 
     /// Get the group-flush suppression registry (ledger R-52: for
@@ -1685,6 +1933,29 @@ mod disposition_tests {
         assert_eq!(d.retry_after_secs, Some(15));
     }
 
+    #[test]
+    fn circuit_open_releases_whole_group_with_fixed_5s_delay_and_failure_metric() {
+        // Ledger: HttpMediator::mediate now returns this outcome directly
+        // when its breaker rejects the call before any network attempt —
+        // see mediator.rs. disposition_of must reproduce the pool's two
+        // former inline short-circuits verbatim: a 5s nack, a Failure
+        // metric, and (unlike RateLimited/Deferred) a full group cascade —
+        // the group-drain call site used to insert into
+        // `failed_batch_groups` directly on an open breaker.
+        let outcome = MediationOutcome::circuit_open();
+        for m in [
+            DispatchMode::Immediate,
+            DispatchMode::NextOnError,
+            DispatchMode::BlockOnError,
+        ] {
+            let d = disposition_of(&outcome, 0, m);
+            assert_eq!(d.action, BrokerAction::Release, "mode {m:?}");
+            assert_eq!(d.group, GroupEffect::Release, "mode {m:?}");
+            assert_eq!(d.metric, DispositionMetric::Failure, "mode {m:?}");
+            assert_eq!(d.retry_after_secs, Some(5), "mode {m:?}");
+        }
+    }
+
     // ------------------------------------------------------------------
     // breaker_effect (ledger 22b / R-06 / A-11)
     // ------------------------------------------------------------------
@@ -1725,5 +1996,14 @@ mod disposition_tests {
             None,
             "a call that never happened is no evidence about the target's health"
         );
+    }
+
+    #[test]
+    fn breaker_effect_circuit_open_is_neutral() {
+        // The breaker that just rejected the call already recorded the
+        // rejection itself (`allow_request`'s own `rejected_calls`
+        // counter) — this function must not double-record it as a
+        // success or failure delta.
+        assert_eq!(breaker_effect(&MediationOutcome::circuit_open()), None);
     }
 }

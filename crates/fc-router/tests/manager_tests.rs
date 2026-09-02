@@ -1434,3 +1434,202 @@ async fn poll_task_exits_after_consumer_stop() {
          (before={count_before}, after={count_after})"
     );
 }
+
+// ---------------------------------------------------------------------
+// Operator-surface parity: force-ack, blocked groups, group flushes
+// ---------------------------------------------------------------------
+
+/// `force_ack_in_flight` clears the tracker entry (so a second call finds
+/// nothing to ack) and acks the broker copy — and once cleared, the
+/// delivery's own eventual `ack()` call (racing the operator override)
+/// finds no receipt handle and is a harmless no-op rather than a
+/// double-ack or a panic.
+#[tokio::test]
+async fn force_ack_in_flight_clears_entry_and_later_ack_is_harmless() {
+    let mediator = Arc::new(MockMediator::new()); // mediate() sleeps 10ms
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "DEFAULT".to_string(),
+                concurrency: 10,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let messages = vec![create_queued_message("msg-1", "DEFAULT", "test-queue")];
+    let consumer = Arc::new(MockQueueConsumer::with_messages("test-queue", messages));
+    // `force_ack_in_flight` resolves the consumer for the entry's
+    // `queue_identifier` from the manager's own consumer registry (unlike
+    // the normal ack/nack path, which the routed `QueueMessageCallback`
+    // already carries a direct `Arc<dyn QueueConsumer>` for) — so, same as
+    // production's consumer-supervisor wiring, the consumer must be
+    // registered here too.
+    manager.add_consumer(consumer.clone()).await;
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    // Force-ack races the mediator's own 10ms delay — the message is
+    // still tracked (route_batch only registers + dispatches; it doesn't
+    // await delivery).
+    let result = manager
+        .force_ack_in_flight("msg-1")
+        .await
+        .expect("message must still be tracked");
+    assert_eq!(result.queue_id, "test-queue");
+    assert_eq!(result.pool_code, "DEFAULT");
+    assert!(
+        result.broker_acked,
+        "the mock consumer's ack must succeed: {:?}",
+        result.broker_ack_error
+    );
+    assert_eq!(
+        consumer.acked.lock().len(),
+        1,
+        "force-ack must delete the broker copy via the source consumer"
+    );
+
+    // A second lookup must report "not tracked" — the entry is gone.
+    assert!(
+        manager.force_ack_in_flight("msg-1").await.is_none(),
+        "the tracker entry must be cleared, not just answered twice"
+    );
+
+    // Let the in-flight delivery (already running when force-ack fired)
+    // finish. Its own ack() finds no receipt handle in `in_pipeline`
+    // (entry gone) — logged as an error, but must not panic, double-ack,
+    // or otherwise crash the task.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        mediator.call_count(),
+        1,
+        "the delivery that was already running must still run to completion"
+    );
+    assert_eq!(
+        consumer.acked.lock().len(),
+        1,
+        "the delivery's own stale-handle ack must be a no-op, not a second broker ack"
+    );
+}
+
+/// A message never routed is reported as not tracked, not an error.
+#[tokio::test]
+async fn force_ack_in_flight_none_for_untracked_message() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = QueueManager::with_shared_mediator_for_testing(mediator);
+    assert!(manager.force_ack_in_flight("never-seen").await.is_none());
+}
+
+/// `blocked_groups` aggregates across every pool the manager is tracking
+/// (ledger R-04) — reflects a gated ordered group the same way
+/// `pool::group_snapshot_reflects_a_gated_ordered_group` pins at the pool
+/// level, but exercised through the manager's routing path end to end.
+#[tokio::test]
+async fn manager_blocked_groups_reflects_a_gated_ordered_group_across_pools() {
+    let mediator = Arc::new(MockMediator::new()); // mediate() sleeps 10ms
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "ORDERED".to_string(),
+                concurrency: 1, // force sequential draining within the group
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    assert!(manager.blocked_groups().is_empty());
+
+    let mut msg1 = create_test_message("group-msg-1", "ORDERED");
+    msg1.message_group_id = Some("g1".to_string());
+    msg1.dispatch_mode = fc_common::DispatchMode::NextOnError;
+    let mut msg2 = create_test_message("group-msg-2", "ORDERED");
+    msg2.message_group_id = Some("g1".to_string());
+    msg2.dispatch_mode = fc_common::DispatchMode::NextOnError;
+
+    let messages = vec![queued_with(msg1), queued_with(msg2)];
+    let consumer = Arc::new(MockQueueConsumer::with_messages("ordered-queue", messages));
+    let poll_result = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(poll_result, consumer.clone())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(3)).await;
+    let groups = manager.blocked_groups();
+    assert_eq!(groups.len(), 1, "exactly one live group across all pools");
+    assert_eq!(groups[0].group, "g1");
+    assert_eq!(groups[0].pool_code, "ORDERED");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        manager.blocked_groups().is_empty(),
+        "a fully-drained group must not show up"
+    );
+}
+
+/// `clear_group_flush` lifts a suppression via the manager-level traversal
+/// (ledger R-52/R-53) — the API-layer's operator override, end to end
+/// through `QueueManager` rather than a direct `ProcessPool` call. The
+/// suppression itself is armed directly on the pool's registry (a target's
+/// `flushGroup` response is pool.rs/mediator territory, out of scope for
+/// this manager-level test) — this test's job is the manager traversal
+/// (`group_flush_snapshots`/`clear_group_flush`) on top of it.
+#[tokio::test]
+async fn manager_clear_group_flush_lifts_suppression_and_reports_in_snapshot() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(mediator));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "FLUSHPOOL".to_string(),
+                concurrency: 5,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    // Unknown pool / unknown group: nothing to lift.
+    assert!(!manager.clear_group_flush("FLUSHPOOL", "no-such-group"));
+    assert!(!manager.clear_group_flush("NO-SUCH-POOL", "g1"));
+
+    let pool = manager.get_pool("FLUSHPOOL").expect("pool must exist");
+    assert!(pool.group_flush_registry().flush("g1", Some(3600)));
+
+    let snap = manager.group_flush_snapshots();
+    assert_eq!(snap.len(), 1);
+    assert_eq!(snap[0].pool_code, "FLUSHPOOL");
+    assert_eq!(snap[0].active_count, 1);
+    assert_eq!(snap[0].total_flushes, 1);
+    assert_eq!(snap[0].groups.len(), 1);
+    assert_eq!(snap[0].groups[0].group, "g1");
+
+    assert!(
+        manager.clear_group_flush("FLUSHPOOL", "g1"),
+        "an active suppression existed to lift"
+    );
+    assert!(
+        !pool.group_flush_registry().suppressed("g1"),
+        "clear must actually lift the suppression on the pool's registry"
+    );
+    let snap_after = manager.group_flush_snapshots();
+    assert_eq!(snap_after[0].active_count, 0);
+    assert!(snap_after[0].groups.is_empty());
+
+    // Already cleared: nothing left to lift.
+    assert!(!manager.clear_group_flush("FLUSHPOOL", "g1"));
+}

@@ -166,6 +166,15 @@
                     <button id="tabInFlight" class="tab-button px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
                         In-Flight Messages
                     </button>
+                    <button id="tabMediating" class="tab-button px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                        Mediating
+                    </button>
+                    <button id="tabBlockedGroups" class="tab-button px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                        Blocked Groups
+                    </button>
+                    <button id="tabGroupFlushes" class="tab-button px-6 py-4 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                        Group Flushes
+                    </button>
                 </nav>
             </div>
 
@@ -316,15 +325,33 @@
                 <div id="contentInFlight" class="tab-content hidden">
                     <div class="px-6 py-4 border-b border-gray-200">
                         <div class="flex justify-between items-center">
-                            <h3 class="text-lg font-semibold text-gray-900">Messages Currently In-Flight</h3>
+                            <h3 class="text-lg font-semibold text-gray-900">Messages Currently In-Flight <span id="inFlightCount" class="ml-2 text-sm font-normal text-gray-500"></span></h3>
                             <div class="flex space-x-4">
-                                <input type="text" id="messageIdFilter" placeholder="Search by message ID..."
+                                <input type="text" id="messageIdFilter" placeholder="Search / enter message ID..."
                                        class="border border-gray-300 rounded px-3 py-2 text-sm w-64">
+                                <button id="messageLookupBtn" class="bg-gray-700 text-white px-4 py-2 rounded text-sm hover:bg-gray-800">
+                                    Lookup
+                                </button>
                                 <button id="refreshInFlightBtn" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
                                     Refresh
                                 </button>
                             </div>
                         </div>
+                    </div>
+                    <!-- Message detail panel (Lookup / row click) -->
+                    <div id="messageDetailPanel" class="hidden px-6 py-4 border-b border-gray-200 bg-gray-50">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h4 class="text-sm font-semibold text-gray-900 font-mono" id="messageDetailId"></h4>
+                                <div id="messageDetailBody" class="mt-2 grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-1 text-sm text-gray-700"></div>
+                                <p id="messageDetailHint" class="mt-2 text-xs text-gray-500"></p>
+                            </div>
+                            <div class="flex space-x-2 ml-4 shrink-0">
+                                <button id="messageDetailAckBtn" class="bg-red-600 text-white px-3 py-2 rounded text-sm hover:bg-red-700">Force ACK</button>
+                                <button id="messageDetailCloseBtn" class="bg-gray-200 text-gray-700 px-3 py-2 rounded text-sm hover:bg-gray-300">Close</button>
+                            </div>
+                        </div>
+                        <div id="messageDetailResult" class="hidden mt-3 text-sm rounded px-3 py-2"></div>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="min-w-full divide-y divide-gray-200">
@@ -334,8 +361,11 @@
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Broker ID</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Queue</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pool</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Group</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Elapsed Time</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Attempts</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Added At</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="inFlightTable" class="bg-white divide-y divide-gray-200">
@@ -344,6 +374,107 @@
                     </div>
                     <div id="noInFlight" class="hidden px-6 py-8 text-center text-gray-500">
                         No messages in flight
+                    </div>
+                </div>
+
+                <!-- Mediating Tab: live set of messages inside pool workers (never reaped) -->
+                <div id="contentMediating" class="tab-content hidden">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-semibold text-gray-900">Currently Mediating <span id="mediatingCount" class="ml-2 text-sm font-normal text-gray-500"></span></h3>
+                            <div class="flex space-x-4">
+                                <input type="text" id="mediatingPoolFilter" placeholder="Filter by pool..."
+                                       class="border border-gray-300 rounded px-3 py-2 text-sm w-64">
+                                <button id="refreshMediatingBtn" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+                        <p class="mt-1 text-xs text-gray-500">Live set of messages inside a pool worker right now — count matches the pool's active workers, and entries are never reaped, so long-running deliveries stay listed. Sorted longest-mediating first.</p>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message ID</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pool</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Group</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Queue</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Target</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Attempts</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mediating For</th>
+                                </tr>
+                            </thead>
+                            <tbody id="mediatingTable" class="bg-white divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                    <div id="noMediating" class="hidden px-6 py-8 text-center text-gray-500">
+                        Nothing is being mediated right now
+                    </div>
+                </div>
+
+                <!-- Blocked Groups Tab: message groups currently held (R-04) -->
+                <div id="contentBlockedGroups" class="tab-content hidden">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-semibold text-gray-900">Blocked Groups <span id="blockedGroupsCount" class="ml-2 text-sm font-normal text-gray-500"></span></h3>
+                            <div class="flex space-x-4">
+                                <input type="text" id="blockedGroupsPoolFilter" placeholder="Filter by pool..."
+                                       class="border border-gray-300 rounded px-3 py-2 text-sm w-64">
+                                <button id="refreshBlockedGroupsBtn" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+                        <p class="mt-1 text-xs text-gray-500">Message groups a pool is currently holding — buffered awaiting a drainer, being drained, or parked with none running. A group with no drainer and a growing "parked for" is the signature of nothing coming back to resume it.</p>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Group</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pool</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Buffered</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Drainer</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parked For</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Suppressed Until</th>
+                                </tr>
+                            </thead>
+                            <tbody id="blockedGroupsTable" class="bg-white divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                    <div id="noBlockedGroups" class="hidden px-6 py-8 text-center text-gray-500">
+                        No blocked groups right now
+                    </div>
+                </div>
+
+                <!-- Group Flushes Tab: target-requested delivery suppression (R-52/R-53) -->
+                <div id="contentGroupFlushes" class="tab-content hidden">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-lg font-semibold text-gray-900">Group Flushes <span id="groupFlushesCount" class="ml-2 text-sm font-normal text-gray-500"></span></h3>
+                            <button id="refreshGroupFlushesBtn" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">
+                                Refresh
+                            </button>
+                        </div>
+                        <p class="mt-1 text-xs text-gray-500">Message groups a target asked the router to stop sending — the group's messages are ACKed without an HTTP call until the suppression lapses on its own, or an operator clears it early. One row per pool with any lifetime flush activity; the "Active" column lists groups suppressed right now.</p>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pool</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Active Now</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lifetime Flushes</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lifetime Suppressed Messages</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Active Groups</th>
+                                </tr>
+                            </thead>
+                            <tbody id="groupFlushesTable" class="bg-white divide-y divide-gray-200"></tbody>
+                        </table>
+                    </div>
+                    <div id="noGroupFlushes" class="hidden px-6 py-8 text-center text-gray-500">
+                        No group-flush activity on any pool
                     </div>
                 </div>
             </div>
@@ -516,8 +647,8 @@
                 this.startPeriodicRefresh();
             }
 
-            async fetchWithAuth(url) {
-                const headers = {};
+            async fetchWithAuth(url, options = {}) {
+                const headers = { ...(options.headers || {}) };
                 if (this.basicAuth) {
                     headers['Authorization'] = 'Basic ' + this.basicAuth;
                 }
@@ -526,7 +657,14 @@
                 // unchanged.
                 const base = window.__API_BASE__ || '';
                 const resolved = url.startsWith('/') ? base + url : url;
-                return fetch(resolved, { headers, credentials: 'include' });
+                return fetch(resolved, { ...options, headers, credentials: 'include' });
+            }
+
+            // Convenience wrapper for the operator-mutation endpoints
+            // (force-ACK, group-flush clear) — same auth/base-path handling
+            // as fetchWithAuth, just defaulted to POST with no body.
+            async postWithAuth(url) {
+                return this.fetchWithAuth(url, { method: 'POST' });
             }
 
             async init() {
@@ -534,16 +672,39 @@
             }
 
             setupTabListeners() {
-                const tabs = ['Queues', 'Pools', 'Warnings', 'InFlight'];
+                const tabs = ['Queues', 'Pools', 'Warnings', 'InFlight', 'Mediating', 'BlockedGroups', 'GroupFlushes'];
                 tabs.forEach(tab => {
                     document.getElementById(`tab${tab}`).addEventListener('click', () => {
                         this.switchTab(tab);
                         if (tab === 'InFlight') this.loadInFlightMessages();
+                        if (tab === 'Mediating') this.loadMediating();
+                        if (tab === 'BlockedGroups') this.loadBlockedGroups();
+                        if (tab === 'GroupFlushes') this.loadGroupFlushes();
                     });
                 });
 
                 document.getElementById('refreshInFlightBtn').addEventListener('click', () => this.loadInFlightMessages());
-                document.getElementById('messageIdFilter').addEventListener('input', (e) => this.filterInFlightMessages(e.target.value));
+                // Server-side search (debounced) so a message beyond the
+                // top-100-by-elapsed page is still findable by ID.
+                document.getElementById('messageIdFilter').addEventListener('input', () => {
+                    clearTimeout(this._inFlightSearchTimer);
+                    this._inFlightSearchTimer = setTimeout(() => this.loadInFlightMessages(), 300);
+                });
+                document.getElementById('messageIdFilter').addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') this.showMessageDetail(e.target.value.trim());
+                });
+                document.getElementById('messageLookupBtn').addEventListener('click', () => {
+                    this.showMessageDetail(document.getElementById('messageIdFilter').value.trim());
+                });
+                document.getElementById('messageDetailAckBtn').addEventListener('click', () => this.forceAckMessage(this._detailMessageId));
+                document.getElementById('messageDetailCloseBtn').addEventListener('click', () => {
+                    document.getElementById('messageDetailPanel').classList.add('hidden');
+                });
+                document.getElementById('refreshMediatingBtn').addEventListener('click', () => this.loadMediating());
+                document.getElementById('mediatingPoolFilter').addEventListener('input', () => this.loadMediating());
+                document.getElementById('refreshBlockedGroupsBtn').addEventListener('click', () => this.loadBlockedGroups());
+                document.getElementById('blockedGroupsPoolFilter').addEventListener('input', () => this.loadBlockedGroups());
+                document.getElementById('refreshGroupFlushesBtn').addEventListener('click', () => this.loadGroupFlushes());
             }
 
             switchTab(tabName) {
@@ -1022,7 +1183,10 @@
 
             async loadInFlightMessages() {
                 try {
-                    const response = await this.fetchWithAuth('/monitoring/in-flight-messages?limit=100');
+                    const filter = (document.getElementById('messageIdFilter').value || '').trim();
+                    const url = '/monitoring/in-flight-messages?limit=100'
+                        + (filter ? '&messageId=' + encodeURIComponent(filter) : '');
+                    const response = await this.fetchWithAuth(url);
                     if (!response.ok) throw new Error('Failed to load in-flight messages');
                     const inFlightMessages = await response.json();
                     this.data.inFlightMessages = inFlightMessages;
@@ -1034,10 +1198,16 @@
                 }
             }
 
-
             renderInFlightMessages(messages) {
                 const table = document.getElementById('inFlightTable');
                 const noMessages = document.getElementById('noInFlight');
+                const countEl = document.getElementById('inFlightCount');
+
+                if (countEl) {
+                    const n = messages ? messages.length : 0;
+                    const over60 = (messages || []).filter(m => (m.elapsedTimeMs || 0) >= 60000).length;
+                    countEl.textContent = over60 > 0 ? `(${n} shown, ${over60} ≥60s)` : `(${n} shown)`;
+                }
 
                 if (!messages || messages.length === 0) {
                     table.innerHTML = '';
@@ -1052,6 +1222,12 @@
                     const elapsedMin = Math.floor(elapsedSec / 60);
                     const elapsedStr = elapsedMin > 0 ? `${elapsedMin}m ${elapsedSec % 60}s` : `${elapsedSec}s`;
                     const brokerIdShort = msg.brokerMessageId ? msg.brokerMessageId.substring(0, 12) + '...' : 'N/A';
+                    // Highlight long-running rows: amber >=60s, red >=300s — the
+                    // orphan / stuck band. Attempts>0 means it's actively retrying.
+                    const elapsedClass = elapsedSec >= 300 ? 'text-red-600 font-semibold'
+                        : elapsedSec >= 60 ? 'text-amber-600 font-medium' : 'text-gray-900';
+                    const attempts = msg.attempts || 0;
+                    const group = msg.messageGroup || '—';
 
                     return `
                         <tr class="hover:bg-gray-50">
@@ -1067,30 +1243,281 @@
                             <td class="px-6 py-4 text-sm text-gray-900">
                                 ${msg.poolCode || 'N/A'}
                             </td>
-                            <td class="px-6 py-4 text-sm text-gray-900">
+                            <td class="px-6 py-4 text-sm text-gray-900 font-mono max-w-xs truncate" title="${msg.messageGroup || ''}">
+                                ${group}
+                            </td>
+                            <td class="px-6 py-4 text-sm ${elapsedClass}">
                                 ${elapsedStr}
+                            </td>
+                            <td class="px-6 py-4 text-sm ${attempts > 0 ? 'text-amber-600 font-medium' : 'text-gray-400'}">
+                                ${attempts}
                             </td>
                             <td class="px-6 py-4 text-sm text-gray-500">
                                 ${addedAt.toLocaleString()}
+                            </td>
+                            <td class="px-6 py-4 text-sm whitespace-nowrap">
+                                <button onclick="window.dashboard.showMessageDetail('${msg.messageId}')" class="text-blue-600 hover:text-blue-800 text-xs font-medium hover:underline mr-3">Details</button>
+                                <button onclick="window.dashboard.forceAckMessage('${msg.messageId}')" class="text-red-600 hover:text-red-800 text-xs font-medium hover:underline">Ack</button>
                             </td>
                         </tr>
                     `;
                 }).join('');
             }
 
-            filterInFlightMessages(filter) {
-                if (!this.data.inFlightMessages) return;
+            // ── Message detail panel + force-ACK ──────────────────────────
+            fmtElapsed(ms) {
+                const s = Math.floor((ms || 0) / 1000);
+                const m = Math.floor(s / 60), h = Math.floor(m / 60);
+                if (h > 0) return `${h}h ${m % 60}m ${s % 60}s`;
+                return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+            }
 
-                let filtered = this.data.inFlightMessages;
-                if (filter && filter.trim()) {
-                    const lowerFilter = filter.toLowerCase();
-                    filtered = filtered.filter(msg =>
-                        msg.messageId.toLowerCase().includes(lowerFilter) ||
-                        msg.queueId.toLowerCase().includes(lowerFilter)
-                    );
+            async showMessageDetail(messageId) {
+                if (!messageId) return;
+                const panel = document.getElementById('messageDetailPanel');
+                const body = document.getElementById('messageDetailBody');
+                const hint = document.getElementById('messageDetailHint');
+                const result = document.getElementById('messageDetailResult');
+                result.classList.add('hidden');
+                document.getElementById('messageDetailId').textContent = messageId;
+                panel.classList.remove('hidden');
+                body.innerHTML = '<span class="text-gray-400">Loading…</span>';
+                hint.textContent = '';
+                this._detailMessageId = messageId;
+                try {
+                    const r = await this.fetchWithAuth('/monitoring/in-flight-messages/detail?messageId=' + encodeURIComponent(messageId));
+                    if (!r.ok) throw new Error('lookup failed (' + r.status + ')');
+                    const d = await r.json();
+                    if (!d.inPipeline) {
+                        body.innerHTML = '<span class="text-green-700 font-medium">Not in the pipeline</span>';
+                        hint.textContent = 'No tracker entry: the message is not being processed, buffered, or deduped. A requeued copy would be accepted and processed fresh.';
+                        document.getElementById('messageDetailAckBtn').classList.add('hidden');
+                        return;
+                    }
+                    document.getElementById('messageDetailAckBtn').classList.remove('hidden');
+                    const statusColors = { MEDIATING: 'text-blue-700', RETRY_BACKOFF: 'text-amber-700', TRACKED_IDLE: 'text-red-700' };
+                    const rows = [
+                        ['Status', `<span class="font-semibold ${statusColors[d.status] || ''}">${d.status}</span>`],
+                        ['In pipeline for', this.fmtElapsed(d.elapsedTimeMs)],
+                        ['Added at', d.addedToInPipelineAt ? new Date(d.addedToInPipelineAt).toLocaleString() : '—'],
+                        ['Attempts', String(d.attempts || 0)],
+                        ['Pool', d.poolCode || '—'],
+                        ['Queue', d.queueId || '—'],
+                        ['Group', d.messageGroup || '—'],
+                        ['Broker ID', d.brokerMessageId || '—'],
+                    ];
+                    if (d.status === 'MEDIATING') {
+                        rows.push(['Mediating for', this.fmtElapsed(d.mediatingElapsedMs)]);
+                        rows.push(['Target', d.mediationTarget || '—']);
+                    }
+                    body.innerHTML = rows.map(([k, v]) =>
+                        `<div><span class="text-gray-500">${k}:</span> <span class="font-mono">${v}</span></div>`).join('');
+                    hint.textContent = {
+                        MEDIATING: 'A worker is delivering this message right now. Force ACK removes it from the broker + dedup tracker but does not abort the running delivery attempt.',
+                        RETRY_BACKOFF: 'The message failed at least once and is retrying in-pipeline (waiting out a backoff between attempts). Requeued copies are ACK-dropped while it retries.',
+                        TRACKED_IDLE: 'Tracked but not inside a worker and not retrying: it is buffered behind its ordered group or waiting for a pool slot.',
+                    }[d.status] || '';
+                } catch (e) {
+                    body.innerHTML = `<span class="text-red-600">${e.message}</span>`;
                 }
+            }
 
-                this.renderInFlightMessages(filtered);
+            async forceAckMessage(messageId) {
+                if (!messageId) return;
+                if (!confirm(`Force-ACK message ${messageId}?\n\nThis deletes the broker copy and clears the in-flight tracker entry. A delivery attempt already running is NOT aborted.`)) return;
+                const result = document.getElementById('messageDetailResult');
+                try {
+                    const r = await this.postWithAuth('/monitoring/in-flight-messages/' + encodeURIComponent(messageId) + '/ack');
+                    const d = await r.json().catch(() => ({}));
+                    let text, ok;
+                    if (r.status === 404) {
+                        ok = true; text = 'Message was not in the pipeline (nothing to ack).';
+                    } else if (!r.ok) {
+                        ok = false; text = `Force ACK failed (${r.status}): ${d.detail || d.error || d.title || 'unknown error'}`;
+                    } else {
+                        ok = d.brokerAcked;
+                        text = `Tracker entry cleared after ${this.fmtElapsed(d.elapsedTimeMs)} in pipeline. `
+                            + (d.brokerAcked ? 'Broker copy deleted.' : `Broker ack failed (${d.brokerAckError}) — entry cleared anyway; the broker copy will redeliver and be processed fresh.`)
+                            + (d.wasMediating ? ' Note: a delivery attempt was still running and will finish on its own.' : '');
+                    }
+                    if (this._detailMessageId === messageId && !document.getElementById('messageDetailPanel').classList.contains('hidden')) {
+                        result.className = 'mt-3 text-sm rounded px-3 py-2 ' + (ok ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800');
+                        result.textContent = text;
+                        result.classList.remove('hidden');
+                    } else {
+                        alert(text);
+                    }
+                    this.loadInFlightMessages();
+                } catch (e) {
+                    alert('Force ACK request failed: ' + e.message);
+                }
+            }
+
+            // ── Mediating ───────────────────────────────────────────────
+            async loadMediating() {
+                const pool = document.getElementById('mediatingPoolFilter').value.trim();
+                const qs = pool ? `?poolCode=${encodeURIComponent(pool)}` : '';
+                try {
+                    const response = await this.fetchWithAuth('/monitoring/mediating' + qs);
+                    if (!response.ok) throw new Error('Failed to load mediating messages');
+                    this.renderMediating(await response.json());
+                } catch (error) {
+                    console.error('Failed to load mediating messages:', error);
+                    document.getElementById('mediatingTable').innerHTML = '';
+                    document.getElementById('noMediating').classList.remove('hidden');
+                }
+            }
+
+            renderMediating(rows) {
+                const table = document.getElementById('mediatingTable');
+                const none = document.getElementById('noMediating');
+                const countEl = document.getElementById('mediatingCount');
+                if (countEl) {
+                    const n = rows ? rows.length : 0;
+                    const over60 = (rows || []).filter(r => (r.elapsedTimeMs || 0) >= 60000).length;
+                    countEl.textContent = over60 > 0 ? `(${n} in workers, ${over60} ≥60s)` : `(${n} in workers)`;
+                }
+                if (!rows || rows.length === 0) {
+                    table.innerHTML = '';
+                    none.classList.remove('hidden');
+                    return;
+                }
+                none.classList.add('hidden');
+                table.innerHTML = rows.map(r => {
+                    const sec = Math.floor((r.elapsedTimeMs || 0) / 1000);
+                    const min = Math.floor(sec / 60);
+                    const elapsed = min > 0 ? `${min}m ${sec % 60}s` : `${sec}s`;
+                    const cls = sec >= 300 ? 'text-red-600 font-semibold' : sec >= 60 ? 'text-amber-600 font-medium' : 'text-gray-900';
+                    const attempts = r.attempts || 0;
+                    return `
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 text-sm text-blue-600 font-mono max-w-xs truncate" title="${r.messageId}">${r.messageId}</td>
+                            <td class="px-6 py-4 text-sm text-gray-900">${r.poolCode || 'N/A'}</td>
+                            <td class="px-6 py-4 text-sm text-gray-900 font-mono max-w-xs truncate" title="${r.group || ''}">${r.group || '—'}</td>
+                            <td class="px-6 py-4 text-sm text-gray-500 font-mono max-w-xs truncate" title="${r.queue || ''}">${r.queue || '—'}</td>
+                            <td class="px-6 py-4 text-sm text-gray-500 font-mono max-w-md truncate" title="${r.target || ''}">${r.target || '—'}</td>
+                            <td class="px-6 py-4 text-sm ${attempts > 0 ? 'text-amber-600 font-medium' : 'text-gray-400'}">${attempts}</td>
+                            <td class="px-6 py-4 text-sm ${cls}">${elapsed}</td>
+                        </tr>`;
+                }).join('');
+            }
+
+            // ── Blocked Groups (R-04) ──────────────────────────────────────
+            async loadBlockedGroups() {
+                const pool = document.getElementById('blockedGroupsPoolFilter').value.trim();
+                const qs = pool ? `?poolCode=${encodeURIComponent(pool)}` : '';
+                try {
+                    const response = await this.fetchWithAuth('/monitoring/blocked-groups' + qs);
+                    if (!response.ok) throw new Error('Failed to load blocked groups (' + response.status + ')');
+                    this.renderBlockedGroups(await response.json());
+                } catch (error) {
+                    console.error('Failed to load blocked groups:', error);
+                    document.getElementById('blockedGroupsTable').innerHTML = '';
+                    document.getElementById('noBlockedGroups').classList.remove('hidden');
+                }
+            }
+
+            renderBlockedGroups(rows) {
+                const table = document.getElementById('blockedGroupsTable');
+                const none = document.getElementById('noBlockedGroups');
+                const countEl = document.getElementById('blockedGroupsCount');
+
+                if (countEl) {
+                    countEl.textContent = rows && rows.length ? `(${rows.length})` : '';
+                }
+                if (!rows || rows.length === 0) {
+                    table.innerHTML = '';
+                    none.classList.remove('hidden');
+                    return;
+                }
+                none.classList.add('hidden');
+                table.innerHTML = rows.map(r => {
+                    const working = !!r.working;
+                    const drainerLabel = working
+                        ? '<span class="text-blue-700 font-medium">draining</span>'
+                        : '<span class="text-amber-600 font-medium">idle</span>';
+                    let parkedFor = '—';
+                    if (!working && r.parkedAt) {
+                        const parkedMs = Date.now() - new Date(r.parkedAt).getTime();
+                        if (parkedMs > 0) parkedFor = this.fmtElapsed(parkedMs);
+                    }
+                    const suppressed = !!r.suppressed;
+                    const suppressedLabel = suppressed && r.suppressedUntil
+                        ? new Date(r.suppressedUntil).toLocaleTimeString()
+                        : (suppressed ? 'yes' : '—');
+                    return `
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 text-sm text-gray-900 font-mono max-w-xs truncate" title="${r.group || ''}">${r.group || '—'}</td>
+                            <td class="px-6 py-4 text-sm text-gray-900">${r.poolCode || 'N/A'}</td>
+                            <td class="px-6 py-4 text-sm text-gray-900">${r.buffered ?? 0}</td>
+                            <td class="px-6 py-4 text-sm">${drainerLabel}</td>
+                            <td class="px-6 py-4 text-sm ${!working && r.parkedAt ? 'text-amber-600 font-medium' : 'text-gray-400'}">${parkedFor}</td>
+                            <td class="px-6 py-4 text-sm ${suppressed ? 'text-red-600 font-medium' : 'text-gray-400'}">${suppressedLabel}</td>
+                        </tr>`;
+                }).join('');
+            }
+
+            // ── Group Flushes (R-52/R-53) ───────────────────────────────────
+            async loadGroupFlushes() {
+                try {
+                    const response = await this.fetchWithAuth('/monitoring/group-flushes');
+                    if (!response.ok) throw new Error('Failed to load group flushes (' + response.status + ')');
+                    this.renderGroupFlushes(await response.json());
+                } catch (error) {
+                    console.error('Failed to load group flushes:', error);
+                    document.getElementById('groupFlushesTable').innerHTML = '';
+                    document.getElementById('noGroupFlushes').classList.remove('hidden');
+                }
+            }
+
+            renderGroupFlushes(rows) {
+                const table = document.getElementById('groupFlushesTable');
+                const none = document.getElementById('noGroupFlushes');
+                const countEl = document.getElementById('groupFlushesCount');
+
+                // Only pools with lifetime flush activity are worth a row —
+                // an idle pool that never saw a flushGroup response is noise.
+                const activeRows = (rows || []).filter(r => (r.totalFlushes || 0) > 0 || (r.activeCount || 0) > 0);
+
+                if (countEl) {
+                    countEl.textContent = activeRows.length ? `(${activeRows.length} pools)` : '';
+                }
+                if (activeRows.length === 0) {
+                    table.innerHTML = '';
+                    none.classList.remove('hidden');
+                    return;
+                }
+                none.classList.add('hidden');
+                table.innerHTML = activeRows.map(r => {
+                    const groups = r.groups || [];
+                    const groupsHtml = groups.length === 0
+                        ? '<span class="text-gray-400">—</span>'
+                        : groups.map(g => `
+                            <div class="flex items-center gap-2 mb-1 last:mb-0">
+                                <span class="font-mono text-xs text-gray-900 truncate max-w-[10rem]" title="${g.group}">${g.group}</span>
+                                <span class="text-xs text-gray-500">until ${new Date(g.suppressedUntil).toLocaleTimeString()}</span>
+                                <button onclick="window.dashboard.clearGroupFlush('${r.poolCode}', '${g.group}')" class="text-red-600 hover:text-red-800 text-xs font-medium hover:underline">Clear</button>
+                            </div>`).join('');
+                    return `
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 text-sm text-gray-900">${r.poolCode || 'N/A'}</td>
+                            <td class="px-6 py-4 text-sm ${r.activeCount > 0 ? 'text-red-600 font-semibold' : 'text-gray-400'}">${r.activeCount || 0}</td>
+                            <td class="px-6 py-4 text-sm text-gray-900">${r.totalFlushes || 0}</td>
+                            <td class="px-6 py-4 text-sm text-gray-900">${r.totalSuppressed || 0}</td>
+                            <td class="px-6 py-4 text-sm">${groupsHtml}</td>
+                        </tr>`;
+                }).join('');
+            }
+
+            async clearGroupFlush(poolCode, group) {
+                if (!confirm(`Clear the flush suppression for group "${group}" on pool "${poolCode}"?\n\nDelivery to this group resumes immediately.`)) return;
+                try {
+                    const r = await this.postWithAuth(`/monitoring/group-flushes/${encodeURIComponent(poolCode)}/${encodeURIComponent(group)}/clear`);
+                    if (!r.ok && r.status !== 404) throw new Error('clear failed (' + r.status + ')');
+                    this.loadGroupFlushes();
+                } catch (e) {
+                    alert('Failed to clear group flush: ' + e.message);
+                }
             }
 
             showHealthModal() {

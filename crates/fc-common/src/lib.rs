@@ -534,6 +534,26 @@ pub enum MediationResult {
     /// NACK with the target's requested delay (or the pool's own backoff
     /// floor when absent) so the message is retried in place.
     Deferred,
+    /// The mediator's own circuit breaker was open for this endpoint, so no
+    /// network call was attempted at all (ledger R-12's breaker admission
+    /// gate, now consulted inside `HttpMediator::mediate` rather than at
+    /// the pool call site — see that module's doc comment). Like
+    /// `RateLimited`/`Deferred` this is breaker-neutral (no call happened,
+    /// so there is nothing new to say about the endpoint's health), but
+    /// unlike them it is not a delivery attempt at all — nearer in kind to
+    /// a pre-flight rejection.
+    ///
+    /// NACK with a short fixed delay, and (in an ordered group) cascade a
+    /// NACK to the rest of the group — mirrors the pool's two previous
+    /// inline short-circuits verbatim; see `pool::disposition_of`'s
+    /// `CircuitOpen` arm doc for exactly how each prior call site behaved
+    /// and why unifying them landed on `GroupEffect::Release`. **Known
+    /// gap, not fixed by this variant's introduction:** the
+    /// cross-implementation conformance corpus
+    /// (`breaker-open-makes-no-call`) expects no metric recorded at all
+    /// for this case; both prior call sites recorded a `Failure` metric,
+    /// and this port preserves that unchanged.
+    CircuitOpen,
 }
 
 /// Outcome of mediation including result and optional delay
@@ -650,6 +670,24 @@ impl MediationOutcome {
             delay_seconds,
             status_code: Some(status_code),
             error_message: Some("Target returned ack=false".to_string()),
+            flush_group: false,
+            pre_flight: false,
+        }
+    }
+
+    /// The endpoint's circuit breaker was open, so `HttpMediator::mediate`
+    /// never attempted a network call. `status_code` is `None` (no HTTP
+    /// exchange happened, same as a pre-flight rejection) and
+    /// `delay_seconds` is a short fixed nack delay — see
+    /// `MediationResult::CircuitOpen`'s doc for the full rationale and the
+    /// known gap this port carries forward from the pool's pre-existing
+    /// inline short-circuit.
+    pub fn circuit_open() -> Self {
+        Self {
+            result: MediationResult::CircuitOpen,
+            delay_seconds: Some(5),
+            status_code: None,
+            error_message: Some("Circuit breaker open".to_string()),
             flush_group: false,
             pre_flight: false,
         }

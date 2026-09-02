@@ -11,6 +11,7 @@ use std::sync::{Arc, Weak};
 use reqwest::Client;
 use tracing::debug;
 
+use crate::circuit_breaker_registry::CircuitBreakerRegistry;
 use crate::http_pool::HostPoolRegistry;
 use crate::warning::WarningService;
 
@@ -21,6 +22,13 @@ pub(super) struct MediatorInner {
     pub(super) config: HttpMediatorConfig,
     pub(super) host_pools: HostPoolRegistry,
     pub(super) warning_service: Arc<WarningService>,
+    /// Per-endpoint circuit breaker registry this mediator consults before
+    /// every delivery and records into after — see `HttpMediator::mediate`.
+    /// Defaults to a private registry (mirrors `warning_service`'s noop
+    /// default) unless `HttpMediator::with_circuit_breakers` wires in a
+    /// shared one, which is what every production pool does via
+    /// `QueueManager`'s `MediatorFactory`.
+    pub(super) breakers: Arc<CircuitBreakerRegistry>,
 }
 
 /// Build a closure that produces fresh `reqwest::Client`s for new per-host

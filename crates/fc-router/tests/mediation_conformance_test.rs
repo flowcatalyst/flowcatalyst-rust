@@ -35,17 +35,15 @@
 //!
 //! ## Architecture note: where "breaker" comes from
 //!
-//! `HttpMediator::mediate` never touches a `CircuitBreakerRegistry` in
-//! this codebase — breaker admission and recording live in `pool.rs`
-//! (`spawn_immediate_task` / the group-drain path), entangled with nack
-//! delays and metrics, outside this lane's file scope. This runner
-//! mirrors `pool.rs`'s exact recording function (`breaker_effect`:
-//! pre-flight -> neither; else `Success | ErrorConfig` -> success,
-//! `ErrorProcess | ErrorConnection` -> failure, `RateLimited | Deferred`
-//! -> neither) and its pre-flight `allow_request` gate for the
-//! `breakerOpen` precondition, rather than changing pool.rs to expose it
-//! directly. If pool.rs's mapping ever changes, this mirror needs to
-//! change with it.
+//! `HttpMediator::mediate` now owns circuit breaker admission and
+//! recording directly (ledger: centralised into the mediator so no call
+//! site can forget to arm it — see `mediator.rs`'s `Mediator::mediate`
+//! impl; `pool.rs` no longer touches a `CircuitBreakerRegistry` at all).
+//! This runner drives the REAL path: every fixture's `HttpMediator` is
+//! built with `with_circuit_breakers` pointed at the same
+//! `CircuitBreakerRegistry` the test manipulates directly (to arm the
+//! `breakerOpen` precondition) and reads back (`before`/`after` stats) —
+//! there is no longer a hand-rolled mirror of `breaker_effect` here.
 //!
 //! Each case gets its own fresh `CircuitBreakerRegistry`, `WarningService`
 //! and `HttpMediator` (and its own wiremock server, where relevant) —
@@ -208,7 +206,8 @@ async fn set_up(given: &Given) -> Setup {
 
             let target = format!("{}/webhook", mock_server.uri());
             let mediator = HttpMediator::with_config(conformance_mediator_config())
-                .with_warning_service(warnings.clone());
+                .with_warning_service(warnings.clone())
+                .with_circuit_breakers(breakers.clone());
             Setup::Ready(Box::new(Fixture {
                 mediator,
                 breakers,
@@ -226,7 +225,8 @@ async fn set_up(given: &Given) -> Setup {
             drop(listener);
             let target = format!("http://127.0.0.1:{port}/webhook");
             let mediator = HttpMediator::with_config(conformance_mediator_config())
-                .with_warning_service(warnings.clone());
+                .with_warning_service(warnings.clone())
+                .with_circuit_breakers(breakers.clone());
             Setup::Ready(Box::new(Fixture {
                 mediator,
                 breakers,
@@ -245,7 +245,8 @@ async fn set_up(given: &Given) -> Setup {
             // exercise: `HostKey::from_url` rejecting a target with no
             // host, pre-flight, before any network call.
             let mediator = HttpMediator::with_config(conformance_mediator_config())
-                .with_warning_service(warnings.clone());
+                .with_warning_service(warnings.clone())
+                .with_circuit_breakers(breakers.clone());
             Setup::Ready(Box::new(Fixture {
                 mediator,
                 breakers,
@@ -292,35 +293,9 @@ fn outcome_name(result: MediationResult) -> &'static str {
         MediationResult::ErrorConnection => "ErrorConnection",
         MediationResult::RateLimited => "RateLimited",
         MediationResult::Deferred => "Deferred",
-    }
-}
-
-// ---------------------------------------------------------------------
-// Breaker mirror (pool.rs's `breaker_effect`, duplicated here — see
-// module doc)
-// ---------------------------------------------------------------------
-
-fn record_breaker_outcome(
-    breakers: &CircuitBreakerRegistry,
-    endpoint: &str,
-    outcome: &fc_common::MediationOutcome,
-) {
-    if outcome.pre_flight {
-        // Ledger R-06/A-11: a call that never happened is no evidence
-        // about the target's health in either direction.
-        return;
-    }
-    match outcome.result {
-        MediationResult::Success | MediationResult::ErrorConfig => {
-            breakers.record_success(endpoint)
-        }
-        MediationResult::ErrorProcess | MediationResult::ErrorConnection => {
-            breakers.record_failure(endpoint)
-        }
-        // RateLimited (a healthy target throttling) and Deferred (ledger
-        // 22b: a healthy target declining the work) are both breaker-
-        // neutral.
-        MediationResult::RateLimited | MediationResult::Deferred => {}
+        // Matches the corpus's own vocabulary for the breakerOpen case
+        // (`breaker-open-makes-no-call`'s `expect.outcome`) directly.
+        MediationResult::CircuitOpen => "CircuitOpen",
     }
 }
 
@@ -443,41 +418,107 @@ async fn mediation_conformance() {
         }
 
         if case.given.kind == "breakerOpen" {
-            // Mirrors pool.rs's pre-flight gate directly: drive the
-            // breaker open, then confirm the pool's own admission check
-            // would refuse the call — no mediator invocation at all, no
-            // wiremock server, nothing to record.
-            let breakers = CircuitBreakerRegistry::new(CircuitBreakerConfig::default());
-            let endpoint = "http://breaker-open.invalid/webhook";
+            // Drives the REAL path end to end: a live wiremock server
+            // (so `httpCallMade` is verified from what actually reached
+            // the network, not inferred from `allow_request`'s return
+            // value alone) behind an `HttpMediator` built with
+            // `with_circuit_breakers` pointed at a registry this test
+            // trips open directly first — exactly how a pool's shared
+            // registry gets tripped by a sibling message's failures in
+            // production.
+            let mock_server = MockServer::start().await;
+            Mock::given(method("POST"))
+                // `path` is shadowed in this scope by the corpus file
+                // path above — fully qualified to avoid it.
+                .and(wiremock::matchers::path("/webhook"))
+                .respond_with(ResponseTemplate::new(200))
+                .mount(&mock_server)
+                .await;
+            let target = format!("{}/webhook", mock_server.uri());
+
+            let breakers = Arc::new(CircuitBreakerRegistry::new(CircuitBreakerConfig::default()));
+            let warnings = Arc::new(WarningService::new(WarningServiceConfig::default()));
+            let mediator = HttpMediator::with_config(conformance_mediator_config())
+                .with_warning_service(warnings.clone())
+                .with_circuit_breakers(breakers.clone());
+            let message = base_message(&target);
+
+            // `breaker_key` collapses to the raw URL unchanged for a
+            // plain scheme://host:port/path target with no query string,
+            // which `target` is — so the registry key the mediator
+            // computes internally is exactly `target`.
             // min_calls=10 failures at 100% -> trips Closed -> Open.
             for _ in 0..20 {
-                if breakers.allow_request(endpoint) {
-                    breakers.record_failure(endpoint);
+                if breakers.allow_request(&target) {
+                    breakers.record_failure(&target);
                 } else {
                     break;
                 }
             }
-            // `admitted == true` means the pool would proceed to call
-            // `mediate` (a call is made); `false` means it nacks without
-            // ever reaching the network — that IS `httpCallMade`, not its
-            // negation.
-            let admitted = breakers.allow_request(endpoint);
+            assert_eq!(
+                breakers.get_state(&target),
+                Some(fc_router::CircuitBreakerState::Open),
+                "test setup bug: breaker must be open before calling mediate"
+            );
+
+            let before = breakers
+                .get_stats(&target)
+                .map(|s| (s.successful_calls, s.failed_calls))
+                .unwrap_or((0, 0));
+            let outcome = mediator.mediate(&message).await;
+            let after = breakers
+                .get_stats(&target)
+                .map(|s| (s.successful_calls, s.failed_calls))
+                .unwrap_or((0, 0));
+
+            let received = mock_server.received_requests().await.unwrap_or_default();
+            let http_call_made = !received.is_empty();
+
             check_field(
                 &case.id,
-                "httpCallMade (breakerOpen: derived from allow_request)",
-                case.expect.http_call_made.map(|b| b.to_string()),
-                admitted.to_string(),
+                "outcome",
+                Some(case.expect.outcome.clone()),
+                outcome_name(outcome.result).to_string(),
                 &mut mismatches,
                 &mut tolerated,
             );
+            if let Some(expected) = case.expect.status_code {
+                check_field(
+                    &case.id,
+                    "statusCode",
+                    Some(expected.to_string()),
+                    outcome.status_code.unwrap_or(0).to_string(),
+                    &mut mismatches,
+                    &mut tolerated,
+                );
+            }
             check_field(
                 &case.id,
                 "breaker",
                 Some(case.expect.breaker.clone()),
-                "neither".to_string(), // allow_request(false) records no success/failure delta
+                breaker_delta(before, after).to_string(),
                 &mut mismatches,
                 &mut tolerated,
             );
+            check_field(
+                &case.id,
+                "warning",
+                Some(case.expect.warning.clone()),
+                warning_level(&warnings).to_string(),
+                &mut mismatches,
+                &mut tolerated,
+            );
+            if let Some(expected) = case.expect.http_call_made {
+                check_field(
+                    &case.id,
+                    "httpCallMade",
+                    Some(expected.to_string()),
+                    http_call_made.to_string(),
+                    &mut mismatches,
+                    &mut tolerated,
+                );
+            }
+
             finish_case(
                 case,
                 mismatches,
@@ -503,8 +544,11 @@ async fn mediation_conformance() {
             .map(|s| (s.successful_calls, s.failed_calls))
             .unwrap_or((0, 0));
 
+        // Real recording — `HttpMediator::mediate` (built with
+        // `with_circuit_breakers(fixture.breakers.clone())` in `set_up`)
+        // already recorded into `fixture.breakers` itself; no mirror call
+        // needed here any more.
         let outcome = fixture.mediator.mediate(&fixture.message).await;
-        record_breaker_outcome(&fixture.breakers, &endpoint, &outcome);
 
         let after = fixture
             .breakers
