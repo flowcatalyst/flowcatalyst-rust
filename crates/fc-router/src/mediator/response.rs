@@ -5,10 +5,12 @@
 //!   target's real status code (ledger A-04) and, if the body carried
 //!   `flushGroup: true`, `flush_group = true` plus that body's
 //!   `delaySeconds` as the suppression window (ledger A-05).
-//! - **2xx with `ack: false`** → `ErrorProcess` with the target's
+//! - **2xx with `ack: false`** → `Deferred` (ledger 22b) with the target's
 //!   `delaySeconds` (a floor on the pool's own backoff curve, defaulting
 //!   to 0 — no floor — when absent) — the target is healthy but
-//!   asking us to retry later.
+//!   asking us to retry later. Breaker-neutral, like `RateLimited`: the
+//!   endpoint answered and declined the work, which is not evidence it is
+//!   unhealthy.
 //! - **3xx** → `ErrorConfig` (ledger R-05 / A-06). The client never
 //!   follows a redirect (see `inner::make_client_builder`), so a 3xx is
 //!   the target's own final answer: permanent, not retryable, warned
@@ -18,7 +20,7 @@
 //! - **429** → `RateLimited` with the `Retry-After` header (default 30).
 //!   The pool nacks with that delay and does NOT consume the retry
 //!   budget or trip the circuit breaker.
-//! - **Other 4xx** → `ErrorConfig` (no warning).
+//! - **Other 4xx** → `ErrorConfig`, warned like a named 4xx.
 //! - **502 / 503 / 504** → `ErrorProcess` — retryable transient: the
 //!   target was unreachable/unavailable, not wrong.
 //! - **Every other 5xx** (500, 505, …) → `ErrorConfig` (ledger R-57): the
@@ -79,13 +81,12 @@ pub(super) async fn classify(
                         delay_seconds = delay,
                         "Target returned ack=false with delay"
                     );
-                    return MediationOutcome {
-                        result: MediationResult::ErrorProcess,
-                        delay_seconds: Some(delay),
-                        status_code: Some(status_code),
-                        error_message: Some("Target returned ack=false".to_string()),
-                        flush_group: false,
-                    };
+                    // Ledger 22b: this is a deferral, not a failure — the
+                    // target is healthy and just declined the work right
+                    // now. Breaker-neutral (see `MediationResult::Deferred`'s
+                    // doc comment), retried in place with the target's
+                    // requested delay.
+                    return MediationOutcome::deferred(status_code, Some(delay));
                 }
 
                 if resp.flush_group {
@@ -240,10 +241,21 @@ pub(super) async fn classify(
     }
 
     if status.is_client_error() {
+        // Generic 4xx fallback (no named branch above claimed this status).
+        // Same permanence and the same deletion as a 400/404, so the same
+        // notice: an operator told about a 404 and not a 422 is a gap, not
+        // a decision (conformance corpus `config-error-other-4xx`).
         warn!(
             message_id = %message.id,
             status_code = status_code,
             "Client error"
+        );
+        emit_config_warning(
+            warning_service,
+            &message.id,
+            &message.mediation_target,
+            status_code,
+            "Client error",
         );
         return MediationOutcome::error_config(
             status_code,
@@ -268,6 +280,7 @@ pub(super) async fn classify(
                 status_code: Some(status_code),
                 error_message: Some(format!("HTTP {}: Server error", status_code)),
                 flush_group: false,
+                pre_flight: false,
             };
         }
 

@@ -453,6 +453,13 @@ pub enum MediationResult {
     /// delay, but do NOT count toward circuit-breaker failures or attempt
     /// budget — the destination is healthy, just throttling us.
     RateLimited,
+    /// Target answered 2xx with `{"ack": false}` (ledger 22b/Deferred): it
+    /// received the request and explicitly declined the work right now
+    /// (e.g. a blocked record). Not a failure — the endpoint is reachable
+    /// and healthy — so this must be breaker-neutral, like `RateLimited`.
+    /// NACK with the target's requested delay (or the pool's own backoff
+    /// floor when absent) so the message is retried in place.
+    Deferred,
 }
 
 /// Outcome of mediation including result and optional delay
@@ -469,6 +476,15 @@ pub struct MediationOutcome {
     /// registry that actually suppresses the group is a later lane's work;
     /// this field only carries the target's request through the outcome.
     pub flush_group: bool,
+    /// Set when the mediator rejected the message BEFORE any network call
+    /// was made (ledger R-06/A-11) — an unsupported mediation type, or a
+    /// target URL with no host to dial. Defaults `false`. A call that
+    /// never happened is no evidence about the target's health in either
+    /// direction, so the pool must skip BOTH a breaker success and a
+    /// breaker failure when this is set (unlike a real `ErrorConfig` from
+    /// an HTTP response, which still credits the breaker with a success —
+    /// the endpoint answered, so it is reachable).
+    pub pre_flight: bool,
 }
 
 impl MediationOutcome {
@@ -482,6 +498,7 @@ impl MediationOutcome {
             status_code: Some(status),
             error_message: None,
             flush_group: false,
+            pre_flight: false,
         }
     }
 
@@ -492,6 +509,26 @@ impl MediationOutcome {
             status_code: Some(status_code),
             error_message: Some(message),
             flush_group: false,
+            pre_flight: false,
+        }
+    }
+
+    /// A pre-flight rejection (ledger R-06/A-11): the mediator refused the
+    /// message before any network call — an unsupported mediation type, or
+    /// a target URL with no host to dial. Classified as `ErrorConfig` (the
+    /// message is permanently undeliverable as addressed, same ACK-drop
+    /// treatment as a 4xx), but flagged `pre_flight` so the pool can skip
+    /// the breaker entirely rather than crediting a success for a call
+    /// that was never made. `status_code` is `None` (no HTTP exchange
+    /// happened at all).
+    pub fn pre_flight_rejected(message: String) -> Self {
+        Self {
+            result: MediationResult::ErrorConfig,
+            delay_seconds: None,
+            status_code: None,
+            error_message: Some(message),
+            flush_group: false,
+            pre_flight: true,
         }
     }
 
@@ -502,6 +539,7 @@ impl MediationOutcome {
             status_code: None,
             error_message: Some(message),
             flush_group: false,
+            pre_flight: false,
         }
     }
 
@@ -512,6 +550,7 @@ impl MediationOutcome {
             status_code: None,
             error_message: Some(message),
             flush_group: false,
+            pre_flight: false,
         }
     }
 
@@ -522,6 +561,23 @@ impl MediationOutcome {
             status_code: Some(429),
             error_message: Some("HTTP 429: Too Many Requests".to_string()),
             flush_group: false,
+            pre_flight: false,
+        }
+    }
+
+    /// Target answered 2xx with `{"ack": false}` (ledger 22b/Deferred).
+    /// `status_code` carries the target's real 2xx status (ledger A-04
+    /// applies here too); `delay_seconds` is the target's requested delay
+    /// (or the pool's own backoff floor when the target sent none — see
+    /// `mediator/response.rs`'s doc comment).
+    pub fn deferred(status_code: u16, delay_seconds: Option<u32>) -> Self {
+        Self {
+            result: MediationResult::Deferred,
+            delay_seconds,
+            status_code: Some(status_code),
+            error_message: Some("Target returned ack=false".to_string()),
+            flush_group: false,
+            pre_flight: false,
         }
     }
 }
@@ -851,6 +907,12 @@ pub struct EnhancedPoolMetrics {
     pub total_failure: u64,
     /// Total messages rate limited (all time)
     pub total_rate_limited: u64,
+    /// Total messages ACKed without delivery because their group was
+    /// suppressed by a target's `flushGroup` request (ledger R-53) — kept
+    /// separate from `total_success` so a heavily-flushed pool reads
+    /// "busy-but-suppressed" rather than idle.
+    #[serde(default)]
+    pub total_suppressed: u64,
     /// Success rate (0.0 - 1.0)
     pub success_rate: f64,
     /// Processing time metrics (all time)

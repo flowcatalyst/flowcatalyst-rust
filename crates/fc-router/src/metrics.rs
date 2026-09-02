@@ -58,6 +58,12 @@ pub struct PoolMetricsCollector {
     total_success: AtomicU64,
     total_failure: AtomicU64,
     total_rate_limited: AtomicU64,
+    /// Messages ACKed without delivery because their group was suppressed
+    /// by a target's `flushGroup` request (ledger R-53). Kept separate
+    /// from `total_success` — no mediation happened, no duration to
+    /// record — so a heavily-flushed pool reads busy-but-suppressed
+    /// rather than idle.
+    total_suppressed: AtomicU64,
 
     /// All-time latency histogram — O(1) record, O(1) percentile query.
     /// Covers 1ms to 15 minutes (900,000ms) with 3 significant digits.
@@ -84,6 +90,7 @@ impl PoolMetricsCollector {
             total_success: AtomicU64::new(0),
             total_failure: AtomicU64::new(0),
             total_rate_limited: AtomicU64::new(0),
+            total_suppressed: AtomicU64::new(0),
             histogram: RwLock::new(histogram),
             samples: RwLock::new(VecDeque::with_capacity(10000)),
             rate_limited_events: RwLock::new(VecDeque::with_capacity(1000)),
@@ -130,6 +137,19 @@ impl PoolMetricsCollector {
     /// Get all-time rate limited count
     pub fn total_rate_limited(&self) -> u64 {
         self.total_rate_limited.load(Ordering::Relaxed)
+    }
+
+    /// Record a message ACKed without delivery because its group was
+    /// suppressed by a target's `flushGroup` request (ledger R-53). No
+    /// mediation happened, so there is no duration to record — this only
+    /// bumps the counter.
+    pub fn record_suppressed(&self) {
+        self.total_suppressed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get all-time suppressed-ACK count.
+    pub fn total_suppressed(&self) -> u64 {
+        self.total_suppressed.load(Ordering::Relaxed)
     }
 
     /// Add a sample to the sliding window and all-time histogram
@@ -265,6 +285,7 @@ impl PoolMetricsCollector {
             total_success,
             total_failure,
             total_rate_limited,
+            total_suppressed: self.total_suppressed.load(Ordering::Relaxed),
             success_rate,
             processing_time,
             last_5_min,
@@ -315,6 +336,7 @@ impl PoolMetricsCollector {
         self.total_success.store(0, Ordering::Relaxed);
         self.total_failure.store(0, Ordering::Relaxed);
         self.total_rate_limited.store(0, Ordering::Relaxed);
+        self.total_suppressed.store(0, Ordering::Relaxed);
         self.histogram.write().reset();
         self.samples.write().clear();
         self.rate_limited_events.write().clear();

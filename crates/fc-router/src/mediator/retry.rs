@@ -1,11 +1,11 @@
 //! Retry loop around `mediate_once`.
 //!
-//! Success, config errors, and rate-limit responses bypass retries —
-//! they should be terminal for the dispatcher, not consume the retry
-//! budget here. Everything else (connection error, process error, 5xx)
-//! retries up to `max_retries - 1` times with delays drawn from
-//! `retry_delays` (falling back to the last configured delay, or 3s if
-//! none were configured, once the list runs out).
+//! Success, config errors, rate-limit responses, and deferrals (ack:false)
+//! bypass retries — they should be terminal for the dispatcher, not
+//! consume the retry budget here. Everything else (connection error,
+//! process error, 5xx) retries up to `max_retries - 1` times with delays
+//! drawn from `retry_delays` (falling back to the last configured delay,
+//! or 3s if none were configured, once the list runs out).
 
 use std::future::Future;
 use std::time::Duration;
@@ -53,11 +53,13 @@ impl RetryPolicy {
 
     /// Which outcomes consume the in-call retry budget at all.
     ///
-    /// `Success`, `ErrorConfig` and `RateLimited` are terminal for
-    /// `mediate_once` and bypass [`run`]'s loop entirely — a config error
-    /// or a healthy-but-throttling target isn't going to change its mind
-    /// because we asked again a second later. `ErrorProcess` (5xx that
-    /// means "target unavailable") and `ErrorConnection` (couldn't even
+    /// `Success`, `ErrorConfig`, `RateLimited` and `Deferred` are terminal
+    /// for `mediate_once` and bypass [`run`]'s loop entirely — a config
+    /// error, a healthy-but-throttling target, or a healthy target that
+    /// just declined the work (ack:false) isn't going to change its mind
+    /// because we asked again a second later; those bubble straight back
+    /// to the pool for its own backoff. `ErrorProcess` (5xx that means
+    /// "target unavailable") and `ErrorConnection` (couldn't even
     /// complete the request) are the two outcomes this policy governs.
     pub fn retries(result: MediationResult) -> bool {
         matches!(
@@ -181,5 +183,6 @@ mod tests {
         assert!(!RetryPolicy::retries(MediationResult::Success));
         assert!(!RetryPolicy::retries(MediationResult::ErrorConfig));
         assert!(!RetryPolicy::retries(MediationResult::RateLimited));
+        assert!(!RetryPolicy::retries(MediationResult::Deferred));
     }
 }

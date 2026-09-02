@@ -122,6 +122,7 @@ impl Mediator for MockMediator {
                 status_code: Some(500),
                 error_message: Some("Mock failure".to_string()),
                 flush_group: false,
+                pre_flight: false,
             }
         } else {
             MediationOutcome::success(200)
@@ -658,4 +659,286 @@ async fn group_handler_cleanup_race_does_not_spurious_nack() {
     );
     assert_eq!(acks.load(Ordering::SeqCst), N as u32);
     assert_eq!(mediator.call_count(), N as u32);
+}
+
+// ============================================================================
+// Group-flush suppression (ledger A-05/R-52/R-53)
+// ============================================================================
+
+/// Mediator that returns a `flushGroup` success for one named message id
+/// (with a configurable suppression delay) and a plain success for every
+/// other message it sees. Tracks every message id it was actually asked
+/// to mediate, so a test can assert a suppressed sibling never reached it.
+struct FlushMediator {
+    flush_id: String,
+    flush_delay_secs: Option<u32>,
+    calls: parking_lot::Mutex<Vec<String>>,
+}
+
+impl FlushMediator {
+    fn new(flush_id: &str, flush_delay_secs: Option<u32>) -> Self {
+        Self {
+            flush_id: flush_id.to_string(),
+            flush_delay_secs,
+            calls: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.lock().clone()
+    }
+}
+
+#[async_trait]
+impl Mediator for FlushMediator {
+    async fn mediate(&self, message: &Message) -> MediationOutcome {
+        self.calls.lock().push(message.id.clone());
+        if message.id == self.flush_id {
+            let mut outcome = MediationOutcome::success(200);
+            outcome.flush_group = true;
+            outcome.delay_seconds = self.flush_delay_secs;
+            outcome
+        } else {
+            MediationOutcome::success(200)
+        }
+    }
+}
+
+fn create_ordered_message(id: &str, group_id: &str) -> Message {
+    let mut m = create_test_message(id, Some(group_id));
+    m.dispatch_mode = fc_common::DispatchMode::NextOnError;
+    m
+}
+
+fn create_ordered_batch(id: &str, group_id: &str) -> (BatchMessage, oneshot::Receiver<AckNack>) {
+    let (tx, rx) = oneshot::channel();
+    let msg = BatchMessage {
+        message: create_ordered_message(id, group_id),
+        receipt_handle: format!("receipt-{}", id),
+        broker_message_id: Some(format!("broker-{}", id)),
+        queue_identifier: "test-queue".to_string(),
+        batch_id: Some(std::sync::Arc::from("batch-1")),
+        callback: Box::new(TestCallback {
+            tx: parking_lot::Mutex::new(Some(tx)),
+        }),
+    };
+    (msg, rx)
+}
+
+/// A message group a target flushed suppresses its sibling: the sibling is
+/// ACKed WITHOUT ever reaching the mediator, and the pool's suppressed-ACK
+/// metric counts it.
+#[tokio::test]
+async fn group_flush_suppresses_sibling_acks_unmediated_and_counts_metric() {
+    let config = PoolConfig {
+        code: "TEST".to_string(),
+        concurrency: 5,
+        rate_limit_per_minute: None,
+    };
+    let mediator = Arc::new(FlushMediator::new("head", Some(60)));
+    let pool = Arc::new(ProcessPool::new(config, mediator.clone()));
+    pool.start().await;
+
+    let (head, head_rx) = create_ordered_batch("head", "g1");
+    pool.submit(head).await.unwrap();
+    let head_ack = tokio::time::timeout(Duration::from_secs(5), head_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(head_ack, AckNack::Ack));
+
+    // The head's flushGroup response suppresses "g1" — this sibling must
+    // be ACKed without ever being mediated.
+    let (sib, sib_rx) = create_ordered_batch("sib1", "g1");
+    pool.submit(sib).await.unwrap();
+    let sib_ack = tokio::time::timeout(Duration::from_secs(5), sib_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(sib_ack, AckNack::Ack),
+        "a suppressed sibling is ACKed, not nacked"
+    );
+
+    assert_eq!(
+        mediator.calls(),
+        vec!["head".to_string()],
+        "the suppressed sibling must never reach the mediator"
+    );
+    assert_eq!(
+        pool.get_enhanced_metrics().total_suppressed,
+        1,
+        "the suppressed ACK must be counted"
+    );
+}
+
+/// Suppression is TTL-bounded: once the window lapses, the next message of
+/// the group is mediated as a normal probe.
+#[tokio::test]
+async fn group_flush_ttl_expiry_resumes_delivery() {
+    let config = PoolConfig {
+        code: "TEST".to_string(),
+        concurrency: 5,
+        rate_limit_per_minute: None,
+    };
+    let mediator = Arc::new(FlushMediator::new("head", Some(1)));
+    let pool = Arc::new(ProcessPool::new(config, mediator.clone()));
+    pool.start().await;
+
+    let (head, head_rx) = create_ordered_batch("head", "g1");
+    pool.submit(head).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), head_rx)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Still within the 1s window: suppressed.
+    let (sib1, sib1_rx) = create_ordered_batch("sib1", "g1");
+    pool.submit(sib1).await.unwrap();
+    let sib1_ack = tokio::time::timeout(Duration::from_secs(5), sib1_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(sib1_ack, AckNack::Ack));
+    assert_eq!(mediator.calls(), vec!["head".to_string()]);
+
+    // Wait past the window.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    let (sib2, sib2_rx) = create_ordered_batch("sib2", "g1");
+    pool.submit(sib2).await.unwrap();
+    let sib2_ack = tokio::time::timeout(Duration::from_secs(5), sib2_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(sib2_ack, AckNack::Ack));
+    assert_eq!(
+        mediator.calls(),
+        vec!["head".to_string(), "sib2".to_string()],
+        "once the TTL lapses the next message must be mediated as a probe"
+    );
+}
+
+/// An operator can lift a suppression early via the registry's `clear`.
+#[tokio::test]
+async fn group_flush_clear_lifts_suppression_early() {
+    let config = PoolConfig {
+        code: "TEST".to_string(),
+        concurrency: 5,
+        rate_limit_per_minute: None,
+    };
+    let mediator = Arc::new(FlushMediator::new("head", Some(60)));
+    let pool = Arc::new(ProcessPool::new(config, mediator.clone()));
+    pool.start().await;
+
+    let (head, head_rx) = create_ordered_batch("head", "g1");
+    pool.submit(head).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), head_rx)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(pool.group_flush_registry().suppressed_until("g1").is_some());
+    pool.group_flush_registry().clear("g1");
+    assert!(pool.group_flush_registry().suppressed_until("g1").is_none());
+
+    let (sib, sib_rx) = create_ordered_batch("sib1", "g1");
+    pool.submit(sib).await.unwrap();
+    let sib_ack = tokio::time::timeout(Duration::from_secs(5), sib_rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(sib_ack, AckNack::Ack));
+    assert_eq!(
+        mediator.calls(),
+        vec!["head".to_string(), "sib1".to_string()],
+        "clear() must lift suppression immediately, so the sibling is mediated"
+    );
+}
+
+// ============================================================================
+// Release-remainder primitive (ledger R-49)
+// ============================================================================
+
+/// `release_remainder` NACKs every not-yet-started message still buffered
+/// in a group's handler, and leaves an already in-flight delivery
+/// (already popped off the buffer, mid-mediation) completely alone.
+#[tokio::test]
+async fn release_remainder_nacks_buffered_remainder_leaves_in_flight_alone() {
+    let config = PoolConfig {
+        code: "TEST".to_string(),
+        concurrency: 1, // force strictly serial delivery within the group
+        rate_limit_per_minute: None,
+    };
+    let mediator = Arc::new(MockMediator::with_delay(300));
+    let pool = Arc::new(ProcessPool::new(config, mediator.clone()));
+    pool.start().await;
+
+    let (b1, r1) = create_ordered_batch("m1", "g1");
+    let (b2, r2) = create_ordered_batch("m2", "g1");
+    let (b3, r3) = create_ordered_batch("m3", "g1");
+    pool.submit(b1).await.unwrap();
+    pool.submit(b2).await.unwrap();
+    pool.submit(b3).await.unwrap();
+
+    // Give the drain task time to pop m1 and start mediating it (300ms
+    // delay) so m2/m3 are still sitting in the group's VecDeque when
+    // release_remainder runs — deterministic since concurrency:1 keeps the
+    // drain task blocked on m1's mediate() call for the whole window.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let released = pool.release_remainder().await;
+    assert_eq!(released, 2, "m2 and m3 were still buffered, unstarted");
+
+    let a2 = tokio::time::timeout(Duration::from_secs(1), r2)
+        .await
+        .unwrap()
+        .unwrap();
+    let a3 = tokio::time::timeout(Duration::from_secs(1), r3)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(a2, AckNack::Nack { .. }));
+    assert!(matches!(a3, AckNack::Nack { .. }));
+
+    // m1 was already in flight when release_remainder ran — untouched, and
+    // resolves normally once the mediator's delay elapses.
+    let a1 = tokio::time::timeout(Duration::from_secs(2), r1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(a1, AckNack::Ack));
+
+    assert_eq!(
+        mediator.call_count(),
+        1,
+        "release_remainder must not trigger mediation for the released messages"
+    );
+}
+
+/// `release_remainder` also stops new admission, mirroring `drain()`.
+#[tokio::test]
+async fn release_remainder_stops_new_admission() {
+    let config = PoolConfig {
+        code: "TEST".to_string(),
+        concurrency: 5,
+        rate_limit_per_minute: None,
+    };
+    let mediator = Arc::new(MockMediator::new());
+    let pool = Arc::new(ProcessPool::new(config, mediator));
+    pool.start().await;
+
+    let released = pool.release_remainder().await;
+    assert_eq!(released, 0, "nothing was buffered yet");
+
+    let (batch_msg, rx) = create_batch_message("msg-1", None);
+    pool.submit(batch_msg).await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(result, AckNack::Nack { .. }),
+        "submit after release_remainder must nack promptly, same as after drain()"
+    );
 }
