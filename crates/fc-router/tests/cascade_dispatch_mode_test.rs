@@ -107,6 +107,7 @@ fn cascade_message(id: &str, group: &str, mode: DispatchMode) -> Message {
         message_group_id: Some(group.to_string()),
         high_priority: false,
         dispatch_mode: mode,
+        dispatch_mode_specified: true,
     }
 }
 
