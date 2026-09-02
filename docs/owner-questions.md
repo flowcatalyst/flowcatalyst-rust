@@ -192,7 +192,7 @@ Counts: **Part A** 27 rulings already taken · **Part B** ~290 open questions in
 - **R-58** (drift-pool) `pendingDelete` is TTL-bounded on the assumption that every target is idempotent; nothing enforces it. Accept as a stated assumption, or require/verify it?
   Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
 - **R-59** (drift-manager) Synthesised `{client}-DEFAULT-POOL` pools are never evicted; a short-lived client leaves its pool and worker footprint alive forever. Evict on idle?
-  Ruling: **(2026-09-02): evict.** A synthesised `{client}-DEFAULT-POOL` idle past a TTL (no message routed to it) is torn down — its group processors finish their buffers first per R-26/R-49; it is re-synthesised on demand as today.
+  Ruling: **(2026-09-02): evict.** A synthesised `{client}-DEFAULT-POOL` idle past a TTL (no message routed to it) is torn down — its group processors finish their buffers first per R-26/R-49; it is re-synthesised on demand as today. **Rust ruling (owner, 2026-09-03): ADD the per-client synthesis — Rust never had it (single global fallback). The Rust router gains `{clientIdentifier}-DEFAULT-POOL` synthesis-on-demand with default settings, idle-TTL eviction, and config-takes-ownership, mirroring Go's ensureFallbackPool/EvictIdleSynthPools.**
 - **R-60** (drift-manager) `queue_message_errors` / quarantine has no index beyond the PK and no retention. Add a cap/retention?
   Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
 - **R-61** (router-fixes Fix 5) Three warning gaps found by the conformance corpus — confirm they are wanted as CONFIGURATION/ERROR warnings in the port.
