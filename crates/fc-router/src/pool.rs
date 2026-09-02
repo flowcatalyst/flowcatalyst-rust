@@ -1934,7 +1934,7 @@ mod disposition_tests {
     }
 
     #[test]
-    fn circuit_open_releases_whole_group_with_fixed_5s_delay_and_failure_metric() {
+    fn circuit_open_releases_whole_group_with_fixed_5s_delay_and_no_metric() {
         // Ledger: HttpMediator::mediate now returns this outcome directly
         // when its breaker rejects the call before any network attempt —
         // see mediator.rs. disposition_of must reproduce the pool's two
@@ -1951,7 +1951,7 @@ mod disposition_tests {
             let d = disposition_of(&outcome, 0, m);
             assert_eq!(d.action, BrokerAction::Release, "mode {m:?}");
             assert_eq!(d.group, GroupEffect::Release, "mode {m:?}");
-            assert_eq!(d.metric, DispositionMetric::Failure, "mode {m:?}");
+            assert_eq!(d.metric, DispositionMetric::None, "mode {m:?}");
             assert_eq!(d.retry_after_secs, Some(5), "mode {m:?}");
         }
     }
