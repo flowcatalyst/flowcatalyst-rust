@@ -184,9 +184,15 @@ async fn test_end_to_end_successful_delivery() {
 async fn test_end_to_end_failed_delivery() {
     let mock_server = MockServer::start().await;
 
+    // 503 (target unavailable) stays retryable end-to-end (ledger R-57) —
+    // NACKed so the broker redelivers. This test used to use 500, but a
+    // bare 500 is now a permanent ErrorConfig (ACKed, not NACKed): "the
+    // app ran and answered", so retrying the identical request can't
+    // help. See `mediator_tests.rs`'s `test_5xx_boundary_r57` for that
+    // classification pinned directly.
     Mock::given(method("POST"))
         .and(path("/webhook"))
-        .respond_with(ResponseTemplate::new(500))
+        .respond_with(ResponseTemplate::new(503))
         .mount(&mock_server)
         .await;
 

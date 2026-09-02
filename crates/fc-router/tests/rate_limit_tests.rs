@@ -41,7 +41,7 @@ impl Mediator for TimingMediator {
     async fn mediate(&self, _message: &Message) -> MediationOutcome {
         self.call_times.lock().push(Instant::now());
         self.call_count.fetch_add(1, Ordering::SeqCst);
-        MediationOutcome::success()
+        MediationOutcome::success(200)
     }
 }
 

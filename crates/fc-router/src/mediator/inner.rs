@@ -37,7 +37,14 @@ pub(super) fn make_client_builder(
         let mut builder = Client::builder()
             .timeout(timeout)
             .connect_timeout(connect_timeout)
-            .pool_max_idle_per_host(10);
+            .pool_max_idle_per_host(10)
+            // Ledger R-05 / A-06: never follow a redirect. reqwest's
+            // default follows up to 10 and, for 301/302/303, rewrites the
+            // POST into a bodyless GET — so the redirect target would
+            // receive nothing and the router would record a false
+            // success. Disabling it hands the 3xx back to `response`,
+            // which classifies it as a permanent configuration error.
+            .redirect(reqwest::redirect::Policy::none());
         match http_version {
             HttpVersion::Http1 => {
                 builder = builder.http1_only();

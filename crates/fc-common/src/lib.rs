@@ -462,15 +462,26 @@ pub struct MediationOutcome {
     pub delay_seconds: Option<u32>,
     pub status_code: Option<u16>,
     pub error_message: Option<String>,
+    /// Set when a 2xx body carried `{"flushGroup": true}` (ledger A-05):
+    /// the target wants this message's whole group suppressed rather than
+    /// delivered message-by-message. Defaults `false` — only the mediator's
+    /// 2xx-body parse (`mediator/response.rs`) ever sets it. The pool-side
+    /// registry that actually suppresses the group is a later lane's work;
+    /// this field only carries the target's request through the outcome.
+    pub flush_group: bool,
 }
 
 impl MediationOutcome {
-    pub fn success() -> Self {
+    /// `status`: the target's real HTTP status code (ledger A-04) — 200,
+    /// 201, 204, etc. Flattening these to a hardcoded 200 discarded
+    /// information an operator reading a trace could never recover.
+    pub fn success(status: u16) -> Self {
         Self {
             result: MediationResult::Success,
             delay_seconds: None,
-            status_code: Some(200),
+            status_code: Some(status),
             error_message: None,
+            flush_group: false,
         }
     }
 
@@ -480,6 +491,7 @@ impl MediationOutcome {
             delay_seconds: None,
             status_code: Some(status_code),
             error_message: Some(message),
+            flush_group: false,
         }
     }
 
@@ -489,6 +501,7 @@ impl MediationOutcome {
             delay_seconds,
             status_code: None,
             error_message: Some(message),
+            flush_group: false,
         }
     }
 
@@ -498,6 +511,7 @@ impl MediationOutcome {
             delay_seconds: Some(30), // Java default: 30 seconds
             status_code: None,
             error_message: Some(message),
+            flush_group: false,
         }
     }
 
@@ -507,6 +521,7 @@ impl MediationOutcome {
             delay_seconds: Some(retry_after_seconds),
             status_code: Some(429),
             error_message: Some("HTTP 429: Too Many Requests".to_string()),
+            flush_group: false,
         }
     }
 }

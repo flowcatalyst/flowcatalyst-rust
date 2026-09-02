@@ -46,7 +46,7 @@ pub use health::{HealthService, HealthServiceConfig};
 pub use http_pool::{HostConnectionPool, HostKey, HostKeyError, HostPoolRegistry, HostPoolSizing};
 pub use lifecycle::{LifecycleConfig, LifecycleManager};
 pub use manager::{ConsumerFactory, InFlightMessageInfo, QueueManager};
-pub use mediator::{HttpMediator, HttpMediatorConfig, HttpVersion, Mediator};
+pub use mediator::{HttpMediator, HttpMediatorConfig, HttpVersion, Mediator, RetryPolicy};
 pub use metrics::{MetricsConfig, PoolMetricsCollector};
 pub use notification::{
     create_notification_service, create_notification_service_with_scheduler,

@@ -47,7 +47,7 @@ impl Mediator for OrderTrackingMediator {
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
         }
         self.processed_ids.lock().push(message.id.clone());
-        MediationOutcome::success()
+        MediationOutcome::success(200)
     }
 }
 

@@ -48,7 +48,7 @@ impl Mediator for MockMediator {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         self.processed_ids.lock().push(message.id.clone());
         tokio::time::sleep(Duration::from_millis(10)).await;
-        MediationOutcome::success()
+        MediationOutcome::success(200)
     }
 }
 
@@ -516,7 +516,7 @@ impl Mediator for SlowMockMediator {
     async fn mediate(&self, _message: &Message) -> MediationOutcome {
         self.call_count.fetch_add(1, Ordering::SeqCst);
         tokio::time::sleep(self.delay).await;
-        MediationOutcome::success()
+        MediationOutcome::success(200)
     }
 }
 

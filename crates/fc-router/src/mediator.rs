@@ -20,6 +20,7 @@ mod response;
 mod retry;
 mod signing;
 
+pub use retry::RetryPolicy;
 pub use signing::{SIGNATURE_HEADER, TIMESTAMP_HEADER};
 
 use std::sync::Arc;
@@ -295,13 +296,17 @@ impl HttpMediator {
 #[async_trait]
 impl Mediator for HttpMediator {
     async fn mediate(&self, message: &Message) -> MediationOutcome {
-        retry::run(
-            &message.id,
+        // `HttpMediatorConfig`'s `max_retries` / `retry_delays` fields stay
+        // as they were — collapsing them into `RetryPolicy` here (rather
+        // than renaming the config fields) keeps every existing config
+        // call site compiling. `RetryPolicy` is the named, documented,
+        // independently-tested schedule ledger A-03 asks for; this is just
+        // where config's loose fields become that policy for the call.
+        let policy = RetryPolicy::new(
             self.inner.config.max_retries,
-            &self.inner.config.retry_delays,
-            || self.mediate_once(message),
-        )
-        .await
+            self.inner.config.retry_delays.clone(),
+        );
+        retry::run(&message.id, &policy, || self.mediate_once(message)).await
     }
 }
 

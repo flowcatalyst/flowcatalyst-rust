@@ -121,9 +121,10 @@ impl Mediator for MockMediator {
                 delay_seconds: Some(1),
                 status_code: Some(500),
                 error_message: Some("Mock failure".to_string()),
+                flush_group: false,
             }
         } else {
-            MediationOutcome::success()
+            MediationOutcome::success(200)
         }
     }
 }
