@@ -29,6 +29,22 @@ pub fn record_mediation_latency(pool_code: &str, duration: Duration) {
     .record(duration.as_secs_f64());
 }
 
+/// Record the HTTP protocol version a mediation request actually
+/// negotiated with the target (item 3, owner ruling 2026-09-07: deployed
+/// mode is supposed to speak h2c/h2, not silently fall back to HTTP/1.1 —
+/// this is how an operator (or a bench run) confirms it did). Recorded
+/// once per completed HTTP response, in `HttpMediator::mediate_once`,
+/// using `reqwest::Response::version()`'s `Debug` form (`"HTTP/2.0"`,
+/// `"HTTP/1.1"`, …) as the label so it reads the same as the bench rig's
+/// own `proto_counts`.
+pub fn record_mediation_http_version(version: &str) {
+    counter!(
+        "fc_mediation_http_version_total",
+        "version" => version.to_string()
+    )
+    .increment(1);
+}
+
 /// Record rate limit exceeded
 pub fn record_rate_limit_exceeded(pool_code: &str) {
     counter!(

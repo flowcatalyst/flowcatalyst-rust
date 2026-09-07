@@ -171,7 +171,14 @@ impl Drop for SlotGuard {
     }
 }
 
-type ClientBuilderFn = dyn Fn() -> Client + Send + Sync;
+/// Builds a fresh `reqwest::Client` for a new slot in a given origin's
+/// pool. Takes the [`HostKey`] (item 3, owner ruling 2026-09-07: deployed
+/// mode needs prior-knowledge h2c for `http://` targets but ALPN h2 for
+/// `https://` ones — those are two different `reqwest::ClientBuilder`
+/// configurations, and a `HostKey` already carries `scheme`, so the
+/// builder decides per-origin rather than the registry needing a second
+/// builder function).
+type ClientBuilderFn = dyn Fn(&HostKey) -> Client + Send + Sync;
 
 /// Per-origin pool of HTTP/2 connections.
 pub struct HostConnectionPool {
@@ -193,7 +200,7 @@ impl HostConnectionPool {
         builder: Arc<ClientBuilderFn>,
         warning_service: Arc<WarningService>,
     ) -> Self {
-        let initial = Arc::new(ClientSlot::new(builder()));
+        let initial = Arc::new(ClientSlot::new(builder(&host)));
         Self {
             host,
             sizing,
@@ -250,7 +257,7 @@ impl HostConnectionPool {
             }
         }
 
-        let slot = Arc::new(ClientSlot::new((self.builder)()));
+        let slot = Arc::new(ClientSlot::new((self.builder)(&self.host)));
         let new_count = {
             let mut slots = self.slots.write();
             slots.push(slot.clone());
@@ -320,7 +327,7 @@ impl HostConnectionPool {
                 // Everything was evictable — restore the freshest one by
                 // rebuilding. (Reached only when grace and watermarks are
                 // both extremely permissive.)
-                slots.push(Arc::new(ClientSlot::new((self.builder)())));
+                slots.push(Arc::new(ClientSlot::new((self.builder)(&self.host))));
             }
             (before - slots.len(), slots.len())
         };
@@ -426,7 +433,7 @@ mod tests {
     use crate::warning::WarningService;
 
     fn make_builder() -> Arc<ClientBuilderFn> {
-        Arc::new(|| reqwest::Client::builder().build().unwrap())
+        Arc::new(|_host: &HostKey| reqwest::Client::builder().build().unwrap())
     }
 
     #[test]

@@ -12,7 +12,7 @@ use reqwest::Client;
 use tracing::debug;
 
 use crate::circuit_breaker_registry::CircuitBreakerRegistry;
-use crate::http_pool::HostPoolRegistry;
+use crate::http_pool::{HostKey, HostPoolRegistry};
 use crate::warning::WarningService;
 
 use super::{HttpMediatorConfig, HttpVersion};
@@ -35,13 +35,34 @@ pub(super) struct MediatorInner {
 /// slots. Each invocation yields an independent client (and therefore an
 /// independent hyper connection pool), which is required by `http_pool`
 /// to give each slot its own HTTP/2 connection.
+///
+/// Item 3 (owner ruling 2026-09-07; Go and Java both already do this):
+/// deployed mode (`HttpVersion::Http2`) needs a DIFFERENT `reqwest`
+/// configuration per target scheme, which a single shared closure with no
+/// per-call input couldn't express — `https://` wants ALPN negotiation
+/// (`http2_prior_knowledge()` NOT set: TLS + ALPN pick h2 or h1 with the
+/// server, same as before this fix), but a plain `http://` target has no
+/// ALPN to negotiate over, so without `http2_prior_knowledge()` reqwest
+/// silently spoke HTTP/1.1 to every cleartext target regardless of
+/// `http_version` — which is exactly the defect this fixes (was: every
+/// mediation to this rig's plaintext sink went out as HTTP/1.1). Setting
+/// `http2_prior_knowledge()` for `http://` targets makes the client send
+/// the HTTP/2 connection preface immediately with no h1 fallback: an
+/// HTTP/1.1-only cleartext target now FAILS the delivery (the preface is
+/// nonsense to an h1-only server, so the connection/request errors out
+/// and `mediate_once` classifies it as a connection error, subject to the
+/// normal retry burst) rather than silently downgrading — deployed mode
+/// must know its targets speak h2c, not guess. Dev mode
+/// (`HttpVersion::Http1`) is unaffected: `.http1_only()` still wins
+/// outright regardless of scheme, so a developer's plaintext target never
+/// needs to speak h2c.
 pub(super) fn make_client_builder(
     config: &HttpMediatorConfig,
-) -> Arc<dyn Fn() -> Client + Send + Sync> {
+) -> Arc<dyn Fn(&HostKey) -> Client + Send + Sync> {
     let timeout = config.timeout;
     let connect_timeout = config.connect_timeout;
     let http_version = config.http_version;
-    Arc::new(move || {
+    Arc::new(move |host_key: &HostKey| {
         let mut builder = Client::builder()
             .timeout(timeout)
             .connect_timeout(connect_timeout)
@@ -58,7 +79,14 @@ pub(super) fn make_client_builder(
                 builder = builder.http1_only();
             }
             HttpVersion::Http2 => {
-                // ALPN negotiation; do NOT use http2_prior_knowledge() for HTTPS.
+                if host_key.scheme.eq_ignore_ascii_case("http") {
+                    // Cleartext target, deployed mode: prior-knowledge h2c
+                    // — see this function's doc comment.
+                    builder = builder.http2_prior_knowledge();
+                }
+                // https:// — ALPN negotiation; do NOT use
+                // http2_prior_knowledge() here, it would skip ALPN
+                // entirely and break a target that only negotiates h1.
             }
         }
         builder.build().expect("Failed to build HTTP client")

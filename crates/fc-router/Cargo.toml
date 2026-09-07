@@ -66,3 +66,11 @@ bytes = { workspace = true }
 # + reading the response body) — same version fc-platform's own API test
 # support module already uses.
 http-body-util = "0.1"
+# Item 3's mediation-protocol tests need raw servers wiremock can't give us:
+# an h2c (HTTP/2 cleartext, prior-knowledge) server, and a server that ONLY
+# understands HTTP/1.1 so an h2c preface sent at it genuinely fails rather
+# than silently downgrading. Pinned to the exact hyper/hyper-util versions
+# axum 0.8 already resolves in this workspace (Cargo.lock) so there's no
+# second hyper version in the dependency graph.
+hyper = { version = "=1.8.1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "=0.1.20", features = ["tokio", "server", "server-auto"] }

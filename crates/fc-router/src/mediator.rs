@@ -171,8 +171,17 @@ impl HttpMediator {
         // Warm up the global rustls / native-certs init before any per-host
         // slot is built. The first reqwest::Client::build() in a process
         // pays a few hundred ms for native-certs loading; we don't want
-        // that tax landing on the first mediation call.
-        drop(builder());
+        // that tax landing on the first mediation call. Warms with an
+        // https:// placeholder key — native-certs loading is TLS-specific,
+        // so that's the scheme whose builder path actually exercises it
+        // (item 3: `make_client_builder` is now scheme-aware, but this
+        // warm-up build is never registered in any real host pool).
+        let warmup_key = HostKey {
+            scheme: "https".to_string(),
+            host: "warmup.invalid".to_string(),
+            port: 443,
+        };
+        drop(builder(&warmup_key));
         let host_pools = crate::http_pool::HostPoolRegistry::new(
             config.host_pool_sizing.clone(),
             builder,
@@ -326,6 +335,14 @@ impl HttpMediator {
 
         match request.send().await {
             Ok(response) => {
+                // Item 3: record the protocol this specific request actually
+                // negotiated — `{:?}` on `http::Version` gives "HTTP/2.0",
+                // "HTTP/1.1", etc., same label shape as the bench rig's own
+                // `proto_counts`.
+                crate::router_metrics::record_mediation_http_version(&format!(
+                    "{:?}",
+                    response.version()
+                ));
                 response::classify(response, message, &self.inner.warning_service).await
             }
             Err(e) => {
