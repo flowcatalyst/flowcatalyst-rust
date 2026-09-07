@@ -345,6 +345,27 @@ impl QueueManager {
     /// **Why `self: &Arc<Self>`**: it calls `spawn_consumer_poll_task`, which
     /// needs an `Arc` clone to hand to the spawned task.
     ///
+    /// **`consumer_id` is resolved as an identifier first (item 2, router
+    /// bench rig, 2026-09-07).** The stall watchdog
+    /// (`LifecycleManager`/`HealthService::get_stalled_consumers`) and the
+    /// ack/nack resolution path (G10) both key by `Consumer::identifier()`
+    /// — the broker-native identity (`consumers_by_id`) — which can differ
+    /// from the config queue name `consumers`/`queue_configs` use as their
+    /// key (NATS: `<stream>/<consumer>` vs an operator-chosen queue name;
+    /// Postgres/SQS happen to use the queue name as their `identifier()`
+    /// too, which is exactly why this mismatch only ever showed up against
+    /// NATS on the bench rig). Passing an identifier-keyed id straight into
+    /// a name-keyed `self.consumers.get(consumer_id)` silently missed for
+    /// NATS ("Consumer not found for restart") — the watchdog detected a
+    /// real (or, pre-Item-1, false-positive) stall and then could never
+    /// actually restart it. This resolves `old` through `consumers_by_id`
+    /// first, falling back to the name-keyed `consumers` map for a caller
+    /// that already knows the registry key (e.g. an operator-driven restart
+    /// by config name, or existing tests), then finds the matching registry
+    /// key by identity so `consumers`/`queue_configs` — which only ever
+    /// know the name — get updated correctly regardless of which key space
+    /// the caller passed in.
+    ///
     /// **No factory / no stored config → no-op, not a stop.** Building a
     /// replacement requires both a [`super::ConsumerFactory`] and a `QueueConfig`
     /// for this id. If either is missing, this deliberately does **not**
@@ -376,21 +397,50 @@ impl QueueManager {
         // can wait on is an in-flight reload.
         let _reload_guard = self.pool_configs.read().await;
 
-        // Brief read lock — clone the Arc and drop the guard before any
-        // `.await` (same discipline as `sync_queue_consumers`).
+        // Item 2: resolve by identifier first — this is the key space the
+        // stall watchdog and G10's ack/nack resolution both use — falling
+        // back to a direct name-keyed lookup for a caller that already
+        // knows the registry key. Brief read locks — clone the Arc and
+        // drop the guards before any `.await` (same discipline as
+        // `sync_queue_consumers`).
         let old = {
-            let guard = self.consumers.read().await;
-            guard.get(consumer_id).cloned()
+            let by_id = self.consumers_by_id.read().await;
+            if let Some(c) = by_id.get(consumer_id).cloned() {
+                Some(c)
+            } else {
+                drop(by_id);
+                self.consumers.read().await.get(consumer_id).cloned()
+            }
         };
         let Some(old) = old else {
             warn!(consumer_id = %consumer_id, "Consumer not found for restart");
             return false;
         };
 
+        // The registry key `self.consumers`/`self.queue_configs` actually
+        // use for this consumer may not be `consumer_id` itself (see
+        // above) — resolve it by identity (`Arc::ptr_eq`) rather than
+        // assuming `consumer_id` doubles as that key.
+        let registry_key = {
+            let guard = self.consumers.read().await;
+            guard
+                .iter()
+                .find(|(_, v)| Arc::ptr_eq(v, &old))
+                .map(|(k, _)| k.clone())
+        };
+        let Some(registry_key) = registry_key else {
+            warn!(
+                consumer_id = %consumer_id,
+                identifier = %old.identifier(),
+                "Consumer resolved by identifier but missing from the name-keyed registry — cannot restart"
+            );
+            return false;
+        };
+
         // Brief read lock — clone the stored QueueConfig, if any.
         let queue_config = {
             let guard = self.queue_configs.read().await;
-            guard.get(consumer_id).cloned()
+            guard.get(&registry_key).cloned()
         };
 
         let (factory, queue_config) = match (self.consumer_factory.as_ref(), queue_config) {
@@ -446,13 +496,13 @@ impl QueueManager {
                 // than relying on the new insert to overwrite it.
                 {
                     let mut guard = self.consumers.write().await;
-                    guard.insert(consumer_id.to_string(), new_consumer.clone());
+                    guard.insert(registry_key.clone(), new_consumer.clone());
                     let mut by_id = self.consumers_by_id.write().await;
                     by_id.remove(&old_identifier);
                     by_id.insert(new_consumer.identifier().to_string(), new_consumer.clone());
                 }
                 self.spawn_consumer_poll_task(new_consumer);
-                info!(consumer_id = %consumer_id, "Consumer restarted with a fresh instance");
+                info!(consumer_id = %consumer_id, registry_key = %registry_key, "Consumer restarted with a fresh instance");
                 true
             }
             Err(e) => {
@@ -475,7 +525,7 @@ impl QueueManager {
                 // it must not stay resolvable) but leave `queue_configs`
                 // alone — see the self-healing note above.
                 let mut guard = self.consumers.write().await;
-                guard.remove(consumer_id);
+                guard.remove(&registry_key);
                 self.consumers_by_id.write().await.remove(&old_identifier);
                 false
             }

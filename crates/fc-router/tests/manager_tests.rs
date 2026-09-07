@@ -1324,6 +1324,113 @@ async fn restart_consumer_replaces_consumer_and_respawns_poll_task() {
     );
 }
 
+/// `ConsumerFactory` that mints consumers whose `identifier()` is
+/// `"{config.name}/router"` — deliberately different from the config queue
+/// name `consumers`/`queue_configs` are keyed by, mirroring NATS's
+/// `<stream>/<consumer>` broker-native identity vs. an operator-chosen
+/// queue name (item 2, router bench rig, 2026-09-07 — the exact shape of
+/// the G10-class mismatch found in `restart_consumer`).
+struct IdentifierDiffersFromNameFactory {
+    created: AtomicU32,
+    handles: parking_lot::Mutex<Vec<Arc<MockQueueConsumer>>>,
+}
+
+impl IdentifierDiffersFromNameFactory {
+    fn new() -> Self {
+        Self {
+            created: AtomicU32::new(0),
+            handles: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn created_count(&self) -> u32 {
+        self.created.load(Ordering::SeqCst)
+    }
+
+    fn handle(&self, index: usize) -> Arc<MockQueueConsumer> {
+        self.handles.lock()[index].clone()
+    }
+}
+
+#[async_trait]
+impl ConsumerFactory for IdentifierDiffersFromNameFactory {
+    async fn create_consumer(
+        &self,
+        config: &fc_common::QueueConfig,
+    ) -> fc_router::Result<Arc<dyn QueueConsumer + Send + Sync>> {
+        self.created.fetch_add(1, Ordering::SeqCst);
+        let mock = Arc::new(MockQueueConsumer::new(&format!("{}/router", config.name)));
+        self.handles.lock().push(mock.clone());
+        Ok(mock as Arc<dyn QueueConsumer + Send + Sync>)
+    }
+}
+
+/// Item 2 (router bench rig, 2026-09-07): the stall watchdog
+/// (`HealthService::get_stalled_consumers`, and G10's ack/nack resolution)
+/// keys by `Consumer::identifier()`, not the config queue name
+/// `consumers`/`queue_configs` use as their own key. Reproduces the exact
+/// bench-rig failure — "Consumer not found for restart" — by calling
+/// `restart_consumer` with the consumer's *identifier* ("BENCH1/router")
+/// rather than its config name ("BENCH1"), and pins that the restart still
+/// succeeds and lands the replacement back under the SAME config-name key.
+///
+/// Mutant check (confirmed by hand while implementing the fix): reverting
+/// `restart_consumer` to look the id up only in `self.consumers` (the
+/// pre-fix behaviour) makes this test fail at the first assertion — the
+/// call returns `false` and logs "Consumer not found for restart", exactly
+/// the bench-rig symptom.
+#[tokio::test]
+async fn restart_consumer_resolves_by_identifier_when_it_differs_from_the_registry_key() {
+    let mediator = Arc::new(MockMediator::new());
+    let factory = Arc::new(IdentifierDiffersFromNameFactory::new());
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator)
+            .consumer_factory(factory.clone())
+            .build(),
+    );
+
+    let config = RouterConfig {
+        processing_pools: vec![],
+        queues: vec![queue_config("BENCH1")],
+    };
+    manager.reload_config(config).await.unwrap();
+
+    wait_until(|| factory.created_count() >= 1).await;
+    let first = factory.handle(0);
+    assert_eq!(first.identifier(), "BENCH1/router");
+    wait_until(|| first.poll_count() > 0).await;
+
+    // The watchdog / health service resolve by identifier, not by the
+    // config queue name — pass exactly that here.
+    let restarted = manager.restart_consumer("BENCH1/router").await;
+    assert!(
+        restarted,
+        "restart_consumer must resolve a consumer by its identifier() even \
+         when that differs from the config queue name it's registered \
+         under in `consumers`"
+    );
+
+    assert!(first.was_stopped(), "old consumer should have been stopped");
+    assert_eq!(
+        factory.created_count(),
+        2,
+        "factory should have created a replacement consumer"
+    );
+    // The replacement must land back under the ORIGINAL config-name key
+    // ("BENCH1"), not under the identifier that was passed in — otherwise
+    // config-driven reconcile/removal would no longer find it.
+    assert_eq!(manager.consumer_ids().await, vec!["BENCH1".to_string()]);
+    assert!(manager.is_consumer_healthy("BENCH1").await);
+
+    let second = factory.handle(1);
+    assert_eq!(second.identifier(), "BENCH1/router");
+    wait_until(|| second.poll_count() > 0).await;
+    assert!(
+        second.poll_count() > 0,
+        "replacement consumer's poll task should be running within ~2s"
+    );
+}
+
 /// Without a `ConsumerFactory`, `restart_consumer` cannot build a
 /// replacement, so it must not stop the existing consumer — that would
 /// strand it with nothing polling in its place (the original bug). It
