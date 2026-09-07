@@ -22,6 +22,7 @@ futures = { workspace = true, optional = true }
 dashmap = { workspace = true, optional = true }
 async-nats = { workspace = true, optional = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 [features]
@@ -30,7 +31,7 @@ sqlite = ["dep:sqlx"]
 postgres = ["dep:sqlx"]
 sqs = ["dep:aws-sdk-sqs", "dep:aws-config", "dep:parking_lot"]
 activemq = ["dep:lapin", "dep:futures", "dep:dashmap"]
-nats = ["dep:async-nats", "dep:dashmap", "dep:futures"]
+nats = ["dep:async-nats", "dep:dashmap", "dep:futures", "dep:tokio-util"]
 
 [dev-dependencies]
 tokio-test = { workspace = true }

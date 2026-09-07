@@ -8,22 +8,19 @@
 //! - Automatic stream and consumer provisioning
 //! - Queue metrics from JetStream consumer info
 
-use async_nats::jetstream::{
-    self,
-    consumer::{pull::Batch as PullBatch, PullConsumer},
-    stream, AckKind,
-};
+use async_nats::jetstream::{self, consumer::PullConsumer, stream, AckKind};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{QueueConsumer, QueueError, QueueMetrics, Result};
-use fc_common::{Message, QueuedMessage};
+use fc_common::QueuedMessage;
 
 /// Configuration for the NATS JetStream consumer
 #[derive(Debug, Clone)]
@@ -36,9 +33,21 @@ pub struct NatsConfig {
     pub consumer_name: String,
     /// Subject filter for the consumer (e.g., "flowcatalyst.>")
     pub subject: String,
-    /// Max messages to request per poll batch
+    /// Max messages to request per poll batch. Also sizes the client-side
+    /// bounded channel the standing subscription feeds (item 2, owner
+    /// ruling 2026-09-07) — "one batch client-side" of flow control.
     pub max_messages_per_poll: u32,
-    /// Timeout in milliseconds for each poll/fetch request
+    /// Timeout in milliseconds for each poll/fetch request.
+    ///
+    /// **Unused since item 2** (owner ruling 2026-09-07, applied to Java
+    /// and Go already): the no-wait/waiting `fetch()` pair this used to
+    /// bound is gone, replaced by one continuous pull subscription per
+    /// queue (`consumer.stream().messages()`) feeding a bounded channel;
+    /// `poll()` now takes the first buffered message with an untimed,
+    /// stop-cancellable await, so there is no per-poll timeout to apply.
+    /// Still parsed from the URI (`from_uri` below) for wire compatibility
+    /// with existing queue configs that set it — an operator's config
+    /// naming a value that's now a no-op should not fail to parse.
     pub poll_timeout_ms: u64,
     /// Ack wait time in seconds before redelivery
     pub ack_wait_secs: u64,
@@ -168,7 +177,21 @@ impl Default for NatsConfig {
     }
 }
 
-/// NATS JetStream pull-based queue consumer
+/// NATS JetStream pull-based queue consumer.
+///
+/// Item 2 (owner ruling 2026-09-07, applied to Java and Go already): backed
+/// by ONE continuous pull subscription per queue
+/// (`consumer.stream().messages()`, `async-nats`'s server-driven
+/// `Consumer<Config>` stream, not the old per-`poll()` `fetch()`/`batch()`
+/// pair) rather than polling the broker on demand. A background task
+/// (spawned in [`Self::new`], stopped via `stream_cancel`) drains that
+/// subscription and pushes decoded [`QueuedMessage`]s into a bounded
+/// channel of capacity `max_messages_per_poll` — "one batch client-side" of
+/// flow control: the channel fills only as fast as `poll()` drains it, and
+/// `async-nats`'s stream (via its own internal batch/heartbeat protocol)
+/// only pulls more from the server as the channel has room, so a slow
+/// consumer naturally throttles the pull rate instead of the client
+/// buffering an unbounded backlog.
 pub struct NatsQueueConsumer {
     config: NatsConfig,
     /// Cached queue identifier in Java format: `streamName/consumerName`
@@ -178,6 +201,19 @@ pub struct NatsQueueConsumer {
     running: AtomicBool,
     /// Maps receipt handle (`streamName:streamSequence`) -> JetStream message for ack/nack
     pending_messages: Arc<DashMap<String, async_nats::jetstream::Message>>,
+    /// Receiving end of the standing subscription's bounded channel. A
+    /// `Mutex` rather than requiring `&mut self` on `poll()` — the trait
+    /// takes `&self` (shared across `Arc<dyn QueueConsumer>`), and in
+    /// production exactly one task ever calls `poll()` on a given consumer
+    /// (`spawn_consumer_poll_task`'s single loop per consumer), so this
+    /// lock is never contended in practice; it exists for soundness, not
+    /// throughput.
+    receiver: tokio::sync::Mutex<mpsc::Receiver<QueuedMessage>>,
+    /// Cancels the background subscription-draining task — see
+    /// [`Self::stop`]. Cancelling it also unblocks a `poll()` parked on
+    /// `receiver.recv()`: the background task's `tx` (channel sender) is
+    /// owned by that task and drops with it, which closes the channel.
+    stream_cancel: CancellationToken,
     /// Total messages polled from queue
     total_polled: AtomicU64,
     /// Total messages successfully ACKed
@@ -286,6 +322,131 @@ impl NatsQueueConsumer {
         );
 
         let queue_id = format!("{}/{}", config.stream_name, config.consumer_name);
+        let pending_messages: Arc<DashMap<String, async_nats::jetstream::Message>> =
+            Arc::new(DashMap::new());
+
+        // Item 2: open the standing subscription and spawn the task that
+        // drains it into `rx`'s bounded channel. `max_messages_per_batch`
+        // matches the channel capacity — the client asks the server for at
+        // most one channel's worth of messages at a time; `heartbeat`
+        // matches `.messages()`'s own convenience-method default (15s) so
+        // an idle stream doesn't silently look dead.
+        let batch_size = (config.max_messages_per_poll.max(1)) as usize;
+        let (tx, rx) = mpsc::channel::<QueuedMessage>(batch_size);
+        let stream_cancel = CancellationToken::new();
+
+        let mut jetstream_stream = consumer
+            .stream()
+            .max_messages_per_batch(batch_size)
+            .heartbeat(Duration::from_secs(15))
+            .messages()
+            .await
+            .map_err(|e| {
+                QueueError::Nats(format!(
+                    "Failed to open standing pull subscription for consumer '{}': {}",
+                    config.consumer_name, e
+                ))
+            })?;
+
+        {
+            let stream_name = config.stream_name.clone();
+            let consumer_name = config.consumer_name.clone();
+            let queue_id = queue_id.clone();
+            let pending_messages = pending_messages.clone();
+            let cancel = stream_cancel.clone();
+
+            tokio::spawn(async move {
+                loop {
+                    let next = tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        n = jetstream_stream.next() => n,
+                    };
+
+                    let js_msg = match next {
+                        None => {
+                            debug!(
+                                consumer = %consumer_name,
+                                "NATS JetStream standing subscription ended"
+                            );
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            // A transient protocol/connection error on one
+                            // pull request — the subscription keeps running
+                            // (async-nats re-issues pull requests
+                            // internally); log and keep draining.
+                            warn!(
+                                consumer = %consumer_name,
+                                error = %e,
+                                "Error on NATS JetStream standing subscription"
+                            );
+                            continue;
+                        }
+                        Some(Ok(msg)) => msg,
+                    };
+
+                    let receipt_handle =
+                        match NatsQueueConsumer::receipt_handle_from_message(&js_msg, &stream_name)
+                        {
+                            Some(h) => h,
+                            None => {
+                                warn!(
+                                    consumer = %consumer_name,
+                                    "Could not extract stream sequence from NATS message, skipping"
+                                );
+                                let _ = js_msg.ack_with(AckKind::Term).await;
+                                continue;
+                            }
+                        };
+
+                    let message: fc_common::Message = match serde_json::from_slice(&js_msg.payload)
+                    {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!(
+                                consumer = %consumer_name,
+                                error = %e,
+                                "Failed to parse NATS message payload, terminating message"
+                            );
+                            let _ = js_msg.ack_with(AckKind::Term).await;
+                            continue;
+                        }
+                    };
+
+                    let broker_message_id = js_msg.info().ok().map(|info| {
+                        NatsQueueConsumer::broker_message_id_from_sequence(
+                            info.stream_sequence,
+                            info.consumer_sequence,
+                        )
+                    });
+
+                    pending_messages.insert(receipt_handle.clone(), js_msg);
+
+                    let queued = QueuedMessage {
+                        message,
+                        receipt_handle,
+                        broker_message_id,
+                        queue_identifier: queue_id.clone(),
+                    };
+
+                    // Race the send against cancellation too — a `stop()`
+                    // that lands while the channel is momentarily full
+                    // (poll() not draining, e.g. mid-shutdown) must not
+                    // block this task's exit.
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        res = tx.send(queued) => {
+                            if res.is_err() {
+                                // Receiver dropped (consumer being torn
+                                // down some other way) — nothing left to
+                                // feed.
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
 
         Ok(Self {
             config,
@@ -293,7 +454,9 @@ impl NatsQueueConsumer {
             client,
             consumer: Arc::new(RwLock::new(consumer)),
             running: AtomicBool::new(true),
-            pending_messages: Arc::new(DashMap::new()),
+            pending_messages,
+            receiver: tokio::sync::Mutex::new(rx),
+            stream_cancel,
             total_polled: AtomicU64::new(0),
             total_acked: AtomicU64::new(0),
             total_nacked: AtomicU64::new(0),
@@ -323,85 +486,6 @@ impl NatsQueueConsumer {
     fn broker_message_id_from_sequence(stream_sequence: u64, _consumer_sequence: u64) -> String {
         stream_sequence.to_string()
     }
-
-    /// Drain a JetStream pull `Batch` (produced by either `.fetch()`'s
-    /// no-wait request or `.batch()`'s waiting request — both yield the
-    /// same [`PullBatch`] stream type) into [`QueuedMessage`]s.
-    ///
-    /// A message whose stream metadata can't be read, or whose payload
-    /// fails to parse, is `Term`ed (never redelivered) and skipped rather
-    /// than aborting the rest of the batch — malformed payloads are a
-    /// broker-backend concern (`docs/spec/router.md` §2.3/§8.2), not a
-    /// reason to drop every other message this poll picked up.
-    async fn drain_batch(&self, mut batch: PullBatch) -> Vec<QueuedMessage> {
-        let mut messages = Vec::new();
-
-        while let Some(msg_result) = batch.next().await {
-            match msg_result {
-                Ok(js_msg) => {
-                    // Extract receipt handle: streamName:streamSequence
-                    let receipt_handle = match Self::receipt_handle_from_message(
-                        &js_msg,
-                        &self.config.stream_name,
-                    ) {
-                        Some(handle) => handle,
-                        None => {
-                            warn!(
-                                consumer = %self.config.consumer_name,
-                                "Could not extract stream sequence from NATS message, skipping"
-                            );
-                            // Term the message since we can't track it
-                            let _ = js_msg.ack_with(AckKind::Term).await;
-                            continue;
-                        }
-                    };
-
-                    // Parse the message body
-                    match serde_json::from_slice::<Message>(&js_msg.payload) {
-                        Ok(message) => {
-                            // Dedup id must be the stream sequence ONLY (R-19) — see
-                            // broker_message_id_from_sequence.
-                            let broker_message_id = js_msg.info().ok().map(|info| {
-                                Self::broker_message_id_from_sequence(
-                                    info.stream_sequence,
-                                    info.consumer_sequence,
-                                )
-                            });
-
-                            // Store the JetStream message for later ack/nack
-                            self.pending_messages.insert(receipt_handle.clone(), js_msg);
-
-                            messages.push(QueuedMessage {
-                                message,
-                                receipt_handle,
-                                broker_message_id,
-                                queue_identifier: self.queue_id.clone(),
-                            });
-                        }
-                        Err(e) => {
-                            error!(
-                                consumer = %self.config.consumer_name,
-                                error = %e,
-                                "Failed to parse NATS message payload, terminating message"
-                            );
-                            // Term the malformed message to prevent infinite redelivery
-                            let _ = js_msg.ack_with(AckKind::Term).await;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        consumer = %self.config.consumer_name,
-                        error = %e,
-                        "Error receiving NATS message"
-                    );
-                    break;
-                }
-            }
-        }
-
-        messages
-    }
 }
 
 #[async_trait]
@@ -410,56 +494,51 @@ impl QueueConsumer for NatsQueueConsumer {
         &self.queue_id
     }
 
+    /// Item 2: takes the first message off the standing subscription's
+    /// bounded channel with an **untimed**, cancellation-aware await (a
+    /// `stop()` closes the channel — see `stream_cancel`'s doc comment —
+    /// so a parked `recv()` resolves to `None` promptly rather than
+    /// blocking forever), then drains whatever else is *immediately*
+    /// available (`try_recv`, non-blocking) up to `max_messages`. This
+    /// replaces the old no-wait-then-waiting `fetch()` pair one-for-one at
+    /// the `poll()` call boundary: still "return promptly if something's
+    /// there, otherwise wait for the next thing," just backed by a
+    /// continuously-fed local buffer instead of two separate broker round
+    /// trips per call. `poll_timeout_ms` is no longer consulted — see its
+    /// field doc.
     async fn poll(&self, max_messages: u32) -> Result<Vec<QueuedMessage>> {
         if !self.running.load(Ordering::SeqCst) {
             return Err(QueueError::Stopped);
         }
 
-        let consumer = self.consumer.read().await;
-        let batch_size = max_messages.min(self.config.max_messages_per_poll) as usize;
+        let limit = max_messages.min(self.config.max_messages_per_poll).max(1) as usize;
+        let mut rx = self.receiver.lock().await;
 
-        // G13: Go-shaped fetch semantics on one long-lived pull consumer
-        // handle (`self.consumer`, built once in `new()` and reused here).
-        // `.fetch()` always issues a `no_wait` pull request — the server
-        // returns immediately with whatever is sitting on the stream right
-        // now, up to `batch_size`, even if that's zero. We try that first
-        // so a poll never blocks waiting for a full batch when messages are
-        // already available. Only when that comes back empty do we fall
-        // through to `.batch()`, a genuine *waiting* pull (`no_wait: false`)
-        // bounded by `poll-timeout` — this is what keeps an idle queue from
-        // being polled in a hot loop while still returning the moment work
-        // shows up.
-        let no_wait_batch = consumer
-            .fetch()
-            .max_messages(batch_size)
-            .messages()
-            .await
-            .map_err(|e| QueueError::Nats(format!("Failed to fetch messages (no-wait): {}", e)))?;
-        let mut messages = self.drain_batch(no_wait_batch).await;
+        let first = match rx.recv().await {
+            Some(m) => m,
+            // Channel closed: either `stop()` cancelled the background
+            // task (which then dropped its `tx`), or the subscription
+            // itself ended. Either way this consumer is done.
+            None => return Err(QueueError::Stopped),
+        };
 
-        if messages.is_empty() {
-            let timeout = Duration::from_millis(self.config.poll_timeout_ms);
-            let waiting_batch = consumer
-                .batch()
-                .max_messages(batch_size)
-                .expires(timeout)
-                .messages()
-                .await
-                .map_err(|e| {
-                    QueueError::Nats(format!("Failed to fetch messages (waiting): {}", e))
-                })?;
-            messages = self.drain_batch(waiting_batch).await;
+        let mut messages = Vec::with_capacity(limit);
+        messages.push(first);
+        while messages.len() < limit {
+            match rx.try_recv() {
+                Ok(m) => messages.push(m),
+                Err(_) => break,
+            }
         }
+        drop(rx);
 
-        if !messages.is_empty() {
-            self.total_polled
-                .fetch_add(messages.len() as u64, Ordering::Relaxed);
-            debug!(
-                consumer = %self.config.consumer_name,
-                count = messages.len(),
-                "Polled messages from NATS JetStream"
-            );
-        }
+        self.total_polled
+            .fetch_add(messages.len() as u64, Ordering::Relaxed);
+        debug!(
+            consumer = %self.config.consumer_name,
+            count = messages.len(),
+            "Polled messages from NATS JetStream (standing subscription)"
+        );
 
         Ok(messages)
     }
@@ -593,8 +672,15 @@ impl QueueConsumer for NatsQueueConsumer {
         )
     }
 
+    /// Item 2: cancelling `stream_cancel` stops the background
+    /// subscription-draining task, which drops its channel `Sender` as it
+    /// exits — that closes the channel, so any `poll()` currently parked
+    /// on `receiver.recv()` (an untimed await) resolves to `None` and
+    /// returns `Err(QueueError::Stopped)` promptly rather than staying
+    /// blocked.
     async fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
+        self.stream_cancel.cancel();
 
         // Clear any pending messages that haven't been acked/nacked.
         // They will be redelivered by the server after ack_wait expires.
