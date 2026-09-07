@@ -14,7 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fc_common::{
-    MediationOutcome, MediationType, Message, PoolConfig, QueuedMessage, RouterConfig,
+    BatchMessage, MediationOutcome, MediationType, Message, MessageCallback, PoolConfig,
+    QueuedMessage, RouterConfig, WarningCategory,
 };
 use fc_queue::{QueueConsumer, QueueError};
 use fc_router::{ConsumerFactory, HttpMediatorConfig, Mediator, QueueManager};
@@ -291,6 +292,114 @@ async fn test_route_batch_multiple_messages() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     assert_eq!(mediator.call_count(), 5);
+}
+
+/// No-op `MessageCallback` for directly `submit()`-ing filler messages to
+/// saturate a pool without going through a real consumer/mediation cycle.
+struct NoOpCallback;
+
+#[async_trait]
+impl MessageCallback for NoOpCallback {
+    async fn ack(&self) {}
+    async fn nack(&self, _delay_seconds: Option<u32>) {}
+}
+
+fn filler_batch_message(id: &str, pool_code: &str) -> BatchMessage {
+    BatchMessage {
+        message: create_test_message(id, pool_code),
+        receipt_handle: format!("filler-rh-{id}"),
+        broker_message_id: Some(format!("filler-bh-{id}")),
+        queue_identifier: "filler-queue".to_string(),
+        batch_id: None,
+        callback: Box::new(NoOpCallback),
+    }
+}
+
+/// Item 3 (router bench rig, 2026-09-07): `route_batch` must report the
+/// "pool at capacity" `WarningCategory::QueueHealth` warning once per
+/// full-episode, not once per deferred batch. Saturates a pool directly via
+/// `pool.submit()` (back-to-back with no other `.await` in between, so on
+/// this current-thread test runtime nothing spawned by `submit()` gets to
+/// run before every filler message is admitted — same technique as the
+/// G12 capacity-gate tests) to exactly its capacity, then routes TWO
+/// separate over-capacity batches at it and asserts only the first records
+/// a warning.
+///
+/// Mutant check: reverting `route_batch` to call
+/// `self.warning_service.add_warning(...)` unconditionally (the pre-fix
+/// behaviour, not gated by `pool.note_capacity_full()`) fails the second
+/// assertion — confirmed by hand while implementing the fix (883
+/// occurrences in one saturated 8-queue bench run were exactly this
+/// unconditional call firing on every deferred batch).
+#[tokio::test]
+async fn route_batch_reports_pool_at_capacity_warning_once_per_transition() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+
+    let config = RouterConfig {
+        processing_pools: vec![PoolConfig {
+            code: "SATURATED".to_string(),
+            concurrency: 1, // capacity = max(1 * 20, 50) = 50
+            rate_limit_per_minute: None,
+        }],
+        queues: vec![],
+    };
+    manager.apply_config(config).await.unwrap();
+
+    let pool = manager
+        .get_pool("SATURATED")
+        .expect("pool must exist after apply_config");
+    for i in 0..50 {
+        pool.submit(filler_batch_message(&format!("filler-{i}"), "SATURATED"))
+            .await
+            .expect("submit must succeed while under capacity");
+    }
+    assert_eq!(
+        pool.available_capacity(),
+        0,
+        "pool must read as exactly saturated immediately after filling it"
+    );
+
+    let consumer = Arc::new(MockQueueConsumer::with_messages(
+        "over-queue",
+        vec![create_queued_message("over-1", "SATURATED", "over-queue")],
+    ));
+    let batch = consumer.poll(10).await.unwrap();
+    manager
+        .route_batch(batch, consumer.clone())
+        .await
+        .unwrap();
+
+    let warnings_after_first = manager
+        .warning_service()
+        .get_warnings_by_category(WarningCategory::QueueHealth)
+        .len();
+    assert_eq!(
+        warnings_after_first, 1,
+        "the first batch that finds the pool full must record exactly one warning"
+    );
+
+    let consumer2 = Arc::new(MockQueueConsumer::with_messages(
+        "over-queue-2",
+        vec![create_queued_message("over-2", "SATURATED", "over-queue-2")],
+    ));
+    let batch2 = consumer2.poll(10).await.unwrap();
+    manager
+        .route_batch(batch2, consumer2.clone())
+        .await
+        .unwrap();
+
+    let warnings_after_second = manager
+        .warning_service()
+        .get_warnings_by_category(WarningCategory::QueueHealth)
+        .len();
+    assert_eq!(
+        warnings_after_second, 1,
+        "a second batch finding the SAME pool still full must not record a \
+         second warning — only the transition into full is reported"
+    );
 }
 
 #[tokio::test]

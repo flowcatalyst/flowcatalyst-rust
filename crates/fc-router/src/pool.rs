@@ -710,6 +710,20 @@ pub struct ProcessPool {
     /// `wait_drained()` awaits `tracker.wait()`; `is_fully_drained()` is a
     /// non-blocking snapshot of the same state via `tracker.is_empty()`.
     tracker: TaskTracker,
+
+    /// Item 3 (router bench rig, 2026-09-07): true from the moment a batch
+    /// found this pool without room for it until a later batch finds room
+    /// again. `QueueManager::route_batch` gates its "pool at capacity"
+    /// WARN log + `WarningService` entry on the `false -> true` transition
+    /// this flag captures (via [`Self::note_capacity_full`]) and its
+    /// "capacity returned" INFO log on the reverse transition
+    /// ([`Self::note_capacity_recovered`]), instead of logging/warning on
+    /// every single deferred batch — under sustained saturation (8 NATS
+    /// queues sharing one pool) that was 883 WARN lines plus 883
+    /// `WarningService` entries in one bench run, one per batch that found
+    /// the pool still full rather than one per time it actually became
+    /// full.
+    capacity_full_warned: AtomicBool,
 }
 
 impl ProcessPool {
@@ -762,6 +776,7 @@ impl ProcessPool {
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
             flush_registry: Arc::new(GroupFlushRegistry::new()),
             tracker: TaskTracker::new(),
+            capacity_full_warned: AtomicBool::new(false),
         }
     }
 
@@ -1508,6 +1523,24 @@ impl ProcessPool {
         let capacity = self.capacity() as usize;
         let used = self.queue_size.load(Ordering::Relaxed) as usize;
         capacity.saturating_sub(used)
+    }
+
+    /// Item 3: true only the first time this is called since the pool last
+    /// had room for a whole batch — every subsequent call while it stays
+    /// full returns false. Callers gate their "pool at capacity" WARN log
+    /// and `WarningService` entry on the return value so a sustained
+    /// saturation episode reports once, not once per deferred batch.
+    pub fn note_capacity_full(&self) -> bool {
+        !self.capacity_full_warned.swap(true, Ordering::SeqCst)
+    }
+
+    /// Item 3: true only when this pool was previously reported full (via
+    /// `note_capacity_full`) and a batch has now found room again — the
+    /// resume-log transition. Safe to call unconditionally whenever a
+    /// batch finds the pool NOT full; it is a no-op (returns false) if the
+    /// pool was never reported full to begin with.
+    pub fn note_capacity_recovered(&self) -> bool {
+        self.capacity_full_warned.swap(false, Ordering::SeqCst)
     }
 
     /// Check if rate limited

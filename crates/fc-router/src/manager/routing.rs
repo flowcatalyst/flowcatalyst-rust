@@ -432,22 +432,46 @@ impl QueueManager {
             // Check pool capacity for ALL messages in this pool
             let available = pool.available_capacity();
             if available < pool_messages.len() {
-                warn!(
-                    pool_code = %pool_code,
-                    available = available,
-                    requested = pool_messages.len(),
-                    "Pool at capacity, deferring all messages for this pool"
-                );
-                self.warning_service.add_warning(
-                    WarningCategory::QueueHealth,
-                    WarningSeverity::Warn,
-                    format!(
-                        "Pool [{}] queue full, deferring {} messages from batch",
-                        pool_code,
-                        pool_messages.len()
-                    ),
-                    "QueueManager".to_string(),
-                );
+                // Item 3 (router bench rig, 2026-09-07): WARN + a
+                // WarningService entry only on the transition into "this
+                // pool can't take a whole batch" (`note_capacity_full`
+                // does the check-and-set); every subsequent batch that
+                // finds it still full logs at debug instead. Under
+                // sustained saturation (8 NATS queues sharing one pool)
+                // the old unconditional warn!+add_warning fired once per
+                // deferred batch — 883 times in one bench run — which is
+                // exactly the kind of warning-volume flood
+                // `HealthService::get_health_report` uses to degrade
+                // status, so an expected, self-resolving backpressure
+                // condition was pushing the router toward Warning/Degraded
+                // on log noise alone. The actual defer (below) is
+                // unconditional either way — this only changes how loudly
+                // it's reported.
+                if pool.note_capacity_full() {
+                    warn!(
+                        pool_code = %pool_code,
+                        available = available,
+                        requested = pool_messages.len(),
+                        "Pool at capacity, deferring all messages for this pool"
+                    );
+                    self.warning_service.add_warning(
+                        WarningCategory::QueueHealth,
+                        WarningSeverity::Warn,
+                        format!(
+                            "Pool [{}] queue full, deferring {} messages from batch",
+                            pool_code,
+                            pool_messages.len()
+                        ),
+                        "QueueManager".to_string(),
+                    );
+                } else {
+                    debug!(
+                        pool_code = %pool_code,
+                        available = available,
+                        requested = pool_messages.len(),
+                        "Pool at capacity, deferring all messages for this pool"
+                    );
+                }
                 // Defer concurrently - capacity limits are not errors
                 let defer_futs: Vec<_> = pool_messages
                     .iter()
@@ -461,6 +485,8 @@ impl QueueManager {
                     .collect();
                 future::join_all(defer_futs).await;
                 continue;
+            } else if pool.note_capacity_recovered() {
+                info!(pool_code = %pool_code, "Pool capacity returned; resuming normal routing");
             }
 
             // Note: Rate limiting is now handled inside the pool worker (blocking wait)

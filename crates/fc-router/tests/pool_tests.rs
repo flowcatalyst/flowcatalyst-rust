@@ -358,6 +358,58 @@ async fn test_pool_capacity() {
     assert!(initial_capacity > 0);
 }
 
+/// Item 3 (router bench rig, 2026-09-07): `note_capacity_full` must return
+/// `true` only on the transition into "full" — every subsequent call while
+/// it stays full returns `false`, which is what lets
+/// `QueueManager::route_batch` gate its WARN log + `WarningService` entry
+/// to once per episode instead of once per deferred batch (883 occurrences
+/// in one saturated 8-queue bench run). `note_capacity_recovered` mirrors
+/// it for the reverse transition.
+///
+/// Mutant check: an implementation of `note_capacity_full` that always
+/// returns `true` (i.e. never actually gates anything) would fail the
+/// second/third assertions here — confirmed by hand while implementing
+/// the fix.
+#[tokio::test]
+async fn note_capacity_full_fires_once_per_transition() {
+    let config = PoolConfig {
+        code: "CAP_TRANSITION".to_string(),
+        concurrency: 1,
+        rate_limit_per_minute: None,
+    };
+    let mediator = Arc::new(MockMediator::new());
+    let pool = Arc::new(ProcessPool::new(config, mediator));
+
+    assert!(
+        pool.note_capacity_full(),
+        "the first call must report the transition into full"
+    );
+    assert!(
+        !pool.note_capacity_full(),
+        "a second call while still full must not report another transition"
+    );
+    assert!(
+        !pool.note_capacity_full(),
+        "a third call while still full must still not report a transition"
+    );
+
+    assert!(
+        pool.note_capacity_recovered(),
+        "recovering from full must report the transition back"
+    );
+    assert!(
+        !pool.note_capacity_recovered(),
+        "calling recovered again with nothing having gone full again is a no-op"
+    );
+
+    // A fresh full/recovered cycle must report again — this isn't a
+    // one-shot latch, it's a real transition flag.
+    assert!(
+        pool.note_capacity_full(),
+        "a fresh transition into full after recovering must report again"
+    );
+}
+
 #[tokio::test]
 async fn test_pool_stats() {
     let config = PoolConfig {
