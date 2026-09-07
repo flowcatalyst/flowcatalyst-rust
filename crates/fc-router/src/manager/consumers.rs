@@ -86,12 +86,23 @@ impl QueueManager {
         // `polling_consumer_ids` field doc for the full mechanism this
         // guards against (production mode's `initial_sync()` and
         // `QueueManager::start()` could each spawn one for the same
-        // queue). `DashSet::insert` returns `false` when the value was
-        // already present, so this is a single atomic check-and-set — no
-        // separate contains()-then-insert() race window. The no-op path
-        // still returns a `JoinHandle` (an already-finished trivial task)
-        // so every call site keeps working with the same return type.
-        if !self.polling_consumer_ids.insert(consumer.identifier().to_string()) {
+        // queue) and for why the map is generation-tagged rather than a
+        // bare set (ABA safety against `restart_consumer`'s deliberate
+        // preemption). `Entry::and_modify`/`or_insert` is a single atomic
+        // check-and-set on this key's shard — no separate
+        // contains()-then-insert() race window. The no-op path still
+        // returns a `JoinHandle` (an already-finished trivial task) so
+        // every call site keeps working with the same return type.
+        let generation = self
+            .next_poll_task_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        let mut already_running = false;
+        self.polling_consumer_ids
+            .entry(consumer.identifier().to_string())
+            .and_modify(|_| already_running = true)
+            .or_insert(generation);
+        if already_running {
             warn!(
                 consumer = %consumer.identifier(),
                 "Refusing to spawn a second poll task for this queue — one is already running"
@@ -271,8 +282,16 @@ impl QueueManager {
             // Mirror image of the guard at spawn time — release this id so
             // a legitimate later spawn (e.g. `restart_consumer`'s
             // replacement, after `old.stop()`) is not itself refused as a
-            // false-positive duplicate.
-            manager.polling_consumer_ids.remove(consumer.identifier());
+            // false-positive duplicate. Generation-checked (`remove_if`,
+            // not a bare `remove`): if `restart_consumer` already
+            // preempted this id (removed it and let a replacement spawn
+            // under a fresh generation) before this task noticed
+            // `Stopped` and got here, the current entry's generation
+            // no longer matches ours — leave the replacement's
+            // registration alone.
+            manager
+                .polling_consumer_ids
+                .remove_if(consumer.identifier(), |_, g| *g == generation);
         })
     }
 
@@ -397,6 +416,19 @@ impl QueueManager {
         // its next poll and exit on its own (see (b) in spawn_consumer_poll_task).
         old.stop().await;
         let old_identifier = old.identifier().to_string();
+
+        // Item 1: deliberate preemption of `spawn_consumer_poll_task`'s
+        // duplicate guard. `old.stop()` only flips a flag — the old poll
+        // task notices `Stopped` and exits (removing its own guard entry)
+        // on its *own* next loop iteration, which for some backends can
+        // be seconds away, not synchronously here. Without this explicit
+        // removal, spawning the replacement below could be refused as a
+        // false-positive "already running" duplicate of the very consumer
+        // this call just stopped. Safe against the old task's own delayed
+        // cleanup clobbering the replacement's registration: that cleanup
+        // is generation-checked (`remove_if` in `spawn_consumer_poll_task`)
+        // and the replacement always spawns under a fresh generation.
+        self.polling_consumer_ids.remove(&old_identifier);
 
         match factory.create_consumer(&queue_config).await {
             Ok(new_consumer) => {

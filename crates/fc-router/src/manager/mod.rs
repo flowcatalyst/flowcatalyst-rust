@@ -33,7 +33,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use fc_common::{PoolConfig, StallConfig};
 use fc_queue::QueueConsumer;
 
@@ -408,12 +408,32 @@ pub struct QueueManager {
     /// deliveries (5,006 sink hits for 5,000 seeded messages in the
     /// reproduction) within *milliseconds* of a message's very first
     /// claim — nothing to do with the 120s visibility window at all. This
-    /// set makes a second `spawn_consumer_poll_task` call for an id that
+    /// map makes a second `spawn_consumer_poll_task` call for an id that
     /// already has a live task a no-op (logged) instead of a second
     /// poller, regardless of which code path or which consumer instance
     /// triggers it — defence in depth alongside the direct fix in
     /// `main.rs`.
-    polling_consumer_ids: Arc<DashSet<String>>,
+    ///
+    /// Maps id -> the spawning generation that currently owns it, rather
+    /// than a bare `DashSet<String>`, to stay ABA-safe against
+    /// `restart_consumer`: that method deliberately preempts an id (its
+    /// replacement must be allowed to spawn even though the *old* task,
+    /// merely `stop()`-flagged, hasn't necessarily exited and
+    /// self-removed yet — `stop()` only flips a flag, the task notices on
+    /// its own next loop iteration, which for some backends can be
+    /// seconds away). Without the generation check, a bare set has a
+    /// real race: preempt id X for the replacement (remove + respawn) ->
+    /// the OLD task *finally* notices `Stopped` and removes id X on its
+    /// way out -> that removal now deletes the *replacement's* entry
+    /// instead of a stale one, silently un-guarding an id that is very
+    /// much still being polled. `remove_if` at exit only removes the
+    /// entry when its generation still matches the exiting task's own —
+    /// a later preemption (which always installs a fresh generation)
+    /// makes the original task's own cleanup a safe no-op.
+    polling_consumer_ids: Arc<DashMap<String, u64>>,
+    /// Monotonic counter handing out the generation each
+    /// `spawn_consumer_poll_task` call stamps into `polling_consumer_ids`.
+    next_poll_task_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
@@ -528,7 +548,8 @@ impl QueueManagerBuilder {
             strict_routing: AtomicBool::new(false),
             is_leader: AtomicBool::new(true),
             consumers_started: AtomicBool::new(false),
-            polling_consumer_ids: Arc::new(DashSet::new()),
+            polling_consumer_ids: Arc::new(DashMap::new()),
+            next_poll_task_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
