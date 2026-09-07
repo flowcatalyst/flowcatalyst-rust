@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::future;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use fc_queue::QueueConsumer;
 
@@ -36,6 +36,31 @@ impl QueueManager {
         drop(consumers); // Release the read lock
 
         for consumer in consumers_vec {
+            // Item 4 (router bench rig, 2026-09-07): in production/
+            // config-sync mode, `sync_queue_consumers` (run by
+            // `initial_sync`/`reload_config` before this ever executes)
+            // already spawned a poll task for every consumer now sitting
+            // in `self.consumers` — see `bin/fc-router/src/main.rs`'s
+            // step-8 comment. Calling `spawn_consumer_poll_task` again
+            // here for one of those would hit its own
+            // `polling_consumer_ids` duplicate guard and log a WARN for
+            // every configured queue on every ordinary startup (8 of them
+            // in one bench run) — the guard already makes the second
+            // attempt harmless, but a routine, expected startup path has
+            // no business logging a warning or paying for a wasted
+            // `tokio::spawn`. Checking the same guard here first makes the
+            // already-running case silent instead of merely harmless; dev
+            // mode (`add_consumer`, which never spawns a poll task itself)
+            // still reaches the real spawn below exactly as before, since
+            // its consumers never appear in `polling_consumer_ids` yet.
+            let id = consumer.identifier().to_string();
+            if self.polling_consumer_ids.contains_key(&id) {
+                debug!(
+                    consumer = %id,
+                    "start(): consumer already has a poll task running (started via config sync) — not spawning a second one"
+                );
+                continue;
+            }
             handles.push(self.spawn_consumer_poll_task(consumer));
         }
 
@@ -304,5 +329,211 @@ impl QueueManager {
         self.orphaned_draining.lock().clear();
 
         info!("QueueManager shutdown complete");
+    }
+}
+
+#[cfg(test)]
+mod start_double_spawn_tests {
+    use super::*;
+    use crate::mediator::HttpMediatorConfig;
+    use async_trait::async_trait;
+    use fc_common::{PoolConfig, RouterConfig};
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+
+    /// Blocks `poll()` forever (until `stop()`) on an un-fired `Notify`,
+    /// counting how many times it's actually called — the real poll loop
+    /// this spawns settles into `tokio::select!` awaiting that `poll()`
+    /// (or cancellation) on its very first iteration, so `poll_calls()`
+    /// reads exactly 1 for as long as the loop stays parked there.
+    struct BlockingPollConsumer {
+        id: &'static str,
+        poll_calls: AtomicU32,
+        block: tokio::sync::Notify,
+    }
+
+    impl BlockingPollConsumer {
+        fn new(id: &'static str) -> Self {
+            Self {
+                id,
+                poll_calls: AtomicU32::new(0),
+                block: tokio::sync::Notify::new(),
+            }
+        }
+
+        fn poll_calls(&self) -> u32 {
+            self.poll_calls.load(AtomicOrdering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl QueueConsumer for BlockingPollConsumer {
+        fn identifier(&self) -> &str {
+            self.id
+        }
+        async fn poll(&self, _: u32) -> fc_queue::Result<Vec<fc_common::QueuedMessage>> {
+            self.poll_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            self.block.notified().await;
+            Err(fc_queue::QueueError::Stopped)
+        }
+        async fn ack(&self, _: &str) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {
+            self.block.notify_waiters();
+        }
+    }
+
+    /// Item 4 (router bench rig, 2026-09-07): `start()` must not even
+    /// ATTEMPT a second `spawn_consumer_poll_task` call for a consumer
+    /// whose poll task is already running — reproduced here by spawning
+    /// one directly and registering the same consumer in `self.consumers`,
+    /// exactly what `sync_queue_consumers` (run by `apply_config`/
+    /// `reload_config`/`initial_sync` before `start()` ever executes in
+    /// production, per `bin/fc-router/src/main.rs`'s step-8 comment) does.
+    ///
+    /// Distinguishing "skipped" from "attempted but harmlessly refused"
+    /// without any timing/counting race: a genuinely SKIPPED attempt calls
+    /// `identifier()` exactly once (this fix's own
+    /// `polling_consumer_ids.contains_key` check); an attempt that reaches
+    /// `spawn_consumer_poll_task` calls it at least twice more (the
+    /// guard's own map key plus the "Refusing to spawn" `warn!`) even
+    /// though that inner guard still keeps it harmless either way. The
+    /// consumer's own already-running poll loop contributes zero further
+    /// calls during the test's window (parked untimed in `poll()` on a
+    /// `Notify` nothing ever fires).
+    ///
+    /// Mutant check: reverting `start()`'s loop to call
+    /// `spawn_consumer_poll_task` unconditionally (this fix's guard
+    /// removed) reproduces the bench rig's exact "Refusing to spawn a
+    /// second poll task" log line and fails the assertion below —
+    /// confirmed by hand while implementing the fix.
+    #[tokio::test]
+    async fn start_does_not_attempt_a_second_spawn_for_an_already_running_consumer() {
+        let manager = Arc::new(QueueManager::builder(HttpMediatorConfig::dev()).build());
+        manager
+            .apply_config(RouterConfig {
+                processing_pools: vec![PoolConfig {
+                    code: "DEFAULT-POOL".to_string(),
+                    concurrency: 5,
+                    rate_limit_per_minute: None,
+                }],
+                queues: vec![],
+            })
+            .await
+            .unwrap();
+
+        let counter = Arc::new(BlockingPollConsumer::new("dup"));
+        let consumer: Arc<dyn QueueConsumer + Send + Sync> = counter.clone();
+
+        // Mirrors `sync_queue_consumers`: the consumer is registered in
+        // `self.consumers` AND already has a poll task running, both
+        // before `start()` is ever called.
+        manager
+            .consumers
+            .write()
+            .await
+            .insert("dup".to_string(), consumer.clone());
+        let poll_task = manager.spawn_consumer_poll_task(consumer.clone());
+
+        // Let the loop settle into its first (blocked) poll() call.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // `next_poll_task_generation` is bumped unconditionally at the top
+        // of EVERY `spawn_consumer_poll_task` call, accepted or rejected by
+        // its internal duplicate guard — unlike counting `identifier()`
+        // calls through the `debug!`/`warn!` log lines (which `tracing`
+        // evaluates lazily and skips entirely with no subscriber
+        // installed, as in this test — a dead end confirmed while writing
+        // this test), this counter is a plain, always-executed increment,
+        // so it reliably tells "was `spawn_consumer_poll_task` invoked at
+        // all" apart from "was it invoked and merely refused by its own
+        // guard".
+        let generation_before_start = manager
+            .next_poll_task_generation
+            .load(AtomicOrdering::SeqCst);
+
+        // `start()` blocks on its background tasks (including the
+        // in-pipeline reaper, which runs forever) — run it in the
+        // background and just observe the effect of its startup pass.
+        let start_task = tokio::spawn(manager.clone().start());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert_eq!(
+            manager
+                .next_poll_task_generation
+                .load(AtomicOrdering::SeqCst),
+            generation_before_start,
+            "start() must not call spawn_consumer_poll_task AT ALL for a \
+             consumer whose poll task is already running — even a call \
+             that gets refused by the inner duplicate guard still bumps \
+             this generation counter"
+        );
+
+        manager.shutdown().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), poll_task).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), start_task).await;
+    }
+
+    /// Regression guard: a consumer that was only ever registered (never
+    /// spawned — the dev-mode `add_consumer` path) must still get a real
+    /// poll task from `start()`. Pins that the new skip-check doesn't
+    /// accidentally swallow the genuine "not yet polling" case.
+    #[tokio::test]
+    async fn start_still_spawns_a_real_poll_task_for_a_never_started_consumer() {
+        let manager = Arc::new(QueueManager::builder(HttpMediatorConfig::dev()).build());
+        manager
+            .apply_config(RouterConfig {
+                processing_pools: vec![PoolConfig {
+                    code: "DEFAULT-POOL".to_string(),
+                    concurrency: 5,
+                    rate_limit_per_minute: None,
+                }],
+                queues: vec![],
+            })
+            .await
+            .unwrap();
+
+        let counter = Arc::new(BlockingPollConsumer::new("never-started"));
+        let consumer: Arc<dyn QueueConsumer + Send + Sync> = counter.clone();
+        manager.add_consumer(consumer.clone()).await;
+
+        // See the previous test's comment on why this, not counting
+        // `identifier()` calls through log macros, is the reliable signal:
+        // it is bumped unconditionally at the top of every
+        // `spawn_consumer_poll_task` call.
+        let generation_before_start = manager
+            .next_poll_task_generation
+            .load(AtomicOrdering::SeqCst);
+
+        let start_task = tokio::spawn(manager.clone().start());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(
+            manager
+                .next_poll_task_generation
+                .load(AtomicOrdering::SeqCst)
+                > generation_before_start,
+            "start() must still call spawn_consumer_poll_task for a consumer \
+             that was only ever registered, never polled"
+        );
+        // And the task it spawned must be a REAL, live poller, not the
+        // guard's trivial no-op — the consumer's `poll()` must actually
+        // have been reached at least once.
+        assert!(
+            counter.poll_calls() > 0,
+            "the spawned poll task must actually call poll() on the consumer"
+        );
+
+        manager.shutdown().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), start_task).await;
     }
 }
