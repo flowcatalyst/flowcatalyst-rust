@@ -486,7 +486,8 @@ impl QueueManager {
         // registry (and the real warning service) — see `MediatorFactory`'s
         // doc — so breaker state is shared across pools and surfaced to
         // monitoring without the pool itself touching a registry at all.
-        let pool = ProcessPool::with_dependencies(pool_config.clone(), self.build_mediator());
+        let pool = ProcessPool::with_dependencies(pool_config.clone(), self.build_mediator())
+            .with_capacity_notify(self.capacity_notify().clone());
 
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;
@@ -583,7 +584,8 @@ impl QueueManager {
             // `build_mediator` shares the manager's single registry (see
             // `get_or_create_pool`) — a reconfigured pool's fresh mediator
             // keeps recording into it, not a private default.
-            let new_pool = ProcessPool::with_dependencies(config.clone(), self.build_mediator());
+            let new_pool = ProcessPool::with_dependencies(config.clone(), self.build_mediator())
+                .with_capacity_notify(self.capacity_notify().clone());
             let pool_arc = Arc::new(new_pool);
             pool_arc.start().await;
 

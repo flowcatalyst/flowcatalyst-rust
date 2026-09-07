@@ -26,6 +26,34 @@ async fn sleep_or_cancel(token: &CancellationToken, d: Duration) -> bool {
     }
 }
 
+/// Park untimed on the manager's capacity-freed gate (G12,
+/// `docs/go-mirror/2026-09-06-go-fix-list.md`) until either it fires or
+/// `token` is cancelled. Returns `true` if cancelled first (caller should
+/// stop looping).
+///
+/// **Race-free by construction.** The `Notified` future is created (which
+/// captures the gate's current `notify_waiters()` call count) *before*
+/// `has_pool_capacity` is checked, and `tokio::sync::Notify` guarantees a
+/// `notify_waiters()` call is observed by a `Notified` as long as it
+/// happens after that `Notified` was created — whether or not it has been
+/// polled yet. So a pool that frees capacity between our last check and
+/// this call (however small that window) cannot be missed: either the
+/// re-check below already sees it, or the wait resolves immediately
+/// because the notification landed after `notified()` was created but
+/// before `.await` started. This is what closes the lost-wakeup race a
+/// bare re-poll-on-a-timer can't.
+async fn wait_for_capacity_or_cancel(manager: &QueueManager, token: &CancellationToken) -> bool {
+    let notified = manager.capacity_notify().notified();
+    if manager.has_pool_capacity() {
+        // Freed between the caller's check and here — don't wait at all.
+        return false;
+    }
+    tokio::select! {
+        _ = notified => false,
+        _ = token.cancelled() => true,
+    }
+}
+
 impl QueueManager {
     /// Spawn a poll task for a single consumer. Returns the JoinHandle.
     /// Called from both `start()` (initial consumers) and `sync_queue_consumers`
@@ -72,6 +100,9 @@ impl QueueManager {
 
             let mut last_poll_end = Instant::now();
             const STARVATION_THRESHOLD: Duration = Duration::from_secs(30);
+            // G12: gates the capacity pause's warning/resume log to once
+            // per transition rather than once per loop iteration.
+            let mut capacity_paused = false;
 
             loop {
                 // Detect thread/task starvation: warn if >30s between poll loops (Java: 30s)
@@ -106,10 +137,29 @@ impl QueueManager {
                     continue;
                 }
 
-                // Backpressure: if all pools are full, wait instead of polling.
-                // Prevents hot poll-defer loop that wastes SQS API calls.
+                // Backpressure (G12): if all pools are full, park untimed on
+                // the manager's capacity-freed gate instead of polling —
+                // never a fixed sleep, which starves the workers on a fast
+                // broker once the pools drain faster than the sleep lets
+                // the loop notice (docs/go-mirror/2026-09-06-go-fix-list.md
+                // G12). `capacity_paused` gates the warning/resume log to
+                // once per transition, not once per loop iteration.
                 if !manager.has_pool_capacity() {
-                    debug!(consumer = %consumer.identifier(), "All pools at capacity — pausing poll");
+                    if !capacity_paused {
+                        capacity_paused = true;
+                        warn!(consumer = %consumer.identifier(), "All pools at capacity — pausing poll");
+                        manager.warning_service.add_warning(
+                            WarningCategory::QueueHealth,
+                            WarningSeverity::Warn,
+                            format!(
+                                "Consumer [{}] paused — all pools at capacity",
+                                consumer.identifier()
+                            ),
+                            "ConsumerLoop".to_string(),
+                        );
+                    } else {
+                        debug!(consumer = %consumer.identifier(), "All pools at capacity — still paused");
+                    }
 
                     // A capacity wait is a deliberate pause, not a stall — record
                     // liveness before pausing so the lifecycle health monitor's
@@ -124,11 +174,14 @@ impl QueueManager {
                         health_service.record_consumer_poll(consumer.identifier());
                     }
 
-                    if sleep_or_cancel(&token, Duration::from_secs(2)).await {
+                    if wait_for_capacity_or_cancel(&manager, &token).await {
                         info!(consumer = %consumer.identifier(), "Consumer shutting down");
                         break;
                     }
                     continue;
+                } else if capacity_paused {
+                    capacity_paused = false;
+                    info!(consumer = %consumer.identifier(), "Capacity returned; resuming poll");
                 }
 
                 tokio::select! {
@@ -154,18 +207,17 @@ impl QueueManager {
                                 }
                             }
                             Ok(messages) => {
-                                let count = messages.len();
                                 if let Err(e) = manager.route_batch(messages, consumer.clone()).await {
                                     error!(error = %e, "Error routing batch");
                                 }
-                                // Full batch (10) — re-poll immediately, more messages likely waiting.
-                                // Partial batch (< 10) — brief pause, queue is draining.
-                                if count < 10
-                                    && sleep_or_cancel(&token, Duration::from_millis(500)).await
-                                {
-                                    info!(consumer = %consumer.identifier(), "Consumer shutting down");
-                                    break;
-                                }
+                                // G12: a partial batch re-polls immediately,
+                                // exactly like a full one — it never means
+                                // "the queue is draining, slow down"; the
+                                // broker may already have the next batch
+                                // ready, and a 500ms pause here holds the
+                                // loop back from work regardless of whether
+                                // that's true (owner ruling 2026-09-07, same
+                                // as the capacity-wait fix above).
                             }
                             Err(fc_queue::QueueError::Stopped) => {
                                 // The consumer was stopped (directly, or as
@@ -530,5 +582,263 @@ mod consumer_liveness_tests {
             !health_service.is_consumer_healthy("lifecycle"),
             "an exited poll task must no longer read as running"
         );
+    }
+}
+
+#[cfg(test)]
+mod g12_capacity_gate_tests {
+    use super::*;
+    use crate::mediator::Mediator;
+    use async_trait::async_trait;
+    use fc_common::{
+        BatchMessage, MediationOutcome, MediationType, Message, MessageCallback, PoolConfig,
+    };
+
+    /// Resolves every mediation instantly with a bare 200 — these tests
+    /// care about queue-capacity crossing timing, never about mediation
+    /// outcome.
+    struct InstantSuccessMediator;
+
+    #[async_trait]
+    impl Mediator for InstantSuccessMediator {
+        async fn mediate(&self, _message: &Message) -> MediationOutcome {
+            MediationOutcome::success(200)
+        }
+    }
+
+    struct NoOpCallback;
+
+    #[async_trait]
+    impl MessageCallback for NoOpCallback {
+        async fn ack(&self) {}
+        async fn nack(&self, _delay_seconds: Option<u32>) {}
+    }
+
+    fn dummy_batch_message(id: &str) -> BatchMessage {
+        BatchMessage {
+            message: Message {
+                id: id.to_string(),
+                pool_code: "TEST".to_string(),
+                auth_token: None,
+                signing_secret: None,
+                mediation_type: MediationType::HTTP,
+                mediation_target: "http://localhost/x".to_string(),
+                message_group_id: None,
+                high_priority: false,
+                dispatch_mode: fc_common::DispatchMode::Immediate,
+                dispatch_mode_specified: true,
+            },
+            receipt_handle: format!("rh-{id}"),
+            broker_message_id: Some(format!("bh-{id}")),
+            queue_identifier: "q".to_string(),
+            batch_id: None,
+            callback: Box::new(NoOpCallback),
+        }
+    }
+
+    /// Build a manager with one real pool saturated to exactly its
+    /// capacity (`max(concurrency * 20, 50)` — concurrency 1 → 50), so
+    /// `has_pool_capacity()` reads false. The 50 `submit()` calls are
+    /// awaited back-to-back with no other `.await` in between; on this
+    /// current-thread test runtime nothing spawned by `submit()` gets a
+    /// chance to run until the caller's task itself yields, so every
+    /// admission lands before any worker starts — the saturation is exact
+    /// and race-free.
+    async fn manager_with_saturated_pool() -> Arc<QueueManager> {
+        let manager = Arc::new(
+            QueueManager::builder_with_shared_mediator(Arc::new(InstantSuccessMediator)).build(),
+        );
+        let pool_config = PoolConfig {
+            code: "TEST".to_string(),
+            concurrency: 1,
+            rate_limit_per_minute: None,
+        };
+        let pool = manager
+            .get_or_create_pool("TEST", Some(pool_config))
+            .await
+            .expect("pool creation must succeed");
+        for i in 0..50 {
+            pool.submit(dummy_batch_message(&format!("m{i}")))
+                .await
+                .expect("submit must succeed while under capacity");
+        }
+        assert!(
+            !manager.has_pool_capacity(),
+            "pool must read as full immediately after saturating it"
+        );
+        manager
+    }
+
+    /// G12: `wait_for_capacity_or_cancel` must resolve within 100ms of the
+    /// pool's capacity-freed signal actually firing — not the fixed 2s
+    /// sleep it replaced.
+    ///
+    /// The moment this function's first `.await` point is reached (inside
+    /// the `tokio::select!`), the runtime is free to run the 50 previously
+    /// -spawned worker tasks for the first time: the first one acquires
+    /// the pool's single concurrency permit and decrements `queue_size`
+    /// from 50 (== capacity) to 49 — the exact full→not-full crossing that
+    /// fires `capacity_notify.notify_waiters()` via `QueueSlotReleaser`.
+    /// That crossing is what resolves the wait — it happens on the very
+    /// first scheduling opportunity after we start waiting, so a real
+    /// (not simulated) capacity-freed signal resolves this well inside the
+    /// 100ms bound.
+    ///
+    /// Mutant check: reverting `wait_for_capacity_or_cancel` to
+    /// `sleep_or_cancel(&token, Duration::from_secs(2))` — confirmed by
+    /// hand while implementing this fix — fails this bound at ~2s actual.
+    #[tokio::test]
+    async fn resolves_within_100ms_of_capacity_actually_returning() {
+        let manager = manager_with_saturated_pool().await;
+        let token = CancellationToken::new();
+
+        let start = Instant::now();
+        let cancelled = wait_for_capacity_or_cancel(&manager, &token).await;
+        let elapsed = start.elapsed();
+
+        assert!(!cancelled, "must not report cancelled — the token was never cancelled");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "wait_for_capacity_or_cancel took {:?} — expected within 100ms \
+             of the pool's capacity-freed signal",
+            elapsed
+        );
+    }
+
+    /// G12: an already-cancelled token must win immediately over an
+    /// unresolved capacity wait — a shutdown landing while a consumer is
+    /// parked on this gate must not add a multi-second stall (mirrors the
+    /// Java pin `stopsPromptlyWhileParkedForCapacity`).
+    #[tokio::test]
+    async fn stops_promptly_when_cancelled_while_parked() {
+        let manager = manager_with_saturated_pool().await;
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let start = Instant::now();
+        let cancelled = wait_for_capacity_or_cancel(&manager, &token).await;
+        let elapsed = start.elapsed();
+
+        assert!(cancelled, "a pre-cancelled token must be reported as cancelled");
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "cancellation took {:?} to be observed — expected well under 100ms",
+            elapsed
+        );
+    }
+
+    /// Returns one partial batch (3 messages, well under the poll's
+    /// request size of 10) on its first call, then empty batches — and
+    /// records the wall-clock time of every call, so a test can measure
+    /// the gap between the first and second poll.
+    struct PartialThenEmptyConsumer {
+        call_times: parking_lot::Mutex<Vec<Instant>>,
+        second_call: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl QueueConsumer for PartialThenEmptyConsumer {
+        fn identifier(&self) -> &str {
+            "partial-then-empty"
+        }
+        async fn poll(&self, _: u32) -> fc_queue::Result<Vec<fc_common::QueuedMessage>> {
+            let call_index = {
+                let mut times = self.call_times.lock();
+                times.push(Instant::now());
+                times.len()
+            };
+            if call_index == 2 {
+                self.second_call.notify_waiters();
+            }
+            if call_index == 1 {
+                let batch: Vec<fc_common::QueuedMessage> = (0..3)
+                    .map(|i| fc_common::QueuedMessage {
+                        message: Message {
+                            id: format!("partial-{i}"),
+                            pool_code: String::new(),
+                            auth_token: None,
+                            signing_secret: None,
+                            mediation_type: MediationType::HTTP,
+                            mediation_target: "http://localhost/x".to_string(),
+                            message_group_id: None,
+                            high_priority: false,
+                            dispatch_mode: fc_common::DispatchMode::Immediate,
+                            dispatch_mode_specified: true,
+                        },
+                        receipt_handle: format!("rh-partial-{i}"),
+                        broker_message_id: Some(format!("bh-partial-{i}")),
+                        queue_identifier: "partial-then-empty".to_string(),
+                    })
+                    .collect();
+                Ok(batch)
+            } else {
+                Ok(vec![])
+            }
+        }
+        async fn ack(&self, _: &str) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {}
+    }
+
+    /// G12 (`batchesRepollImmediately` in the Java pin): a partial batch
+    /// (fewer than the requested 10) must trigger an immediate re-poll,
+    /// not the old fixed 500ms pause — a partial batch never meant "the
+    /// queue is draining, slow down" and the pause held the loop back from
+    /// work regardless of whether the broker already had the next batch
+    /// ready.
+    ///
+    /// Every pool the 3 routed messages land in (the synthesised
+    /// DEFAULT-POOL, capacity 400) stays far under capacity throughout, so
+    /// this measures the partial-batch pacing in isolation from the
+    /// capacity gate.
+    ///
+    /// Mutant check: reinstating `sleep_or_cancel(&token,
+    /// Duration::from_millis(500))` after a partial batch — confirmed by
+    /// hand while implementing this fix — pushes the gap past 500ms
+    /// against this test's 100ms bound.
+    #[tokio::test]
+    async fn partial_batch_repolls_within_100ms() {
+        let manager = Arc::new(
+            QueueManager::builder_with_shared_mediator(Arc::new(InstantSuccessMediator)).build(),
+        );
+        let call_times = parking_lot::Mutex::new(Vec::new());
+        let second_call = Arc::new(tokio::sync::Notify::new());
+        let consumer = Arc::new(PartialThenEmptyConsumer {
+            call_times,
+            second_call: second_call.clone(),
+        });
+
+        let waiting = second_call.notified();
+        let handle = manager.spawn_consumer_poll_task(consumer.clone());
+
+        tokio::time::timeout(Duration::from_secs(2), waiting)
+            .await
+            .expect("second poll() call must happen");
+
+        let gap = {
+            let times = consumer.call_times.lock();
+            assert!(times.len() >= 2, "expected at least two poll() calls");
+            times[1].duration_since(times[0])
+        };
+
+        assert!(
+            gap < Duration::from_millis(100),
+            "gap between poll() calls was {:?} — a partial batch must \
+             re-poll immediately, not pause",
+            gap
+        );
+
+        manager.shutdown().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
 }

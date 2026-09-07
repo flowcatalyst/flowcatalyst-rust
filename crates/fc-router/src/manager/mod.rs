@@ -190,6 +190,19 @@ pub struct QueueManager {
     /// elsewhere in this struct.
     orphaned_draining: Mutex<Vec<Arc<ProcessPool>>>,
 
+    /// G12 (`docs/go-mirror/2026-09-06-go-fix-list.md`): the capacity-freed
+    /// gate every consumer poll loop parks on, untimed, when
+    /// [`Self::has_pool_capacity`] answers false. Every pool this manager
+    /// creates is wired to this same `Notify` via
+    /// [`ProcessPool::with_capacity_notify`], so a `notify_waiters()` from
+    /// *any* pool's [`crate::pool::QueueSlotReleaser`] wakes every parked
+    /// consumer loop to re-check — a reconfigure/eviction that adds,
+    /// removes, or drains a pool also signals this directly (see
+    /// `reconcile.rs`/`synth_pools.rs`), since either can change what
+    /// `has_pool_capacity` answers. Replaces the old fixed-2s-sleep
+    /// backpressure pause.
+    capacity_notify: Arc<tokio::sync::Notify>,
+
     /// R-59: idle tracker for every per-client fallback pool
     /// (`{identifier}-DEFAULT-POOL`) this manager synthesised on demand —
     /// see [`Self::ensure_fallback_pool`]. Never holds an entry for a
@@ -442,6 +455,7 @@ impl QueueManagerBuilder {
             app_message_to_pipeline_key: Arc::new(DashMap::new()),
             pools: DashMap::new(),
             orphaned_draining: Mutex::new(Vec::new()),
+            capacity_notify: Arc::new(tokio::sync::Notify::new()),
             synth_pools: DashMap::new(),
             consumers: RwLock::new(HashMap::new()),
             consumers_by_id: RwLock::new(HashMap::new()),
@@ -600,6 +614,13 @@ impl QueueManager {
     #[doc(hidden)]
     pub fn with_shared_mediator_for_testing(mediator: Arc<dyn Mediator + 'static>) -> Self {
         Self::builder_with_shared_mediator(mediator).build()
+    }
+
+    /// The G12 capacity-freed gate — see the `capacity_notify` field's doc
+    /// comment. `Consumer::poll` loops park on this via `notified()` when
+    /// [`Self::has_pool_capacity`] answers false.
+    pub(super) fn capacity_notify(&self) -> &Arc<tokio::sync::Notify> {
+        &self.capacity_notify
     }
 
     /// Add a queue consumer

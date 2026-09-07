@@ -44,6 +44,41 @@ const DEFAULT_GROUP: &str = "__DEFAULT__";
 const QUEUE_CAPACITY_MULTIPLIER: u32 = 20; // Java: QUEUE_CAPACITY_MULTIPLIER = 20
 const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
 
+/// Releases one queue slot and signals a capacity-freed [`tokio::sync::Notify`]
+/// exactly on the full→not-full crossing (G12,
+/// `docs/go-mirror/2026-09-06-go-fix-list.md`).
+///
+/// Cloned into every worker/drain closure that needs to decrement
+/// `queue_size` on completion (`spawn_immediate_task`, `spawn_drain_task`,
+/// the batch+group failure paths, `drain()`), so the crossing-detection
+/// logic lives in one place instead of being reimplemented at each of the
+/// half-dozen decrement sites — and, more importantly, so it is provably
+/// the *only* place `queue_size` is ever decremented, closing off the
+/// classic bug this pattern exists to prevent: a decrement site that
+/// forgets to notify, silently reintroducing the fixed-sleep starvation
+/// G12 was written to fix.
+///
+/// The notify fires only when `queue_size` was *exactly* at `capacity`
+/// immediately before this decrement — i.e. only the one release that
+/// actually ends a capacity outage signals, not every completion. A busy
+/// pool cycling through capacity therefore costs the manager's consumer
+/// poll loops one wakeup per outage, not one per message.
+#[derive(Clone)]
+pub(crate) struct QueueSlotReleaser {
+    queue_size: Arc<AtomicU32>,
+    capacity: u32,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl QueueSlotReleaser {
+    fn release(&self) {
+        let prev = self.queue_size.fetch_sub(1, Ordering::Relaxed);
+        if prev == self.capacity {
+            self.notify.notify_waiters();
+        }
+    }
+}
+
 // ============================================================================
 // Disposition — ledger A-27
 // ============================================================================
@@ -629,6 +664,15 @@ pub struct ProcessPool {
     /// Queue size counter (Arc for sharing across tasks)
     queue_size: Arc<AtomicU32>,
 
+    /// Capacity-freed signal (G12) — notified exactly on the full→not-full
+    /// crossing by every [`QueueSlotReleaser`] built from this pool. A
+    /// standalone pool (constructed via `new`/`with_dependencies` outside a
+    /// `QueueManager`) gets its own private `Notify` that nothing waits on;
+    /// `QueueManager` overwrites it with its one shared gate via
+    /// [`Self::with_capacity_notify`] so every pool's crossing wakes the
+    /// same consumer poll loops.
+    capacity_notify: Arc<tokio::sync::Notify>,
+
     /// Active workers counter (Arc for sharing across tasks)
     active_workers: Arc<AtomicU32>,
 
@@ -711,12 +755,48 @@ impl ProcessPool {
             rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
             running: AtomicBool::new(false),
             queue_size: Arc::new(AtomicU32::new(0)),
+            capacity_notify: Arc::new(tokio::sync::Notify::new()),
             active_workers: Arc::new(AtomicU32::new(0)),
             mediating: Arc::new(DashMap::new()),
             mediating_seq: Arc::new(AtomicU64::new(0)),
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
             flush_registry: Arc::new(GroupFlushRegistry::new()),
             tracker: TaskTracker::new(),
+        }
+    }
+
+    /// Wire this pool's capacity-freed signal into a shared [`tokio::sync::Notify`]
+    /// (G12) — see the `capacity_notify` field's doc comment. `QueueManager`
+    /// calls this on every pool it creates so all pools wake the same
+    /// consumer poll loops; a pool built directly for a standalone test
+    /// keeps its own private, never-waited-on `Notify` if this is never
+    /// called.
+    pub(crate) fn with_capacity_notify(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
+        self.capacity_notify = notify;
+        self
+    }
+
+    /// This pool's queue capacity — `max(concurrency * QUEUE_CAPACITY_MULTIPLIER,
+    /// MIN_QUEUE_CAPACITY)`. Factored out of `submit`/`available_capacity`
+    /// so [`Self::queue_slot_releaser`] can build a [`QueueSlotReleaser`]
+    /// with the same value those two already use, without a third
+    /// inline copy of the formula.
+    fn capacity(&self) -> u32 {
+        std::cmp::max(
+            self.config.concurrency * QUEUE_CAPACITY_MULTIPLIER,
+            MIN_QUEUE_CAPACITY,
+        )
+    }
+
+    /// Build a [`QueueSlotReleaser`] bound to this pool's queue-size counter,
+    /// capacity, and capacity-freed notify — clone this into a worker/drain
+    /// closure instead of cloning `queue_size` directly, so every
+    /// decrement site goes through the crossing-detection logic (G12).
+    fn queue_slot_releaser(&self) -> QueueSlotReleaser {
+        QueueSlotReleaser {
+            queue_size: self.queue_size.clone(),
+            capacity: self.capacity(),
+            notify: self.capacity_notify.clone(),
         }
     }
 
@@ -743,10 +823,7 @@ impl ProcessPool {
 
         // Check capacity
         let current_size = self.queue_size.load(Ordering::Relaxed);
-        let capacity = std::cmp::max(
-            self.config.concurrency * QUEUE_CAPACITY_MULTIPLIER,
-            MIN_QUEUE_CAPACITY,
-        );
+        let capacity = self.capacity();
 
         if current_size >= capacity {
             debug!(
@@ -793,7 +870,7 @@ impl ProcessPool {
                     group_id = %key.group_id,
                     "Batch+group failed, NACKing for FIFO"
                 );
-                self.queue_size.fetch_sub(1, Ordering::Relaxed);
+                self.queue_slot_releaser().release();
                 self.decrement_and_cleanup_batch_group(key);
                 batch_msg.callback.nack(Some(10)).await;
                 return Ok(());
@@ -882,7 +959,7 @@ impl ProcessPool {
     fn spawn_immediate_task(&self, task: PoolTask) {
         let semaphore = self.semaphore.clone();
         let mediator = self.mediator.clone();
-        let queue_size = self.queue_size.clone();
+        let queue_size = self.queue_slot_releaser();
         let active_workers = self.active_workers.clone();
         let mediating = self.mediating.clone();
         let mediating_seq = self.mediating_seq.clone();
@@ -899,7 +976,7 @@ impl ProcessPool {
             // spends neither a concurrency slot nor a rate-limit token —
             // that saving is the whole point of suppression.
             if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
-                queue_size.fetch_sub(1, Ordering::Relaxed);
+                queue_size.release();
                 if let Some(ref key) = task.batch_group_key {
                     Self::decrement_and_cleanup_batch_group_static(
                         key,
@@ -916,7 +993,7 @@ impl ProcessPool {
             let permit = match semaphore.acquire().await {
                 Ok(p) => p,
                 Err(_) => {
-                    queue_size.fetch_sub(1, Ordering::Relaxed);
+                    queue_size.release();
                     if let Some(ref key) = task.batch_group_key {
                         Self::decrement_and_cleanup_batch_group_static(
                             key,
@@ -935,7 +1012,7 @@ impl ProcessPool {
             active_workers.fetch_add(1, Ordering::Relaxed);
             let mediating_key =
                 Self::begin_mediating(&mediating, &mediating_seq, &pool_code, &task);
-            queue_size.fetch_sub(1, Ordering::Relaxed);
+            queue_size.release();
 
             // Circuit breaker admission/recording now lives entirely
             // inside `mediator.mediate` (ledger: centralised so no call
@@ -997,7 +1074,7 @@ impl ProcessPool {
         let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
         let semaphore = self.semaphore.clone();
         let mediator = self.mediator.clone();
-        let queue_size = self.queue_size.clone();
+        let queue_size = self.queue_slot_releaser();
         let active_workers = self.active_workers.clone();
         let mediating = self.mediating.clone();
         let mediating_seq = self.mediating_seq.clone();
@@ -1111,7 +1188,7 @@ impl ProcessPool {
                     Some(task) => {
                         if let Some(ref key) = task.batch_group_key {
                             if failed_batch_groups.contains(key) {
-                                queue_size.fetch_sub(1, Ordering::Relaxed);
+                                queue_size.release();
                                 Self::decrement_and_cleanup_batch_group_static(
                                     key,
                                     &batch_group_message_count,
@@ -1156,7 +1233,7 @@ impl ProcessPool {
                 };
 
                 // Decrement queue size
-                queue_size.fetch_sub(1, Ordering::Relaxed);
+                queue_size.release();
 
                 // Group-flush suppression (ledger A-05/R-52/R-53), checked
                 // BEFORE the semaphore/rate limiter so a suppressed group
@@ -1428,10 +1505,7 @@ impl ProcessPool {
 
     /// Check available capacity
     pub fn available_capacity(&self) -> usize {
-        let capacity = std::cmp::max(
-            self.config.concurrency * QUEUE_CAPACITY_MULTIPLIER,
-            MIN_QUEUE_CAPACITY,
-        ) as usize;
+        let capacity = self.capacity() as usize;
         let used = self.queue_size.load(Ordering::Relaxed) as usize;
         capacity.saturating_sub(used)
     }
@@ -1596,6 +1670,7 @@ impl ProcessPool {
             .collect();
 
         let mut released = 0usize;
+        let queue_slot_releaser = self.queue_slot_releaser();
         for group_id in group_ids {
             let drained: Vec<PoolTask> = match self.group_handlers.get(&group_id) {
                 Some(entry) => {
@@ -1611,7 +1686,7 @@ impl ProcessPool {
 
             for task in drained {
                 released += 1;
-                self.queue_size.fetch_sub(1, Ordering::Relaxed);
+                queue_slot_releaser.release();
                 if let Some(ref key) = task.batch_group_key {
                     self.decrement_and_cleanup_batch_group(key);
                 }
