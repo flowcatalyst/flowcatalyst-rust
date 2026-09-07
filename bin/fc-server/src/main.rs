@@ -685,12 +685,11 @@ fn build_platform_app(
 
 // ── Background Processor Spawners ────────────────────────────────────────────
 
-/// Spawn the SQS message router, gated on leadership.
+/// Spawn the message router, gated on leadership.
 async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::task::JoinHandle<()>> {
-    use fc_queue::sqs::SqsQueueConsumer;
     use fc_router::{
-        HealthService, HealthServiceConfig, HttpMediatorConfig, QueueManager, WarningService,
-        WarningServiceConfig,
+        ConsumerFactory, HealthService, HealthServiceConfig, HttpMediatorConfig, QueueManager,
+        WarningService, WarningServiceConfig,
     };
 
     let dev_mode = env_bool("FLOWCATALYST_DEV_MODE", false);
@@ -725,6 +724,9 @@ async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::tas
         QueueManager::builder(HttpMediatorConfig::production())
             .warning_service(warning_service.clone())
             .health_service(health_service.clone())
+            .consumer_factory(Arc::new(SchemeConsumerFactory {
+                sqs_client: sqs_client.clone(),
+            }))
             .build(),
     );
 
@@ -765,17 +767,19 @@ async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::tas
         }
     };
 
-    // Add SQS consumers
+    // Add consumers, dispatching on each queue URI's scheme (item 1 — every
+    // queue used to be handed to the SQS consumer regardless of scheme).
+    let scheme_factory = SchemeConsumerFactory {
+        sqs_client: sqs_client.clone(),
+    };
     for queue_config in &router_config.queues {
-        let consumer = Arc::new(
-            SqsQueueConsumer::from_queue_url(
-                sqs_client.clone(),
-                queue_config.uri.clone(),
-                queue_config.visibility_timeout as i32,
-            )
-            .await,
-        );
-        queue_manager.add_consumer(consumer).await;
+        match scheme_factory.create_consumer(queue_config).await {
+            Ok(consumer) => queue_manager.add_consumer(consumer).await,
+            Err(e) => {
+                error!(queue = %queue_config.name, error = %e, "Failed to create queue consumer");
+                return None;
+            }
+        }
     }
 
     let manager = queue_manager.clone();
@@ -1246,4 +1250,111 @@ async fn metrics_handler() -> &'static str {
 
 async fn ready_handler() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "READY" }))
+}
+
+// ── Consumer factory: dispatch by queue URI scheme (item 1) ─────────────────
+//
+// Mirrors the identical factory in `bin/fc-router/src/main.rs` — kept as a
+// separate copy per binary (same pattern the pre-existing SQS-only wiring
+// used) rather than shared, since `fc-server` is a single monolithic
+// `main.rs` with no internal module split today.
+
+struct SchemeConsumerFactory {
+    sqs_client: aws_sdk_sqs::Client,
+}
+
+#[async_trait::async_trait]
+impl fc_router::ConsumerFactory for SchemeConsumerFactory {
+    async fn create_consumer(
+        &self,
+        config: &fc_common::QueueConfig,
+    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer + Send + Sync>, fc_router::RouterError>
+    {
+        let scheme = fc_queue::resolve_scheme(&config.uri)
+            .map_err(|e| fc_router::RouterError::Consumer(format!("queue [{}]: {}", config.name, e)))?;
+
+        match scheme {
+            fc_queue::QueueScheme::Sqs => {
+                info!(
+                    queue_name = %config.name,
+                    queue_uri = %config.uri,
+                    visibility_timeout = config.visibility_timeout,
+                    "Creating SQS consumer from config"
+                );
+                let consumer = fc_queue::sqs::SqsQueueConsumer::from_queue_url(
+                    self.sqs_client.clone(),
+                    config.uri.clone(),
+                    config.visibility_timeout as i32,
+                )
+                .await;
+                Ok(Arc::new(consumer))
+            }
+            fc_queue::QueueScheme::Nats => build_nats_consumer(config).await,
+            fc_queue::QueueScheme::Postgres => build_postgres_consumer(config).await,
+        }
+    }
+}
+
+/// Build a NATS JetStream consumer from a `nats://` queue URI — see the
+/// identical helper's doc comment in `bin/fc-router/src/main.rs`.
+async fn build_nats_consumer(
+    config: &fc_common::QueueConfig,
+) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer + Send + Sync>, fc_router::RouterError> {
+    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(|e| {
+        fc_router::RouterError::Consumer(format!("queue [{}]: invalid NATS URI: {}", config.name, e))
+    })?;
+    info!(
+        queue_name = %config.name,
+        stream = %nats_config.stream_name,
+        consumer = %nats_config.consumer_name,
+        subject = %nats_config.subject,
+        "Creating NATS JetStream consumer from config"
+    );
+    let consumer = fc_queue::nats::NatsQueueConsumer::new(nats_config)
+        .await
+        .map_err(|e| {
+            fc_router::RouterError::Consumer(format!(
+                "queue [{}]: NATS consumer setup failed: {}",
+                config.name, e
+            ))
+        })?;
+    Ok(Arc::new(consumer))
+}
+
+/// Build a Postgres queue consumer from a `postgres://` queue URI — connects
+/// from the URI itself (a dedicated pool per queue), matching the other
+/// routers per `docs/spec/router.md` §7.3. See the identical helper's doc
+/// comment in `bin/fc-router/src/main.rs`.
+async fn build_postgres_consumer(
+    config: &fc_common::QueueConfig,
+) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer + Send + Sync>, fc_router::RouterError> {
+    info!(queue_name = %config.name, "Creating Postgres queue consumer from config");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect(&config.uri)
+        .await
+        .map_err(|e| {
+            fc_router::RouterError::Consumer(format!(
+                "queue [{}]: Postgres pool connect failed: {}",
+                config.name, e
+            ))
+        })?;
+
+    let visibility = if config.visibility_timeout == 0 {
+        30
+    } else {
+        config.visibility_timeout
+    };
+    let consumer = fc_queue::postgres::PostgresQueue::new(pool, config.name.clone(), visibility);
+
+    use fc_queue::EmbeddedQueue;
+    consumer.init_schema().await.map_err(|e| {
+        fc_router::RouterError::Consumer(format!(
+            "queue [{}]: Postgres schema init failed: {}",
+            config.name, e
+        ))
+    })?;
+
+    Ok(Arc::new(consumer))
 }

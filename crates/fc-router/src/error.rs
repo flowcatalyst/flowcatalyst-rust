@@ -32,4 +32,11 @@ pub enum RouterError {
     /// via `?`.
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+
+    /// A [`crate::manager::ConsumerFactory`] failed to build a consumer for
+    /// a queue — unrecognised URI scheme (item 1: `fc_queue::scheme`), or
+    /// the backend-specific connect/provisioning step itself errored (NATS
+    /// stream/consumer provisioning, the Postgres schema/pool bootstrap).
+    #[error("Consumer factory error: {0}")]
+    Consumer(String),
 }

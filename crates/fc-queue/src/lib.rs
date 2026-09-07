@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use fc_common::{Message, QueuedMessage};
 
 pub mod error;
+pub mod scheme;
 
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
@@ -19,6 +20,7 @@ pub mod activemq;
 pub mod nats;
 
 pub use error::QueueError;
+pub use scheme::{resolve_scheme, QueueScheme};
 
 pub type Result<T> = std::result::Result<T, QueueError>;
 

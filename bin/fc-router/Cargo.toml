@@ -7,9 +7,10 @@ license.workspace = true
 [dependencies]
 fc-common = { path = "../../crates/fc-common" }
 fc-router = { path = "../../crates/fc-router" }
-fc-queue = { path = "../../crates/fc-queue", features = ["sqs"] }
+fc-queue = { path = "../../crates/fc-queue", features = ["sqs", "postgres", "nats"] }
 aws-config = { workspace = true }
 aws-sdk-sqs = { workspace = true }
+sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -26,4 +27,3 @@ default = []
 email = ["fc-router/email"]
 alb = ["fc-router/alb"]
 oidc-flow = ["fc-router/oidc-flow"]
-nats = ["fc-queue/nats"]

@@ -13,7 +13,7 @@ path = "src/main.rs"
 fc-common = { path = "../../crates/fc-common" }
 fc-platform = { path = "../../crates/fc-platform" }
 fc-router = { path = "../../crates/fc-router" }
-fc-queue = { path = "../../crates/fc-queue", features = ["sqs"] }
+fc-queue = { path = "../../crates/fc-queue", features = ["sqs", "postgres", "nats"] }
 fc-standby = { path = "../../crates/fc-standby" }
 fc-stream = { path = "../../crates/fc-stream" }
 fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres"] }

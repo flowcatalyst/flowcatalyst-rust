@@ -50,6 +50,101 @@ pub struct NatsConfig {
     pub max_age_days: u64,
 }
 
+impl NatsConfig {
+    /// Parse a `nats://` queue URI into a [`NatsConfig`], per
+    /// `docs/spec/router.md` §7.4:
+    ///
+    /// `nats://host:port[,host2…]?stream=&consumer=&subject=&max-messages=&poll-timeout-ms=&ack-wait-secs=&max-deliver=&max-ack-pending=&storage=file|memory&replicas=&max-age-days=`
+    ///
+    /// Everything before the first `?` (including the `nats://` scheme) is
+    /// passed straight through as `servers` — `async_nats`'s connector
+    /// already accepts a comma-separated multi-host string in that shape.
+    /// Every query parameter is optional; an absent or unparseable one
+    /// falls back to [`NatsConfig::default`]'s value for that field (same
+    /// defaults the other routers ship: stream `FLOWCATALYST`, consumer
+    /// `fc-router`, subject `flowcatalyst.>`, batch 10, poll timeout 20s,
+    /// ack-wait 120s, max-deliver 10, max-ack-pending 1000, storage file,
+    /// replicas 1, max-age 7d).
+    pub fn from_uri(uri: &str) -> Result<Self> {
+        if !uri.starts_with("nats://") {
+            return Err(QueueError::Config(format!(
+                "not a nats:// URI: {}",
+                uri
+            )));
+        }
+
+        let mut config = NatsConfig::default();
+
+        let (servers, query) = match uri.split_once('?') {
+            Some((before, after)) => (before, Some(after)),
+            None => (uri, None),
+        };
+        config.servers = servers.to_string();
+
+        let Some(query) = query else {
+            return Ok(config);
+        };
+
+        for pair in query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            let (key, value) = match pair.split_once('=') {
+                Some((k, v)) => (k, v),
+                None => (pair, ""),
+            };
+            match key {
+                "stream" if !value.is_empty() => config.stream_name = value.to_string(),
+                "consumer" if !value.is_empty() => config.consumer_name = value.to_string(),
+                "subject" if !value.is_empty() => config.subject = value.to_string(),
+                "max-messages" => {
+                    if let Ok(v) = value.parse::<u32>() {
+                        config.max_messages_per_poll = v;
+                    }
+                }
+                "poll-timeout-ms" => {
+                    if let Ok(v) = value.parse::<u64>() {
+                        config.poll_timeout_ms = v;
+                    }
+                }
+                "ack-wait-secs" => {
+                    if let Ok(v) = value.parse::<u64>() {
+                        config.ack_wait_secs = v;
+                    }
+                }
+                "max-deliver" => {
+                    if let Ok(v) = value.parse::<i64>() {
+                        config.max_deliver = v;
+                    }
+                }
+                "max-ack-pending" => {
+                    if let Ok(v) = value.parse::<i64>() {
+                        config.max_ack_pending = v;
+                    }
+                }
+                "storage" if !value.is_empty() => config.storage = value.to_string(),
+                "replicas" => {
+                    if let Ok(v) = value.parse::<usize>() {
+                        config.replicas = v;
+                    }
+                }
+                "max-age-days" => {
+                    if let Ok(v) = value.parse::<u64>() {
+                        config.max_age_days = v;
+                    }
+                }
+                _ => {
+                    // Unknown parameter — ignore rather than fail, same
+                    // tolerance the other backends' URI parsing gives an
+                    // operator adding a forward-looking query param.
+                }
+            }
+        }
+
+        Ok(config)
+    }
+}
+
 impl Default for NatsConfig {
     fn default() -> Self {
         Self {
@@ -572,5 +667,71 @@ mod tests {
         let a = NatsQueueConsumer::broker_message_id_from_sequence(42, 1);
         let b = NatsQueueConsumer::broker_message_id_from_sequence(43, 1);
         assert_ne!(a, b);
+    }
+
+    // --- NatsConfig::from_uri (item 1: scheme-dispatched queue wiring) ---
+
+    #[test]
+    fn from_uri_bare_servers_uses_every_default() {
+        let config = NatsConfig::from_uri("nats://localhost:4222").unwrap();
+        let defaults = NatsConfig::default();
+        assert_eq!(config.servers, "nats://localhost:4222");
+        assert_eq!(config.stream_name, defaults.stream_name);
+        assert_eq!(config.consumer_name, defaults.consumer_name);
+        assert_eq!(config.subject, defaults.subject);
+        assert_eq!(config.max_messages_per_poll, defaults.max_messages_per_poll);
+        assert_eq!(config.poll_timeout_ms, defaults.poll_timeout_ms);
+        assert_eq!(config.ack_wait_secs, defaults.ack_wait_secs);
+        assert_eq!(config.max_deliver, defaults.max_deliver);
+        assert_eq!(config.max_ack_pending, defaults.max_ack_pending);
+        assert_eq!(config.storage, defaults.storage);
+        assert_eq!(config.replicas, defaults.replicas);
+        assert_eq!(config.max_age_days, defaults.max_age_days);
+    }
+
+    #[test]
+    fn from_uri_parses_every_query_parameter() {
+        let uri = "nats://host1:4222,host2:4222?stream=BENCH1&consumer=router&subject=flowcatalyst.bench.>&max-messages=25&poll-timeout-ms=5000&ack-wait-secs=60&max-deliver=5&max-ack-pending=500&storage=memory&replicas=3&max-age-days=1";
+        let config = NatsConfig::from_uri(uri).unwrap();
+
+        assert_eq!(config.servers, "nats://host1:4222,host2:4222");
+        assert_eq!(config.stream_name, "BENCH1");
+        assert_eq!(config.consumer_name, "router");
+        assert_eq!(config.subject, "flowcatalyst.bench.>");
+        assert_eq!(config.max_messages_per_poll, 25);
+        assert_eq!(config.poll_timeout_ms, 5000);
+        assert_eq!(config.ack_wait_secs, 60);
+        assert_eq!(config.max_deliver, 5);
+        assert_eq!(config.max_ack_pending, 500);
+        assert_eq!(config.storage, "memory");
+        assert_eq!(config.replicas, 3);
+        assert_eq!(config.max_age_days, 1);
+    }
+
+    #[test]
+    fn from_uri_identifier_is_stream_slash_consumer() {
+        let config =
+            NatsConfig::from_uri("nats://localhost:4222?stream=BENCH4&consumer=router").unwrap();
+        assert_eq!(
+            format!("{}/{}", config.stream_name, config.consumer_name),
+            "BENCH4/router"
+        );
+    }
+
+    #[test]
+    fn from_uri_rejects_non_nats_scheme() {
+        assert!(NatsConfig::from_uri("postgres://host/db").is_err());
+    }
+
+    #[test]
+    fn from_uri_ignores_unparseable_numeric_param_keeping_default() {
+        // A malformed value must not poison the whole parse — it falls back
+        // to the default for that one field, same tolerance the other
+        // fields get when a param is absent altogether.
+        let config = NatsConfig::from_uri("nats://localhost:4222?max-messages=not-a-number").unwrap();
+        assert_eq!(
+            config.max_messages_per_poll,
+            NatsConfig::default().max_messages_per_poll
+        );
     }
 }
