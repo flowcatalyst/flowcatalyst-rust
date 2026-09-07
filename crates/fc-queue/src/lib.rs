@@ -72,6 +72,33 @@ pub trait QueueConsumer: Send + Sync {
     /// Check if the consumer is healthy
     fn is_healthy(&self) -> bool;
 
+    /// Evidence the broker connection is alive, independent of whether
+    /// `poll()` has returned.
+    ///
+    /// The stall watchdog (`fc_router::health::HealthService`) normally
+    /// judges a consumer's liveness purely off when `poll()` last
+    /// *returned* — correct for a backend whose `poll()` is bounded (SQS's
+    /// long-poll cap, Postgres's own poll loop) but wrong for one whose
+    /// `poll()` legitimately blocks **untimed** waiting on the broker
+    /// (NATS's standing subscription, `docs/spec/router.md` §3.2/§7.4):
+    /// an idle queue and a genuinely hung one look identical to a
+    /// poll-return-only heartbeat once the poll has been running longer
+    /// than the stall threshold, which restarts a perfectly healthy,
+    /// merely-idle consumer forever (G13,
+    /// `docs/go-mirror/2026-09-06-go-fix-list.md`).
+    ///
+    /// This is consulted ONLY as a second lifeline while a poll is
+    /// genuinely in progress: it can rescue a consumer the plain
+    /// poll-return heartbeat would call stale, but it can never hide one
+    /// that's actually wedged — a backend that never overrides this
+    /// keeps the default `None`, which adds nothing to the existing
+    /// poll-return check, and an override that itself goes stale (broker
+    /// disconnected, nothing delivered in a long time) still lets the
+    /// watchdog restart normally.
+    fn last_broker_activity(&self) -> Option<std::time::Instant> {
+        None
+    }
+
     /// Stop the consumer
     async fn stop(&self);
 

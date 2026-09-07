@@ -14,6 +14,7 @@ use tracing::{debug, warn};
 
 use crate::warning::WarningService;
 use fc_common::{ConsumerHealth, HealthReport, HealthStatus, PoolStats};
+use fc_queue::QueueConsumer;
 
 /// Configuration for health service
 #[derive(Debug, Clone)]
@@ -124,6 +125,15 @@ pub struct HealthService {
 
     /// Consumer running state
     consumer_running: RwLock<HashMap<String, bool>>,
+
+    /// G13 (`docs/go-mirror/2026-09-06-go-fix-list.md`): a handle to the
+    /// live consumer, registered for as long as its poll task is running
+    /// (`register_consumer`/`unregister_consumer`, called in lockstep with
+    /// `set_consumer_running`), so `last_alive` can consult
+    /// `QueueConsumer::last_broker_activity()` as a second liveness signal
+    /// while a poll is in flight. Empty for a backend that never overrides
+    /// the trait default — this adds nothing for those.
+    consumer_broker: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
 }
 
 impl HealthService {
@@ -134,6 +144,7 @@ impl HealthService {
             pool_counters: RwLock::new(HashMap::new()),
             consumer_last_poll: RwLock::new(HashMap::new()),
             consumer_running: RwLock::new(HashMap::new()),
+            consumer_broker: RwLock::new(HashMap::new()),
         }
     }
 
@@ -161,14 +172,82 @@ impl HealthService {
             .insert(consumer_id.to_string(), Instant::now());
     }
 
-    /// Set consumer running state
+    /// Set consumer running state.
+    ///
+    /// Item 1 (router bench rig, 2026-09-07): the `true` transition (poll
+    /// task start — the only place this is ever called with `true`, see
+    /// `spawn_consumer_poll_task`) also seeds `consumer_last_poll` with
+    /// "now". Before this, a freshly spawned consumer had NO entry in
+    /// `consumer_last_poll` until its first `poll()` actually returned,
+    /// and `get_stalled_consumers`'s old `unwrap_or(true)` treated that
+    /// absence as "already stalled" — combined with `tokio::time::interval`
+    /// firing its FIRST tick immediately (t≈0), every consumer still on
+    /// its first poll at that instant was flagged "Stalled consumer
+    /// detected" during an otherwise perfectly healthy drain (reproduced
+    /// on the bench rig against Postgres and SQS — both bound `poll()` in
+    /// well under the 60s default threshold, so this startup race, not a
+    /// genuinely slow poll, was the only way to trigger it). Seeding here
+    /// makes a fresh consumer "alive since just now" and age exactly like
+    /// a real heartbeat, closing that window without weakening the check
+    /// for a consumer that never completes a first poll at all — it still
+    /// ages past the threshold and gets flagged, correctly.
     pub fn set_consumer_running(&self, consumer_id: &str, running: bool) {
         self.consumer_running
             .write()
             .insert(consumer_id.to_string(), running);
+        if running {
+            self.consumer_last_poll
+                .write()
+                .insert(consumer_id.to_string(), Instant::now());
+        }
     }
 
-    /// Check if a consumer is healthy (polled recently)
+    /// Register the live consumer handle for `consumer_id` so `last_alive`
+    /// can consult [`QueueConsumer::last_broker_activity`] while its poll
+    /// task is running. Call in lockstep with `set_consumer_running(id,
+    /// true)`; pair with [`Self::unregister_consumer`] on exit.
+    pub fn register_consumer(
+        &self,
+        consumer_id: &str,
+        consumer: Arc<dyn QueueConsumer + Send + Sync>,
+    ) {
+        self.consumer_broker
+            .write()
+            .insert(consumer_id.to_string(), consumer);
+    }
+
+    /// Drop the registered consumer handle for `consumer_id`. Call in
+    /// lockstep with `set_consumer_running(id, false)`.
+    pub fn unregister_consumer(&self, consumer_id: &str) {
+        self.consumer_broker.write().remove(consumer_id);
+    }
+
+    /// G13: the most recent evidence `consumer_id` is alive — the later of
+    /// its last recorded `poll()`-return heartbeat and (while a poll task
+    /// is actually registered) its own [`QueueConsumer::last_broker_activity`].
+    /// `None` only when there is no heartbeat AND no broker-activity signal
+    /// at all — i.e. a consumer id nothing has ever recorded liveness for.
+    /// This can only ever push the returned instant LATER than the plain
+    /// `last_poll` value (rescuing a consumer the old check would call
+    /// stale); it never makes it earlier, so a genuinely wedged consumer
+    /// (broker override itself stale, or none registered) is never hidden.
+    fn last_alive(&self, consumer_id: &str, last_poll: &HashMap<String, Instant>) -> Option<Instant> {
+        let by_poll = last_poll.get(consumer_id).copied();
+        let by_broker = self
+            .consumer_broker
+            .read()
+            .get(consumer_id)
+            .and_then(|c| c.last_broker_activity());
+        match (by_poll, by_broker) {
+            (Some(p), Some(b)) => Some(if b > p { b } else { p }),
+            (Some(p), None) => Some(p),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }
+    }
+
+    /// Check if a consumer is healthy (alive within the stall threshold —
+    /// see `last_alive`)
     pub fn is_consumer_healthy(&self, consumer_id: &str) -> bool {
         let threshold = Duration::from_secs(self.config.consumer_stall_threshold_secs);
 
@@ -183,9 +262,8 @@ impl HealthService {
             return false;
         }
 
-        self.consumer_last_poll
-            .read()
-            .get(consumer_id)
+        let last_poll = self.consumer_last_poll.read();
+        self.last_alive(consumer_id, &last_poll)
             .map(|t| t.elapsed() < threshold)
             .unwrap_or(false)
     }
@@ -207,7 +285,8 @@ impl HealthService {
         };
 
         let is_healthy = is_running
-            && last_poll_time
+            && self
+                .last_alive(consumer_id, &last_poll)
                 .map(|t| {
                     t.elapsed() < Duration::from_secs(self.config.consumer_stall_threshold_secs)
                 })
@@ -222,7 +301,15 @@ impl HealthService {
         }
     }
 
-    /// Get stalled consumer IDs
+    /// Get stalled consumer IDs.
+    ///
+    /// Item 1: a consumer with NO liveness evidence at all (`last_alive`
+    /// returns `None` — never polled, never broker-registered) is NOT
+    /// reported stalled here; `set_consumer_running(id, true)` always
+    /// seeds a heartbeat the instant the poll task starts (see its doc
+    /// comment), so `None` should only ever occur for an id this service
+    /// was never told is running in the first place — `is_running` already
+    /// filters those out below regardless.
     pub fn get_stalled_consumers(&self) -> Vec<String> {
         let threshold = Duration::from_secs(self.config.consumer_stall_threshold_secs);
         let last_poll = self.consumer_last_poll.read();
@@ -232,10 +319,10 @@ impl HealthService {
             .iter()
             .filter(|(id, &is_running)| {
                 is_running
-                    && last_poll
-                        .get(*id)
+                    && self
+                        .last_alive(id, &last_poll)
                         .map(|t| t.elapsed() >= threshold)
-                        .unwrap_or(true)
+                        .unwrap_or(false)
             })
             .map(|(id, _)| id.clone())
             .collect()
@@ -401,6 +488,15 @@ impl HealthService {
             if running.keys().any(|id| !active_consumer_ids.contains(id)) {
                 drop(running);
                 self.consumer_running
+                    .write()
+                    .retain(|id, _| active_consumer_ids.contains(id));
+            }
+        }
+        {
+            let broker = self.consumer_broker.read();
+            if broker.keys().any(|id| !active_consumer_ids.contains(id)) {
+                drop(broker);
+                self.consumer_broker
                     .write()
                     .retain(|id, _| active_consumer_ids.contains(id));
             }
@@ -586,6 +682,223 @@ mod tests {
             report.status,
             HealthStatus::Degraded,
             "the only consumer stalling must degrade status (all consumers unhealthy)"
+        );
+    }
+
+    // --- Item 1 (router bench rig, 2026-09-07): liveness must be
+    // `last_poll` OR (while a poll task is registered) broker-activity
+    // evidence, and a freshly started consumer must never read as
+    // already-stalled. ---
+
+    use async_trait::async_trait;
+    use fc_common::QueuedMessage;
+    use fc_queue::Result as QueueResult;
+    use std::sync::Mutex as StdMutex;
+
+    /// A consumer whose `last_broker_activity()` is entirely test-driven —
+    /// `poll()` itself is never actually called in these tests, which are
+    /// about the health-service side of the liveness check only.
+    struct FakeConsumer {
+        broker_activity: StdMutex<Option<Instant>>,
+    }
+
+    impl FakeConsumer {
+        fn with_activity(activity: Option<Instant>) -> Arc<Self> {
+            Arc::new(Self {
+                broker_activity: StdMutex::new(activity),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl QueueConsumer for FakeConsumer {
+        fn identifier(&self) -> &str {
+            "fake"
+        }
+        async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+            Ok(vec![])
+        }
+        async fn ack(&self, _: &str) -> QueueResult<()> {
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        fn last_broker_activity(&self) -> Option<Instant> {
+            *self.broker_activity.lock().unwrap()
+        }
+        async fn stop(&self) {}
+    }
+
+    /// Pins the exact startup bug this unit fixes: the instant a poll task
+    /// starts (`set_consumer_running(id, true)` — the only place this is
+    /// ever called with `true`), the consumer must NOT read as stalled,
+    /// even though no `poll()` has returned yet. Before this fix,
+    /// `consumer_last_poll` had no entry until the first real poll
+    /// returned, and `get_stalled_consumers`'s `unwrap_or(true)` treated
+    /// that absence as "already stalled" — flagged on the health monitor's
+    /// very first (immediate) tick, against a perfectly healthy consumer.
+    ///
+    /// Mutant check: reverting `set_consumer_running` to skip the
+    /// `consumer_last_poll` seed on `running == true` reproduces the old
+    /// behaviour and fails this assertion (confirmed by hand: with the
+    /// seed removed, `get_stalled_consumers` immediately contains
+    /// "consumer-1").
+    #[test]
+    fn freshly_started_consumer_is_not_stalled_before_its_first_poll_returns() {
+        let cfg = HealthServiceConfig {
+            consumer_stall_threshold_secs: 60,
+            ..HealthServiceConfig::default()
+        };
+        let service = HealthService::new(cfg, Arc::new(WarningService::default()));
+
+        // Exactly what `spawn_consumer_poll_task` does at task start —
+        // no `record_consumer_poll` call has happened yet.
+        service.set_consumer_running("consumer-1", true);
+
+        assert!(
+            service.is_consumer_healthy("consumer-1"),
+            "a consumer that just started, mid its first poll, must read healthy"
+        );
+        assert!(
+            !service.get_stalled_consumers().contains(&"consumer-1".to_string()),
+            "a consumer that just started must not be reported stalled before \
+             it has ever had a chance to complete a poll"
+        );
+    }
+
+    /// The other half of the same guarantee: a consumer that genuinely
+    /// never completes a first poll (deadlocked from the start, no
+    /// broker-activity override registered) must still eventually be
+    /// flagged once the threshold it was SEEDED at (task start) elapses —
+    /// the seed must age normally, not grant permanent immunity.
+    ///
+    /// Mutant check: seeding `consumer_last_poll` with a value that never
+    /// ages (e.g. re-stamping "now" on every `get_stalled_consumers` call
+    /// instead of once at start) would fail this — confirmed by hand.
+    #[test]
+    fn a_consumer_that_never_completes_a_poll_still_goes_stale_eventually() {
+        let cfg = HealthServiceConfig {
+            consumer_stall_threshold_secs: 0, // instantly "stale" once any time passes
+            ..HealthServiceConfig::default()
+        };
+        let service = HealthService::new(cfg, Arc::new(WarningService::default()));
+
+        service.set_consumer_running("consumer-1", true);
+        std::thread::sleep(Duration::from_millis(5));
+
+        assert!(
+            service.get_stalled_consumers().contains(&"consumer-1".to_string()),
+            "a consumer whose seeded start-time heartbeat has aged past the \
+             threshold, with no poll ever completing and no broker-activity \
+             override, must be reported stalled"
+        );
+    }
+
+    /// G13's rescue case: `last_poll` is stale (long past the threshold —
+    /// exactly what an idle NATS standing-subscription `poll()` blocked
+    /// well past the stall threshold looks like from the outside), but the
+    /// registered consumer's `last_broker_activity()` reports activity
+    /// inside the threshold — the consumer must NOT be reported stalled.
+    ///
+    /// Mutant check: dropping the broker-activity branch from `last_alive`
+    /// (i.e. reverting `get_stalled_consumers` to consult only
+    /// `consumer_last_poll`) fails this — confirmed by hand while
+    /// implementing the fix.
+    #[test]
+    fn stale_last_poll_is_rescued_by_recent_broker_activity() {
+        let cfg = HealthServiceConfig {
+            consumer_stall_threshold_secs: 1,
+            ..HealthServiceConfig::default()
+        };
+        let service = HealthService::new(cfg, Arc::new(WarningService::default()));
+
+        service.set_consumer_running("consumer-1", true);
+        // Force `consumer_last_poll` far into the past — simulates a poll
+        // that has been in flight far longer than the threshold.
+        service
+            .consumer_last_poll
+            .write()
+            .insert("consumer-1".to_string(), Instant::now() - Duration::from_secs(60));
+
+        let consumer = FakeConsumer::with_activity(Some(Instant::now()));
+        service.register_consumer("consumer-1", consumer);
+
+        assert!(
+            service.is_consumer_healthy("consumer-1"),
+            "recent broker activity must rescue a consumer whose poll-return \
+             heartbeat alone would read as stale"
+        );
+        assert!(
+            !service.get_stalled_consumers().contains(&"consumer-1".to_string())
+        );
+    }
+
+    /// G13's other half — "never hides a real hang": stale `last_poll` AND
+    /// stale (or absent) broker activity must still be flagged. A
+    /// registered consumer whose own broker-activity signal has itself
+    /// gone stale (connection dropped, nothing delivered in a long time)
+    /// gets no benefit from being registered at all.
+    ///
+    /// Mutant check: making `last_alive` ignore the broker-activity
+    /// instant's own age (e.g. treating ANY `Some(_)` as "alive now")
+    /// fails this — confirmed by hand.
+    #[test]
+    fn stale_broker_activity_does_not_rescue_a_genuinely_hung_consumer() {
+        let cfg = HealthServiceConfig {
+            consumer_stall_threshold_secs: 1,
+            ..HealthServiceConfig::default()
+        };
+        let service = HealthService::new(cfg, Arc::new(WarningService::default()));
+
+        service.set_consumer_running("consumer-1", true);
+        service
+            .consumer_last_poll
+            .write()
+            .insert("consumer-1".to_string(), Instant::now() - Duration::from_secs(60));
+
+        let consumer = FakeConsumer::with_activity(Some(Instant::now() - Duration::from_secs(60)));
+        service.register_consumer("consumer-1", consumer);
+
+        assert!(
+            !service.is_consumer_healthy("consumer-1"),
+            "a consumer with stale broker activity too must still be flagged — \
+             the broker signal must never permanently mask a real hang"
+        );
+        assert!(service.get_stalled_consumers().contains(&"consumer-1".to_string()));
+    }
+
+    /// `unregister_consumer` must actually drop the registration — after
+    /// it, a stale `last_poll` is judged on its own again (no leftover
+    /// broker-activity rescue from a since-exited poll task).
+    #[test]
+    fn unregister_consumer_removes_the_broker_activity_rescue() {
+        let cfg = HealthServiceConfig {
+            consumer_stall_threshold_secs: 1,
+            ..HealthServiceConfig::default()
+        };
+        let service = HealthService::new(cfg, Arc::new(WarningService::default()));
+
+        service.set_consumer_running("consumer-1", true);
+        service
+            .consumer_last_poll
+            .write()
+            .insert("consumer-1".to_string(), Instant::now() - Duration::from_secs(60));
+
+        let consumer = FakeConsumer::with_activity(Some(Instant::now()));
+        service.register_consumer("consumer-1", consumer);
+        assert!(service.is_consumer_healthy("consumer-1"));
+
+        service.unregister_consumer("consumer-1");
+        assert!(
+            !service.is_consumer_healthy("consumer-1"),
+            "once unregistered, a stale last_poll must go back to being stale"
         );
     }
 }

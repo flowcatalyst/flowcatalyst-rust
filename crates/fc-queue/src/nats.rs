@@ -13,8 +13,8 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -222,6 +222,17 @@ pub struct NatsQueueConsumer {
     total_nacked: AtomicU64,
     /// Total messages deferred (rate limiting, capacity - not failures)
     total_deferred: AtomicU64,
+    /// G13 (`docs/go-mirror/2026-09-06-go-fix-list.md`,
+    /// `QueueConsumer::last_broker_activity`): last time the background
+    /// subscription-draining task actually handed a message to `tx`.
+    /// Read as the liveness fallback when the client doesn't report
+    /// `Connected` (see `last_broker_activity` below); while connected,
+    /// the connection state itself is the positive signal, since jnats-
+    /// style clients expose no per-heartbeat callback, only a negative one
+    /// for a *missed* heartbeat. Seeded to the consumer's construction
+    /// time so a queue that has never delivered anything yet still reads
+    /// as "recently alive" rather than a stale zero value.
+    last_delivery: Arc<Mutex<Instant>>,
 }
 
 impl NatsQueueConsumer {
@@ -334,6 +345,7 @@ impl NatsQueueConsumer {
         let batch_size = (config.max_messages_per_poll.max(1)) as usize;
         let (tx, rx) = mpsc::channel::<QueuedMessage>(batch_size);
         let stream_cancel = CancellationToken::new();
+        let last_delivery = Arc::new(Mutex::new(Instant::now()));
 
         let mut jetstream_stream = consumer
             .stream()
@@ -354,6 +366,7 @@ impl NatsQueueConsumer {
             let queue_id = queue_id.clone();
             let pending_messages = pending_messages.clone();
             let cancel = stream_cancel.clone();
+            let last_delivery = last_delivery.clone();
 
             tokio::spawn(async move {
                 loop {
@@ -422,6 +435,13 @@ impl NatsQueueConsumer {
 
                     pending_messages.insert(receipt_handle.clone(), js_msg);
 
+                    // G13: a real message just arrived from the broker —
+                    // stamp the liveness fallback the moment it did, not
+                    // only once `poll()` eventually hands it to a caller.
+                    if let Ok(mut guard) = last_delivery.lock() {
+                        *guard = Instant::now();
+                    }
+
                     let queued = QueuedMessage {
                         message,
                         receipt_handle,
@@ -461,6 +481,7 @@ impl NatsQueueConsumer {
             total_acked: AtomicU64::new(0),
             total_nacked: AtomicU64::new(0),
             total_deferred: AtomicU64::new(0),
+            last_delivery,
         })
     }
 
@@ -670,6 +691,28 @@ impl QueueConsumer for NatsQueueConsumer {
             self.client.connection_state(),
             async_nats::connection::State::Connected
         )
+    }
+
+    /// G13: "now" for as long as the connection reads `Connected` — this
+    /// client exposes no positive per-heartbeat callback (only a negative
+    /// `ErrorListener`-style alarm for a *missed* one), so the connection
+    /// state itself, refreshed on every check, stands in as the positive
+    /// signal; falling back to the last time a message actually arrived
+    /// otherwise (disconnected/reconnecting). Either way this can only
+    /// read as "alive" for as long as one of those two things is
+    /// genuinely true right now — a connection that drops and stays down
+    /// ages `last_delivery` normally and eventually reads stale, so the
+    /// stall watchdog still restarts it (G13's "never hides a real hang"
+    /// requirement).
+    fn last_broker_activity(&self) -> Option<Instant> {
+        if matches!(
+            self.client.connection_state(),
+            async_nats::connection::State::Connected
+        ) {
+            Some(Instant::now())
+        } else {
+            self.last_delivery.lock().ok().map(|g| *g)
+        }
     }
 
     /// Item 2: cancelling `stream_cancel` stops the background

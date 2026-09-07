@@ -125,6 +125,10 @@ impl QueueManager {
             // reported as still running.
             if let Some(ref health_service) = manager.health_service {
                 health_service.set_consumer_running(consumer.identifier(), true);
+                // Item 1/G13: register the live handle so the stall
+                // watchdog can consult `last_broker_activity()` while this
+                // task's poll is in flight (see `HealthService::last_alive`).
+                health_service.register_consumer(consumer.identifier(), consumer.clone());
             }
 
             let mut last_poll_end = Instant::now();
@@ -278,6 +282,7 @@ impl QueueManager {
             // the `true` set at task start).
             if let Some(ref health_service) = manager.health_service {
                 health_service.set_consumer_running(consumer.identifier(), false);
+                health_service.unregister_consumer(consumer.identifier());
             }
             // Mirror image of the guard at spawn time — release this id so
             // a legitimate later spawn (e.g. `restart_consumer`'s
