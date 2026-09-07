@@ -179,3 +179,85 @@ async fn test_quarantine_latest_failure_wins() {
         "the latest failure's reason must replace the earlier one"
     );
 }
+
+// Per-row receipt handle (found while wiring up the router bench,
+// bench/router BROKER=postgres): `ack`/`nack` key solely on
+// `receipt_handle` + `queue_name` (no `id` column in the WHERE clause), so
+// every row a single poll() call claims MUST get its own unique receipt
+// handle — sharing one handle across the whole batch means the first
+// message to ack deletes every other message's row in the same statement,
+// and every other message's own ack/nack then silently affects zero rows.
+//
+// Pins: acking ONE message out of a 3-message batch deletes exactly that
+// row — the other two must still be present and still ackable on their own
+// receipt handles afterward.
+//
+// Mutant check: reverting the claiming UPDATE to a single shared
+// `poll_uuid` (no `|| ':' || m.id`) — confirmed by hand while implementing
+// this fix — makes the first ack delete all three rows, so the second and
+// third assertions below fail (the rows are already gone).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_batch_claim_gives_each_row_its_own_receipt_handle() {
+    let (pool, _container) = setup_pool().await;
+    let queue = PostgresQueue::new(pool.clone(), "pg-test-batch".to_string(), 30);
+    queue.init_schema().await.unwrap();
+
+    for id in ["m1", "m2", "m3"] {
+        queue
+            .publish(healthy_message(id))
+            .await
+            .expect("publish must succeed");
+    }
+
+    let messages = queue.poll(10).await.expect("poll must succeed");
+    assert_eq!(messages.len(), 3, "all three published messages must be claimed");
+
+    let handles: std::collections::HashSet<&str> = messages
+        .iter()
+        .map(|m| m.receipt_handle.as_str())
+        .collect();
+    assert_eq!(
+        handles.len(),
+        3,
+        "each of the three claimed rows must get a distinct receipt handle, \
+         not one shared across the whole batch"
+    );
+
+    // Ack only the first message.
+    queue
+        .ack(&messages[0].receipt_handle)
+        .await
+        .expect("ack of the first message must succeed");
+
+    let remaining: i64 = sqlx::query("SELECT count(*) FROM queue_messages WHERE queue_name = $1")
+        .bind("pg-test-batch")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        remaining, 2,
+        "acking one message must remove exactly that row, leaving the \
+         other two untouched"
+    );
+
+    // The other two messages' own receipt handles must still resolve —
+    // proof their rows were never touched by the first ack.
+    queue
+        .ack(&messages[1].receipt_handle)
+        .await
+        .expect("second message's own receipt handle must still be valid");
+    queue
+        .ack(&messages[2].receipt_handle)
+        .await
+        .expect("third message's own receipt handle must still be valid");
+
+    let remaining: i64 = sqlx::query("SELECT count(*) FROM queue_messages WHERE queue_name = $1")
+        .bind("pg-test-batch")
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(remaining, 0, "all three rows must now be gone");
+}

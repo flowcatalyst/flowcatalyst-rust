@@ -152,7 +152,13 @@ impl QueueConsumer for PostgresQueue {
 
         let now = Utc::now().timestamp();
         let new_visible_at = now + self.visibility_timeout_seconds as i64;
-        let receipt_handle = self.generate_receipt_handle();
+        // `poll_uuid` identifies THIS poll call; the receipt handle each
+        // claimed row gets is `poll_uuid:id` (docs/spec/router.md §7.3:
+        // "receipt_handle = pollUUID||':'||id"), computed server-side in
+        // the UPDATE below so it's unique PER ROW, not shared across the
+        // whole batch — see the doc comment on `QueuedMessage::receipt_handle`
+        // just below for why that distinction is load-bearing.
+        let poll_uuid = self.generate_receipt_handle();
 
         // Claim up to max_messages eligible rows atomically.
         //
@@ -180,7 +186,7 @@ impl QueueConsumer for PostgresQueue {
                 FOR UPDATE SKIP LOCKED
             )
             UPDATE queue_messages m
-               SET receipt_handle = $4,
+               SET receipt_handle = $4 || ':' || m.id,
                    visible_at = $5,
                    receive_count = m.receive_count + 1
               FROM claimed
@@ -192,7 +198,7 @@ impl QueueConsumer for PostgresQueue {
         .bind(&self.queue_name)
         .bind(now)
         .bind(max_messages as i64)
-        .bind(&receipt_handle)
+        .bind(&poll_uuid)
         .bind(new_visible_at)
         .fetch_all(&self.pool)
         .await?;
@@ -222,16 +228,26 @@ impl QueueConsumer for PostgresQueue {
                 }
             };
 
+            // Per-row receipt handle (`poll_uuid:id`, matching what the
+            // UPDATE above just computed server-side) — NOT the bare
+            // `poll_uuid` shared by the whole batch. `ack`/`nack` key
+            // solely on `receipt_handle` + `queue_name` (no `id` filter),
+            // so a shared handle meant any one message's ack deleted every
+            // other message claimed in the same poll() call in one shot —
+            // the rest then failed their own ack/nack against a row that
+            // was already gone, and if that fired for a message whose
+            // delivery actually needed a *nack* (release back to the
+            // broker), the row had already vanished instead: a real
+            // message loss, not just a spurious warning. Verified against
+            // the bench rig (`bench/router`, BROKER=postgres QUEUES=8):
+            // pre-fix, ~90% of acks logged "message not found or already
+            // deleted" and the queue never fully drained within the grace
+            // window.
+            let row_receipt_handle = format!("{poll_uuid}:{id}");
+
             messages.push(QueuedMessage {
                 message,
-                // Every row in this batch shares the receipt_handle because
-                // we issued one per poll() call. That's fine: ack/nack/extend
-                // all match on (receipt_handle, queue_name, id) via the
-                // broker_message_id when needed. For typical single-claim
-                // per receipt, issue one handle per message by moving the
-                // generation into the loop — but for batch claims this is
-                // simpler and keeps parity with SQLite behaviour.
-                receipt_handle: receipt_handle.clone(),
+                receipt_handle: row_receipt_handle,
                 broker_message_id: Some(id),
                 queue_identifier: self.queue_name.clone(),
             });
