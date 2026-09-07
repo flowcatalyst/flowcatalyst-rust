@@ -99,7 +99,7 @@ utoipa-axum = "0.2"
 
 # Test dependencies
 testcontainers = "0.26"
-testcontainers-modules = { version = "0.14", features = ["localstack", "redis", "postgres"] }
+testcontainers-modules = { version = "0.14", features = ["localstack", "redis", "postgres", "nats"] }
 wiremock = "0.6"
 tokio-test = "0.4"
 tempfile = "3.19"

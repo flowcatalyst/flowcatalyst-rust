@@ -300,6 +300,7 @@ impl QueueManager {
             std::collections::HashSet<String>,
         ) = {
             let mut consumers = self.consumers.write().await;
+            let mut consumers_by_id = self.consumers_by_id.write().await;
             let mut queue_configs = self.queue_configs.write().await;
 
             let existing_queues: Vec<String> = consumers.keys().cloned().collect();
@@ -308,6 +309,8 @@ impl QueueManager {
                 if !new_queue_configs.contains_key(queue_id) {
                     if let Some(consumer) = consumers.remove(queue_id) {
                         queue_configs.remove(queue_id);
+                        // G10: keep the identifier-keyed index in lockstep.
+                        consumers_by_id.remove(consumer.identifier());
                         removed.push((queue_id.clone(), consumer));
                     }
                 }
@@ -391,9 +394,12 @@ impl QueueManager {
         // and their configs.
         {
             let mut consumers = self.consumers.write().await;
+            let mut consumers_by_id = self.consumers_by_id.write().await;
             let mut queue_configs = self.queue_configs.write().await;
             for (queue_id, consumer, queue_config) in &new_consumers {
                 consumers.insert(queue_id.clone(), consumer.clone());
+                // G10: keep the identifier-keyed index in lockstep.
+                consumers_by_id.insert(consumer.identifier().to_string(), consumer.clone());
                 queue_configs.insert(queue_id.clone(), queue_config.clone());
             }
         }

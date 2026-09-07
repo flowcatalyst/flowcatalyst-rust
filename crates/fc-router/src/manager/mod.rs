@@ -204,8 +204,30 @@ pub struct QueueManager {
     /// `Manager.synthPools`.
     synth_pools: DashMap<String, synth_pools::SynthPoolState>,
 
-    /// Queue consumers (RwLock for async-safe access)
+    /// Queue consumers (RwLock for async-safe access), keyed however the
+    /// caller identifies a queue for reconfigure-diffing purposes — the
+    /// config's queue name (`sync_queue_consumers`) or, for consumers added
+    /// directly via [`Self::add_consumer`], the consumer's own
+    /// `identifier()`. **Do not** resolve a consumer from a
+    /// `QueueIdentifier` read off a polled/tracked message through this
+    /// map — see `consumers_by_id` below (G10).
     consumers: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
+
+    /// `Consumer::identifier()`-keyed index mirroring `consumers`,
+    /// maintained on every insert/remove ([`Self::add_consumer`],
+    /// `sync_queue_consumers`, [`Self::restart_consumer`]) regardless of
+    /// what key `consumers` itself used for that same entry.
+    ///
+    /// Every resolution that starts from a `QueueIdentifier` carried on a
+    /// polled/tracked message — the operator force-ack endpoint
+    /// (`force_ack_in_flight`), the stall detector's force-NACK path — MUST
+    /// go through this index, never through `consumers`. The two key
+    /// spaces genuinely differ: a queue's `identifier()` (NATS:
+    /// `<stream>/<consumer>`) is a broker-native identity, while the
+    /// config's queue name/key is an operator-chosen label; resolving the
+    /// wrong one silently drops the ack/nack — the message then redelivers
+    /// forever (G10, `docs/go-mirror/2026-09-06-go-fix-list.md`).
+    consumers_by_id: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
 
     /// Current pool configurations (for detecting changes).
     ///
@@ -422,6 +444,7 @@ impl QueueManagerBuilder {
             orphaned_draining: Mutex::new(Vec::new()),
             synth_pools: DashMap::new(),
             consumers: RwLock::new(HashMap::new()),
+            consumers_by_id: RwLock::new(HashMap::new()),
             pool_configs: RwLock::new(HashMap::new()),
             queue_configs: RwLock::new(HashMap::new()),
             consumer_factory: self.consumer_factory,
@@ -582,7 +605,9 @@ impl QueueManager {
     /// Add a queue consumer
     pub async fn add_consumer(&self, consumer: Arc<dyn QueueConsumer + Send + Sync>) {
         let id = consumer.identifier().to_string();
-        self.consumers.write().await.insert(id, consumer);
+        self.consumers.write().await.insert(id.clone(), consumer.clone());
+        // G10: keep the identifier-keyed resolution index in lockstep.
+        self.consumers_by_id.write().await.insert(id, consumer);
     }
 
     /// The currently *active* pool for `code` — `None` if absent, or if

@@ -321,13 +321,23 @@ impl QueueManager {
         // Stopping this makes its poll task observe `QueueError::Stopped` on
         // its next poll and exit on its own (see (b) in spawn_consumer_poll_task).
         old.stop().await;
+        let old_identifier = old.identifier().to_string();
 
         match factory.create_consumer(&queue_config).await {
             Ok(new_consumer) => {
-                // Brief write lock — swap in the replacement.
+                // Brief write lock — swap in the replacement. Also keeps
+                // the identifier-keyed resolution index (G10) in lockstep:
+                // the replacement's own `identifier()` may equal the old
+                // one (same broker-native identity, e.g. NATS's
+                // `<stream>/<consumer>` reprovisioned unchanged) or differ,
+                // so the old identifier key is dropped explicitly rather
+                // than relying on the new insert to overwrite it.
                 {
                     let mut guard = self.consumers.write().await;
                     guard.insert(consumer_id.to_string(), new_consumer.clone());
+                    let mut by_id = self.consumers_by_id.write().await;
+                    by_id.remove(&old_identifier);
+                    by_id.insert(new_consumer.identifier().to_string(), new_consumer.clone());
                 }
                 self.spawn_consumer_poll_task(new_consumer);
                 info!(consumer_id = %consumer_id, "Consumer restarted with a fresh instance");
@@ -348,10 +358,13 @@ impl QueueManager {
                     ),
                     "QueueManager".to_string(),
                 );
-                // Remove the dead entry from `consumers` but leave
-                // `queue_configs` alone — see the self-healing note above.
+                // Remove the dead entry from `consumers` (and its
+                // identifier-keyed mirror — the old consumer is stopped,
+                // it must not stay resolvable) but leave `queue_configs`
+                // alone — see the self-healing note above.
                 let mut guard = self.consumers.write().await;
                 guard.remove(consumer_id);
+                self.consumers_by_id.write().await.remove(&old_identifier);
                 false
             }
         }

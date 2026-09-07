@@ -233,17 +233,30 @@ impl QueueManager {
         // Snapshot consumers before awaiting any nack — holding the read
         // lock across `consumer.nack(...).await` for every stalled message
         // would stall concurrent reloads/health reads for however long
-        // this whole loop takes.
+        // this whole loop takes. G10: keyed by identifier() (resolution),
+        // not the config queue name `self.consumers` uses.
         let consumers: HashMap<String, Arc<dyn QueueConsumer + Send + Sync>> = {
-            let guard = self.consumers.read().await;
+            let guard = self.consumers_by_id.read().await;
             guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
         let mut force_nacked = 0;
 
         for msg in &stalled {
             if msg.elapsed_seconds >= force_threshold {
+                // `in_pipeline` is keyed by pipeline_key (the broker
+                // message id, queue-scoped — G11), not by the application
+                // `message_id` `StalledMessageInfo` carries — resolve the
+                // real key through `app_message_to_pipeline_key` first,
+                // same as `force_ack_in_flight`/`is_in_flight_by_app_id`.
+                let Some(pipeline_key) = self
+                    .app_message_to_pipeline_key
+                    .get(&msg.message_id)
+                    .map(|e| e.value().clone())
+                else {
+                    continue;
+                };
                 // Get the in-flight message to get the receipt handle
-                if let Some(in_flight) = self.in_pipeline.get(&msg.message_id) {
+                if let Some(in_flight) = self.in_pipeline.get(&pipeline_key) {
                     let receipt_handle = in_flight.receipt_handle.clone();
                     let queue_id = in_flight.queue_identifier.clone();
                     drop(in_flight); // Release the lock before async call
@@ -264,7 +277,7 @@ impl QueueManager {
                             );
                         } else {
                             // Remove from pipeline since we've force-NACKed
-                            self.in_pipeline.remove(&msg.message_id);
+                            self.in_pipeline.remove(&pipeline_key);
                             self.app_message_to_pipeline_key.remove(&msg.message_id);
                             force_nacked += 1;
                         }
@@ -411,6 +424,120 @@ mod stall_warning_tests {
                 .len(),
             2,
             "a fresh stall of a previously-resolved message id must report again"
+        );
+    }
+
+    // --- G10: force-NACK must resolve the consumer by identifier(), not
+    // the config queue name, and must resolve the in-pipeline entry via
+    // app_message_to_pipeline_key rather than the bare application id. ---
+
+    use async_trait::async_trait;
+    use fc_common::QueuedMessage;
+    use fc_queue::{QueueConsumer, Result as QueueResult};
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+
+    /// Records nack() calls; a broker-native `identifier()` that deliberately
+    /// differs from any config queue name a test might otherwise key things
+    /// by (G10's whole point).
+    #[derive(Default)]
+    struct RecordingConsumer {
+        nacks: AtomicU32,
+    }
+
+    #[async_trait]
+    impl QueueConsumer for RecordingConsumer {
+        fn identifier(&self) -> &str {
+            "STREAM1/router"
+        }
+        async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+            Ok(vec![])
+        }
+        async fn ack(&self, _: &str) -> QueueResult<()> {
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+            self.nacks.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {}
+    }
+
+    fn manager_with_force_nack() -> super::QueueManager {
+        super::QueueManager::builder(HttpMediatorConfig::dev())
+            .stall_config(StallConfig {
+                enabled: true,
+                stall_threshold_seconds: 5,
+                force_nack_stalled: true,
+                force_nack_after_seconds: 0, // anything stalled immediately qualifies
+                nack_delay_seconds: 5,
+            })
+            .build()
+    }
+
+    /// Pins: force-NACK actually reaches the consumer and clears the
+    /// tracker entry, when the consumer is registered under its own
+    /// `identifier()` — a broker-native id ("STREAM1/router") that is
+    /// *not* the config queue name — and the in-pipeline entry is keyed by
+    /// a broker-derived pipeline_key ("scoped-key-1") that is *not* the
+    /// bare application message id ("msg-1").
+    ///
+    /// Mutant check A (G10): resolving via `self.consumers` (config-name
+    /// keyed, empty in this test) instead of `self.consumers_by_id`
+    /// (identifier-keyed) — `consumers.get("STREAM1/router")` finds
+    /// nothing, `nacks` stays 0, this test fails.
+    ///
+    /// Mutant check B (adjacent pipeline_key defect): resolving
+    /// `self.in_pipeline.get(&msg.message_id)` (bare app id "msg-1")
+    /// instead of resolving through `app_message_to_pipeline_key` first —
+    /// "msg-1" is never a key in `in_pipeline` (only "scoped-key-1" is),
+    /// so the lookup finds nothing, `nacks` stays 0, this test fails.
+    #[tokio::test]
+    async fn force_nack_resolves_consumer_by_identifier_and_pipeline_key_by_app_id_index() {
+        let manager = manager_with_force_nack();
+        let consumer = Arc::new(RecordingConsumer::default());
+
+        // Consumer registered ONLY under its identifier() — never under a
+        // config queue name — so any lookup through `self.consumers`
+        // (config-name keyed) must miss.
+        manager
+            .consumers_by_id
+            .write()
+            .await
+            .insert("STREAM1/router".to_string(), consumer.clone());
+
+        let mut in_flight = stalled_in_flight("msg-1");
+        in_flight.queue_identifier = "STREAM1/router".to_string();
+        manager
+            .in_pipeline
+            .insert("scoped-key-1".to_string(), in_flight);
+        manager
+            .app_message_to_pipeline_key
+            .insert("msg-1".to_string(), "scoped-key-1".to_string());
+
+        let force_nacked = manager.check_and_handle_stalled_messages().await;
+
+        assert_eq!(
+            consumer.nacks.load(AtomicOrdering::SeqCst),
+            1,
+            "the registered consumer's nack() must have been called exactly once"
+        );
+        assert_eq!(force_nacked, 1);
+        assert!(
+            !manager.in_pipeline.contains_key("scoped-key-1"),
+            "the in-pipeline entry must be cleared once force-NACKed"
+        );
+        assert!(
+            manager
+                .app_message_to_pipeline_key
+                .get("msg-1")
+                .is_none(),
+            "the app-id index entry must be cleared once force-NACKed"
         );
     }
 }

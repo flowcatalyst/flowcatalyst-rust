@@ -132,8 +132,12 @@ impl QueueManager {
             .map(|e| e.value().clone())?;
         let entry = self.in_pipeline.get(&pipeline_key).map(|e| e.value().clone())?;
 
+        // G10: resolve by the consumer's own identifier(), not the config
+        // queue name `consumers` is keyed by — `entry.queue_identifier` is
+        // `Consumer::identifier()` (see `InFlightMessage::new`), which for
+        // NATS differs from the operator-chosen queue name.
         let consumer = self
-            .consumers
+            .consumers_by_id
             .read()
             .await
             .get(&entry.queue_identifier)

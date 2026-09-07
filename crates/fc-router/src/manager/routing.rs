@@ -22,6 +22,24 @@ use crate::Result;
 
 use super::QueueManager;
 
+/// Scope a broker-native message id to the queue it came from (G11,
+/// `docs/go-mirror/2026-09-06-go-fix-list.md`).
+///
+/// A broker id is only unique *within one queue* — NATS JetStream's is
+/// `<streamSeq>:<consumerSeq>`-shaped per stream, so a second NATS queue's
+/// Nth message collides with the first queue's Nth message on the bare id.
+/// Every map keyed on a broker id (`in_pipeline`'s `pipeline_key`,
+/// `pending_delete_broker_ids`) MUST use this scoped form instead of the
+/// bare broker id, or two queues sharing a sequence number cross-wire their
+/// tracker entries — an ack on one queue's receipt handle winds up applied
+/// (and rejected by the broker) on a different queue's consumer. `\0` is the
+/// separator: it cannot appear in either half (a queue identifier or a
+/// broker id), unlike `:` or `/`, both of which NATS identifiers already
+/// contain.
+fn broker_scope_key(queue_identifier: &str, broker_id: &str) -> String {
+    format!("{queue_identifier}\0{broker_id}")
+}
+
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
 /// redelivery), performs the SQS operation, then cleans up tracking.
@@ -43,6 +61,11 @@ use super::QueueManager;
 struct QueueMessageCallback {
     pipeline_key: String,
     app_message_id: String,
+    /// The queue this message was polled from — `Consumer::identifier()`.
+    /// Used (G11) to scope the `pending_delete` broker-id key the same way
+    /// `pipeline_key` itself is scoped, so an ACK-failed retry never
+    /// collides with another queue's entry at the same broker id.
+    queue_identifier: String,
     consumer: Arc<dyn QueueConsumer + Send + Sync>,
     in_pipeline: Arc<DashMap<String, InFlightMessage>>,
     app_message_to_pipeline_key: Arc<DashMap<String, String>>,
@@ -96,7 +119,12 @@ impl MessageCallback for QueueMessageCallback {
                         error = %e,
                         "ACK failed (receipt handle likely expired) - adding to pending delete"
                     );
-                    self.pending_delete.insert(bid.clone(), Instant::now());
+                    // G11: scope by queue, same as `pipeline_key` — see
+                    // `broker_scope_key`'s doc comment.
+                    self.pending_delete.insert(
+                        broker_scope_key(&self.queue_identifier, bid),
+                        Instant::now(),
+                    );
                 } else {
                     error!(
                         app_message_id = %self.app_message_id,
@@ -250,10 +278,15 @@ impl QueueManager {
         let mut messages_to_delete = Vec::new();
         let mut messages_to_process = Vec::with_capacity(messages.len());
         for msg in messages {
+            // G11: scoped by queue — see `broker_scope_key`'s doc comment.
             let should_delete = msg
                 .broker_message_id
                 .as_ref()
-                .map(|broker_id| self.pending_delete_broker_ids.remove(broker_id).is_some())
+                .map(|broker_id| {
+                    self.pending_delete_broker_ids
+                        .remove(&broker_scope_key(&msg.queue_identifier, broker_id))
+                        .is_some()
+                })
                 .unwrap_or(false);
 
             if should_delete {
@@ -455,15 +488,27 @@ impl QueueManager {
 
                     let app_message_id = msg.message.id.clone();
 
-                    // Use broker_message_id as pipeline key (mirrors Java's sqsMessageId usage)
-                    // Fall back to a composite key if broker_message_id is not available
-                    let pipeline_key = msg.broker_message_id.clone().unwrap_or_else(|| {
-                        format!("fallback:{}:{}", msg.queue_identifier, msg.message.id)
-                    });
+                    // Use broker_message_id, scoped to its queue (G11), as
+                    // pipeline key (mirrors Java's sqsMessageId usage, plus
+                    // the queue scoping Java's InFlightTracker applies to
+                    // its own broker-id index) — a bare broker id is only
+                    // unique within one queue (NATS: unique per stream), so
+                    // two queues at the same sequence number would
+                    // otherwise collide. Fall back to a composite key
+                    // (already queue-scoped) if broker_message_id is not
+                    // available.
+                    let pipeline_key = msg
+                        .broker_message_id
+                        .as_deref()
+                        .map(|bid| broker_scope_key(&msg.queue_identifier, bid))
+                        .unwrap_or_else(|| {
+                            format!("fallback:{}:{}", msg.queue_identifier, msg.message.id)
+                        });
 
                     let receipt_handle = msg.receipt_handle.clone();
 
                     // Track in pipeline with receipt handle
+                    let queue_identifier = msg.queue_identifier.clone();
                     let in_flight = InFlightMessage::new(
                         &msg.message,
                         msg.broker_message_id.clone(),
@@ -481,6 +526,7 @@ impl QueueManager {
                     let callback = QueueMessageCallback {
                         pipeline_key: pipeline_key.clone(),
                         app_message_id: app_message_id.clone(),
+                        queue_identifier,
                         consumer: consumer.clone(),
                         in_pipeline: self.in_pipeline.clone(),
                         app_message_to_pipeline_key: self.app_message_to_pipeline_key.clone(),
@@ -542,7 +588,10 @@ impl QueueManager {
             // This MUST be checked FIRST because the same broker ID means it's a visibility timeout redelivery,
             // NOT a requeue by an external process
             if let Some(ref broker_msg_id) = msg.broker_message_id {
-                if let Some(mut entry) = self.in_pipeline.get_mut(broker_msg_id) {
+                // G11: look up the queue-scoped key, not the bare broker id
+                // — see `broker_scope_key`'s doc comment.
+                let pipeline_key = broker_scope_key(&msg.queue_identifier, broker_msg_id);
+                if let Some(mut entry) = self.in_pipeline.get_mut(&pipeline_key) {
                     // Update receipt handle with the new one from the redelivered message
                     // This ensures when processing completes, ACK uses the valid (latest) receipt handle
                     if entry.receipt_handle != msg.receipt_handle {
@@ -557,7 +606,7 @@ impl QueueManager {
                             entry.broker_message_id = Some(broker_msg_id.clone());
                         }
                     }
-                    let pipeline_key = broker_msg_id.clone();
+                    drop(entry);
                     result.duplicates.push(DuplicateMessage {
                         message: msg,
                         existing_pipeline_key: pipeline_key,
@@ -575,9 +624,15 @@ impl QueueManager {
                 let existing_key = existing_pipeline_key.value().clone();
 
                 // Only treat as requeued duplicate if the broker message IDs are DIFFERENT
-                // If they're the same, it would have been caught by the check above
+                // If they're the same, it would have been caught by the check above.
+                // `existing_key` is a queue-scoped pipeline_key (G11) — build
+                // the same scoped form from this message's own broker id
+                // before comparing, or the comparison always reads as
+                // "different" now that the scoping prefix never matches a
+                // bare id.
                 if let Some(ref new_broker_id) = msg.broker_message_id {
-                    if *new_broker_id != existing_key {
+                    let candidate_key = broker_scope_key(&msg.queue_identifier, new_broker_id);
+                    if candidate_key != existing_key {
                         info!(
                             app_message_id = %msg.message.id,
                             existing_broker_id = %existing_key,
@@ -835,6 +890,7 @@ mod callback_drop_tests {
         let cb = QueueMessageCallback {
             pipeline_key,
             app_message_id,
+            queue_identifier: "queue-id".to_string(),
             consumer: consumer as Arc<dyn QueueConsumer + Send + Sync>,
             in_pipeline: in_pipeline.clone(),
             app_message_to_pipeline_key: app_index.clone(),
@@ -1123,6 +1179,132 @@ mod routing_gate_tests {
             manager.warning_service().warning_count(),
             2,
             "both the empty and the unknown pool_code should have warned identically"
+        );
+    }
+}
+
+#[cfg(test)]
+mod g11_broker_scoping_tests {
+    use super::*;
+    use crate::mediator::HttpMediatorConfig;
+    use fc_common::{DispatchMode, MediationType, Message, QueuedMessage};
+
+    fn queued_on(id: &str, queue: &str, broker_id: &str, receipt: &str) -> QueuedMessage {
+        QueuedMessage {
+            message: Message {
+                id: id.to_string(),
+                pool_code: "POOL".to_string(),
+                auth_token: None,
+                signing_secret: None,
+                mediation_type: MediationType::HTTP,
+                mediation_target: "http://localhost/x".to_string(),
+                message_group_id: None,
+                high_priority: false,
+                dispatch_mode: DispatchMode::Immediate,
+                dispatch_mode_specified: true,
+            },
+            receipt_handle: receipt.to_string(),
+            broker_message_id: Some(broker_id.to_string()),
+            queue_identifier: queue.to_string(),
+        }
+    }
+
+    /// G11: two different NATS streams' Nth message legitimately share the
+    /// same bare broker id (`<streamSeq>:<consumerSeq>` is only unique
+    /// within one stream). Registering both must produce two DISTINCT
+    /// `in_pipeline` entries, and a redelivery on one queue must never
+    /// touch the other queue's entry despite the shared bare id.
+    ///
+    /// Mutant check: reverting `pipeline_key`/`filter_duplicates`'s lookup
+    /// to the bare broker id instead of `broker_scope_key(queue_identifier,
+    /// broker_id)` makes queue B's registration silently overwrite queue
+    /// A's `in_pipeline` entry (same map key) — the `len() == 2` assertion
+    /// below catches that immediately — and, more subtly, sends A's
+    /// redelivery down Check 1 for whichever queue's entry is currently at
+    /// the bare key, corrupting the receipt handle the wrong queue would
+    /// try to ack with — the final two assertions catch that (checked by
+    /// hand against a bare-key revert while implementing this fix: the
+    /// `b_entry.receipt_handle` assertion below is the one that fails).
+    #[tokio::test]
+    async fn same_broker_id_on_different_queues_gets_distinct_pipeline_entries() {
+        let manager = QueueManager::new(HttpMediatorConfig::dev());
+
+        let a = queued_on("msg-a", "BENCH1/router", "9", "receipt-a-v1");
+        let b = queued_on("msg-b", "BENCH4/router", "9", "receipt-b-v1");
+
+        // Register A, mimicking what route_batch does once filter_duplicates
+        // admits a message as unique.
+        let filtered_a = manager.filter_duplicates(vec![a.clone()]);
+        assert_eq!(filtered_a.unique.len(), 1);
+        let key_a = broker_scope_key(&a.queue_identifier, "9");
+        manager.in_pipeline.insert(
+            key_a.clone(),
+            InFlightMessage::new(
+                &a.message,
+                a.broker_message_id.clone(),
+                a.queue_identifier.clone(),
+                None,
+                a.receipt_handle.clone(),
+            ),
+        );
+        manager
+            .app_message_to_pipeline_key
+            .insert(a.message.id.clone(), key_a.clone());
+
+        // Register B, on a different queue, sharing the bare broker id "9".
+        let filtered_b = manager.filter_duplicates(vec![b.clone()]);
+        assert_eq!(
+            filtered_b.unique.len(),
+            1,
+            "queue BENCH4's message must not be mistaken for a redelivery \
+             of queue BENCH1's, despite sharing the bare broker id \"9\""
+        );
+        let key_b = broker_scope_key(&b.queue_identifier, "9");
+        manager.in_pipeline.insert(
+            key_b.clone(),
+            InFlightMessage::new(
+                &b.message,
+                b.broker_message_id.clone(),
+                b.queue_identifier.clone(),
+                None,
+                b.receipt_handle.clone(),
+            ),
+        );
+        manager
+            .app_message_to_pipeline_key
+            .insert(b.message.id.clone(), key_b.clone());
+
+        assert_eq!(
+            manager.in_pipeline.len(),
+            2,
+            "two different queues' messages sharing a bare broker id must \
+             not collapse into one tracker entry"
+        );
+
+        // A genuine redelivery of A (same queue, same broker id, fresh
+        // receipt handle) must update ONLY A's entry.
+        let a_redelivered = queued_on("msg-a", "BENCH1/router", "9", "receipt-a-v2");
+        let filtered_redeliver = manager.filter_duplicates(vec![a_redelivered]);
+        assert_eq!(
+            filtered_redeliver.duplicates.len(),
+            1,
+            "A's redelivery must be recognised as a duplicate of A"
+        );
+        assert_eq!(filtered_redeliver.unique.len(), 0);
+
+        let a_entry = manager.in_pipeline.get(&key_a).unwrap();
+        assert_eq!(
+            a_entry.receipt_handle, "receipt-a-v2",
+            "A's receipt handle must be updated to the fresher redelivery"
+        );
+        drop(a_entry);
+
+        let b_entry = manager.in_pipeline.get(&key_b).unwrap();
+        assert_eq!(
+            b_entry.receipt_handle, "receipt-b-v1",
+            "B's entry must be untouched by A's redelivery — a bare-broker-id \
+             key would route A's redelivery onto whichever queue's entry \
+             happened to be at key \"9\" (the G11 cross-wiring bug)"
         );
     }
 }

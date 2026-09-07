@@ -8,7 +8,11 @@
 //! - Automatic stream and consumer provisioning
 //! - Queue metrics from JetStream consumer info
 
-use async_nats::jetstream::{self, consumer::PullConsumer, stream, AckKind};
+use async_nats::jetstream::{
+    self,
+    consumer::{pull::Batch as PullBatch, PullConsumer},
+    stream, AckKind,
+};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -319,33 +323,18 @@ impl NatsQueueConsumer {
     fn broker_message_id_from_sequence(stream_sequence: u64, _consumer_sequence: u64) -> String {
         stream_sequence.to_string()
     }
-}
 
-#[async_trait]
-impl QueueConsumer for NatsQueueConsumer {
-    fn identifier(&self) -> &str {
-        &self.queue_id
-    }
-
-    async fn poll(&self, max_messages: u32) -> Result<Vec<QueuedMessage>> {
-        if !self.running.load(Ordering::SeqCst) {
-            return Err(QueueError::Stopped);
-        }
-
-        let consumer = self.consumer.read().await;
-        let batch_size = max_messages.min(self.config.max_messages_per_poll) as usize;
-        let timeout = Duration::from_millis(self.config.poll_timeout_ms);
-
-        // Use fetch() for pull-based consumption with a timeout
-        let mut batch = consumer
-            .fetch()
-            .max_messages(batch_size)
-            .expires(timeout)
-            .messages()
-            .await
-            .map_err(|e| QueueError::Nats(format!("Failed to fetch messages: {}", e)))?;
-
-        let mut messages = Vec::with_capacity(batch_size);
+    /// Drain a JetStream pull `Batch` (produced by either `.fetch()`'s
+    /// no-wait request or `.batch()`'s waiting request — both yield the
+    /// same [`PullBatch`] stream type) into [`QueuedMessage`]s.
+    ///
+    /// A message whose stream metadata can't be read, or whose payload
+    /// fails to parse, is `Term`ed (never redelivered) and skipped rather
+    /// than aborting the rest of the batch — malformed payloads are a
+    /// broker-backend concern (`docs/spec/router.md` §2.3/§8.2), not a
+    /// reason to drop every other message this poll picked up.
+    async fn drain_batch(&self, mut batch: PullBatch) -> Vec<QueuedMessage> {
+        let mut messages = Vec::new();
 
         while let Some(msg_result) = batch.next().await {
             match msg_result {
@@ -409,6 +398,57 @@ impl QueueConsumer for NatsQueueConsumer {
                     break;
                 }
             }
+        }
+
+        messages
+    }
+}
+
+#[async_trait]
+impl QueueConsumer for NatsQueueConsumer {
+    fn identifier(&self) -> &str {
+        &self.queue_id
+    }
+
+    async fn poll(&self, max_messages: u32) -> Result<Vec<QueuedMessage>> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(QueueError::Stopped);
+        }
+
+        let consumer = self.consumer.read().await;
+        let batch_size = max_messages.min(self.config.max_messages_per_poll) as usize;
+
+        // G13: Go-shaped fetch semantics on one long-lived pull consumer
+        // handle (`self.consumer`, built once in `new()` and reused here).
+        // `.fetch()` always issues a `no_wait` pull request — the server
+        // returns immediately with whatever is sitting on the stream right
+        // now, up to `batch_size`, even if that's zero. We try that first
+        // so a poll never blocks waiting for a full batch when messages are
+        // already available. Only when that comes back empty do we fall
+        // through to `.batch()`, a genuine *waiting* pull (`no_wait: false`)
+        // bounded by `poll-timeout` — this is what keeps an idle queue from
+        // being polled in a hot loop while still returning the moment work
+        // shows up.
+        let no_wait_batch = consumer
+            .fetch()
+            .max_messages(batch_size)
+            .messages()
+            .await
+            .map_err(|e| QueueError::Nats(format!("Failed to fetch messages (no-wait): {}", e)))?;
+        let mut messages = self.drain_batch(no_wait_batch).await;
+
+        if messages.is_empty() {
+            let timeout = Duration::from_millis(self.config.poll_timeout_ms);
+            let waiting_batch = consumer
+                .batch()
+                .max_messages(batch_size)
+                .expires(timeout)
+                .messages()
+                .await
+                .map_err(|e| {
+                    QueueError::Nats(format!("Failed to fetch messages (waiting): {}", e))
+                })?;
+            messages = self.drain_batch(waiting_batch).await;
         }
 
         if !messages.is_empty() {
