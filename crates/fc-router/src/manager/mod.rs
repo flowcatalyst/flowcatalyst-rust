@@ -364,6 +364,22 @@ pub struct QueueManager {
     /// in-flight or buffered work — it only stops *new* polling — so no
     /// other state needs to change on a transition.
     is_leader: AtomicBool,
+
+    /// Flips to `true` once [`Self::start`] has spawned a poll task for
+    /// every consumer configured at startup (item 5, bench rig finding
+    /// 2026-09-07: the HTTP listener and `QueueManager::start()` are two
+    /// independent tasks spawned back-to-back in `main.rs` with no
+    /// ordering between them, so `/health` was answering 200 — and the
+    /// bench rig's drain clock was starting — before a single consumer
+    /// poll task existed. `api::health::health_handler` reads this via
+    /// [`Self::consumers_started`] and answers 503 until it flips, so a
+    /// health check genuinely means "consuming has begun", not just "the
+    /// HTTP listener is bound". Deliberately does **not** wait for each
+    /// task's first actual `poll()` — a slow/long-polling broker (SQS's
+    /// 20s) would then hold `/health` unready for the length of one poll
+    /// cycle for no correctness reason; "a poll task is running for every
+    /// configured consumer" is what "started consuming" means here.
+    consumers_started: AtomicBool,
 }
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
@@ -477,6 +493,7 @@ impl QueueManagerBuilder {
             health_service: self.health_service,
             strict_routing: AtomicBool::new(false),
             is_leader: AtomicBool::new(true),
+            consumers_started: AtomicBool::new(false),
         }
     }
 }
@@ -598,6 +615,14 @@ impl QueueManager {
         } else if !leader && was_leader {
             warn!("This instance lost leadership — pausing message consumption (in-flight work continues)");
         }
+    }
+
+    /// Whether [`Self::start`] has spawned a poll task for every consumer
+    /// configured at startup. See the `consumers_started` field doc for why
+    /// `/health` gates on this rather than answering the moment the HTTP
+    /// listener is bound.
+    pub fn consumers_started(&self) -> bool {
+        self.consumers_started.load(Ordering::SeqCst)
     }
 
     /// Build a mediator instance for a pool via the configured factory,

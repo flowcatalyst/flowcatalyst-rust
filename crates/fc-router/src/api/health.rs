@@ -30,15 +30,37 @@ pub struct ProbeResponse {
 }
 
 /// Health check endpoint
+///
+/// Item 5 (bench rig finding 2026-09-07): answers 503 until
+/// [`crate::manager::QueueManager::consumers_started`] flips — the HTTP
+/// listener and `QueueManager::start()` are independent tasks with no
+/// ordering between them (`bin/fc-router/src/main.rs`), so before this fix
+/// `/health` could (and under the bench rig's poll cadence, did) answer 200
+/// before a single consumer poll task existed. A caller that treats "health
+/// returns 200" as "the router is consuming" — the bench rig's drain clock,
+/// an operator's own health probe — needs that to be true, not just "the
+/// HTTP listener is bound".
 #[utoipa::path(
     get,
     path = "/health",
     tag = "health",
     responses(
-        (status = 200, description = "Health status", body = SimpleHealthResponse)
+        (status = 200, description = "Health status", body = SimpleHealthResponse),
+        (status = 503, description = "Consumers not started yet", body = SimpleHealthResponse)
     )
 )]
-pub(crate) async fn health_handler(State(state): State<AppState>) -> Json<SimpleHealthResponse> {
+pub(crate) async fn health_handler(State(state): State<AppState>) -> Response {
+    if !state.queue_manager.consumers_started() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(SimpleHealthResponse {
+                status: "STARTING".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            }),
+        )
+            .into_response();
+    }
+
     let pool_stats = state.queue_manager.get_pool_stats();
     let report = state.health_service.get_health_report(&pool_stats);
 
@@ -52,6 +74,7 @@ pub(crate) async fn health_handler(State(state): State<AppState>) -> Json<Simple
         status: status.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+    .into_response()
 }
 
 /// Simple health handler (no state dependency)

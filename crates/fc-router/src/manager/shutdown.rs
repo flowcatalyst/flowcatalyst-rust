@@ -39,6 +39,16 @@ impl QueueManager {
             handles.push(self.spawn_consumer_poll_task(consumer));
         }
 
+        // Item 5: every configured consumer now has a poll task spawned —
+        // flip the readiness gate `api::health::health_handler` reads
+        // before the bench rig's (or any operator's) health probe can see
+        // 200. Ordering: `tokio::spawn` above only *schedules* each task;
+        // it doesn't run until this async fn next yields. That's fine —
+        // "started" means "a poll task exists and will run", not "has
+        // already completed a poll" (see the field doc on why we don't
+        // wait for that).
+        self.consumers_started.store(true, std::sync::atomic::Ordering::SeqCst);
+
         // Defence-in-depth: reaper for stuck `in_pipeline` entries.
         handles.push(self.clone().spawn_in_pipeline_reaper());
 
