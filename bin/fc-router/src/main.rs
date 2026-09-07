@@ -201,19 +201,57 @@ async fn main() -> Result<()> {
     // 8. Create consumers from config, dispatching on each queue URI's
     // scheme (item 1 — the blocker this fixes: every queue used to be
     // handed to SqsConsumerFactory regardless of its scheme).
-    let scheme_factory = SchemeConsumerFactory {
-        sqs_client: sqs_client.clone(),
-    };
+    //
+    // Item 1 (router bench rig, 2026-09-07): in production mode
+    // (`config_sync.is_some()`, i.e. `FLOWCATALYST_CONFIG_URL` set),
+    // `sync_service.initial_sync()` above already created AND spawned a
+    // poll task for every one of these queues via `QueueManager`'s own
+    // `reload_config` -> `sync_queue_consumers` (the manager was built
+    // with a `consumer_factory` specifically so that path could do this —
+    // see the `.consumer_factory(...)` call above). This loop used to
+    // unconditionally create a SECOND, fully independent consumer per
+    // queue here too (its own `PostgresQueue`/etc. instance, own DB
+    // connection pool) and `add_consumer` it — `add_consumer` only
+    // overwrites the manager's `consumers` map entry, it neither stops the
+    // poll task `sync_queue_consumers` already spawned for that id nor
+    // spawns one for this new instance (that only happened later, when
+    // `QueueManager::start()` — step 11, below — spawned one for whatever
+    // was currently in the map). Net effect: two independent pollers
+    // racing each other against the same `queue_name`, reproduced as
+    // spurious "ACK failed - message not found" warnings and a handful of
+    // genuine duplicate deliveries within milliseconds of a message's
+    // first claim (`QueueManager`'s new `polling_consumer_ids` guard is
+    // the defence-in-depth backstop for this same class of bug; this is
+    // the direct fix — never create the redundant instance in the first
+    // place).
+    //
+    // Dev mode (`config_sync` is `None`) has no config-sync service at
+    // all, so `initial_sync` never runs and `self.consumers` starts empty
+    // — this loop is still the only thing that ever creates a consumer
+    // there, so it still needs to run in full for that branch.
     let mut first_queue_url: Option<String> = None;
-    for queue_config in &router_config.queues {
-        let consumer = scheme_factory.create_consumer(queue_config).await?;
-        queue_manager.add_consumer(consumer).await;
+    if config_sync.is_none() {
+        let scheme_factory = SchemeConsumerFactory {
+            sqs_client: sqs_client.clone(),
+        };
+        for queue_config in &router_config.queues {
+            let consumer = scheme_factory.create_consumer(queue_config).await?;
+            queue_manager.add_consumer(consumer).await;
 
-        // Track first queue URL for the publisher (still SQS-only — see
-        // SqsPublisher's doc comment).
-        if first_queue_url.is_none() {
-            first_queue_url = Some(queue_config.uri.clone());
+            // Track first queue URL for the publisher (still SQS-only —
+            // see SqsPublisher's doc comment).
+            if first_queue_url.is_none() {
+                first_queue_url = Some(queue_config.uri.clone());
+            }
         }
+    } else {
+        // Consumers already exist (and are already polling) courtesy of
+        // initial_sync() above — just find the first queue URL for the
+        // publisher.
+        first_queue_url = router_config
+            .queues
+            .first()
+            .map(|q| q.uri.clone());
     }
 
     if router_config.queues.is_empty() {
@@ -732,12 +770,23 @@ async fn build_nats_consumer(
 async fn build_postgres_consumer(
     config: &QueueConfig,
 ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer + Send + Sync>, fc_router::RouterError> {
+    // Item 1 (router bench rig, 2026-09-07): a hardcoded max_connections(4)
+    // starved this queue's acks under load (see
+    // `fc_queue::postgres::default_max_connections`'s doc comment for the
+    // full mechanism — undersized pool -> acks queue up behind claim
+    // traffic -> visibility timeout lapses before the ack lands -> the row
+    // gets reclaimed out from under the still-in-flight delivery -> the
+    // eventual ack fails "message not found", and the retry path only
+    // resolves on the row's next natural reclaim). Sizing now mirrors Go's
+    // own `pgxpool.New` default of `max(4, NumCPU)`.
+    let max_connections = fc_queue::postgres::default_max_connections();
     info!(
         queue_name = %config.name,
+        max_connections,
         "Creating Postgres queue consumer from config"
     );
     let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(4)
+        .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(10))
         .connect(&config.uri)
         .await

@@ -33,7 +33,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use fc_common::{PoolConfig, StallConfig};
 use fc_queue::QueueConsumer;
 
@@ -380,6 +380,40 @@ pub struct QueueManager {
     /// cycle for no correctness reason; "a poll task is running for every
     /// configured consumer" is what "started consuming" means here.
     consumers_started: AtomicBool,
+
+    /// Item 1 (router bench rig, 2026-09-07): identifiers (`consumer.
+    /// identifier()`) that currently have a poll task running, guarding
+    /// [`Self::spawn_consumer_poll_task`] against being called twice for
+    /// the same queue. Found via a hand-rolled single-queue reproduction
+    /// after the bench rig's `ACK failed - message not found` warnings
+    /// turned out not to be a visibility-timeout race at all: production
+    /// mode (`FLOWCATALYST_CONFIG_URL` set) calls `initial_sync()` ->
+    /// `reload_config()` -> `sync_queue_consumers()` *before*
+    /// `QueueManager::start()` runs, and `sync_queue_consumers` already
+    /// spawns a poll task for every queue it creates (the "hot-add" path,
+    /// meant for a *later* config reload) — but `start()` then
+    /// unconditionally spawns a poll task for every consumer currently in
+    /// `self.consumers` too, with no way to know one is already running.
+    /// `bin/fc-router/src/main.rs` compounded this by ALSO manually
+    /// creating and `add_consumer`-ing a second, fully independent
+    /// `PostgresQueue` instance per queue in between those two calls
+    /// (`add_consumer` only overwrites the map entry — it neither stops
+    /// whatever poll task is already running for that id nor spawns one
+    /// for the new instance itself) — see that file's own fix. Two
+    /// concurrent pollers hammering the same `queue_name` doesn't produce
+    /// a literal double-claim of one row (`FOR UPDATE SKIP LOCKED` still
+    /// prevents that), but it does mean two independent, concurrently-
+    /// running dedup/redelivery cycles racing each other, which reproduced
+    /// as spurious ACK failures and a small number of genuine duplicate
+    /// deliveries (5,006 sink hits for 5,000 seeded messages in the
+    /// reproduction) within *milliseconds* of a message's very first
+    /// claim — nothing to do with the 120s visibility window at all. This
+    /// set makes a second `spawn_consumer_poll_task` call for an id that
+    /// already has a live task a no-op (logged) instead of a second
+    /// poller, regardless of which code path or which consumer instance
+    /// triggers it — defence in depth alongside the direct fix in
+    /// `main.rs`.
+    polling_consumer_ids: Arc<DashSet<String>>,
 }
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
@@ -494,6 +528,7 @@ impl QueueManagerBuilder {
             strict_routing: AtomicBool::new(false),
             is_leader: AtomicBool::new(true),
             consumers_started: AtomicBool::new(false),
+            polling_consumer_ids: Arc::new(DashSet::new()),
         }
     }
 }

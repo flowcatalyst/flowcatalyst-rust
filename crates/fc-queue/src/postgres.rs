@@ -139,6 +139,47 @@ impl PostgresQueue {
     }
 }
 
+/// Sensible default `max_connections` for a per-queue Postgres pool
+/// (`docs/spec/router.md` §7.3: "one pgxpool per consumer"), mirroring Go's
+/// own `pgxpool.New` default of `max(4, runtime.NumCPU())`.
+///
+/// Found via the router bench rig (`bench/router`, `BROKER=postgres
+/// QUEUES=8`, item 1): every claim/ack/nack query itself was fast (p100
+/// under the batch < 70ms even under load — see the SQL comment on
+/// `poll()`'s claiming UPDATE), but a hardcoded `max_connections(4)` still
+/// starved the queue empty: with `POOL_CONCURRENCY=256` worker tasks all
+/// needing to ACK through the *same* 4-connection pool a poll loop that
+/// re-polls immediately (G12, no pacing sleep) is *also* drawing from,
+/// acks queued up behind claim traffic for long enough that the row's
+/// visibility timeout (default 30s) lapsed before the ack landed — the row
+/// got silently re-claimed out from under the still-in-flight delivery,
+/// and the original ack, when it finally ran, failed with "message not
+/// found" against the now-superseded receipt handle (`ack`'s doc comment
+/// on `receipt_handle`). The failed ack's fallback (`pending_delete` in
+/// `manager/routing.rs`) only resolves on the row's *next* natural
+/// reclaim, which — since every reclaim resets the visibility deadline
+/// another 30s out — can take a full extra visibility cycle per miss,
+/// compounding: 947 of 50,000 rows were still sitting in `queue_messages`
+/// 30s after the sink had already recorded all 50,000 deliveries (they
+/// were not lost — draining the same table by hand afterward showed 0
+/// rows once the process was left running — just very slow to resolve).
+/// Raising the pool size is a direct fix for the contention that starts
+/// the whole cascade, not a workaround for its symptom.
+///
+/// `std::thread::available_parallelism()` (not the `num_cpus` crate — no
+/// new dependency needed) reads the same OS-reported core count Go's
+/// `runtime.NumCPU()` does; both are equally unaware of a `--cpus`
+/// container quota (`/proc/cpuinfo` inside a `--cpus=1` container still
+/// reports the host's full core count) — that's Go's own behaviour being
+/// mirrored here, not something this port should silently "fix" by
+/// under-sizing relative to Go on the same host.
+pub fn default_max_connections() -> u32 {
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(1);
+    cpus.max(4)
+}
+
 #[async_trait]
 impl QueueConsumer for PostgresQueue {
     fn identifier(&self) -> &str {
@@ -493,5 +534,49 @@ impl QueuePublisher for PostgresQueue {
 impl EmbeddedQueue for PostgresQueue {
     async fn init_schema(&self) -> Result<()> {
         self.create_schema().await
+    }
+}
+
+#[cfg(test)]
+mod pool_sizing_tests {
+    use super::*;
+
+    /// Pins the `max(4, cpus)` formula itself (Go's `pgxpool.New` default)
+    /// — independent of whatever core count this particular test host
+    /// reports, both arms of the `max` must hold.
+    ///
+    /// Mutant check (hand-edited `default_max_connections` to return the
+    /// bare `cpus` with no `.max(4)` floor, confirmed by hand while
+    /// implementing this fix, then restored): on any host with 1-3 cores
+    /// visible to the process this assertion fails immediately (a value
+    /// under 4); on this dev machine (14 cores) it happened not to catch
+    /// the floor, which is exactly why the assertion is a `>=` bound, not
+    /// an exact-equality one that could pass vacuously on a wide-core CI
+    /// runner.
+    #[test]
+    fn never_below_four_regardless_of_host_cpu_count() {
+        let n = default_max_connections();
+        assert!(n >= 4, "default_max_connections() = {n}, must be >= 4");
+    }
+
+    /// The formula must actually track the host's reported core count when
+    /// that's higher than the floor — not just clamp everything to 4. This
+    /// is the assertion that pins the actual bug fixed here (a hardcoded 4
+    /// regardless of host cores): a mutant that hardcodes the return value
+    /// to `4` passes the floor test above but fails this one whenever the
+    /// test host reports more than 4 cores (true of essentially every CI
+    /// runner and dev machine today).
+    #[test]
+    fn tracks_available_parallelism_above_the_floor() {
+        let reported = std::thread::available_parallelism()
+            .map(|n| n.get() as u32)
+            .unwrap_or(1);
+        let n = default_max_connections();
+        assert_eq!(
+            n,
+            reported.max(4),
+            "default_max_connections() must equal max(4, available_parallelism()), \
+             not a value independent of the host's reported core count"
+        );
     }
 }

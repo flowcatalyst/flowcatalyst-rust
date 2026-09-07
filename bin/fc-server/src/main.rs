@@ -769,15 +769,31 @@ async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::tas
 
     // Add consumers, dispatching on each queue URI's scheme (item 1 — every
     // queue used to be handed to the SQS consumer regardless of scheme).
-    let scheme_factory = SchemeConsumerFactory {
-        sqs_client: sqs_client.clone(),
-    };
-    for queue_config in &router_config.queues {
-        match scheme_factory.create_consumer(queue_config).await {
-            Ok(consumer) => queue_manager.add_consumer(consumer).await,
-            Err(e) => {
-                error!(queue = %queue_config.name, error = %e, "Failed to create queue consumer");
-                return None;
+    //
+    // Item 1 (router bench rig, 2026-09-07; identical fix to
+    // `bin/fc-router/src/main.rs` — see that file's doc comment for the
+    // full mechanism): when `!dev_mode`, `sync_service.initial_sync()`
+    // above already created AND spawned a poll task for every one of these
+    // queues via `QueueManager::reload_config` -> `sync_queue_consumers`
+    // (the manager was built with a `consumer_factory` specifically so
+    // that path could do this). Running this loop unconditionally used to
+    // create a SECOND, independent consumer per queue here too and
+    // `add_consumer` it — orphaning the first poll task and racing it with
+    // a second one spawned later by `QueueManager::start()`. Dev mode
+    // synthesises `router_config` inline above with no config-sync
+    // service involved at all, so this loop is still the only thing that
+    // ever creates a consumer there.
+    if dev_mode {
+        let scheme_factory = SchemeConsumerFactory {
+            sqs_client: sqs_client.clone(),
+        };
+        for queue_config in &router_config.queues {
+            match scheme_factory.create_consumer(queue_config).await {
+                Ok(consumer) => queue_manager.add_consumer(consumer).await,
+                Err(e) => {
+                    error!(queue = %queue_config.name, error = %e, "Failed to create queue consumer");
+                    return None;
+                }
             }
         }
     }
@@ -1328,9 +1344,18 @@ async fn build_nats_consumer(
 async fn build_postgres_consumer(
     config: &fc_common::QueueConfig,
 ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer + Send + Sync>, fc_router::RouterError> {
-    info!(queue_name = %config.name, "Creating Postgres queue consumer from config");
+    // Item 1 (router bench rig, 2026-09-07) — see the identical fix's doc
+    // comment on `fc_queue::postgres::default_max_connections` and on the
+    // sibling helper in `bin/fc-router/src/main.rs`: a hardcoded
+    // max_connections(4) starved this queue's acks under load.
+    let max_connections = fc_queue::postgres::default_max_connections();
+    info!(
+        queue_name = %config.name,
+        max_connections,
+        "Creating Postgres queue consumer from config"
+    );
     let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(4)
+        .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(10))
         .connect(&config.uri)
         .await

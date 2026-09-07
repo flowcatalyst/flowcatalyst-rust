@@ -81,6 +81,24 @@ impl QueueManager {
         self: &Arc<Self>,
         consumer: Arc<dyn QueueConsumer + Send + Sync>,
     ) -> tokio::task::JoinHandle<()> {
+        // Item 1 (router bench rig, 2026-09-07): refuse to spawn a second
+        // poll task for a queue that already has one running — see the
+        // `polling_consumer_ids` field doc for the full mechanism this
+        // guards against (production mode's `initial_sync()` and
+        // `QueueManager::start()` could each spawn one for the same
+        // queue). `DashSet::insert` returns `false` when the value was
+        // already present, so this is a single atomic check-and-set — no
+        // separate contains()-then-insert() race window. The no-op path
+        // still returns a `JoinHandle` (an already-finished trivial task)
+        // so every call site keeps working with the same return type.
+        if !self.polling_consumer_ids.insert(consumer.identifier().to_string()) {
+            warn!(
+                consumer = %consumer.identifier(),
+                "Refusing to spawn a second poll task for this queue — one is already running"
+            );
+            return tokio::spawn(async {});
+        }
+
         let manager = self.clone();
         let token = self.shutdown.child_token();
 
@@ -250,6 +268,11 @@ impl QueueManager {
             if let Some(ref health_service) = manager.health_service {
                 health_service.set_consumer_running(consumer.identifier(), false);
             }
+            // Mirror image of the guard at spawn time — release this id so
+            // a legitimate later spawn (e.g. `restart_consumer`'s
+            // replacement, after `old.stop()`) is not itself refused as a
+            // false-positive duplicate.
+            manager.polling_consumer_ids.remove(consumer.identifier());
         })
     }
 
@@ -582,6 +605,110 @@ mod consumer_liveness_tests {
             !health_service.is_consumer_healthy("lifecycle"),
             "an exited poll task must no longer read as running"
         );
+    }
+
+    /// Never returns messages; counts every `poll()` call so a test can
+    /// tell whether this specific consumer instance was ever actually
+    /// polled — as opposed to merely being registered somewhere.
+    struct CountingIdleConsumer {
+        id: &'static str,
+        poll_calls: Arc<std::sync::atomic::AtomicU32>,
+    }
+
+    #[async_trait]
+    impl QueueConsumer for CountingIdleConsumer {
+        fn identifier(&self) -> &str {
+            self.id
+        }
+        async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+            self.poll_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // A real broker poll never returns instantly forever — avoid
+            // spinning this test's runtime hot while still polling
+            // repeatedly enough to prove liveness within the test's own
+            // short window.
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok(vec![])
+        }
+        async fn ack(&self, _: &str) -> QueueResult<()> {
+            Ok(())
+        }
+        async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+            Ok(())
+        }
+        async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+            Ok(())
+        }
+        fn is_healthy(&self) -> bool {
+            true
+        }
+        async fn stop(&self) {}
+    }
+
+    /// Item 1 (router bench rig, 2026-09-07): reproduces the exact shape
+    /// of the bug at the unit level — two *different* `QueueConsumer`
+    /// instances that happen to share an `identifier()` (exactly what
+    /// happened when `main.rs` built a second, independent `PostgresQueue`
+    /// for a queue `sync_queue_consumers` had already spawned a poller
+    /// for) must never both end up polling. The second
+    /// `spawn_consumer_poll_task` call for that id must be a no-op.
+    ///
+    /// Pins: (1) the second call's `JoinHandle` finishes promptly (it's a
+    /// trivial already-done task, not a second live poller) instead of
+    /// running indefinitely like a real poll loop would; (2) the second
+    /// consumer's `poll()` is never called, ever — only the first
+    /// consumer's counter moves.
+    ///
+    /// Mutant check (removed the `polling_consumer_ids.insert(...)` guard
+    /// — i.e. `spawn_consumer_poll_task` unconditionally spawns, the
+    /// pre-fix behaviour — confirmed by hand while implementing this fix,
+    /// then restored): assertion (2) fails immediately — `counter_b`
+    /// climbs above 0 just like `counter_a`, proving a second poller
+    /// really did run.
+    #[tokio::test]
+    async fn spawning_a_second_poll_task_for_the_same_id_is_a_no_op() {
+        let (manager, _health_service) = manager_with_health();
+
+        let counter_a = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let counter_b = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let consumer_a = Arc::new(CountingIdleConsumer {
+            id: "dup-queue",
+            poll_calls: counter_a.clone(),
+        });
+        let consumer_b = Arc::new(CountingIdleConsumer {
+            id: "dup-queue",
+            poll_calls: counter_b.clone(),
+        });
+
+        let handle_a = manager.spawn_consumer_poll_task(consumer_a);
+        let handle_b = manager.spawn_consumer_poll_task(consumer_b);
+
+        // The second, duplicate spawn must be a no-op task that finishes
+        // essentially immediately — a real poll loop never returns on its
+        // own.
+        tokio::time::timeout(Duration::from_millis(200), handle_b)
+            .await
+            .expect("the second spawn_consumer_poll_task call for an id \
+                     already being polled must return promptly, not run \
+                     forever like a real poller")
+            .expect("the no-op task must not panic");
+
+        // Give consumer A's real poll loop several iterations.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(
+            counter_a.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "the first (legitimate) spawn's consumer must actually be polling"
+        );
+        assert_eq!(
+            counter_b.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the second, duplicate spawn's consumer must never be polled — \
+             exactly the router-bench-rig race (two independent pollers \
+             for the same queue_name)"
+        );
+
+        manager.shutdown().await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle_a).await;
     }
 }
 
