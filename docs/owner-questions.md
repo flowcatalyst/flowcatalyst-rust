@@ -202,91 +202,91 @@ Counts: **Part A** 27 rulings already taken · **Part B** ~290 open questions in
 
 ### AC. Auth core (`spec/auth-core.md` §19; Q4–Q15 ruled → Part A). Default if unanswered = keep as Go.
 - **AC-1** Keep `auth_time` = ID-token `iat` (not the real login time)? _(Note: Go later fixed this — role-canonicalisation work shipped real `auth_time`; confirm the port follows Go.)_
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): real login time** — follow Go's later fix; `auth_time` = the session cookie's issue time.
 - **AC-2** Keep `email_verified: true` unconditionally whenever an email exists?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** — `email_verified: true` whenever an email exists.
 - **AC-3** Keep writing `PendingAuth:{state}` rows that nothing reads?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** writing `PendingAuth:{state}`.
 - **AC-16** Treat `RefreshTokenExpirySecs` / `SessionTokenExpirySecs` config as dead (7 d / 24 h compile-time)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): dead config** — 7 d / 24 h compile-time; Java adds no knob.
 - **AC-17** Keep two different "standard scope" sets (authorize validation excludes `address`/`phone`; narrowing reserves them)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** both scope sets as Go.
 - **AC-18** Drop the three caller-less rate buckets (`oauth_introspect_ip`, `oauth_revoke_ip`, `check_domain_ip`)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep the bucket names**; these endpoints *should* be rate-limited — wiring policies + callers is a backlog item, not a drop.
 - **AC-19** Keep "any non-empty HS256 secret" (no minimum length)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): require ≥ 32 bytes** for the HS256 secret.
 - **AC-20** Keep "empty grant-type list ⇒ every grant allowed"?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): empty = none** (fail closed). Cutover note: rows with an empty list must have grants set; Go's empty-means-all is a defect.
 - **AC-21** Keep lenient `clientType` parsing (unknown ⇒ PUBLIC) on create?
   Ruling: closed by X-06 — reject unknown.
 - **AC-22** Keep the implicit `state` length cap (≤ 116 chars) from `oauth_oidc_payloads.id VARCHAR(128)`?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): reject up front** with `invalid_request`; cap stays at 116.
 - **AC-23** Keep fail-open on rate-limit backend errors and ignored backoff errors?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): rate limit fail-open, backoff fail-closed** (503 on a backoff-store error).
 - **AC-24** Keep `/auth/me` emitting `"status": ""`?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): populate** `status` with the real value; confirm SPA/SDK types tolerate it.
 - **AC-25** Keep `/oauth/authorize` preferring the cookie over Bearer while the middleware prefers the header?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** both precedence orders.
 - **AC-26** Keep introspect's `client_id` = first `clients` entry (`id:identifier` or `*`), not the OAuth client?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): RFC** — `client_id` = the minting OAuth client. Verified no consumer reads the tenant pair from introspection (InhanceMono, all SDKs).
 - **AC-27** Keep `/oauth/authorize` per-client 429 in the platform envelope while `/oauth/token` uses the RFC envelope?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): RFC shape on both**; SDK/SPA follow-up on the backlog.
 - **AC-28** Keep `/oauth/revoke` ignoring `token_type_hint` and only ever revoking refresh tokens?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** refresh-only; access-token denylist (cache + table fallback) recorded as a backlog option.
 - **AC-29** Keep `GET /auth/check-domain` legacy shape (`providerId` for any IdP type, guessed `authorizationUrl`)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05) with AI-9: keep the shape, omit the fabricated `authorizationUrl`.**
 
 ### AI. Auth identity (`spec/auth-identity.md` §19)
 - **AI-1** May the port invalidate/refresh the cached OIDC client when the IdP row changes (secret rotation, issuer change) instead of requiring a restart?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): yes** — invalidate on change + TTL.
 - **AI-2** Keep the empty-string `email_domain_mapping_id` as the provider-direct marker in the stored row (schema compat), modelling it as a sealed mode only in memory?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** the storage marker; sealed mode in memory.
 - **AI-3** Keep leaking the library's verification error text in `OIDC_VERIFY` messages?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): fixed message, cause logged.**
 - **AI-4** Keep "single-tenant provider-direct IdP with no mapped domains accepts any account at that IdP"?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep**, documented.
 - **AI-5** Keep the plain-text 500 on session-mint failure, or switch to the `ErrorModel` envelope?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): envelope 500** as A-18.
 - **AI-6** Keep failing JIT with `CLIENT_REQUIRED` when a CLIENT/PARTNER mapping has no `primaryClientId` (vs refusing at mapping creation)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): refuse at mapping creation**; JIT check stays as defence.
 - **AI-7** Keep `GET /auth/oidc/login?provider_id=` without a portal flow (the Phase-1 inert-principal JIT path) now that the portal plane is separate?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep.**
 - **AI-8** When every `allowedRoleIds` entry is dangling, keep "reject all roles" (vs unrestricted)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** reject-all.
 - **AI-9** Keep the GET `/auth/check-domain` legacy shape at all?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep the shape, drop the fabricated `authorizationUrl`.**
 - **AI-10** Keep consuming the portal flow at SSO **start** (no retry after an IdP failure), or consume at the callback sink like the password path?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): consume at the callback sink.**
 - **AI-11** Align `rememberAllowed` with `RememberEnabled()` (require internal domain)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): remember-device only for internal identities, never external IdP, default off, explicit domain policy, audit-logged** (policy change + each enrolment/revocation). Verify Go's stored default at cutover.
 - **AI-12** Should `/auth/2fa/verify` enforce the domain's allowed-method list?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): enforce at verify.**
 - **AI-13** Fix passkey sign-counter / `last_used_at` persistence and emit `passkey:authenticated` in the port?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): fix** — persist counter + last_used_at, reject a backwards counter, emit the event.
 - **AI-14** Should admin-triggered reset tokens set `requires_factor` when the user has TOTP?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep the bypass; add an admin-only option** to also clear MFA + trusted devices, notify, audit.
 - **AI-15** Add `Date` / `Message-ID` headers and RFC 2047 subject encoding to outgoing mail?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): add them.**
 - **AI-16** Change the notification default brand to `FlowCatalyst`?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): `FlowCatalyst`.**
 - **AI-17** Purge expired PINs / trusted devices / reset tokens / approvals on the housekeeping loop?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): purge all four.**
 - **AI-18** Keep the 15-minute portal flow TTL (vs 10 min like OIDC state)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** 15/10.
 - **AI-19** Keep `RequireStrongFactorForReset = false` (no-TOTP users get an e-mailed link; approval queue dormant)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep off.**
 - **AI-20** Keep `/auth/2fa/*` token routes public and self-service routes behind the auth middleware exactly as mounted?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep as mounted**; the token discipline is what tests pin.
 - **AI-21** Keep Go-default time serialisation (RFC 3339 nanos) and `principalId` on `GET /auth/2fa/trusted-devices` items, or align to the platform `Time` shape?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): align** to the platform time shape; drop `principalId`.
 - **AI-22** Unify the system actor spelling (`""` vs `"system"`) in `aud_logs`?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): `"system"`** for new rows.
 - **AI-23** Keep the portal-plane 2FA deferral (no second factor for portal password users)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): keep** the portal MFA deferral (product decision).
 - **AI-24** Keep `authenticate/begin` on huma's 429 shape (vs the `TOO_MANY_REQUESTS` envelope)?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): align** to the platform envelope.
 - **AI-25** Keep passkey events under source `platform:admin`?
-  Ruling: — deferred (2026-09-02); no ruling yet, current (Go) behaviour stands per the standing convention.
+  Ruling: **Ruled (owner, 2026-09-05): `platform:iam`.**
 
 ### PR. Principal (`spec/principal.md` §11 — security-critical; rule on PR-3 and PR-4 first)
 - **PR-1** `AssignRoles` rewrites every assignment as `ADMIN_ASSIGNED`, silently adopting IdP- and SDK-sourced rows.
