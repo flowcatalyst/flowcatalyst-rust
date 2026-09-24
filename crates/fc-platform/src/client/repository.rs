@@ -92,6 +92,25 @@ impl ClientRepository {
         row.map(Client::try_from).transpose()
     }
 
+    /// `identifier -> id` for every client whose identifier is in
+    /// `identifiers`: one shallow query for a whole batch. Identifiers with
+    /// no row are absent.
+    pub async fn find_ids_by_identifiers(
+        &self,
+        identifiers: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        if identifiers.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT identifier, id FROM tnt_clients WHERE identifier = ANY($1)",
+        )
+        .bind(identifiers)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     pub async fn find_active(&self) -> Result<Vec<Client>> {
         let rows =
             sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE status = 'ACTIVE'")

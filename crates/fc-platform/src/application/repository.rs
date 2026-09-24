@@ -109,6 +109,24 @@ impl ApplicationRepository {
         row.map(Application::try_from).transpose()
     }
 
+    /// `code -> id` for every application whose code is in `codes`: one
+    /// shallow query for a whole batch. Codes with no row are absent.
+    pub async fn find_ids_by_codes(
+        &self,
+        codes: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        if codes.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT code, id FROM app_applications WHERE code = ANY($1)",
+        )
+        .bind(codes)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().collect())
+    }
+
     pub async fn find_active(&self) -> Result<Vec<Application>> {
         let rows = sqlx::query_as::<_, ApplicationRow>(
             "SELECT * FROM app_applications WHERE active = TRUE",

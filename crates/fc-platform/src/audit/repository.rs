@@ -106,21 +106,56 @@ impl AuditLogRepository {
         Self { pool: pool.clone() }
     }
 
+    /// Insert one row, `performed_at` as the log carries it.
     pub async fn insert(&self, log: &AuditLog) -> Result<()> {
+        self.insert_batch(std::slice::from_ref(log)).await
+    }
+
+    /// Insert every row in one statement (UNNEST), so a batch lands or fails
+    /// as a whole. Each row keeps its own `performed_at`.
+    pub async fn insert_batch(&self, logs: &[AuditLog]) -> Result<()> {
+        if logs.is_empty() {
+            return Ok(());
+        }
+        let n = logs.len();
+        let mut ids = Vec::with_capacity(n);
+        let mut entity_types = Vec::with_capacity(n);
+        let mut entity_ids = Vec::with_capacity(n);
+        let mut operations = Vec::with_capacity(n);
+        let mut operation_jsons: Vec<Option<serde_json::Value>> = Vec::with_capacity(n);
+        let mut principal_ids: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut application_ids: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut client_ids: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut performed_ats: Vec<DateTime<Utc>> = Vec::with_capacity(n);
+        for log in logs {
+            ids.push(log.id.as_str());
+            entity_types.push(log.entity_type.as_str());
+            entity_ids.push(log.entity_id.as_str());
+            operations.push(log.operation.as_str());
+            operation_jsons.push(log.operation_json.clone());
+            principal_ids.push(log.principal_id.clone());
+            application_ids.push(log.application_id.clone());
+            client_ids.push(log.client_id.clone());
+            performed_ats.push(log.performed_at);
+        }
         sqlx::query(
             r#"INSERT INTO aud_logs
                 (id, entity_type, entity_id, operation, operation_json,
                  principal_id, application_id, client_id, performed_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())"#,
+            SELECT * FROM UNNEST(
+                $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],
+                $5::jsonb[], $6::varchar[], $7::varchar[], $8::varchar[],
+                $9::timestamptz[])"#,
         )
-        .bind(&log.id)
-        .bind(&log.entity_type)
-        .bind(&log.entity_id)
-        .bind(&log.operation)
-        .bind(&log.operation_json)
-        .bind(&log.principal_id)
-        .bind(&log.application_id)
-        .bind(&log.client_id)
+        .bind(&ids)
+        .bind(&entity_types)
+        .bind(&entity_ids)
+        .bind(&operations)
+        .bind(&operation_jsons)
+        .bind(&principal_ids)
+        .bind(&application_ids)
+        .bind(&client_ids)
+        .bind(&performed_ats)
         .execute(&self.pool)
         .await?;
         Ok(())
