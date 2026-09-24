@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use super::events::ServiceAccountTokenRegenerated;
 use crate::service_account::ServiceAccount;
+use crate::shared::encryption_service::{require_configured, EncryptionService};
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
@@ -54,13 +55,21 @@ crate::impl_domain_event!(RegenerateAuthTokenResult => event);
 pub struct RegenerateAuthTokenUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,
     unit_of_work: Arc<U>,
+    /// Encrypts the generated credential before it is stored. `None` when no
+    /// key is configured; the use case then fails rather than store plaintext.
+    encryption: Option<Arc<EncryptionService>>,
 }
 
 impl<U: UnitOfWork> RegenerateAuthTokenUseCase<U> {
-    pub fn new(service_account_repo: Arc<ServiceAccountRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        service_account_repo: Arc<ServiceAccountRepository>,
+        unit_of_work: Arc<U>,
+        encryption: Option<Arc<EncryptionService>>,
+    ) -> Self {
         Self {
             service_account_repo,
             unit_of_work,
+            encryption,
         }
     }
 }
@@ -132,9 +141,12 @@ impl<U: UnitOfWork> RegenerateAuthTokenUseCase<U> {
                 ),
             )?;
 
-        // Generate new token
+        // Generate new token; the caller gets the plaintext once, only the
+        // `encrypted:` form is stored.
         let auth_token = generate_auth_token();
-        service_account.webhook_credentials.token = Some(auth_token.clone());
+        let auth_token_ref =
+            require_configured(self.encryption.as_deref())?.encrypt_ref(&auth_token)?;
+        service_account.webhook_credentials.token = Some(auth_token_ref);
         service_account.webhook_credentials.auth_type = WebhookAuthType::BearerToken;
         service_account.updated_at = Utc::now();
 

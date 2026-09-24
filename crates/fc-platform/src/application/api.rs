@@ -789,6 +789,10 @@ pub async fn provision_service_account<U: UnitOfWork>(
     let sa_repo = state.service_account_repo.clone();
     let app_repo = state.application_repo.clone();
     let oauth_client_repo = state.oauth_client_repo.clone();
+    // The SA's webhook credentials are encrypted before storage.
+    // `generate_and_encrypt_client_secret` above already failed if no key
+    // is configured.
+    let encryption = crate::shared::encryption_service::EncryptionService::from_env().map(Arc::new);
 
     let oauth_row_id_for_cmd = oauth_row_id.clone();
     let oauth_public_client_id_for_cmd = oauth_public_client_id.clone();
@@ -798,7 +802,8 @@ pub async fn provision_service_account<U: UnitOfWork>(
     let result = state
         .pg_unit_of_work
         .run(|session| async move {
-            let create_sa_uc = CreateServiceAccountUseCase::new(sa_repo, session.clone());
+            let create_sa_uc =
+                CreateServiceAccountUseCase::new(sa_repo, session.clone(), encryption);
             let attach_uc =
                 AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
             let create_oauth_uc = CreateOAuthClientUseCase::new(oauth_client_repo, session);

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ServiceAccountCreated;
+use crate::shared::encryption_service::{require_configured, EncryptionService};
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use crate::ServiceAccountRepository;
 use crate::{ServiceAccount, WebhookCredentials};
@@ -73,13 +74,21 @@ crate::impl_domain_event!(CreateServiceAccountResult => event);
 pub struct CreateServiceAccountUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,
     unit_of_work: Arc<U>,
+    /// Encrypts the generated credential before it is stored. `None` when no
+    /// key is configured; the use case then fails rather than store plaintext.
+    encryption: Option<Arc<EncryptionService>>,
 }
 
 impl<U: UnitOfWork> CreateServiceAccountUseCase<U> {
-    pub fn new(service_account_repo: Arc<ServiceAccountRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        service_account_repo: Arc<ServiceAccountRepository>,
+        unit_of_work: Arc<U>,
+        encryption: Option<Arc<EncryptionService>>,
+    ) -> Self {
         Self {
             service_account_repo,
             unit_of_work,
+            encryption,
         }
     }
 }
@@ -143,17 +152,28 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             ));
         }
 
-        // Generate credentials
+        // Generate credentials. The caller gets the plaintext once in the
+        // result; only the `encrypted:` form is stored.
         let auth_token = generate_auth_token();
         let signing_secret = generate_signing_secret();
+        let sealed = require_configured(self.encryption.as_deref()).and_then(|enc| {
+            Ok((
+                enc.encrypt_ref(&auth_token)?,
+                enc.encrypt_ref(&signing_secret)?,
+            ))
+        });
+        let (auth_token_ref, signing_secret_ref) = match sealed {
+            Ok(refs) => refs,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
 
         // Create the service account entity
         let mut service_account = ServiceAccount::new(code, name);
         service_account.description = command.description.clone();
         service_account.client_ids = command.client_ids.clone();
         service_account.application_id = command.application_id.clone();
-        service_account.webhook_credentials = WebhookCredentials::bearer_token(&auth_token);
-        service_account.webhook_credentials.signing_secret = Some(signing_secret.clone());
+        service_account.webhook_credentials = WebhookCredentials::bearer_token(&auth_token_ref);
+        service_account.webhook_credentials.signing_secret = Some(signing_secret_ref);
 
         // Create domain event
         let event = ServiceAccountCreated::new(

@@ -599,6 +599,7 @@ pub fn build_platform_routes(
     let create_sa_use_case = Arc::new(CreateServiceAccountUseCase::new(
         repos.service_account_repo.clone(),
         unit_of_work.clone(),
+        encryption_service.clone(),
     ));
     let update_sa_use_case = Arc::new(UpdateServiceAccountUseCase::new(
         repos.service_account_repo.clone(),
@@ -615,10 +616,12 @@ pub fn build_platform_routes(
     let regenerate_token_use_case = Arc::new(RegenerateAuthTokenUseCase::new(
         repos.service_account_repo.clone(),
         unit_of_work.clone(),
+        encryption_service.clone(),
     ));
     let regenerate_secret_use_case = Arc::new(RegenerateSigningSecretUseCase::new(
         repos.service_account_repo.clone(),
         unit_of_work.clone(),
+        encryption_service.clone(),
     ));
 
     // ── Application use cases ─────────────────────────────────────────────

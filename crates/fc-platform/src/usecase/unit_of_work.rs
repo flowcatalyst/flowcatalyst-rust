@@ -773,7 +773,7 @@ impl PgUnitOfWork {
     ///
     /// ```ignore
     /// state.unit_of_work.run(|session| async move {
-    ///     let sa_uc = CreateServiceAccountUseCase::new(sa_repo, session.clone());
+    ///     let sa_uc = CreateServiceAccountUseCase::new(sa_repo, session.clone(), encryption);
     ///     let attach_uc = AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
     ///
     ///     sa_uc.run(create_cmd, ctx.clone()).await.into_result()?;

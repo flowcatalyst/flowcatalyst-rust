@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use super::events::ServiceAccountSecretRegenerated;
 use crate::service_account::ServiceAccount;
+use crate::shared::encryption_service::{require_configured, EncryptionService};
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
@@ -44,13 +45,21 @@ crate::impl_domain_event!(RegenerateSigningSecretResult => event);
 pub struct RegenerateSigningSecretUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,
     unit_of_work: Arc<U>,
+    /// Encrypts the generated credential before it is stored. `None` when no
+    /// key is configured; the use case then fails rather than store plaintext.
+    encryption: Option<Arc<EncryptionService>>,
 }
 
 impl<U: UnitOfWork> RegenerateSigningSecretUseCase<U> {
-    pub fn new(service_account_repo: Arc<ServiceAccountRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        service_account_repo: Arc<ServiceAccountRepository>,
+        unit_of_work: Arc<U>,
+        encryption: Option<Arc<EncryptionService>>,
+    ) -> Self {
         Self {
             service_account_repo,
             unit_of_work,
+            encryption,
         }
     }
 }
@@ -125,9 +134,12 @@ impl<U: UnitOfWork> RegenerateSigningSecretUseCase<U> {
                 ),
             )?;
 
-        // Generate new secret
+        // Generate new secret; the caller gets the plaintext once, only the
+        // `encrypted:` form is stored.
         let signing_secret = generate_signing_secret();
-        service_account.webhook_credentials.signing_secret = Some(signing_secret.clone());
+        let signing_secret_ref =
+            require_configured(self.encryption.as_deref())?.encrypt_ref(&signing_secret)?;
+        service_account.webhook_credentials.signing_secret = Some(signing_secret_ref);
         service_account.updated_at = Utc::now();
 
         // Create domain event

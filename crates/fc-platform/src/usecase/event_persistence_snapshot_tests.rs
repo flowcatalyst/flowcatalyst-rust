@@ -43,7 +43,8 @@ use crate::service_account::operations::events::{
     ServiceAccountCreated, ServiceAccountSecretRegenerated, ServiceAccountTokenRegenerated,
 };
 use crate::service_account::operations::{
-    CreateServiceAccountResult, RegenerateAuthTokenResult, RegenerateSigningSecretResult,
+    CreateServiceAccountCommand, CreateServiceAccountResult, RegenerateAuthTokenCommand,
+    RegenerateAuthTokenResult, RegenerateSigningSecretCommand, RegenerateSigningSecretResult,
 };
 use crate::shared::encryption_service::EncryptionService;
 use crate::subscription::operations::events::{SubscriptionCreated, SubscriptionsSynced};
@@ -680,6 +681,63 @@ fn identity_provider_secret_without_key_is_refused() {
         None
     );
     assert_eq!(seal_client_secret(None, None).unwrap(), None);
+}
+
+/// The service-account commands carry no credential at all; the generated
+/// plaintext lives only in the (non-serialised) result fields.
+#[test]
+fn service_account_commands_persist_no_generated_credentials() {
+    const TOKEN: &str = "fc_generatedtoken";
+    const SIGNING: &str = "generated-signing-secret";
+
+    let create = CreateServiceAccountCommand {
+        code: "orders-bot".to_string(),
+        name: "Orders bot".to_string(),
+        description: None,
+        client_ids: s(&["clt_1"]),
+        application_id: Some("app_1".to_string()),
+    };
+    let result = CreateServiceAccountResult {
+        event: fixed!(ServiceAccountCreated::new(
+            &ctx(),
+            "sac_1",
+            "orders-bot",
+            "Orders bot",
+            Some("app_1"),
+            s(&["clt_1"])
+        )),
+        auth_token: TOKEN.to_string(),
+        signing_secret: SIGNING.to_string(),
+    };
+    let rows = persisted(&result, &create);
+    assert_no_plaintext(&rows, TOKEN);
+    assert_no_plaintext(&rows, SIGNING);
+
+    let regen_token = RegenerateAuthTokenCommand {
+        service_account_id: "sac_1".to_string(),
+    };
+    let result = RegenerateAuthTokenResult {
+        event: fixed!(ServiceAccountTokenRegenerated::new(
+            &ctx(),
+            "sac_1",
+            "orders-bot"
+        )),
+        auth_token: TOKEN.to_string(),
+    };
+    assert_no_plaintext(&persisted(&result, &regen_token), TOKEN);
+
+    let regen_secret = RegenerateSigningSecretCommand {
+        service_account_id: "sac_1".to_string(),
+    };
+    let result = RegenerateSigningSecretResult {
+        event: fixed!(ServiceAccountSecretRegenerated::new(
+            &ctx(),
+            "sac_1",
+            "orders-bot"
+        )),
+        signing_secret: SIGNING.to_string(),
+    };
+    assert_no_plaintext(&persisted(&result, &regen_secret), SIGNING);
 }
 
 // ── expected rows ───────────────────────────────────────────────────────────
