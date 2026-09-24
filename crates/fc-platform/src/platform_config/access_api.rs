@@ -11,6 +11,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::access_entity::PlatformConfigAccess;
 use super::access_repository::PlatformConfigAccessRepository;
+use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -62,6 +63,8 @@ pub struct AccessListResponse {
 #[derive(Clone)]
 pub struct ConfigAccessState {
     pub access_repo: Arc<PlatformConfigAccessRepository>,
+    /// Resolves `{appCode}` and confines the caller to its applications.
+    pub app_access: Arc<ApplicationAccessService>,
     pub grant_access_use_case:
         Arc<super::operations::GrantPlatformConfigAccessUseCase<crate::usecase::PgUnitOfWork>>,
     pub revoke_access_use_case:
@@ -84,9 +87,13 @@ pub struct ConfigAccessState {
 )]
 pub async fn list_access(
     State(state): State<ConfigAccessState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(app_code): Path<String>,
 ) -> Result<Json<AccessListResponse>, PlatformError> {
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
     let items = state.access_repo.find_by_application(&app_code).await?;
     Ok(Json(AccessListResponse {
         items: items.into_iter().map(|a| a.into()).collect(),
@@ -119,6 +126,10 @@ pub async fn create_access(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
     if state
         .access_repo
         .find_by_application_and_role(&app_code, &req.role_code)
@@ -179,6 +190,10 @@ pub async fn update_access(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
     if state
         .access_repo
         .find_by_application_and_role(&app_code, &role_code)
@@ -237,6 +252,10 @@ pub async fn delete_access(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let cmd = RevokePlatformConfigAccessCommand {
         application_code: app_code,

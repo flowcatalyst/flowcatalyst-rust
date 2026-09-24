@@ -270,3 +270,49 @@ async fn provisioned_service_account_reaches_only_its_application() {
         StatusCode::NOT_FOUND
     );
 }
+
+/// Platform config is addressed by `{appCode}` too, and every service
+/// account is anchor scope, so `require_anchor` alone let one application's
+/// service account rewrite another's config.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn platform_config_is_confined_to_the_callers_applications() {
+    let app = TestApp::setup().await;
+    let app_a = create_app(&app, "cfg-a").await;
+    create_app(&app, "cfg-b").await;
+    let sa_a = token_for(
+        &app,
+        Principal::new_service("sa_cfg_a", "SA Cfg A").with_application_id(&app_a.id),
+        &[],
+    )
+    .await;
+    let body = json!({ "value": "x" });
+
+    let own = app
+        .put("/api/config/cfg-a/general/colour", &sa_a, body.clone())
+        .await;
+    assert_eq!(own.status(), StatusCode::CREATED);
+    let other = app
+        .put("/api/config/cfg-b/general/colour", &sa_a, body.clone())
+        .await;
+    assert_eq!(other.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        app.get("/api/config/cfg-b", &sa_a).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        app.get("/api/config-access/cfg-b", &sa_a).await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    let admin = token_for(
+        &app,
+        Principal::new_user("cfg-admin@flowcatalyst.test", UserScope::Anchor),
+        &[],
+    )
+    .await;
+    let as_admin = app
+        .put("/api/config/cfg-b/general/colour", &admin, body)
+        .await;
+    assert_eq!(as_admin.status(), StatusCode::CREATED);
+}

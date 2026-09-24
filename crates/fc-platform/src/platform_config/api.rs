@@ -12,6 +12,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use super::entity::{ConfigScope, PlatformConfig};
 use super::repository::PlatformConfigRepository;
+use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::enum_str::parse_opt;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -108,6 +109,8 @@ pub struct ConfigValueResponse {
 #[derive(Clone)]
 pub struct PlatformConfigState {
     pub config_repo: Arc<PlatformConfigRepository>,
+    /// Resolves `{appCode}` and confines the caller to its applications.
+    pub app_access: Arc<ApplicationAccessService>,
     pub set_property_use_case:
         Arc<super::operations::SetPlatformConfigPropertyUseCase<crate::usecase::PgUnitOfWork>>,
 }
@@ -130,10 +133,14 @@ pub struct PlatformConfigState {
 )]
 pub async fn list_configs(
     State(state): State<PlatformConfigState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(app_code): Path<String>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigListResponse>, PlatformError> {
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
     let items = state
         .config_repo
         .find_by_application(
@@ -166,10 +173,14 @@ pub async fn list_configs(
 )]
 pub async fn get_section(
     State(state): State<PlatformConfigState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path((app_code, section)): Path<(String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigSectionResponse>, PlatformError> {
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
     let scope_str = query.scope_or_global()?.as_str();
     let items = state
         .config_repo
@@ -214,10 +225,14 @@ pub async fn get_section(
 )]
 pub async fn get_property(
     State(state): State<PlatformConfigState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path((app_code, section, property)): Path<(String, String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigValueResponse>, PlatformError> {
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
     let scope_str = query.scope_or_global()?.as_str();
     let config = state
         .config_repo
@@ -278,6 +293,10 @@ pub async fn set_property(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
     let scope = query.scope_or_global()?;
 
     let cmd = SetPlatformConfigPropertyCommand {
@@ -343,6 +362,10 @@ pub async fn delete_property(
     Query(query): Query<ConfigQuery>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
     let scope_str = query.scope_or_global()?.as_str();
     let deleted = state
         .config_repo

@@ -800,10 +800,12 @@ pub fn build_platform_routes(
     ));
     let platform_config_state = PlatformConfigState {
         config_repo: repos.platform_config_repo.clone(),
+        app_access: app_access.clone(),
         set_property_use_case: set_platform_config_property_use_case,
     };
     let config_access_state = ConfigAccessState {
         access_repo: repos.platform_config_access_repo.clone(),
+        app_access: app_access.clone(),
         grant_access_use_case: grant_platform_config_access_use_case,
         revoke_access_use_case: revoke_platform_config_access_use_case,
     };
