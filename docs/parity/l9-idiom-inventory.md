@@ -372,7 +372,7 @@ Two corrections followed. **SUB-7**: sync honours `mode` again (`92ac82aa`), bec
 
 ### To tighten later (owner note, 2026-09-24)
 
-- **Audit-log ingest** (`POST /api/audit-logs/batch`) matches Go: authentication, then a per-item client-access
+- **Audit-log ingest** (`POST /api/audit-logs/batch`) matches Go (`7bdb5112`): authentication, then a per-item client-access
   check that skips items. There is no permission gate, in Go as well. Tighten it by requiring
   `platform:admin:batch:audit-logs-write` or an application-service audit permission, in Rust, Go and Java
   together, and give the application-service role that permission so SDK service accounts keep working.
