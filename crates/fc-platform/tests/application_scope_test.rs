@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use fc_platform::application::entity::Application;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::role::entity::roles;
-use fc_platform::service_account::entity::RoleAssignment;
+use fc_platform::service_account::entity::{AssignmentSource, RoleAssignment};
 use support::{read_json, TestApp};
 
 async fn create_app(app: &TestApp, code: &str) -> Application {
@@ -275,9 +275,9 @@ async fn permission_is_checked_before_the_application() {
     );
 }
 
-/// A service account made by the real provisioning endpoint reaches its own
-/// application and nothing else. Provisioning doesn't assign roles, so the
-/// test grants the application-service role the way an admin would.
+/// A service account made by the real provisioning endpoint is granted the
+/// application-service role (PROVISIONED, as Go does) and reaches its own
+/// application and nothing else.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn provisioned_service_account_reaches_only_its_application() {
@@ -287,6 +287,7 @@ async fn provisioned_service_account_reaches_only_its_application() {
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     );
     let app = TestApp::setup().await;
+    let role_name = application_service_role(&app).await;
     let app_a = create_app(&app, "prov-a").await;
     create_app(&app, "prov-b").await;
 
@@ -299,24 +300,30 @@ async fn provisioned_service_account_reaches_only_its_application() {
         .await,
     )
     .await;
-    assert!(status.is_success(), "provision failed: {} {}", status, body);
+    assert_eq!(status, StatusCode::CREATED, "provision failed: {}", body);
     let principal_id = body["serviceAccount"]["principalId"]
         .as_str()
         .expect("principalId")
         .to_string();
 
-    let mut principal = app
+    let principal = app
         .repos
         .principal_repo
         .find_by_id(&principal_id)
         .await
         .expect("find principal")
         .expect("provisioned principal");
-    // Stored as Go provisions it: no all-applications, one access row.
+    // Stored as Go provisions it: no all-applications, one access row, and
+    // the application-service role marked PROVISIONED.
     assert!(!principal.all_applications);
     assert_eq!(principal.accessible_application_ids, vec![app_a.id.clone()]);
+    assert_eq!(principal.roles.len(), 1);
+    assert_eq!(principal.roles[0].role, role_name);
+    assert_eq!(
+        principal.roles[0].assignment_source,
+        Some(AssignmentSource::Provisioned)
+    );
 
-    principal.roles = vec![RoleAssignment::new(application_service_role(&app).await)];
     let token = app
         .auth_service
         .generate_access_token(&principal)

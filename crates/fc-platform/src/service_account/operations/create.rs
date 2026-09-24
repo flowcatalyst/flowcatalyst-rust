@@ -8,6 +8,8 @@ use std::sync::Arc;
 use super::client_reach::{dedupe_client_ids, require_clients_exist, resolve_client_reach};
 use super::events::ServiceAccountCreated;
 use crate::principal::entity::UserScope;
+use crate::role::entity::roles;
+use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::shared::encryption_service::{require_configured, EncryptionService};
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use crate::{ClientRepository, ServiceAccountRepository};
@@ -209,6 +211,18 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         service_account.all_applications = false;
         service_account.accessible_application_ids =
             command.application_id.clone().into_iter().collect();
+        // An application's own service account is granted the seeded
+        // least-privilege `platform:application-service` role, marked
+        // PROVISIONED, as Go's provisioning does
+        // (application/operations/provision_service_account.go:159-165).
+        // Without it the account's token carries no permissions and every
+        // SDK sync call is a 403 until an admin assigns the role.
+        if command.application_id.is_some() {
+            service_account.roles = vec![RoleAssignment::with_source(
+                roles::application_service().name,
+                AssignmentSource::Provisioned,
+            )];
+        }
         service_account.webhook_credentials = WebhookCredentials::bearer_token(&auth_token_ref);
         service_account.webhook_credentials.signing_secret = Some(signing_secret_ref);
 
