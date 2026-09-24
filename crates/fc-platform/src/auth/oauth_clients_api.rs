@@ -12,7 +12,7 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 // rand::Rng removed — now using rand::RngCore directly
-// SHA-256 removed — secrets now use encrypted: format via EncryptionService
+// Client secrets are stored as `hashed:v1:` refs (EncryptionService::hash_secret).
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use crate::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
@@ -147,7 +147,7 @@ pub struct CreateOAuthClientResponse {
     pub client: OAuthClientResponse,
     /// Plaintext client secret. Only present on creation of CONFIDENTIAL
     /// clients. Capture this on the first response — the platform stores
-    /// only the encrypted form and cannot return it again.
+    /// only a keyed hash and cannot return it again.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
 }
@@ -230,8 +230,8 @@ pub async fn create_oauth_client(
         crate::shared::enum_str::parse_opt(req.client_type.as_deref())?.unwrap_or_default();
 
     // For CONFIDENTIAL clients, generate a secret at the edge. The plaintext
-    // is returned once; the encrypted ref is passed into the use case which
-    // persists it atomically with the domain event.
+    // is returned once; only its keyed hash (`hashed:v1:`) is passed into the
+    // use case, which persists it atomically with the domain event.
     let (client_secret_ref, generated_secret) = if client_type == OAuthClientType::Confidential {
         use base64::Engine;
 
@@ -242,13 +242,10 @@ pub async fn create_oauth_client(
         let enc =
             crate::shared::encryption_service::EncryptionService::from_env().ok_or_else(|| {
                 PlatformError::internal(
-                    "FLOWCATALYST_APP_KEY not configured — cannot encrypt client secret",
+                    "FLOWCATALYST_APP_KEY not configured — cannot hash client secret",
                 )
             })?;
-        let encrypted = enc.encrypt(&plaintext).map_err(|e| {
-            PlatformError::internal(format!("Failed to encrypt client secret: {}", e))
-        })?;
-        (Some(format!("encrypted:{}", encrypted)), Some(plaintext))
+        (Some(enc.hash_secret(&plaintext)), Some(plaintext))
     } else {
         (None, None)
     };
@@ -597,21 +594,17 @@ pub async fn regenerate_oauth_client_secret(
 
     crate::checks::require_anchor(&auth.0)?;
 
-    // Generate + encrypt the secret at the edge; the use case gets only the
-    // encrypted ref so plaintext never crosses the domain boundary.
+    // Generate + hash the secret at the edge; the use case gets only the
+    // `hashed:v1:` ref so plaintext never crosses the domain boundary.
     let mut secret_bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
     let plaintext_secret = URL_SAFE_NO_PAD.encode(secret_bytes);
 
     let enc = crate::shared::encryption_service::EncryptionService::from_env()
         .ok_or_else(|| PlatformError::internal("FLOWCATALYST_APP_KEY not configured"))?;
-    let encrypted = enc
-        .encrypt(&plaintext_secret)
-        .map_err(|e| PlatformError::internal(format!("Failed to encrypt secret: {}", e)))?;
-
     let cmd = RotateOAuthClientSecretCommand {
         oauth_client_id: id,
-        new_client_secret_ref: format!("encrypted:{}", encrypted),
+        new_client_secret_ref: enc.hash_secret(&plaintext_secret),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state

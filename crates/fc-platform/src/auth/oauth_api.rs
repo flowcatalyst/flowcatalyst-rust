@@ -189,6 +189,9 @@ pub struct OAuthState {
     pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
     /// Per-bucket policies (window + limit), loaded once from env.
     pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
+    /// Verifies client secrets. `None` when `FLOWCATALYST_APP_KEY` is unset,
+    /// in which case every confidential client is refused.
+    pub encryption_service: Option<Arc<crate::shared::encryption_service::EncryptionService>>,
 }
 
 /// Authorization endpoint - initiates the OAuth2 flow
@@ -517,6 +520,46 @@ pub async fn authorize(
     Redirect::temporary(&login_url).into_response()
 }
 
+/// Check `provided` against a client's stored secret ref and, when it
+/// matches a shape other than the current `hashed:v1:` form (an older
+/// `encrypted:` ref, a bare envelope, or a hash under a previous app key),
+/// rewrite the ref to [`EncryptionService::hash_secret`] of the secret the
+/// caller just proved it holds. Mirrors the Go platform's
+/// `acceptClientSecret`, which shares the `oauth_clients` table.
+///
+/// The rewrite is best-effort: authentication has already succeeded, so a
+/// failure is logged and dropped. It goes straight to the repository rather
+/// than through a use case: it changes the at-rest format of a secret, not
+/// the secret itself, and runs on the token endpoint's hot path. A domain
+/// event and audit row per migrated client would record a storage upgrade,
+/// not a business fact (same reasoning as the other infrastructure
+/// exceptions in `CLAUDE.md`).
+///
+/// [`EncryptionService::hash_secret`]: crate::shared::encryption_service::EncryptionService::hash_secret
+async fn verify_client_secret(
+    state: &OAuthState,
+    client: &OAuthClient,
+    stored: &str,
+    provided: &str,
+) -> bool {
+    let Some(enc) = state.encryption_service.as_deref() else {
+        error!(client_id = %client.client_id, "Cannot verify client secret — FLOWCATALYST_APP_KEY not configured");
+        return false;
+    };
+    let (ok, needs_rehash) = enc.verify_secret(stored, provided);
+    if ok && needs_rehash {
+        let hashed = enc.hash_secret(provided);
+        if let Err(e) = state
+            .oauth_client_repo
+            .rewrite_secret_ref(client, stored, &hashed)
+            .await
+        {
+            warn!(client_id = %client.client_id, error = %e, "Could not migrate client secret to hashed form");
+        }
+    }
+    ok
+}
+
 /// Authenticate an OAuth client from the request.
 /// Supports both HTTP Basic auth and POST body credentials.
 /// Returns the authenticated client, or an error response.
@@ -645,8 +688,8 @@ async fn authenticate_client(
         return Ok(client);
     }
 
-    // If confidential client (has a secret), verify it.
-    // Secrets are stored as "encrypted:..." (encrypted with FLOWCATALYST_APP_KEY).
+    // If confidential client (has a secret), verify it against the stored
+    // verify-only ref (see `verify_client_secret`).
     if let Some(ref secret_ref) = client.client_secret_ref {
         let provided_secret = client_secret.ok_or_else(|| {
             (
@@ -661,19 +704,7 @@ async fn authenticate_client(
                 .into_response()
         })?;
 
-        let verified = match crate::shared::encryption_service::EncryptionService::from_env() {
-            Some(enc) => match enc.decrypt(secret_ref) {
-                Ok(decrypted) => decrypted == provided_secret,
-                Err(e) => {
-                    error!(client_id = %client_id, error = %e, "Failed to decrypt client secret");
-                    false
-                }
-            },
-            None => {
-                error!(client_id = %client_id, "Cannot verify client secret — FLOWCATALYST_APP_KEY not configured");
-                false
-            }
-        };
+        let verified = verify_client_secret(state, &client, secret_ref, &provided_secret).await;
 
         if !verified {
             warn!(client_id = %client_id, "Client secret verification failed");
@@ -1405,20 +1436,7 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
         }
     };
 
-    // Verify client secret — decrypt stored encrypted ref and compare
-    let verified = match crate::shared::encryption_service::EncryptionService::from_env() {
-        Some(enc) => match enc.decrypt(secret_hash) {
-            Ok(decrypted) => decrypted == client_secret,
-            Err(e) => {
-                error!(client_id = %client_id, error = %e, "Failed to decrypt client secret");
-                false
-            }
-        },
-        None => {
-            error!(client_id = %client_id, "Cannot verify client secret — FLOWCATALYST_APP_KEY not configured");
-            false
-        }
-    };
+    let verified = verify_client_secret(&state, &client, secret_hash, &client_secret).await;
 
     if !verified {
         warn!(client_id = %client_id, "Client secret verification failed");

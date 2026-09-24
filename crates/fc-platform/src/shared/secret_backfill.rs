@@ -35,7 +35,9 @@ pub struct SecretColumn {
 }
 
 /// Every column the platform stores a secret in, except the OAuth client
-/// secret (handled separately once its stored shapes are understood).
+/// secret. That one is a verify-only `hashed:v1:` ref, which can only be
+/// computed from the plaintext the client presents; `/oauth/token` migrates
+/// older shapes lazily on the next successful authentication.
 pub const SECRET_COLUMNS: [SecretColumn; 4] = [
     SecretColumn {
         table: "oauth_identity_providers",

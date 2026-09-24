@@ -307,7 +307,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     println!("  → service account \"{}\" attached", sa_code);
 
     // ── 5. OAuth client for the SA (client_credentials grant) ────────
-    let (client_secret_plaintext, client_secret_ref) = generate_and_encrypt_secret()?;
+    let (client_secret_plaintext, client_secret_ref) = generate_client_secret()?;
     let oauth_row_id = tsid::generate(EntityType::OAuthClient);
     let public_client_id = tsid::generate(EntityType::OAuthClient);
 
@@ -317,7 +317,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     );
     oauth_client.id = oauth_row_id;
     oauth_client.client_type = OAuthClientType::Confidential;
-    oauth_client.client_secret_ref = Some(format!("encrypted:{}", client_secret_ref));
+    oauth_client.client_secret_ref = Some(client_secret_ref);
     oauth_client.grant_types = vec![GrantType::ClientCredentials];
     oauth_client.application_ids = vec![app_id.clone()];
     oauth_client.service_account_principal_id = Some(sa.id.clone());
@@ -353,7 +353,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
         "  Credentials written to {}. The clientSecret is shown ONLY in",
         env_path.display()
     );
-    println!("  the .env — the platform stores only the encrypted form and cannot");
+    println!("  the .env — the platform stores only a keyed hash and cannot");
     println!("  return it again. Rotate via the OAuth Clients page if needed.");
 
     #[cfg(feature = "embedded-db")]
@@ -498,7 +498,9 @@ async fn create_admin(
 
 // ─── Secret generation ─────────────────────────────────────────────────
 
-fn generate_and_encrypt_secret() -> Result<(String, String)> {
+/// A fresh client secret and its stored form, the verify-only `hashed:v1:`
+/// ref (what the platform's OAuth client API stores).
+fn generate_client_secret() -> Result<(String, String)> {
     use base64::Engine;
     let mut secret_bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
@@ -510,10 +512,8 @@ fn generate_and_encrypt_secret() -> Result<(String, String)> {
              if you cleared it, set it again and re-run"
         )
     })?;
-    let encrypted = enc
-        .encrypt(&plaintext)
-        .map_err(|e| anyhow::anyhow!("encrypt client secret: {}", e))?;
-    Ok((plaintext, encrypted))
+    let stored_ref = enc.hash_secret(&plaintext);
+    Ok((plaintext, stored_ref))
 }
 
 // ─── .env writer ───────────────────────────────────────────────────────

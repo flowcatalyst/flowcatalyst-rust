@@ -773,11 +773,11 @@ pub async fn provision_service_account<U: UnitOfWork>(
     }
 
     // Mint the OAuth client identifiers and a fresh secret BEFORE opening
-    // the tx. We hand the encrypted ref into the closure and keep the
+    // the tx. We hand the hashed ref into the closure and keep the
     // plaintext to return in the response.
     let oauth_row_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
     let oauth_public_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
-    let (client_secret_plaintext, client_secret_ref) = generate_and_encrypt_client_secret()?;
+    let (client_secret_plaintext, client_secret_ref) = generate_client_secret()?;
 
     let sa_code = format!("app:{}", app.code);
     let sa_name = format!("{} Service Account", app.name);
@@ -790,7 +790,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
     let app_repo = state.application_repo.clone();
     let oauth_client_repo = state.oauth_client_repo.clone();
     // The SA's webhook credentials are encrypted before storage.
-    // `generate_and_encrypt_client_secret` above already failed if no key
+    // `generate_client_secret` above already failed if no key
     // is configured.
     let encryption = crate::shared::encryption_service::EncryptionService::from_env().map(Arc::new);
 
@@ -846,7 +846,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 client_id: oauth_public_client_id_for_cmd,
                 client_name: oauth_client_name,
                 client_type: OAuthClientType::Confidential,
-                client_secret_ref: Some(format!("encrypted:{}", client_secret_ref)),
+                client_secret_ref: Some(client_secret_ref),
                 redirect_uris: Vec::new(),
                 post_logout_redirect_uris: Vec::new(),
                 grant_types: vec![GrantType::ClientCredentials],
@@ -964,8 +964,8 @@ pub async fn provision_login_client<U: UnitOfWork>(
     // clients have one — PUBLIC clients use PKCE alone).
     let (client_secret_plaintext, client_secret_ref) =
         if client_type == OAuthClientType::Confidential {
-            let (plaintext, encrypted) = generate_and_encrypt_client_secret()?;
-            (Some(plaintext), Some(format!("encrypted:{}", encrypted)))
+            let (plaintext, stored_ref) = generate_client_secret()?;
+            (Some(plaintext), Some(stored_ref))
         } else {
             (None, None)
         };
@@ -1026,11 +1026,11 @@ async fn app_has_login_client(
     }))
 }
 
-/// Generate a fresh 32-byte client secret and encrypt it for storage.
-/// Returns `(plaintext, encrypted_payload)`. The caller wraps the second
-/// value as `format!("encrypted:{}", …)` before persistence (matches what
-/// the OAuth client API at `oauth_clients_api.rs:226` does).
-fn generate_and_encrypt_client_secret() -> Result<(String, String), PlatformError> {
+/// Generate a fresh 32-byte client secret and its stored form. Returns
+/// `(plaintext, stored_ref)`, where `stored_ref` is the verify-only
+/// `hashed:v1:` ref from `EncryptionService::hash_secret` (the same form
+/// the OAuth client API stores).
+fn generate_client_secret() -> Result<(String, String), PlatformError> {
     use base64::Engine;
     let mut secret_bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
@@ -1039,13 +1039,11 @@ fn generate_and_encrypt_client_secret() -> Result<(String, String), PlatformErro
     let enc =
         crate::shared::encryption_service::EncryptionService::from_env().ok_or_else(|| {
             PlatformError::internal(
-                "FLOWCATALYST_APP_KEY not configured — cannot encrypt client secret",
+                "FLOWCATALYST_APP_KEY not configured — cannot hash client secret",
             )
         })?;
-    let encrypted = enc
-        .encrypt(&plaintext)
-        .map_err(|e| PlatformError::internal(format!("Failed to encrypt client secret: {}", e)))?;
-    Ok((plaintext, encrypted))
+    let stored_ref = enc.hash_secret(&plaintext);
+    Ok((plaintext, stored_ref))
 }
 
 /// Get service account for an application

@@ -372,7 +372,7 @@ pub async fn create_service_account<U: UnitOfWork>(
                 .ok_or_else(|| PlatformError::internal("Created service account not found"))?;
 
             // Auto-provision a CONFIDENTIAL OAuth client for this service account.
-            // Plaintext secret stays in this handler — only the encrypted ref
+            // Plaintext secret stays in this handler — only the hashed ref
             // crosses into the use case.
             use base64::Engine;
 
@@ -385,20 +385,17 @@ pub async fn create_service_account<U: UnitOfWork>(
             let enc = crate::shared::encryption_service::EncryptionService::from_env().ok_or_else(
                 || {
                     PlatformError::internal(
-                        "FLOWCATALYST_APP_KEY not configured — cannot encrypt client secret",
+                        "FLOWCATALYST_APP_KEY not configured — cannot hash client secret",
                     )
                 },
             )?;
-            let encrypted = enc.encrypt(&plaintext_secret).map_err(|e| {
-                PlatformError::internal(format!("Failed to encrypt client secret: {}", e))
-            })?;
 
             let oauth_cmd = crate::auth::operations::CreateOAuthClientCommand {
                 oauth_client_id: oauth_client_id.clone(),
                 client_id: oauth_client_id.clone(),
                 client_name: account.name.clone(),
                 client_type: crate::auth::oauth_entity::OAuthClientType::Confidential,
-                client_secret_ref: Some(format!("encrypted:{}", encrypted)),
+                client_secret_ref: Some(enc.hash_secret(&plaintext_secret)),
                 redirect_uris: vec![],
                 post_logout_redirect_uris: vec![],
                 grant_types: vec![

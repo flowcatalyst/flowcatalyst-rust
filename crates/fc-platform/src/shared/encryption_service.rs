@@ -18,13 +18,27 @@
 //! 3. Restart the server — new data encrypted with new key, old data still decryptable
 //! 4. Run re-encryption batch job (`re_encrypt()`) to migrate old data
 //! 5. Remove `FLOWCATALYST_APP_KEY_PREVIOUS` after all data is migrated
+//!
+//! ## Verify-only secrets
+//!
+//! OAuth client secrets are never resent by the platform, only checked, so
+//! they are stored as a keyed hash instead of ciphertext:
+//! `hashed:v1:` + base64(HMAC-SHA256(current key bytes, plaintext)). This is
+//! byte-compatible with the Go platform's `encryption.Service.Hash`, which
+//! writes the same table. [`EncryptionService::verify_secret`] accepts that
+//! form (current key, then previous keys) and the older reversible forms,
+//! and reports when the stored value should be rewritten to the current
+//! hashed form.
 
 use aes_gcm::{
     aead::{generic_array::typenum::U12, rand_core::RngCore, Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use std::string::FromUtf8Error;
+use subtle::ConstantTimeEq;
 use tracing::{info, warn};
 
 /// Why a key could not be loaded or a value could not be encrypted or
@@ -87,6 +101,15 @@ pub fn is_encrypted_ref(stored: &str) -> bool {
     stored.starts_with(ENCRYPTED_PREFIX)
 }
 
+/// Marks a verify-only secret stored as a keyed hash (see
+/// [`EncryptionService::hash_secret`]). A closed claim: a value with this
+/// prefix is only ever checked against its MAC, never decrypted.
+pub const HASHED_PREFIX: &str = "hashed:v1:";
+
+/// Marks a value that is its own plaintext. The Go platform's `Decrypt`
+/// honours it, so [`EncryptionService::verify_secret`] does too.
+const LITERAL_PREFIX: &str = "literal:";
+
 /// Current encryption format version.
 const CURRENT_VERSION: u8 = 1;
 
@@ -97,24 +120,39 @@ pub struct EncryptionService {
     current: Aes256Gcm,
     /// Previous key(s) — used as fallback for decryption during rotation
     previous: Vec<Aes256Gcm>,
+    /// Raw bytes of `current`, the HMAC key for [`Self::hash_secret`].
+    current_key: Vec<u8>,
+    /// Raw bytes of each `previous` key, in the same order.
+    previous_keys: Vec<Vec<u8>>,
 }
 
-fn make_cipher(key_base64: &str) -> Result<Aes256Gcm, EncryptionError> {
+fn decode_key(key_base64: &str) -> Result<(Aes256Gcm, Vec<u8>), EncryptionError> {
     let key_bytes = BASE64
         .decode(key_base64)
         .map_err(EncryptionError::InvalidKeyEncoding)?;
     // `new_from_slice` fails only on a wrong key length.
-    Aes256Gcm::new_from_slice(&key_bytes)
-        .map_err(|_| EncryptionError::InvalidKeyLength(key_bytes.len()))
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+        .map_err(|_| EncryptionError::InvalidKeyLength(key_bytes.len()))?;
+    Ok((cipher, key_bytes))
+}
+
+/// HMAC-SHA256(key, plaintext).
+fn mac_for(key: &[u8], plaintext: &str) -> Vec<u8> {
+    // HMAC accepts a key of any length; this cannot fail.
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC takes any key length");
+    mac.update(plaintext.as_bytes());
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// Constant-time equality; slices of different length compare unequal.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.ct_eq(b).into()
 }
 
 impl EncryptionService {
     /// Create with a single key (no rotation).
     pub fn new(key_base64: &str) -> Result<Self, EncryptionError> {
-        Ok(Self {
-            current: make_cipher(key_base64)?,
-            previous: Vec::new(),
-        })
+        Self::with_previous_keys(key_base64, &[])
     }
 
     /// Create with current key + previous key(s) for rotation.
@@ -122,12 +160,19 @@ impl EncryptionService {
         current_key: &str,
         previous_keys: &[&str],
     ) -> Result<Self, EncryptionError> {
-        let current = make_cipher(current_key)?;
-        let previous = previous_keys
+        let (current, current_key) = decode_key(current_key)?;
+        let (previous, previous_keys) = previous_keys
             .iter()
-            .map(|k| make_cipher(k))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { current, previous })
+            .map(|k| decode_key(k))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
+        Ok(Self {
+            current,
+            previous,
+            current_key,
+            previous_keys,
+        })
     }
 
     /// Create from environment variables.
@@ -211,16 +256,17 @@ impl EncryptionService {
         }
 
         // Check if versioned format (first byte is version)
-        if data[0] == CURRENT_VERSION {
-            // Versioned: version(1) || nonce(12) || ciphertext
-            if data.len() < 14 {
-                // 1 + 12 + at least 1 byte ciphertext
-                return Err(EncryptionError::TooShort);
-            }
+        // Versioned: version(1) || nonce(12) || at least 1 byte ciphertext
+        if data[0] == CURRENT_VERSION && data.len() >= 14 {
             let nonce_bytes: [u8; 12] = data[1..13].try_into().unwrap();
             let nonce = Nonce::from(nonce_bytes);
-            let ciphertext = &data[13..];
-            return self.try_decrypt_with_fallback(&nonce, ciphertext);
+            if let Ok(plaintext) = self.try_decrypt_with_fallback(&nonce, &data[13..]) {
+                return Ok(plaintext);
+            }
+            // A v0 value whose random nonce starts with 0x01 (1 in 256)
+            // reads as v1 and fails under every key. Retry it as v0, as the
+            // Go platform does: GCM authenticates, so the wrong layout can
+            // only fail, never yield a false plaintext.
         }
 
         // Legacy format (v0): nonce(12) || ciphertext (no version byte)
@@ -282,6 +328,62 @@ impl EncryptionService {
         let nonce = Nonce::from(nonce_bytes);
         let ciphertext = &data[13..];
         self.current.decrypt(&nonce, ciphertext).is_err()
+    }
+
+    /// The stored form of a verify-only secret: `hashed:v1:` followed by
+    /// base64(HMAC-SHA256(current key bytes, plaintext)). Deterministic and
+    /// irreversible. Byte-identical to the Go platform's
+    /// `encryption.Service.Hash` for the same key and plaintext.
+    pub fn hash_secret(&self, plaintext: &str) -> String {
+        format!(
+            "{HASHED_PREFIX}{}",
+            BASE64.encode(mac_for(&self.current_key, plaintext))
+        )
+    }
+
+    /// Check `provided` against a stored verify-only secret. Mirrors the Go
+    /// platform's `encryption.Service.VerifySecret`:
+    ///
+    /// - `hashed:v1:<mac>`: compare the MAC in constant time under the
+    ///   current key, then each previous key. Never falls back to decrypt:
+    ///   a mismatch is a failure.
+    /// - anything else (`encrypted:…`, a bare envelope, `literal:…`):
+    ///   decrypt, then compare in constant time.
+    ///
+    /// Returns `(ok, needs_rehash)`. `needs_rehash` is true when the value
+    /// matched but is not yet [`hash_secret`](Self::hash_secret) under the
+    /// current key (every legacy-shape match, and a hash only a previous key
+    /// verifies); the caller should then store `hash_secret(provided)`.
+    pub fn verify_secret(&self, stored: &str, provided: &str) -> (bool, bool) {
+        if let Some(raw) = stored.strip_prefix(HASHED_PREFIX) {
+            let Ok(mac) = BASE64.decode(raw) else {
+                return (false, false);
+            };
+            if ct_eq(&mac, &mac_for(&self.current_key, provided)) {
+                return (true, false);
+            }
+            if self
+                .previous_keys
+                .iter()
+                .any(|key| ct_eq(&mac, &mac_for(key, provided)))
+            {
+                return (true, true);
+            }
+            return (false, false);
+        }
+
+        let decrypted = match stored.trim().strip_prefix(LITERAL_PREFIX) {
+            Some(literal) => literal.to_string(),
+            None => match self.decrypt(stored) {
+                Ok(pt) => pt,
+                Err(_) => return (false, false),
+            },
+        };
+        if ct_eq(decrypted.as_bytes(), provided.as_bytes()) {
+            (true, true)
+        } else {
+            (false, false)
+        }
     }
 
     /// Generate a new random 32-byte key, base64-encoded.
@@ -437,6 +539,168 @@ mod tests {
         // Now decryptable with current key alone
         let current_only = EncryptionService::new(&new_key).unwrap();
         assert_eq!(current_only.decrypt(&new_encrypted).unwrap(), "migrate-me");
+    }
+
+    // ── hash_secret / verify_secret ────────────────────────────────────
+
+    /// Key bytes 0x00..0x1f, base64.
+    const GOLDEN_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+
+    /// Copied verbatim from the Go platform's `TestGoldenHashVector`
+    /// (`internal/platform/shared/encryption/encryption_test.go`): the Rust
+    /// hash must be byte-identical, because both write `oauth_clients`.
+    #[test]
+    fn test_hash_secret_matches_go_golden_vector() {
+        let key: Vec<u8> = (0u8..32).collect();
+        assert_eq!(BASE64.encode(&key), GOLDEN_KEY);
+        let svc = EncryptionService::new(GOLDEN_KEY).unwrap();
+        let got = svc.hash_secret("client-secret-golden");
+        assert_eq!(
+            got,
+            "hashed:v1:HhInGB9kwvg6VsfBL0oHER0eslXRAg6GBwoTsRa2D4E="
+        );
+        assert_eq!(
+            svc.verify_secret(&got, "client-secret-golden"),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn test_hash_secret_is_keyed() {
+        use sha2::Digest;
+        let a = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let b = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        assert_ne!(a.hash_secret("same"), b.hash_secret("same"));
+        let unkeyed = format!("{HASHED_PREFIX}{}", BASE64.encode(Sha256::digest(b"same")));
+        assert_ne!(a.hash_secret("same"), unkeyed);
+    }
+
+    #[test]
+    fn test_verify_secret_hashed_roundtrip_and_wrong_secret() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let stored = svc.hash_secret("s3cr3t");
+        assert!(stored.starts_with(HASHED_PREFIX));
+        assert!(!stored.contains("s3cr3t"));
+        assert_eq!(svc.verify_secret(&stored, "s3cr3t"), (true, false));
+        assert_eq!(svc.verify_secret(&stored, "not-the-secret"), (false, false));
+        assert_eq!(svc.verify_secret(&stored, ""), (false, false));
+    }
+
+    #[test]
+    fn test_verify_secret_hashed_malformed_fails_closed() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        assert_eq!(
+            svc.verify_secret("hashed:v1:not-valid-base64!!!", "anything"),
+            (false, false)
+        );
+        // A truncated MAC is a length mismatch, not a prefix match.
+        let stored = svc.hash_secret("x");
+        assert_eq!(
+            svc.verify_secret(&stored[..stored.len() - 8], "x"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn test_verify_secret_hashed_never_falls_back_to_decrypt() {
+        // A hashed: prefix in front of real ciphertext of the provided value
+        // must still fail: the prefix is a closed claim.
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let ct = svc.encrypt("s3cr3t").unwrap();
+        assert_eq!(
+            svc.verify_secret(&format!("{HASHED_PREFIX}{ct}"), "s3cr3t"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn test_verify_secret_hashed_previous_key_needs_rehash() {
+        let old_key = EncryptionService::generate_key();
+        let new_key = EncryptionService::generate_key();
+        let stored = EncryptionService::new(&old_key)
+            .unwrap()
+            .hash_secret("rotate-me");
+
+        let rotating = EncryptionService::with_previous_keys(&new_key, &[&old_key]).unwrap();
+        assert_eq!(rotating.verify_secret(&stored, "rotate-me"), (true, true));
+
+        let rehashed = rotating.hash_secret("rotate-me");
+        let current_only = EncryptionService::new(&new_key).unwrap();
+        assert_eq!(
+            current_only.verify_secret(&rehashed, "rotate-me"),
+            (true, false)
+        );
+
+        // A key not held at all verifies nothing.
+        let unrelated = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        assert_eq!(
+            rotating.verify_secret(&unrelated.hash_secret("rotate-me"), "rotate-me"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn test_verify_secret_legacy_encrypted_needs_rehash() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let stored = svc.encrypt_ref("legacy-secret").unwrap();
+        assert_eq!(svc.verify_secret(&stored, "legacy-secret"), (true, true));
+        assert_eq!(svc.verify_secret(&stored, "legacy-secreT"), (false, false));
+    }
+
+    #[test]
+    fn test_verify_secret_legacy_bare_envelope_needs_rehash() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let bare = svc.encrypt("bare-legacy-secret").unwrap();
+        assert_eq!(svc.verify_secret(&bare, "bare-legacy-secret"), (true, true));
+    }
+
+    #[test]
+    fn test_verify_secret_legacy_previous_key_and_literal() {
+        let old_key = EncryptionService::generate_key();
+        let stored = EncryptionService::new(&old_key)
+            .unwrap()
+            .encrypt_ref("old")
+            .unwrap();
+        let rotating =
+            EncryptionService::with_previous_keys(&EncryptionService::generate_key(), &[&old_key])
+                .unwrap();
+        assert_eq!(rotating.verify_secret(&stored, "old"), (true, true));
+
+        // Go's Decrypt treats `literal:` as its own plaintext.
+        assert_eq!(rotating.verify_secret("literal:dev", "dev"), (true, true));
+        assert_eq!(
+            rotating.verify_secret("literal:dev", "other"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn test_verify_secret_garbage_fails() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        assert_eq!(svc.verify_secret("", ""), (false, false));
+        assert_eq!(
+            svc.verify_secret("plain-secret", "plain-secret"),
+            (false, false)
+        );
+        let other = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let stored = other.encrypt_ref("x").unwrap();
+        assert_eq!(svc.verify_secret(&stored, "x"), (false, false));
+    }
+
+    #[test]
+    fn test_decrypt_v0_value_whose_nonce_starts_with_version_byte() {
+        // Build a v0 envelope (nonce || ciphertext, no version byte) whose
+        // nonce begins with 0x01, so it first parses as v1.
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let mut nonce_bytes = [7u8; 12];
+        nonce_bytes[0] = CURRENT_VERSION;
+        let ct = svc
+            .current
+            .encrypt(&Nonce::from(nonce_bytes), b"v0-secret".as_ref())
+            .unwrap();
+        let mut data = nonce_bytes.to_vec();
+        data.extend(ct);
+        assert_eq!(svc.decrypt(&BASE64.encode(data)).unwrap(), "v0-secret");
     }
 
     #[test]

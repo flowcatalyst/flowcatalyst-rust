@@ -944,3 +944,45 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
     let again = backfill_secrets(&pool, &enc, true).await.unwrap();
     assert!(again.iter().all(|r| r.unencrypted == 0 && r.encrypted == 0));
 }
+
+// ─── OAuth client secret lazy rehash ──────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_oauth_client_rewrite_secret_ref_guards_on_verified_value() {
+    use fc_platform::shared::encryption_service::EncryptionService;
+    use fc_platform::{OAuthClient, OAuthClientRepository};
+
+    let (pool, _container) = setup_test_db().await;
+    let enc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+    let repo = OAuthClientRepository::new(&pool);
+
+    let legacy = enc.encrypt_ref("client-secret").unwrap();
+    let mut client = OAuthClient::new("rehash-client", "Rehash Client");
+    client.client_secret_ref = Some(legacy.clone());
+    repo.insert(&client).await.unwrap();
+
+    // A rewrite against a value the row no longer holds changes nothing.
+    let hashed = enc.hash_secret("client-secret");
+    assert!(!repo
+        .rewrite_secret_ref(&client, "encrypted:stale", &hashed)
+        .await
+        .unwrap());
+
+    // The verified value is replaced exactly, other columns untouched.
+    assert!(repo
+        .rewrite_secret_ref(&client, &legacy, &hashed)
+        .await
+        .unwrap());
+    let after = repo
+        .find_by_client_id("rehash-client")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.client_secret_ref.as_deref(), Some(hashed.as_str()));
+    assert_eq!(after.client_name, "Rehash Client");
+    assert_eq!(
+        enc.verify_secret(after.client_secret_ref.as_deref().unwrap(), "client-secret"),
+        (true, false)
+    );
+}

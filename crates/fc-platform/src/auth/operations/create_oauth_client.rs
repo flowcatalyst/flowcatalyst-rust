@@ -2,8 +2,9 @@
 //!
 //! Builds an `OAuthClient` from the command and persists it via the
 //! OAuth client repository. Emits `OAuthClientCreated` through the UoW.
-//! Secret material is opaque to this use case: callers encrypt the
-//! plaintext and pass only the already-encrypted `client_secret_ref`.
+//! Secret material is opaque to this use case: callers hash the plaintext
+//! (`EncryptionService::hash_secret`) and pass only the stored
+//! `client_secret_ref`.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

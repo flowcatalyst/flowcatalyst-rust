@@ -1,7 +1,7 @@
 //! Rotate OAuth Client Secret Use Case.
 //!
-//! Persists a new (already-encrypted) `client_secret_ref` on an existing
-//! OAuth client. Secret generation + encryption stays in the handler so
+//! Persists a new (already-hashed) `client_secret_ref` on an existing
+//! OAuth client. Secret generation + hashing stays in the handler so
 //! the domain layer never touches plaintext secrets.
 
 use async_trait::async_trait;
@@ -19,8 +19,8 @@ use crate::OAuthClientRepository;
 #[serde(rename_all = "camelCase")]
 pub struct RotateOAuthClientSecretCommand {
     pub oauth_client_id: String,
-    /// The already-encrypted secret reference (e.g. `encrypted:…`). The use
-    /// case treats this as opaque — encryption happens at the edge so the
+    /// The stored secret reference (`hashed:v1:…`). The use case treats
+    /// this as opaque — hashing happens at the edge so the
     /// plaintext can be returned to the caller without ever crossing the
     /// domain boundary.
     pub new_client_secret_ref: String,

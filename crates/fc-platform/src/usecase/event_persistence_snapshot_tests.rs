@@ -623,6 +623,28 @@ fn assert_no_plaintext(rows: &str, plaintext: &str) {
 
 const IDP_SECRET: &str = "idp-plaintext-client-secret";
 
+const OAUTH_CLIENT_SECRET: &str = "oauth-plaintext-client-secret";
+
+#[test]
+fn oauth_client_secret_rotation_persists_only_the_hash() {
+    let enc = test_encryption();
+    let cmd = crate::auth::operations::RotateOAuthClientSecretCommand {
+        oauth_client_id: "oac_1".to_string(),
+        new_client_secret_ref: enc.hash_secret(OAUTH_CLIENT_SECRET),
+    };
+    assert_eq!(
+        enc.verify_secret(&cmd.new_client_secret_ref, OAUTH_CLIENT_SECRET),
+        (true, false)
+    );
+
+    let e = fixed!(
+        crate::auth::operations::events::OAuthClientSecretRotated::new(&ctx(), "oac_1", "client-1")
+    );
+    let rows = persisted(&e, &cmd);
+    assert_no_plaintext(&rows, OAUTH_CLIENT_SECRET);
+    assert!(rows.contains("hashed:v1:"));
+}
+
 #[test]
 fn identity_provider_create_persists_no_plaintext_secret() {
     let enc = test_encryption();

@@ -586,6 +586,35 @@ impl OAuthClientRepository {
         Ok(())
     }
 
+    /// Overwrite only `client_secret_ref` (and `updated_at`): the lazy
+    /// migration `/oauth/token` runs after a successful verify against an
+    /// older stored shape, so the row holds `hashed:v1:` under the current
+    /// key from then on. Mirrors the Go platform's `RewriteSecretRef`.
+    ///
+    /// A direct UPDATE, not a use case: this upgrades the at-rest format of
+    /// a secret the caller just proved it holds; it is not a secret change,
+    /// so there is no domain event or audit row. Only rewrites while the row
+    /// still holds `verified_ref`, so a concurrent rotation is never
+    /// overwritten. Returns whether a row changed.
+    pub async fn rewrite_secret_ref(
+        &self,
+        client: &OAuthClient,
+        verified_ref: &str,
+        new_ref: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE oauth_clients SET client_secret_ref = $3, updated_at = NOW() \
+             WHERE id = $1 AND client_secret_ref = $2",
+        )
+        .bind(&client.id)
+        .bind(verified_ref)
+        .bind(new_ref)
+        .execute(&self.pool)
+        .await?;
+        self.invalidate_cache(client).await;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn delete(&self, id: &str) -> Result<bool> {
         // Evict from cache before delete
         {
