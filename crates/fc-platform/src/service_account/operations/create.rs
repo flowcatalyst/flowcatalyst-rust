@@ -36,6 +36,54 @@ fn generate_signing_secret() -> String {
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
 }
 
+/// The code rule, as Java's `ServiceAccountCode` has it
+/// (serviceaccount/ServiceAccountCode.java): trimmed and lower-cased, then
+/// it must match `^(app:)?[a-z][a-z0-9-]*$` (so `app:` alone fails).
+/// A code chosen through the API (`user_chosen`) may not use the `app:`
+/// namespace, which belongs to application service accounts. Provisioning
+/// (an application's own account) keeps `app:<applicationCode>` as it is,
+/// unchecked, as Java's provisioning does (ProvisionServiceAccount.java:
+/// 89-93).
+fn normalise_code(raw: &str, user_chosen: bool) -> Result<String, UseCaseError> {
+    const APP_PREFIX: &str = "app:";
+    if !user_chosen {
+        let code = raw.trim();
+        return if code.is_empty() {
+            Err(UseCaseError::validation(
+                "CODE_REQUIRED",
+                "code is required",
+            ))
+        } else {
+            Ok(code.to_string())
+        };
+    }
+    let code = raw.trim().to_lowercase();
+    if code.is_empty() {
+        return Err(UseCaseError::validation(
+            "CODE_REQUIRED",
+            "code is required",
+        ));
+    }
+    let body = code.strip_prefix(APP_PREFIX).unwrap_or(&code);
+    let well_formed = body.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && body
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !well_formed {
+        return Err(UseCaseError::validation(
+            "INVALID_CODE_FORMAT",
+            "code must start with a lowercase letter and contain only lowercase alphanumeric and hyphens",
+        ));
+    }
+    if code.starts_with(APP_PREFIX) {
+        return Err(UseCaseError::validation(
+            "RESERVED_CODE",
+            "codes starting with 'app:' are reserved for application service accounts",
+        ));
+    }
+    Ok(code)
+}
+
 /// Command for creating a new service account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,8 +164,8 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
     type Event = CreateServiceAccountResult;
 
     async fn validate(&self, command: &CreateServiceAccountCommand) -> Result<(), UseCaseError> {
-        let code = command.code.trim();
-        if code.is_empty() || code.len() > 50 {
+        let code = normalise_code(&command.code, command.application_id.is_none())?;
+        if code.len() > 50 {
             return Err(UseCaseError::validation(
                 "INVALID_CODE",
                 "Code must be 1-50 characters",
@@ -125,7 +173,13 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         }
 
         let name = command.name.trim();
-        if name.is_empty() || name.len() > 100 {
+        if name.is_empty() {
+            return Err(UseCaseError::validation(
+                "NAME_REQUIRED",
+                "name is required",
+            ));
+        }
+        if name.len() > 100 {
             return Err(UseCaseError::validation(
                 "INVALID_NAME",
                 "Name must be 1-100 characters",
@@ -157,18 +211,23 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         command: CreateServiceAccountCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<CreateServiceAccountResult> {
-        let code = command.code.trim();
+        let code = match normalise_code(&command.code, command.application_id.is_none()) {
+            Ok(code) => code,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+        let code = code.as_str();
         let name = command.name.trim();
 
-        // Business rule: code must be unique
+        // Business rule: code must be unique (Java: 409 CODE_EXISTS,
+        // CreateServiceAccountWithCredentials.java:86-89).
         let existing = match self.service_account_repo.find_by_code(code).await {
             Ok(found) => found,
             Err(e) => return UseCaseResult::failure(e.into()),
         };
         if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
-                "SERVICE_ACCOUNT_CODE_EXISTS",
-                format!("A service account with code '{}' already exists", code),
+                "CODE_EXISTS",
+                format!("Service account with code '{}' already exists", code),
             ));
         }
 
@@ -285,6 +344,33 @@ mod tests {
     fn test_service_account_has_id() {
         let sa = ServiceAccount::new("test", "Test", UserScope::Client);
         assert!(!sa.id().is_empty());
+    }
+
+    #[test]
+    fn code_rule_matches_java() {
+        // Trimmed and lower-cased.
+        assert_eq!(
+            normalise_code(" SACreate-Happy ", true).unwrap(),
+            "sacreate-happy"
+        );
+        for (raw, code) in [
+            ("", "CODE_REQUIRED"),
+            ("   ", "CODE_REQUIRED"),
+            ("1abc", "INVALID_CODE_FORMAT"),
+            ("-abc", "INVALID_CODE_FORMAT"),
+            ("a_b", "INVALID_CODE_FORMAT"),
+            ("a b", "INVALID_CODE_FORMAT"),
+            ("app:", "INVALID_CODE_FORMAT"),
+            ("app:orders", "RESERVED_CODE"),
+        ] {
+            assert_eq!(
+                normalise_code(raw, true).unwrap_err().code(),
+                code,
+                "{raw:?}"
+            );
+        }
+        // Provisioning keeps its app: code unchecked.
+        assert_eq!(normalise_code("app:My_App", false).unwrap(), "app:My_App");
     }
 
     #[test]
