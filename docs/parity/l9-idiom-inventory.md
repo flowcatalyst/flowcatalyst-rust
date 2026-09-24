@@ -17,9 +17,9 @@ Scope (owner, 2026-09-24): track C plus the enum and secret bugs (A1–A3, A5–
 | Platform P2 | C1 errors (`?` in use cases, `UseCaseError` struct, typed errors) | done |
 | Platform P3 | C2 events (`from_ctx`, `DomainEvent::metadata`, snapshot tests) | done |
 | Platform P6 | C4 null injection and sentinels, C5 constructors, drop `too_many_arguments` allow | done |
-| Platform P4 | C3 + A1–A3 enums under X-06/X-01 | waiting on DB access |
-| Platform P5 | A13 secrets at rest + backfill | waiting on DB access |
-| Platform P7 | fc-platform `tsid::` migration, remove `TsidGenerator`, drop `should_implement_trait` allow | `tsid::` migration + `TsidGenerator` removal done; `should_implement_trait` allow still pending |
+| Platform P4 | C3 + A1–A3 enums under X-06/X-01 | done (value set verified against the prod DB audit, 2026-09-24) |
+| Platform P5 | A13 secrets at rest + backfill | waiting on secret-shape audit (fc-audit-2) |
+| Platform P7 | fc-platform `tsid::` migration, remove `TsidGenerator`, drop `should_implement_trait` allow | done |
 
 ## Summary
 
@@ -297,3 +297,17 @@ Go already implements the owner rulings, so it is the reference for A1–A3.
 B → A5 and C7 (small, and they unblock later items) → C1 → C2 → C3 → C4 → C5 → C6 → C8.
 Section A runs as its own track against the Java contract: A1–A4 first, because A2 is security-relevant
 (login scope assignment) and A4 breaks the audit invariant.
+
+## Open rulings raised during P4 (2026-09-24)
+
+- **PKCE without `code_challenge_method`** now binds S256, as in Go. RFC 7636 says the default is `plain`,
+  but before this change such requests had PKCE silently dropped. Every first-party client (frontend, TS,
+  Laravel, Go SDKs) sends `S256` explicitly. **Also open:** Go refuses `plain`; Rust still accepts it.
+- **Subscriptions created by sync** default to IMMEDIATE via `Subscription::new`, while Go and X-01 default to
+  NEXT_ON_ERROR.
+- The client list `status` filter was never implemented and is still ignored.
+- Principal `idp_type`, service-account `scope` and IDP role-mapping `idp_type` are still plain strings.
+- fc-common's lenient `DispatchStatus`/`DispatchMode::from_str` are unchanged. fc-platform uses its own
+  strict/X-01 parsers.
+- The frontend user and service-account pages style `assignmentSource === 'MANUAL'`, which the API never
+  emits (cosmetic).
