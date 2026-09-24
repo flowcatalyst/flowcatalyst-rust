@@ -9,6 +9,7 @@
 //! | load-time checks and their refusal codes | [`inspect`] |
 //! | the `.cwasm` cache and its invariant | [`cwasm`] |
 //! | a store's WASI, `wasi:http` and `flowcatalyst:function` host side | `guest` |
+//! | `httpAllow` for outbound calls | [`egress`] |
 //! | guest log lines on `fn.<address>` | [`output`] |
 //! | the invoker: instance per request, deadline, outcomes | `function` |
 //!
@@ -27,6 +28,7 @@
 //! `WASM_ENTRYPOINT_NOT_EXPORTED`, `WASM_MEMORY_OVER_CAP`.
 
 pub mod cwasm;
+pub mod egress;
 pub mod engine;
 mod function;
 mod guest;
@@ -278,12 +280,16 @@ impl FunctionLoader for WasmLoader {
         };
         let mut secrets = pick(&entry.secrets, declared("secrets"));
         secrets.retain(|_, v| !v.is_empty());
+        let http_allow = declared("httpAllow");
         let shared = Arc::new(FunctionShared {
             address: entry.address.clone(),
             version: entry.version,
             logger: GuestLogger::for_address(&entry.address.render()),
             config: pick(&entry.config, declared("config")),
             secrets,
+            allow: Arc::new(egress::HttpAllowlist::new(
+                http_allow.iter().map(String::as_str),
+            )),
             memory_limit: declared_max.map_or(cap_bytes, |max| max.min(cap_bytes)) as usize,
             response_cap: cap_bytes as usize,
             emitter: Emitter {

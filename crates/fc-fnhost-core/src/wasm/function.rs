@@ -46,7 +46,8 @@ use wasmtime_wasi_http::p2::bindings::ProxyPre;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
 
-use super::guest::{DenyOutbound, FunctionShared, GuestState, InvocationData};
+use super::egress::EgressHooks;
+use super::guest::{FunctionShared, GuestState, InvocationData};
 use super::output::GuestOutput;
 use super::WasmRuntime;
 use crate::invoke::{InvocationContext, InvokeError, Invoker};
@@ -92,7 +93,10 @@ impl WasmFunction {
             limits: StoreLimitsBuilder::new()
                 .memory_size(self.shared.memory_limit)
                 .build(),
-            hooks: DenyOutbound,
+            hooks: EgressHooks {
+                allow: self.shared.allow.clone(),
+                deadline: context.deadline,
+            },
             function: self.shared.clone(),
             invocation: InvocationData::from(context),
         }

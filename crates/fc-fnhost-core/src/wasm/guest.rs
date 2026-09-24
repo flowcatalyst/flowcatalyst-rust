@@ -1,5 +1,5 @@
 //! A store's data: WASI (no preopens, no environment, no arguments, no
-//! sockets; clocks and random), `wasi:http` (outbound calls refused for now), the
+//! sockets; clocks and random), `wasi:http` with the egress policy, the
 //! memory limits, and the host side of the `flowcatalyst:function`
 //! interfaces (`wit/flowcatalyst-function`).
 
@@ -14,6 +14,7 @@ use wasmtime::StoreLimits;
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
+use super::egress::EgressHooks;
 use super::output::GuestLogger;
 use crate::control_plane::{ControlPlane, EmitItem, EmitRequest};
 
@@ -58,6 +59,7 @@ pub struct FunctionShared {
     pub config: HashMap<String, String>,
     /// Only the keys the manifest declares, and only non-empty values.
     pub secrets: HashMap<String, String>,
+    pub allow: Arc<super::egress::HttpAllowlist>,
     /// Each memory's `StoreLimits` cap, in bytes: `limits.wasmMemoryMb`, or
     /// the component's own declared maximum when that is smaller.
     pub memory_limit: usize,
@@ -166,34 +168,13 @@ impl InvocationData {
     }
 }
 
-/// Outbound HTTP is refused until the host's egress policy is wired in.
-pub struct DenyOutbound;
-
-impl wasmtime_wasi_http::WasiHttpHooks for DenyOutbound {
-    fn send_request(
-        &mut self,
-        _request: http::Request<wasmtime_wasi_http::WasiBody>,
-        _options: Option<wasmtime_wasi_http::RequestOptions>,
-        _fut: Box<dyn std::future::Future<Output = wasmtime_wasi_http::Result<()>> + Send>,
-    ) -> Box<
-        dyn std::future::Future<
-                Output = wasmtime_wasi_http::Result<(
-                    http::Response<wasmtime_wasi_http::WasiBody>,
-                    Box<dyn std::future::Future<Output = wasmtime_wasi_http::Result<()>> + Send>,
-                )>,
-            > + Send,
-    > {
-        Box::new(async { Err(wasmtime_wasi_http::Error::HttpRequestDenied) })
-    }
-}
-
 /// One store's data.
 pub struct GuestState {
     pub wasi: WasiCtx,
     pub http: WasiHttpCtx,
     pub table: ResourceTable,
     pub limits: StoreLimits,
-    pub hooks: DenyOutbound,
+    pub hooks: EgressHooks,
     pub function: Arc<FunctionShared>,
     pub invocation: InvocationData,
 }
