@@ -1,0 +1,9 @@
+// StarlingMonkey (componentize-js 0.22/0.23) embeds wasi:http@0.2.10, so the WIT must be exactly 0.2.10.
+// deps/: WebAssembly/WASI tag v0.2.10, proposals/{cli,clocks,http,io,random}/wit, with the filesystem and
+// sockets includes removed from cli/imports.wit (the splicer failed to merge them), plus one duplicated
+// @since line fixed.
+package fc:js;
+
+world proxy-fn {
+  include wasi:http/proxy@0.2.10;
+}

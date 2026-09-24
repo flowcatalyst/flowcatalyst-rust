@@ -1,0 +1,24 @@
+# (c) WASI 0.2 component guest: wasi:http/proxy + flowcatalyst:function/host.
+# Build: cargo build --release --target wasm32-wasip2
+[package]
+name = "comp_echo"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasi = "=0.14.7"
+wit-bindgen = "=0.62.0"
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

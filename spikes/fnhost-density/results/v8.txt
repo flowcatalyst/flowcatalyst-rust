@@ -1,0 +1,10 @@
+$ ./target/release/fnhost-v8 density --n 100
+scenario=density engine=v8 n=100 snapshot=true snapshot_build_ms=38.5 rss_start_mb=4.4 rss_engine_mb=17.2 rss_loaded_mb=165.7 fp_engine_mb=6.5 fp_loaded_mb=170.3 rss_per_fn_kb=1521.4 fp_per_fn_kb=1677.8 create_p50_ms=0.597 create_p99_ms=0.840 first_call_p50_ms=0.014 first_call_p99_ms=0.043 cold_p50_ms=0.611 cold_p99_ms=0.883 cold_max_ms=2.031
+$ ./target/release/fnhost-v8 density --n 1000
+scenario=density engine=v8 n=1000 snapshot=true snapshot_build_ms=14.8 rss_start_mb=4.3 rss_engine_mb=17.5 rss_loaded_mb=1520.3 fp_engine_mb=8.5 fp_loaded_mb=1620.1 rss_per_fn_kb=1538.9 fp_per_fn_kb=1650.2 create_p50_ms=0.704 create_p99_ms=1.198 first_call_p50_ms=0.014 first_call_p99_ms=0.038 cold_p50_ms=0.718 cold_p99_ms=1.219 cold_max_ms=1.435
+$ ./target/release/fnhost-v8 density --n 100 --no-snapshot
+scenario=density engine=v8 n=100 snapshot=false snapshot_build_ms=0.0 rss_start_mb=4.3 rss_engine_mb=4.3 rss_loaded_mb=324.8 fp_engine_mb=2.2 fp_loaded_mb=346.8 rss_per_fn_kb=3281.8 fp_per_fn_kb=3528.8 create_p50_ms=2.495 create_p99_ms=4.018 first_call_p50_ms=0.023 first_call_p99_ms=0.038 cold_p50_ms=2.518 cold_p99_ms=4.055 cold_max_ms=8.090
+$ ./target/release/fnhost-v8 steady --c 1 --secs 10
+scenario=steady engine=v8 c=1 calls=4180458 rps=417354 p50_us=2.3 p99_us=2.9 max_us=401.0 rss_mb=122.5 fp_mb=101.5
+$ ./target/release/fnhost-v8 steady --c 64 --secs 10
+scenario=steady engine=v8 c=64 calls=35027701 rps=3474134 p50_us=2.5 p99_us=6.5 max_us=326962.1 rss_mb=1799.4 fp_mb=975.5

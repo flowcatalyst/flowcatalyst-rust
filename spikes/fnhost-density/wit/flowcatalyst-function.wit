@@ -1,0 +1,48 @@
+// A sketch of a typed FlowCatalyst host interface for WASI 0.2 component guests (F0 spike).
+// A function component would target:
+//
+//   world function {
+//     include wasi:http/proxy@0.2.x;   // incoming-handler export + outgoing-handler, clocks, random, stdio
+//     import host;
+//   }
+//
+// The spike binds `guest-imports` on both sides (the wasi:http half comes from the `wasi` crate
+// in the guest and wasmtime-wasi-http in the host).
+package flowcatalyst:function@0.1.0;
+
+interface host {
+    enum level { trace, debug, info, warn, error }
+
+    /// A log line on the function's logger (`fn.<address>`), with the invocation's fields.
+    log: func(level: level, message: string);
+
+    /// A manifest-declared config value; none for an undeclared key.
+    config-get: func(key: string) -> option<string>;
+
+    /// A manifest-declared secret; none when undeclared or unset. Never logged.
+    secret-get: func(key: string) -> option<string>;
+
+    record outbound-event {
+        %type: string,
+        subject: option<string>,
+        /// JSON text.
+        data: string,
+        correlation-id: option<string>,
+        causation-id: option<string>,
+        message-group: option<string>,
+        dedup-id: string,
+    }
+
+    variant emit-error {
+        invalid-event(string),
+        event-type-not-owned,
+        failed(string),
+    }
+
+    /// Publish an event to the platform (control-plane `events` route).
+    emit-event: func(event: outbound-event) -> result<_, emit-error>;
+}
+
+world guest-imports {
+    import host;
+}

@@ -1,0 +1,24 @@
+$ ./target/release/fnhost-density steady native --c 1 --secs 10
+scenario=steady engine=native export=echo c=1 fresh=false calls=1683141 rps=168083 p50_us=5.9 p90_us=6.0 p99_us=7.4 max_us=326.4 rss_mb=99.5 fp_mb=53.2
+$ ./target/release/fnhost-density steady native --c 64 --secs 10
+scenario=steady engine=native export=echo c=64 fresh=false calls=7552081 rps=752905 p50_us=8.4 p90_us=47.0 p99_us=1500.2 max_us=98813.8 rss_mb=350.8 fp_mb=164.3
+$ ./target/release/fnhost-density steady kernel --c 1 --secs 10
+scenario=steady engine=kernel export=echo c=1 fresh=false calls=192031 rps=19172 p50_us=45.8 p90_us=46.8 p99_us=107.5 max_us=38213.0 rss_mb=45.3 fp_mb=28.5
+$ ./target/release/fnhost-density steady kernel --c 64 --secs 10
+scenario=steady engine=kernel export=echo c=64 fresh=false calls=16581 rps=1652 p50_us=6983.7 p90_us=118117.5 p99_us=271507.7 max_us=517600.6 rss_mb=47.6 fp_mb=29.0
+$ ./target/release/fnhost-density steady extism --c 1 --secs 10
+scenario=steady engine=extism export=echo c=1 fresh=false calls=732922 rps=73230 p50_us=13.3 p90_us=14.4 p99_us=22.0 max_us=32933.5 rss_mb=69.8 fp_mb=49.4
+$ ./target/release/fnhost-density steady extism --c 64 --secs 10
+scenario=steady engine=extism export=echo c=64 fresh=false calls=1519985 rps=151703 p50_us=51.1 p90_us=142.4 p99_us=10087.4 max_us=314853.2 rss_mb=114.0 fp_mb=70.9
+$ ./target/release/fnhost-density steady component --c 1 --secs 10
+scenario=steady engine=component export=/echo c=1 fresh=false calls=847018 rps=84672 p50_us=10.0 p90_us=12.2 p99_us=36.0 max_us=53037.9 rss_mb=73.3 fp_mb=50.9
+$ ./target/release/fnhost-density steady component --c 64 --secs 10
+scenario=steady engine=component export=/echo c=64 fresh=false calls=3392679 rps=338779 p50_us=40.7 p90_us=379.2 p99_us=1831.3 max_us=116717.5 rss_mb=168.2 fp_mb=87.0
+$ ./target/release/fnhost-density steady native --c 1 --secs 10 --fresh
+scenario=steady engine=native export=echo c=1 fresh=true calls=226727 rps=22607 p50_us=22.0 p90_us=28.9 p99_us=97.6 max_us=112364.3 rss_mb=42.1 fp_mb=26.8
+$ ./target/release/fnhost-density steady native --c 64 --secs 10 --fresh
+scenario=steady engine=native export=echo c=64 fresh=true calls=217159 rps=21604 p50_us=2560.2 p90_us=4871.6 p99_us=16887.2 max_us=106951.8 rss_mb=46.4 fp_mb=23.9
+$ ./target/release/fnhost-density steady component --c 1 --secs 10 --fresh
+scenario=steady engine=component export=/echo c=1 fresh=true calls=169142 rps=16908 p50_us=34.9 p90_us=83.2 p99_us=340.2 max_us=34937.2 rss_mb=44.2 fp_mb=29.3
+$ ./target/release/fnhost-density steady component --c 64 --secs 10 --fresh
+scenario=steady engine=component export=/echo c=64 fresh=true calls=488072 rps=48768 p50_us=532.5 p90_us=2555.6 p99_us=13096.5 max_us=138995.2 rss_mb=59.8 fp_mb=29.3

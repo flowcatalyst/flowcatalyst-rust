@@ -1,0 +1,16 @@
+$ ./target/release/fnhost-density neighbour native --mode spin --b 28 --rate 500 --secs 10
+scenario=neighbour engine=native b_mode=spin b_threads=28 a_rate=500 b_calls=1773 alone_p50_us=688.2 alone_p99_us=1026.9 busy_p50_us=697.8 busy_p99_us=5763.5 p50_degradation_pct=+1 p99_degradation_pct=+461
+$ ./target/release/fnhost-density neighbour native --mode alloc --b 28 --rate 500 --secs 10
+scenario=neighbour engine=native b_mode=alloc b_threads=28 a_rate=500 b_calls=143266 alone_p50_us=686.2 alone_p99_us=5574.3 busy_p50_us=742.5 busy_p99_us=4833.7 p50_degradation_pct=+8 p99_degradation_pct=-13
+$ ./target/release/fnhost-density neighbour kernel --mode spin --b 28 --rate 500 --secs 10
+scenario=neighbour engine=kernel b_mode=spin b_threads=28 a_rate=500 b_calls=1448 alone_p50_us=933.6 alone_p99_us=11471.8 busy_p50_us=897.8 busy_p99_us=10111.0 p50_degradation_pct=-4 p99_degradation_pct=-12
+$ ./target/release/fnhost-density neighbour kernel --mode alloc --b 28 --rate 500 --secs 10
+scenario=neighbour engine=kernel b_mode=alloc b_threads=28 a_rate=500 b_calls=20841 alone_p50_us=845.7 alone_p99_us=10741.0 busy_p50_us=8178.8 busy_p99_us=54284.3 p50_degradation_pct=+867 p99_degradation_pct=+405
+$ ./target/release/fnhost-density neighbour extism --mode spin --b 28 --rate 500 --secs 10
+scenario=neighbour engine=extism b_mode=spin b_threads=28 a_rate=500 b_calls=3661 alone_p50_us=705.2 alone_p99_us=3402.1 busy_p50_us=1219.4 busy_p99_us=33030.3 p50_degradation_pct=+73 p99_degradation_pct=+871
+$ ./target/release/fnhost-density neighbour extism --mode alloc --b 28 --rate 500 --secs 10
+scenario=neighbour engine=extism b_mode=alloc b_threads=28 a_rate=500 b_calls=149427 alone_p50_us=767.3 alone_p99_us=2121.5 busy_p50_us=730.6 busy_p99_us=10417.3 p50_degradation_pct=-5 p99_degradation_pct=+391
+$ ./target/release/fnhost-density neighbour component --mode spin --b 28 --rate 500 --secs 10
+scenario=neighbour engine=component b_mode=spin b_tasks=28 a_rate=500 b_calls=2273 alone_p50_us=1157.9 alone_p99_us=10930.0 busy_p50_us=17288.2 busy_p99_us=110220.5 p50_degradation_pct=+1393 p99_degradation_pct=+908
+$ ./target/release/fnhost-density neighbour component --mode alloc --b 28 --rate 500 --secs 10
+scenario=neighbour engine=component b_mode=alloc b_tasks=28 a_rate=500 b_calls=147605 alone_p50_us=1160.7 alone_p99_us=8310.2 busy_p50_us=8843.4 busy_p99_us=37484.8 p50_degradation_pct=+662 p99_degradation_pct=+351
