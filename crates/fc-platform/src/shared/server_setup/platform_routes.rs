@@ -564,12 +564,11 @@ pub fn build_platform_routes(
         identity_provider_repo: repos.idp_repo.clone(),
         login_attempt_repo: repos.login_attempt_repo.clone(),
         backoff_policy: backoff_policy.clone(),
-        // Password login has always issued its cookie with these fixed
-        // values rather than the configured Secure/SameSite/expiry above.
-        // Kept as-is; aligning it is a deliberate behaviour change.
+        // Password login: Secure per deployment config (on in fc-server,
+        // off only for fc-dev's plain-http localhost), always SameSite=Lax.
         session_cookie: SessionCookieConfig {
             name: "fc_session".to_string(),
-            secure: false,
+            secure: config.session_cookie_secure,
             same_site: SameSite::Lax,
             ttl: time::Duration::seconds(86400),
         },
