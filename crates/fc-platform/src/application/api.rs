@@ -775,8 +775,8 @@ pub async fn provision_service_account<U: UnitOfWork>(
     // Mint the OAuth client identifiers and a fresh secret BEFORE opening
     // the tx. We hand the encrypted ref into the closure and keep the
     // plaintext to return in the response.
-    let oauth_row_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
-    let oauth_public_client_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let oauth_row_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
+    let oauth_public_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
     let (client_secret_plaintext, client_secret_ref) = generate_and_encrypt_client_secret()?;
 
     let sa_code = format!("app:{}", app.code);
@@ -952,8 +952,8 @@ pub async fn provision_login_client<U: UnitOfWork>(
         ));
     }
 
-    let oauth_row_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
-    let oauth_public_client_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let oauth_row_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
+    let oauth_public_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
     let client_name = format!("{} Login", app.name);
 
     // CONFIDENTIAL clients get a secret at the edge (only confidential

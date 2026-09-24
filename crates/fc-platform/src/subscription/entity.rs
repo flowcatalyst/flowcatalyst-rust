@@ -147,7 +147,7 @@ impl Subscription {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Subscription),
+            id: crate::shared::tsid::generate(crate::EntityType::Subscription),
             code: code.into(),
             application_code: None,
             name: name.into(),

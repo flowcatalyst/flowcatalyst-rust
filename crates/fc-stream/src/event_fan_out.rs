@@ -26,7 +26,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use fc_common::{tsid::EntityType, DispatchMode, DispatchStatus, TsidGenerator};
+use fc_common::tsid::{self, EntityType};
+use fc_common::{DispatchMode, DispatchStatus};
 use sqlx::{PgPool, Postgres, Transaction};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -427,7 +428,7 @@ impl NewJobRow {
         let payload = serde_json::to_string(&event.data.clone().unwrap_or(serde_json::Value::Null))
             .unwrap_or_default();
         Self {
-            id: TsidGenerator::generate(EntityType::DispatchJob),
+            id: tsid::generate(EntityType::DispatchJob),
             code: event.event_type.clone(),
             source: event.source.clone(),
             subject: event.subject.clone(),

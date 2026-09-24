@@ -132,7 +132,7 @@ impl SpecVersion {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Schema),
+            id: crate::shared::tsid::generate(crate::EntityType::Schema),
             event_type_id: event_type_id.into(),
             version: version.into(),
             mime_type: "application/schema+json".to_string(),
@@ -211,7 +211,7 @@ impl EventType {
         let event_name = parts[3].to_string();
         let now = Utc::now();
         Ok(Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::EventType),
+            id: crate::shared::tsid::generate(crate::EntityType::EventType),
             code,
             name: name.into(),
             description: None,

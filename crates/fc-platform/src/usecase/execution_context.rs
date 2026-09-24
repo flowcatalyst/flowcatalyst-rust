@@ -5,7 +5,7 @@
 
 use super::domain_event::DomainEvent;
 use crate::shared::authorization_service::AuthContext;
-use crate::shared::tsid::TsidGenerator;
+use crate::shared::tsid;
 use chrono::{DateTime, Utc};
 
 /// Context for a use case execution.
@@ -39,7 +39,7 @@ impl ExecutionContext {
     /// To continue an existing trace, use [`Self::with_correlation`] or
     /// [`Self::from_parent_event`] instead.
     pub fn create(principal_id: impl Into<String>) -> Self {
-        let exec_id = format!("exec-{}", TsidGenerator::generate_untyped());
+        let exec_id = format!("exec-{}", tsid::generate_untyped());
         Self {
             execution_id: exec_id.clone(),
             correlation_id: exec_id, // correlation starts as execution ID
@@ -58,7 +58,7 @@ impl ExecutionContext {
         correlation_id: impl Into<String>,
     ) -> Self {
         Self {
-            execution_id: format!("exec-{}", TsidGenerator::generate_untyped()),
+            execution_id: format!("exec-{}", tsid::generate_untyped()),
             correlation_id: correlation_id.into(),
             causation_id: None,
             principal_id: principal_id.into(),
@@ -73,7 +73,7 @@ impl ExecutionContext {
     /// is preserved.
     pub fn from_parent_event<E: DomainEvent>(parent: &E, principal_id: impl Into<String>) -> Self {
         Self {
-            execution_id: format!("exec-{}", TsidGenerator::generate_untyped()),
+            execution_id: format!("exec-{}", tsid::generate_untyped()),
             correlation_id: parent.metadata().correlation_id.clone(),
             causation_id: Some(parent.metadata().event_id.clone()),
             principal_id: principal_id.into(),

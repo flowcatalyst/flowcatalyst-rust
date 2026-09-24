@@ -59,5 +59,5 @@ pub use health_api::health_router;
 pub use middleware::{AppState, Authenticated, ClientIp};
 pub use monitoring_api::monitoring_router;
 pub use platform_config_api::platform_config_router;
-pub use tsid::{EntityType, TsidGenerator};
+pub use tsid::EntityType;
 pub use well_known_api::well_known_router;

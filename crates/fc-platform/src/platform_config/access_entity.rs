@@ -17,7 +17,7 @@ pub struct PlatformConfigAccess {
 impl PlatformConfigAccess {
     pub fn new(application_code: impl Into<String>, role_code: impl Into<String>) -> Self {
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::ConfigAccess),
+            id: crate::shared::tsid::generate(crate::EntityType::ConfigAccess),
             application_code: application_code.into(),
             role_code: role_code.into(),
             can_read: true,

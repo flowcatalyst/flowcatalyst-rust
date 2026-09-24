@@ -256,7 +256,7 @@ impl Principal {
         let now = Utc::now();
 
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Principal),
+            id: crate::shared::tsid::generate(crate::EntityType::Principal),
             principal_type: PrincipalType::User,
             scope,
             client_id: None,
@@ -279,7 +279,7 @@ impl Principal {
     pub fn new_service(service_account_id: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Principal),
+            id: crate::shared::tsid::generate(crate::EntityType::Principal),
             principal_type: PrincipalType::Service,
             scope: UserScope::Anchor,
             client_id: None,
@@ -413,7 +413,7 @@ impl ClientAccessGrant {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Principal),
+            id: crate::shared::tsid::generate(crate::EntityType::Principal),
             principal_id: principal_id.into(),
             client_id: client_id.into(),
             granted_by: granted_by.into(),

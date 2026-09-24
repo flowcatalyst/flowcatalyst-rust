@@ -68,7 +68,7 @@ impl AnchorDomain {
     pub fn new(domain: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::AnchorDomain),
+            id: crate::shared::tsid::generate(crate::EntityType::AnchorDomain),
             domain: domain.into().to_lowercase(),
             created_at: now,
             updated_at: now,
@@ -104,7 +104,7 @@ impl ClientAuthConfig {
     pub fn new_internal(email_domain: impl Into<String>, config_type: AuthConfigType) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::ClientAuthConfig),
+            id: crate::shared::tsid::generate(crate::EntityType::ClientAuthConfig),
             email_domain: email_domain.into().to_lowercase(),
             config_type,
             primary_client_id: None,
@@ -189,7 +189,7 @@ impl IdpRoleMapping {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::IdpRoleMapping),
+            id: crate::shared::tsid::generate(crate::EntityType::IdpRoleMapping),
             idp_type: idp_type.into(),
             idp_role_name: idp_role_name.into(),
             platform_role_name: platform_role_name.into(),

@@ -53,7 +53,7 @@ impl EmailDomainMapping {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::EmailDomainMapping),
+            id: crate::shared::tsid::generate(crate::EntityType::EmailDomainMapping),
             email_domain: email_domain.into(),
             identity_provider_id: identity_provider_id.into(),
             scope_type,

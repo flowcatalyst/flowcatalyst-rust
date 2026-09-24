@@ -394,4 +394,4 @@ This is one of the few infrastructure-write paths exempt from UoW — it runs at
 - Authz service: `crates/fc-platform/src/shared/authorization_service.rs`.
 - Auth middleware: `crates/fc-platform/src/shared/middleware.rs` (`AuthLayer`).
 - DB pool + migrations + secret refresh + role seeding: `crates/fc-platform/src/shared/database.rs`.
-- TSID generation: `crates/fc-common/src/lib.rs::TsidGenerator`, `crates/fc-platform/src/shared/tsid.rs`.
+- TSID generation: `crates/fc-common/src/tsid.rs` (`tsid::generate`/`generate_with_prefix`/`generate_untyped`), re-exported via `crates/fc-platform/src/shared/tsid.rs`.

@@ -52,7 +52,7 @@ impl Application {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Application),
+            id: crate::shared::tsid::generate(crate::EntityType::Application),
             application_type: ApplicationType::Application,
             code: code.into(),
             name: name.into(),

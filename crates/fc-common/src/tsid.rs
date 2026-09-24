@@ -167,38 +167,6 @@ pub fn from_long(value: i64) -> String {
     encode_crockford(value as u64)
 }
 
-/// Namespace kept for existing callers; prefer the free functions in this
-/// module ([`generate`], [`generate_with_prefix`], [`generate_untyped`],
-/// [`to_long`], [`from_long`]), which these methods delegate to.
-pub struct TsidGenerator;
-
-impl TsidGenerator {
-    /// See [`generate`].
-    pub fn generate(entity_type: EntityType) -> String {
-        generate(entity_type)
-    }
-
-    /// See [`generate_with_prefix`].
-    pub fn generate_with_prefix(prefix: &str) -> String {
-        generate_with_prefix(prefix)
-    }
-
-    /// See [`generate_untyped`].
-    pub fn generate_untyped() -> String {
-        generate_untyped()
-    }
-
-    /// See [`to_long`].
-    pub fn to_long(tsid_str: &str) -> Option<i64> {
-        to_long(tsid_str)
-    }
-
-    /// See [`from_long`].
-    pub fn from_long(value: i64) -> String {
-        from_long(value)
-    }
-}
-
 /// Encode a 64-bit value to Crockford Base32 (13 characters).
 fn encode_crockford(mut value: u64) -> String {
     let mut result = [b'0'; 13];
@@ -292,17 +260,6 @@ mod tests {
         let num = to_long(&id).unwrap();
         let back = from_long(num);
         assert_eq!(id, back);
-    }
-
-    #[test]
-    fn test_tsid_generator_delegates() {
-        assert!(TsidGenerator::generate(EntityType::Role).starts_with("rol_"));
-        assert!(TsidGenerator::generate_with_prefix("ord").starts_with("ord_"));
-        let raw = TsidGenerator::generate_untyped();
-        assert_eq!(
-            TsidGenerator::from_long(TsidGenerator::to_long(&raw).unwrap()),
-            raw
-        );
     }
 
     #[test]

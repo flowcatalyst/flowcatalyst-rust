@@ -103,7 +103,7 @@ impl Process {
         let process_name = parts[2].to_string();
         let now = Utc::now();
         Ok(Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Process),
+            id: crate::shared::tsid::generate(crate::EntityType::Process),
             code,
             name: name.into(),
             description: None,

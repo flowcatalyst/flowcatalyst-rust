@@ -51,7 +51,7 @@ impl Connection {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Connection),
+            id: crate::shared::tsid::generate(crate::EntityType::Connection),
             code: code.into(),
             name: name.into(),
             description: None,

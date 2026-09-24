@@ -84,7 +84,7 @@ impl EventMetadata {
         message_group: impl Into<String>,
     ) -> Self {
         Self {
-            event_id: crate::shared::tsid::TsidGenerator::generate_untyped(),
+            event_id: crate::shared::tsid::generate_untyped(),
             event_type: event_type.to_string(),
             spec_version: spec_version.to_string(),
             source: source.to_string(),

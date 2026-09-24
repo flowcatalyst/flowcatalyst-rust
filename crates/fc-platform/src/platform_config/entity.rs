@@ -72,7 +72,7 @@ impl PlatformConfig {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::PlatformConfig),
+            id: crate::shared::tsid::generate(crate::EntityType::PlatformConfig),
             application_code: application_code.into(),
             section: section.into(),
             property: property.into(),

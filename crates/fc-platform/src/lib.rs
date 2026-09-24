@@ -69,7 +69,7 @@ pub mod router;
 
 // Re-export common types from shared
 pub use shared::error::{PlatformError, Result};
-pub use shared::tsid::{EntityType, TsidGenerator};
+pub use shared::tsid::EntityType;
 
 // Re-export use case infrastructure
 pub use usecase::{

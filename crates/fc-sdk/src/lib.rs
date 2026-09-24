@@ -168,7 +168,7 @@ pub mod webhook;
 pub mod scheduled_jobs;
 
 // Re-export key types at crate root
-pub use tsid::{EntityType, TsidGenerator};
+pub use tsid::EntityType;
 pub use usecase::{
     DomainEvent, EventMetadata, ExecutionContext, TracingContext, UseCase, UseCaseError,
     UseCaseResult,

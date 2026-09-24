@@ -800,7 +800,7 @@ impl AuthService {
             exp: exp.timestamp(),
             iat: now.timestamp(),
             nbf: now.timestamp(),
-            jti: crate::TsidGenerator::generate_untyped(),
+            jti: crate::shared::tsid::generate_untyped(),
             principal_type: format!("{:?}", principal.principal_type).to_uppercase(),
             scope: format!("{:?}", principal.scope).to_uppercase(),
             email: principal.email().map(String::from),

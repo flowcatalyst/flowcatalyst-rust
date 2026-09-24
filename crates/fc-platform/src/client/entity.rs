@@ -112,7 +112,7 @@ impl Client {
     pub fn new(name: impl Into<String>, identifier: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::Client),
+            id: crate::shared::tsid::generate(crate::EntityType::Client),
             name: name.into(),
             identifier: identifier.into(),
             status: ClientStatus::Active,

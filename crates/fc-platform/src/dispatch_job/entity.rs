@@ -399,7 +399,7 @@ impl DispatchJob {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate_untyped(),
+            id: crate::shared::tsid::generate_untyped(),
             external_id: None,
             kind: DispatchKind::Event,
             code: event_type.into(),

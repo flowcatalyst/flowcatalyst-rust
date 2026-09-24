@@ -4,7 +4,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{EntityType, TsidGenerator};
+use crate::shared::tsid;
+use crate::EntityType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -92,7 +93,7 @@ impl OpenApiSpec {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: TsidGenerator::generate(EntityType::ApplicationOpenApiSpec),
+            id: tsid::generate(EntityType::ApplicationOpenApiSpec),
             application_id: application_id.into(),
             version: version.into(),
             status: OpenApiSpecStatus::Current,

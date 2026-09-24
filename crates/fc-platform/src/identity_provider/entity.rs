@@ -50,7 +50,7 @@ impl IdentityProvider {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::IdentityProvider),
+            id: crate::shared::tsid::generate(crate::EntityType::IdentityProvider),
             code: code.into(),
             name: name.into(),
             r#type: idp_type,

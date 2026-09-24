@@ -29,7 +29,7 @@ impl AuditLog {
         principal_id: Option<String>,
     ) -> Self {
         Self {
-            id: crate::TsidGenerator::generate_untyped(),
+            id: crate::shared::tsid::generate_untyped(),
             entity_type: entity_type.into(),
             entity_id: entity_id.into(),
             operation: operation.into(),

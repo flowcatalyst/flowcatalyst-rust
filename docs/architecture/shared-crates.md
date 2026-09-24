@@ -78,7 +78,7 @@ Other essentials:
 - `InFlightMessage` — internal router bookkeeping.
 - `PoolConfig`, `QueueConfig`, `RouterConfig` — what the platform's config endpoint returns to the router.
 - `LeaderElectionConfig` — leader election parameters.
-- `EntityType` enum + `TsidGenerator` — 30 entity types, prefixed Crockford-Base32 IDs (`clt_0HZXEQ5Y8JY5Z`, `usr_…`, `evt_…`, `sub_…`, etc.).
+- `EntityType` enum + `tsid::generate`/`generate_with_prefix`/`generate_untyped` free functions — 30 entity types, prefixed Crockford-Base32 IDs (`clt_0HZXEQ5Y8JY5Z`, `usr_…`, `evt_…`, `sub_…`, etc.).
 - `config::env_or`, `env_bool`, `env_or_alias`, `env_or_parse` — the env-var helpers every binary uses. `_alias` variants accept a legacy TS name for ECS-task-def compatibility.
 
 ---

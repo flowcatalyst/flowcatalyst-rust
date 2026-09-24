@@ -44,7 +44,7 @@ pub mod config;
 pub mod logging;
 pub mod tsid;
 
-pub use tsid::{EntityType, TsidGenerator};
+pub use tsid::EntityType;
 
 // ============================================================================
 // Core Message Types

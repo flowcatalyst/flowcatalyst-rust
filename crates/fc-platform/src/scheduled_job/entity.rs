@@ -101,7 +101,7 @@ impl ScheduledJob {
     pub fn new(code: impl Into<String>, name: impl Into<String>, crons: Vec<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::ScheduledJob),
+            id: crate::shared::tsid::generate(crate::EntityType::ScheduledJob),
             client_id: None,
             code: code.into(),
             name: name.into(),

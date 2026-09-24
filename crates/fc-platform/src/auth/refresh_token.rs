@@ -3,7 +3,7 @@
 //! Stores refresh tokens for session renewal.
 //! Refresh tokens are long-lived and can be used to obtain new access tokens.
 
-use crate::TsidGenerator;
+use crate::shared::tsid;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -88,7 +88,7 @@ impl RefreshToken {
     pub fn new(token_hash: impl Into<String>, principal_id: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: TsidGenerator::generate_untyped(),
+            id: tsid::generate_untyped(),
             token_hash: token_hash.into(),
             principal_id: principal_id.into(),
             oauth_client_id: None,

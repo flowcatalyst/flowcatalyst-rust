@@ -1087,7 +1087,7 @@ impl DispatchJobRepository {
             error_stack_trace,
             duration_millis,
         } = *attempt;
-        let id = crate::TsidGenerator::generate_untyped();
+        let id = crate::shared::tsid::generate_untyped();
         let now = Utc::now();
 
         sqlx::query(

@@ -376,7 +376,7 @@ pub async fn create_service_account<U: UnitOfWork>(
             // crosses into the use case.
             use base64::Engine;
 
-            let oauth_client_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+            let oauth_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
             let mut secret_bytes = [0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
             let plaintext_secret =

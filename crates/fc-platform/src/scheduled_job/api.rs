@@ -841,7 +841,7 @@ pub async fn post_instance_log(
     check_scope_access(&auth, inst.client_id.as_deref())?;
 
     let log = ScheduledJobInstanceLog {
-        id: crate::TsidGenerator::generate(crate::EntityType::ScheduledJobInstanceLog),
+        id: crate::shared::tsid::generate(crate::EntityType::ScheduledJobInstanceLog),
         instance_id: inst.id.clone(),
         scheduled_job_id: Some(inst.scheduled_job_id.clone()),
         client_id: inst.client_id.clone(),

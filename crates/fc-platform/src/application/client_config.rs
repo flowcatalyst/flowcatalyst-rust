@@ -24,7 +24,7 @@ impl ApplicationClientConfig {
     pub fn new(application_id: impl Into<String>, client_id: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::AppClientConfig),
+            id: crate::shared::tsid::generate(crate::EntityType::AppClientConfig),
             application_id: application_id.into(),
             client_id: client_id.into(),
             enabled: true,

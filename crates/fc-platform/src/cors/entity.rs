@@ -22,7 +22,7 @@ impl CorsAllowedOrigin {
     ) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::CorsOrigin),
+            id: crate::shared::tsid::generate(crate::EntityType::CorsOrigin),
             origin: origin.into(),
             description,
             created_by,

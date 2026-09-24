@@ -223,7 +223,7 @@ pub async fn create_oauth_client(
     // Auto-generate client_id if not provided
     let client_id = req
         .client_id
-        .unwrap_or_else(|| crate::TsidGenerator::generate(crate::EntityType::OAuthClient));
+        .unwrap_or_else(|| crate::shared::tsid::generate(crate::EntityType::OAuthClient));
     let client_type = req
         .client_type
         .clone()
@@ -264,7 +264,7 @@ pub async fn create_oauth_client(
         req.grant_types
     };
 
-    let oauth_client_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let oauth_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
 
     let cmd = CreateOAuthClientCommand {
         oauth_client_id: oauth_client_id.clone(),

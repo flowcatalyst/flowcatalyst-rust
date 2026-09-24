@@ -64,7 +64,7 @@ pub struct LoginAttempt {
 impl LoginAttempt {
     pub fn new(attempt_type: AttemptType, outcome: LoginOutcome) -> Self {
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::LoginAttempt),
+            id: crate::shared::tsid::generate(crate::EntityType::LoginAttempt),
             attempt_type,
             outcome,
             failure_reason: None,

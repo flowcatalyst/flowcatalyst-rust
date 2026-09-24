@@ -17,7 +17,7 @@ impl PasswordResetToken {
         expires_at: DateTime<Utc>,
     ) -> Self {
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::PasswordResetToken),
+            id: crate::shared::tsid::generate(crate::EntityType::PasswordResetToken),
             principal_id: principal_id.into(),
             token_hash: token_hash.into(),
             expires_at,

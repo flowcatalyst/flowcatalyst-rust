@@ -22,7 +22,7 @@ pub struct WebauthnCredential {
 impl WebauthnCredential {
     pub fn new(principal_id: impl Into<String>, passkey: Passkey, name: Option<String>) -> Self {
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::WebauthnCredential),
+            id: crate::shared::tsid::generate(crate::EntityType::WebauthnCredential),
             principal_id: principal_id.into(),
             passkey,
             name,

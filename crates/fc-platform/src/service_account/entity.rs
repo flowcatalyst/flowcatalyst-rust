@@ -263,7 +263,7 @@ impl ServiceAccount {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::ServiceAccount),
+            id: crate::shared::tsid::generate(crate::EntityType::ServiceAccount),
             code: code.into(),
             name: name.into(),
             description: None,

@@ -515,7 +515,7 @@ impl PrincipalRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT (principal_id, client_id) DO NOTHING",
         )
-        .bind(crate::TsidGenerator::generate(crate::EntityType::Principal))
+        .bind(crate::shared::tsid::generate(crate::EntityType::Principal))
         .bind(principal_id)
         .bind(client_id)
         .bind(principal_id)
@@ -898,7 +898,7 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
                 "INSERT INTO iam_client_access_grants (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)"
             )
-            .bind(crate::TsidGenerator::generate(crate::EntityType::Principal))
+            .bind(crate::shared::tsid::generate(crate::EntityType::Principal))
             .bind(&p.id)
             .bind(client_id)
             .bind(&p.id) // granted_by = self

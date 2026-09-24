@@ -137,7 +137,7 @@ impl OAuthClient {
     pub fn new(client_id: impl Into<String>, client_name: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
-            id: crate::TsidGenerator::generate(crate::EntityType::OAuthClient),
+            id: crate::shared::tsid::generate(crate::EntityType::OAuthClient),
             client_id: client_id.into(),
             client_name: client_name.into(),
             client_type: OAuthClientType::Public,

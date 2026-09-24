@@ -230,7 +230,7 @@ impl PgUnitOfWork {
                  client_id, performed_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         )
-        .bind(crate::TsidGenerator::generate_untyped())
+        .bind(crate::shared::tsid::generate_untyped())
         .bind(&row.entity_type)
         .bind(&row.entity_id)
         .bind(&row.operation)

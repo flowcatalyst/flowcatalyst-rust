@@ -127,7 +127,7 @@ impl ScheduledJobPoller {
         };
 
         let instance = ScheduledJobInstance {
-            id: crate::TsidGenerator::generate(crate::EntityType::ScheduledJobInstance),
+            id: crate::shared::tsid::generate(crate::EntityType::ScheduledJobInstance),
             scheduled_job_id: job.id.clone(),
             client_id: job.client_id.clone(),
             job_code: job.code.clone(),
