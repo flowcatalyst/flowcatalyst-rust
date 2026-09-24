@@ -122,7 +122,7 @@ impl EventTypeCreatedBuilder {
         }
     }
 
-    /// Initialize from execution context (like Java's .from(ctx)).
+    /// Initialize from execution context.
     /// Named `with_context` (not `from_context`) so it doesn't trigger
     /// clippy's `wrong_self_convention` — `from_*` is conventionally for
     /// constructors taking no `self`.

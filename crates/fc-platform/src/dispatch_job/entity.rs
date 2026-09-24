@@ -1214,7 +1214,7 @@ mod tests {
     }
 }
 
-/// Dispatch job read projection - optimized for queries (matches Java DispatchJobRead)
+/// Dispatch job read projection - optimized for queries
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobRead {

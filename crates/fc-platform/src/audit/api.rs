@@ -18,7 +18,7 @@ use crate::AuditLog;
 use crate::AuditLogRepository;
 use crate::PrincipalRepository;
 
-/// Audit log response DTO (matches Java AuditLogDto)
+/// Audit log response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditLogResponse {
@@ -163,7 +163,7 @@ pub struct AuditLogsQuery {
     /// Filter by entity ID
     pub entity_id: Option<String>,
 
-    /// Filter by operation (Java calls this "operation", maps to action internally)
+    /// Filter by operation (maps to action internally)
     pub operation: Option<String>,
 
     /// Filter by principal ID
@@ -299,7 +299,7 @@ pub async fn get_audit_log(
     Ok(Json(log.into()))
 }
 
-/// List audit logs with filters (matches Java AuditLogAdminResource)
+/// List audit logs with filters
 #[utoipa::path(
     get,
     path = "",

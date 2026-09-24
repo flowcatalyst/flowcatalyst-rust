@@ -45,7 +45,7 @@ pub struct LoginRequest {
     pub remember_me: bool,
 }
 
-/// Login response - matches Java LoginResponse record
+/// Login response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginResponse {
@@ -336,7 +336,7 @@ pub async fn login(
     )
     .await;
 
-    // Build response with user info (matches Java LoginResponse)
+    // Build response with user info
     let response = LoginResponse {
         principal_id: principal.id.clone(),
         name: principal.name.clone(),

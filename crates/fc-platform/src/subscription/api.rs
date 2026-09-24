@@ -125,7 +125,7 @@ impl From<&EventTypeBinding> for EventTypeBindingResponse {
     }
 }
 
-/// Config entry response (matches Java ConfigEntry)
+/// Config entry response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigEntryResponse {
@@ -142,7 +142,7 @@ impl From<&crate::subscription::entity::ConfigEntry> for ConfigEntryResponse {
     }
 }
 
-/// Subscription response DTO (matches Java SubscriptionDto)
+/// Subscription response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionResponse {
@@ -209,7 +209,7 @@ impl From<Subscription> for SubscriptionResponse {
     }
 }
 
-/// Subscription list response (matches Java SubscriptionListResponse)
+/// Subscription list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionListResponse {

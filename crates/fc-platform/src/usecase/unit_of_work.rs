@@ -32,13 +32,6 @@ use super::result::UseCaseResult;
 /// Trait for entities that have a unique string ID.
 pub trait HasId {
     fn id(&self) -> &str;
-    /// Legacy collection name. Unused in PostgreSQL implementation.
-    fn collection_name() -> &'static str
-    where
-        Self: Sized,
-    {
-        ""
-    }
 }
 
 // ─── Repository-owned persistence ────────────────────────────────────────────

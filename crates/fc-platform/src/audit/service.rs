@@ -1,7 +1,6 @@
 //! Audit Service
 //!
 //! Provides centralized audit logging for all platform mutations.
-//! Uses the same schema as Java for cross-platform compatibility.
 
 use std::sync::Arc;
 use tracing::{error, info};
@@ -147,7 +146,7 @@ impl AuditService {
         self.insert(log).await
     }
 
-    /// Build an audit log from auth context (matches Java schema)
+    /// Build an audit log from auth context
     fn build_log(
         &self,
         auth: &AuthContext,

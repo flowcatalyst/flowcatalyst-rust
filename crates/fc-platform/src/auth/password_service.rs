@@ -327,39 +327,6 @@ impl Default for PasswordService {
     }
 }
 
-/// Password reset token
-#[derive(Debug, Clone)]
-pub struct PasswordResetToken {
-    pub token: String,
-    pub principal_id: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl PasswordResetToken {
-    pub fn new(principal_id: impl Into<String>, validity_hours: i64) -> Self {
-        use chrono::Utc;
-
-        // Generate secure random token
-        let mut token_bytes = [0u8; 32];
-        use argon2::password_hash::rand_core::RngCore;
-        OsRng.fill_bytes(&mut token_bytes);
-        let token = base64::Engine::encode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            token_bytes,
-        );
-
-        Self {
-            token,
-            principal_id: principal_id.into(),
-            expires_at: Utc::now() + chrono::Duration::hours(validity_hours),
-        }
-    }
-
-    pub fn is_expired(&self) -> bool {
-        chrono::Utc::now() > self.expires_at
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,36 +410,6 @@ mod tests {
         // But both verify correctly
         assert!(service.verify_password(password, &hash1).unwrap());
         assert!(service.verify_password(password, &hash2).unwrap());
-    }
-
-    #[test]
-    fn test_password_reset_token() {
-        let token = PasswordResetToken::new("principal-123", 24);
-
-        assert_eq!(token.principal_id, "principal-123");
-        assert!(!token.is_expired());
-        assert!(!token.token.is_empty());
-    }
-
-    #[test]
-    fn test_password_reset_token_expiry_duration() {
-        let before = chrono::Utc::now();
-        let token = PasswordResetToken::new("prn_test", 1); // 1 hour
-        let after = chrono::Utc::now();
-
-        // expires_at should be ~1 hour from now
-        let diff_from_before = (token.expires_at - before).num_seconds();
-        let diff_from_after = (token.expires_at - after).num_seconds();
-        assert!((3599..=3601).contains(&diff_from_before));
-        assert!((3599..=3601).contains(&diff_from_after));
-    }
-
-    #[test]
-    fn test_password_reset_token_zero_hours_is_immediately_expired() {
-        let token = PasswordResetToken::new("prn_test", 0);
-        // With 0 hours, expires_at == creation time, so should be expired
-        // (or very nearly so — allow a tiny margin)
-        assert!(token.is_expired() || token.expires_at <= chrono::Utc::now());
     }
 
     #[test]

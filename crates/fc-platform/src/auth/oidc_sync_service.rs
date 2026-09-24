@@ -10,8 +10,6 @@
 //! - Partner IDP is compromised and grants all users "super-admin" role
 //! - This service rejects the role because it's not in idp_role_mappings
 //! - Attack is logged and prevented
-//!
-//! See Java implementation: OidcSyncService.java
 
 use chrono::Utc;
 use std::collections::HashSet;
@@ -46,16 +44,8 @@ impl OidcSyncService {
     /// Synchronize user information from OIDC token.
     /// Creates or updates the user principal based on OIDC claims.
     ///
-    /// # Arguments
-    /// * `email` - User email from OIDC token
-    /// * `name` - User display name from OIDC token
-    /// * `external_idp_id` - Subject from OIDC token (IDP's user ID)
-    /// * `provider_id` - OIDC provider identifier
-    /// * `client_id` - Home tenant ID (None for anchor domain users)
-    /// * `scope` - User scope (ANCHOR, PARTNER, or CLIENT)
-    ///
-    /// # Returns
-    /// Synchronized principal
+    /// `external_idp_id` is the token's subject (the IDP's user ID);
+    /// `client_id` is the home tenant, `None` for anchor-domain users.
     pub async fn sync_oidc_user(
         &self,
         email: &str,
@@ -146,12 +136,9 @@ impl OidcSyncService {
     /// - Platform administrator must explicitly authorize IDP roles before they work
     /// - All rejections are logged for security auditing
     ///
-    /// # Arguments
-    /// * `principal` - The user principal to sync roles for
-    /// * `idp_role_names` - List of role names from the OIDC token (e.g., from realm_access.roles)
-    ///
-    /// # Returns
-    /// Set of accepted internal role names (e.g., "platform:tenant-admin")
+    /// `idp_role_names` are the role names from the OIDC token (e.g. from
+    /// `realm_access.roles`). Returns the accepted internal role names
+    /// (e.g. `platform:tenant-admin`).
     pub async fn sync_idp_roles(
         &self,
         principal: &mut Principal,
@@ -322,18 +309,8 @@ impl OidcSyncService {
 
     /// Full OIDC sync: sync both user info and roles.
     /// This is the main method called during OIDC login callback.
-    ///
-    /// # Arguments
-    /// * `email` - User email from OIDC token
-    /// * `name` - User display name from OIDC token
-    /// * `external_idp_id` - Subject from OIDC token
-    /// * `provider_id` - OIDC provider identifier
-    /// * `client_id` - Home tenant ID (None for anchor users)
-    /// * `scope` - User scope
-    /// * `idp_role_names` - List of role names from OIDC token
-    ///
-    /// # Returns
-    /// Synchronized principal
+    /// Arguments are as for [`Self::sync_oidc_user`], plus the token's
+    /// `idp_role_names` (see [`Self::sync_idp_roles`]).
     pub async fn sync_oidc_login(
         &self,
         email: &str,

@@ -27,9 +27,8 @@ use crate::api::{
     EventsState, FilterOptionsState, IdentityProvidersState, InFlightTracker, LeaderState,
     LoginAttemptsState, MeState, MonitoringState, OAuthClientsState, OAuthState, OidcLoginApiState,
     PasswordResetApiState, PlatformConfigState, PrincipalsState, ProcessesState, PublicApiState,
-    RolesState,
-    SdkAuditBatchState, SdkDispatchJobsState, SdkEventsState, SdkSyncState, ServiceAccountsState,
-    SubscriptionsState, WellKnownState,
+    RolesState, SdkAuditBatchState, SdkDispatchJobsState, SdkEventsState, SdkSyncState,
+    ServiceAccountsState, SubscriptionsState, WellKnownState,
 };
 use crate::audit::service::AuditService;
 use crate::operations::{
@@ -139,12 +138,10 @@ pub fn build_platform_routes(
     };
 
     // ── Process documentation (use cases + API state) ────────────────────
-    let sync_processes_use_case = Arc::new(
-        crate::process::operations::SyncProcessesUseCase::new(
-            repos.process_repo.clone(),
-            unit_of_work.clone(),
-        ),
-    );
+    let sync_processes_use_case = Arc::new(crate::process::operations::SyncProcessesUseCase::new(
+        repos.process_repo.clone(),
+        unit_of_work.clone(),
+    ));
     let processes_state = {
         use crate::process::operations::{
             ArchiveProcessUseCase, CreateProcessUseCase, DeleteProcessUseCase, UpdateProcessUseCase,
@@ -266,7 +263,6 @@ pub fn build_platform_routes(
         client_repo: repos.client_repo.clone(),
         application_repo: Some(repos.application_repo.clone()),
         application_client_config_repo: Some(repos.application_client_config_repo.clone()),
-        audit_service: Some(audit_service.clone()),
         create_use_case: create_client_use_case,
         update_use_case: update_client_use_case,
         delete_use_case: delete_client_use_case,
@@ -578,7 +574,6 @@ pub fn build_platform_routes(
         repos.oauth_client_repo.clone(),
         repos.principal_repo.clone(),
         auth.auth.clone(),
-        auth.oidc.clone(),
         repos.auth_code_repo.clone(),
         repos.refresh_token_repo.clone(),
         repos.pending_auth_repo.clone(),

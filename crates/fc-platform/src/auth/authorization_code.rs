@@ -7,8 +7,6 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Authorization code for OAuth2 authorization code flow.
-///
-/// Matches Java AuthorizationCode entity for cross-platform compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizationCode {
     /// The authorization code value (64 char random string).

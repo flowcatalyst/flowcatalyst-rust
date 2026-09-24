@@ -70,7 +70,7 @@ pub struct GrantPermissionRequest {
     pub permission: String,
 }
 
-/// Role response DTO (matches Java BffRoleResponse)
+/// Role response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleResponse {
@@ -107,7 +107,7 @@ impl From<AuthRole> for RoleResponse {
     }
 }
 
-/// Role list response (matches Java RoleListResponse)
+/// Role list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleListResponse {
@@ -659,7 +659,7 @@ pub async fn get_roles_by_application_id(
     Ok(Json(response))
 }
 
-/// Get built-in platform permissions (matches Java PermissionRegistry)
+/// Get built-in platform permissions
 fn get_builtin_permissions() -> Vec<PermissionResponse> {
     vec![
         // IAM Permissions

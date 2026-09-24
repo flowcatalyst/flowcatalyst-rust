@@ -30,25 +30,6 @@ pub enum HealthStatus {
     Degraded,
 }
 
-/// Individual health check result
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct HealthCheck {
-    /// Name of the check
-    pub name: String,
-
-    /// Status of the check
-    pub status: HealthStatus,
-
-    /// Optional details/message
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-
-    /// Time taken for the check in milliseconds
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
-}
-
 /// Full health response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -62,22 +43,12 @@ pub struct HealthResponse {
     /// Service version
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-
-    /// Individual health checks
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub checks: Vec<HealthCheck>,
 }
 
 /// Simple health status response
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SimpleHealthResponse {
     pub status: HealthStatus,
-}
-
-/// Health check dependencies
-pub trait HealthChecker: Send + Sync {
-    /// Perform the health check
-    fn check(&self) -> impl std::future::Future<Output = HealthCheck> + Send;
 }
 
 /// Health service state
@@ -115,7 +86,7 @@ impl HealthState {
 
 /// Combined health check
 ///
-/// Returns the overall health status including all checks.
+/// Returns the overall health status.
 /// Use this for monitoring dashboards.
 #[utoipa::path(
     get,
@@ -127,7 +98,6 @@ impl HealthState {
     )
 )]
 pub async fn get_health(State(state): State<HealthState>) -> Response {
-    let checks = Vec::new();
     let mut overall_status = HealthStatus::Up;
 
     // Readiness check
@@ -139,7 +109,6 @@ pub async fn get_health(State(state): State<HealthState>) -> Response {
         status: overall_status,
         timestamp: Utc::now(),
         version: state.version.clone(),
-        checks,
     };
 
     let status_code = if overall_status == HealthStatus::Down {
@@ -259,17 +228,12 @@ mod tests {
             status: HealthStatus::Up,
             timestamp: Utc::now(),
             version: Some("1.0.0".to_string()),
-            checks: vec![HealthCheck {
-                name: "database".to_string(),
-                status: HealthStatus::Up,
-                message: None,
-                duration_ms: Some(5),
-            }],
         };
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"status\":\"UP\""));
         assert!(json.contains("\"version\":\"1.0.0\""));
+        assert!(!json.contains("checks"));
     }
 
     #[test]

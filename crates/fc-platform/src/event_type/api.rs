@@ -61,7 +61,7 @@ pub struct AddSchemaVersionRequest {
     pub schema: serde_json::Value,
 }
 
-/// Event type response DTO (matches Java BffEventTypeResponse)
+/// Event type response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypeResponse {
@@ -80,7 +80,7 @@ pub struct EventTypeResponse {
     pub updated_at: String,
 }
 
-/// Schema version response (matches Java BffSpecVersionResponse)
+/// Schema version response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SpecVersionResponse {
@@ -92,7 +92,7 @@ pub struct SpecVersionResponse {
     pub schema: Option<serde_json::Value>,
 }
 
-/// Event type list response (matches Java BffEventTypeListResponse)
+/// Event type list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypeListResponse {

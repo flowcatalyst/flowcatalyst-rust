@@ -277,7 +277,7 @@ The auth surface is small enough to security-review annually as one focused pass
 - Token validation middleware: `crates/fc-platform/src/shared/middleware.rs::AuthLayer`.
 - Password login: `crates/fc-platform/src/auth/auth_api.rs`.
 - OAuth: `crates/fc-platform/src/auth/oauth_api.rs`.
-- OIDC bridge: `crates/fc-platform/src/auth/oidc_login_api.rs`, `oidc_service.rs`, `oidc_sync_service.rs`.
+- OIDC bridge: `crates/fc-platform/src/auth/oidc_login_api.rs`, `oidc_sync_service.rs`.
 - JWKS cache: `crates/fc-platform/src/auth/jwks_cache.rs`.
 - Password reset: `crates/fc-platform/src/auth/password_reset_api.rs`.
 - Login backoff: `crates/fc-platform/src/auth/login_backoff.rs`.

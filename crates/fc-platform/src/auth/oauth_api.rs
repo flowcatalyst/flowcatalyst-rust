@@ -28,7 +28,6 @@ use crate::login_attempt::entity::{AttemptType, LoginAttempt, LoginOutcome};
 use crate::login_attempt::repository::LoginAttemptRepository;
 use crate::shared::error::PlatformError;
 use crate::AuthService;
-use crate::OidcService;
 use crate::{AuthorizationCode, RefreshToken};
 use crate::{
     AuthorizationCodeRepository, OAuthClientRepository, PrincipalRepository, RefreshTokenRepository,
@@ -171,7 +170,6 @@ pub struct OAuthState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
     pub principal_repo: Arc<PrincipalRepository>,
     pub auth_service: Arc<AuthService>,
-    pub oidc_service: Arc<OidcService>,
     /// Authorization code storage (PostgreSQL)
     pub auth_code_repo: Arc<AuthorizationCodeRepository>,
     /// Refresh token storage for token rotation
@@ -199,7 +197,6 @@ impl OAuthState {
         oauth_client_repo: Arc<OAuthClientRepository>,
         principal_repo: Arc<PrincipalRepository>,
         auth_service: Arc<AuthService>,
-        oidc_service: Arc<OidcService>,
         auth_code_repo: Arc<AuthorizationCodeRepository>,
         refresh_token_repo: Arc<RefreshTokenRepository>,
         pending_auth_repo: Arc<PendingAuthRepository>,
@@ -213,7 +210,6 @@ impl OAuthState {
             oauth_client_repo,
             principal_repo,
             auth_service,
-            oidc_service,
             auth_code_repo,
             refresh_token_repo,
             pending_auth_repo,
@@ -500,27 +496,18 @@ pub async fn authorize(
         );
     }
 
-    // If external provider specified, redirect to OIDC provider
+    // `?provider=` selected a statically registered external OIDC provider.
+    // No such registry exists — federated login goes through
+    // `/auth/oidc/login` (IdentityProvider + EmailDomainMapping) — so any
+    // provider named here is unknown and the flow can't be initialised.
     if let Some(provider_id) = req.provider {
-        match state
-            .oidc_service
-            .get_authorization_url(&provider_id, &state_param, req.nonce.as_deref())
-            .await
-        {
-            Ok(url) => {
-                info!(provider = %provider_id, "Redirecting to OIDC provider");
-                return Redirect::temporary(&url).into_response();
-            }
-            Err(e) => {
-                error!(error = %e, "Failed to get authorization URL");
-                return error_redirect(
-                    &req.redirect_uri,
-                    "server_error",
-                    "Failed to initialize OIDC flow",
-                    req.state.as_deref(),
-                );
-            }
-        }
+        error!(provider = %provider_id, "Unknown OIDC provider; failed to get authorization URL");
+        return error_redirect(
+            &req.redirect_uri,
+            "server_error",
+            "Failed to initialize OIDC flow",
+            req.state.as_deref(),
+        );
     }
 
     // Redirect to SPA login page with all OAuth params so the SPA can route back

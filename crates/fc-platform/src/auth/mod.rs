@@ -25,7 +25,6 @@ pub mod jwks_cache;
 pub mod oidc_login_api;
 pub mod oidc_login_state;
 pub mod oidc_login_state_repository;
-pub mod oidc_service;
 pub mod oidc_sync_service;
 
 // Authorization codes
@@ -53,5 +52,4 @@ pub use config_repository::ClientAuthConfigRepository;
 pub use oauth_api::{oauth_router, OAuthState};
 pub use oauth_clients_api::oauth_clients_router;
 pub use oidc_login_api::oidc_login_router;
-pub use oidc_service::OidcService;
 pub use password_service::PasswordService;

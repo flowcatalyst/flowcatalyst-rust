@@ -1,14 +1,14 @@
 //! Shared auth services initialization.
 //!
 //! Constructs `AuthService`, `AuthorizationService`, `PasswordService`,
-//! `OidcSyncService`, and `OidcService` from configuration — the same
+//! and `OidcSyncService` from configuration — the same
 //! set of services that all three server binaries build.
 
 use std::sync::Arc;
 
 use crate::repository::Repositories;
 use crate::service::{
-    AuthConfig, AuthService, AuthorizationService, OidcService, OidcSyncService, PasswordService,
+    AuthConfig, AuthService, AuthorizationService, OidcSyncService, PasswordService,
 };
 
 /// Bundle of auth-related services every binary needs.
@@ -21,7 +21,6 @@ pub struct AuthServices {
     pub authz: Arc<AuthorizationService>,
     pub password: Arc<PasswordService>,
     pub oidc_sync: Arc<OidcSyncService>,
-    pub oidc: Arc<OidcService>,
 }
 
 /// Configuration needed to build the auth services.
@@ -93,8 +92,7 @@ impl AuthInitConfig {
 /// Build the full auth service bundle from configuration + repos.
 ///
 /// Loads or generates RSA keys, then wires up the `AuthService`,
-/// `AuthorizationService`, `PasswordService`, `OidcSyncService`,
-/// and `OidcService`.
+/// `AuthorizationService`, `PasswordService`, and `OidcSyncService`.
 pub fn init_auth_services(
     repos: &Repositories,
     config: AuthInitConfig,
@@ -123,14 +121,12 @@ pub fn init_auth_services(
         repos.principal_repo.clone(),
         repos.idp_role_mapping_repo.clone(),
     ));
-    let oidc = Arc::new(OidcService::new());
 
     Ok(AuthServices {
         auth,
         authz,
         password,
         oidc_sync,
-        oidc,
     })
 }
 

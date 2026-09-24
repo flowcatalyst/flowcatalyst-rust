@@ -31,7 +31,7 @@ pub struct CreateAnchorDomainRequest {
     pub domain: String,
 }
 
-/// Anchor domain response DTO (matches Java AnchorDomainDto)
+/// Anchor domain response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchorDomainResponse {
@@ -51,7 +51,7 @@ pub struct AnchorDomainListResponse {
 }
 
 impl AnchorDomainResponse {
-    /// Create response with user count (matches Java toDto method)
+    /// Create response with user count
     pub fn from_domain(d: AnchorDomain, user_count: i64) -> Self {
         Self {
             id: d.id,
@@ -195,7 +195,7 @@ pub struct ValidateSecretResponse {
     pub error: Option<String>,
 }
 
-/// Client auth config response DTO (matches Java AuthConfigDto)
+/// Client auth config response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientAuthConfigResponse {
@@ -408,7 +408,7 @@ pub async fn list_anchor_domains(
 
     let anchor_domains = state.anchor_domain_repo.find_all().await?;
 
-    // Convert to response DTOs with user counts (matches Java toDto)
+    // Convert to response DTOs with user counts
     let mut domains = Vec::with_capacity(anchor_domains.len());
     for d in anchor_domains {
         let user_count = if let Some(ref principal_repo) = state.principal_repo {
@@ -454,7 +454,7 @@ pub async fn get_anchor_domain(
         .await?
         .ok_or_else(|| PlatformError::not_found("AnchorDomain", &id))?;
 
-    // Count users from this domain (matches Java toDto)
+    // Count users from this domain
     let user_count = if let Some(ref principal_repo) = state.principal_repo {
         principal_repo
             .count_by_email_domain(&domain.domain)

@@ -42,9 +42,6 @@ pub enum PlatformError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("Invalid TSID: {0}")]
-    InvalidTsid(String),
-
     #[error("Configuration error: {message}")]
     Configuration { message: String },
 
@@ -71,12 +68,6 @@ pub enum PlatformError {
 
     #[error("Invalid token: {message}")]
     InvalidToken { message: String },
-
-    #[error("Schema validation failed: {message}")]
-    SchemaValidation { message: String },
-
-    #[error("Dispatch error: {message}")]
-    Dispatch { message: String },
 
     #[error("Internal error: {message}")]
     Internal { message: String },
@@ -204,9 +195,6 @@ impl IntoResponse for PlatformError {
             PlatformError::TokenExpired => (StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED".to_string()),
             PlatformError::InvalidToken { .. } => {
                 (StatusCode::UNAUTHORIZED, "INVALID_TOKEN".to_string())
-            }
-            PlatformError::SchemaValidation { .. } => {
-                (StatusCode::BAD_REQUEST, "SCHEMA_ERROR".to_string())
             }
             PlatformError::EventTypeNotFound { .. } => {
                 (StatusCode::NOT_FOUND, "EVENT_TYPE_NOT_FOUND".to_string())

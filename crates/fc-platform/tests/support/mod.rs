@@ -30,7 +30,6 @@ use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
 
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
-use fc_platform::auth::oidc_service::OidcService;
 use fc_platform::auth::oidc_sync_service::OidcSyncService;
 use fc_platform::auth::password_service::PasswordService;
 use fc_platform::domain::{Principal, UserScope};
@@ -116,7 +115,6 @@ impl TestApp {
                 repos.principal_repo.clone(),
                 repos.idp_role_mapping_repo.clone(),
             )),
-            oidc: Arc::new(OidcService::new()),
         };
 
         let platform_routes = build_platform_routes(

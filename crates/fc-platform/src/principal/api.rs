@@ -23,7 +23,7 @@ use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
 use crate::{AuditService, PasswordService};
 
-/// Create user request (matches Java CreateUserRequest)
+/// Create user request
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateUserRequest {
@@ -93,7 +93,7 @@ pub struct BatchAssignRolesRequest {
     pub roles: Vec<String>,
 }
 
-/// Batch assign roles response (matches Java RolesAssignedResponse)
+/// Batch assign roles response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchAssignRolesResponse {
@@ -113,7 +113,7 @@ pub struct CheckEmailDomainQuery {
     pub email: String,
 }
 
-/// Check email domain response (matches Java EmailDomainCheckResponse)
+/// Check email domain response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckEmailDomainResponse {
@@ -221,7 +221,7 @@ pub struct GrantClientAccessRequest {
     pub client_id: String,
 }
 
-/// Client access grant response (matches Java ClientAccessGrantDto)
+/// Client access grant response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientAccessGrantResponse {
@@ -279,7 +279,7 @@ impl From<&RoleAssignment> for RoleAssignmentResponse {
     }
 }
 
-/// Role assignment DTO (matches Java RoleAssignmentDto for GET /roles)
+/// Role assignment DTO (for GET /roles)
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleAssignmentDto {
@@ -321,7 +321,7 @@ impl From<&UserIdentity> for UserIdentityResponse {
     }
 }
 
-/// Principal response DTO (matches Java PrincipalDto)
+/// Principal response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalResponse {
@@ -334,11 +334,11 @@ pub struct PrincipalResponse {
     pub active: bool,
     pub email: Option<String>,
     pub idp_type: Option<String>,
-    /// Role names (matches Java's Set<String>)
+    /// Role names
     pub roles: Vec<String>,
     /// Whether user is an anchor domain user
     pub is_anchor_user: bool,
-    /// Granted client IDs (matches Java's Set<String>)
+    /// Granted client IDs
     pub granted_client_ids: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -369,7 +369,7 @@ impl From<Principal> for PrincipalResponse {
     }
 }
 
-/// Principal list response (matches Java PrincipalListResponse)
+/// Principal list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalListResponse {
@@ -1577,9 +1577,7 @@ pub async fn check_email_domain(
             Some("This is an anchor domain. User will have access to all clients.".to_string()),
             None,
         )
-    } else if let (Some(ref m), Some(ref idp_repo)) =
-        (&mapping, &state.identity_provider_repo)
-    {
+    } else if let (Some(ref m), Some(ref idp_repo)) = (&mapping, &state.identity_provider_repo) {
         match idp_repo.find_by_id(&m.identity_provider_id).await? {
             Some(idp) => {
                 let provider = match idp.r#type {

@@ -298,7 +298,7 @@ impl AuthConfig {
         Ok((private_pem, public_pem))
     }
 
-    /// Load or generate RSA keys (like Java JwtKeyService)
+    /// Load or generate RSA keys
     /// 1. Try loading from configured paths / env vars
     /// 2. If both paths are configured (but the files don't yet exist),
     ///    generate a keypair and persist to those paths — keeps keys
@@ -478,7 +478,7 @@ impl AuthService {
             }
         })?;
 
-        // Generate key ID from public key hash (like Java)
+        // Generate key ID from public key hash
         let key_id = Self::generate_key_id(public_key_pem);
 
         // Extract RSA components for JWKS
@@ -643,10 +643,8 @@ impl AuthService {
     /// It includes the same custom claims as the TypeScript oidc-provider version:
     /// type, scope, client_id, roles, applications, clients.
     ///
-    /// # Arguments
-    /// * `principal` - The authenticated principal
-    /// * `client_id` - The OAuth client_id (used as the `aud` claim)
-    /// * `nonce` - Optional nonce from the authorization request
+    /// `client_id` becomes the `aud` claim; `nonce` is echoed from the
+    /// authorization request.
     pub fn generate_id_token(
         &self,
         principal: &Principal,

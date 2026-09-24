@@ -96,7 +96,6 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
         client_repo: client_repo.clone(),
         application_repo: None,
         application_client_config_repo: None,
-        audit_service: None,
         create_use_case: Arc::new(fc_platform::client::operations::CreateClientUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),

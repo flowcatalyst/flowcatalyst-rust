@@ -43,7 +43,7 @@ Current aggregates (mid-2026):
 - **Tenancy & IAM**: `client`, `principal`, `role`, `application`, `service_account`, `identity_provider`, `email_domain_mapping`, `cors`, `anchor_domain` (under `client/`), `webauthn`, `password_reset`, `login_attempt`.
 - **Messaging**: `event_type`, `subscription`, `connection`, `dispatch_pool`, `dispatch_job`, `event`, `scheduled_job`.
 - **Platform**: `platform_config`, `application_openapi_spec`, `audit`.
-- **Auth machinery**: `auth/` (oauth, oidc, password, JWKS), `idp/`.
+- **Auth machinery**: `auth/` (oauth, oidc, password, JWKS).
 
 Outside the aggregate dirs:
 

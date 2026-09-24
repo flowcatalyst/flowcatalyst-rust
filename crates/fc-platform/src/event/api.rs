@@ -453,7 +453,7 @@ pub struct BatchCreateEventsRequest {
     pub events: Vec<CreateEventRequest>,
 }
 
-/// Batch create response (matches Java BatchEventResponse)
+/// Batch create response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchCreateResponse {

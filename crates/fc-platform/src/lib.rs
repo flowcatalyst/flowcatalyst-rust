@@ -63,7 +63,6 @@ pub mod platform_config;
 pub mod shared;
 
 // Cross-cutting concerns
-pub mod idp;
 pub mod seed;
 pub mod usecase;
 
@@ -147,7 +146,6 @@ pub use subscription::repository::SubscriptionRepository;
 // Re-export services
 pub use audit::service::AuditService;
 pub use auth::auth_service::{AccessTokenClaims, AuthService, IdTokenClaims};
-pub use auth::oidc_service::OidcService;
 pub use auth::oidc_sync_service::OidcSyncService;
 pub use auth::password_service::PasswordService;
 pub use shared::authorization_service::{checks, AuthContext, AuthorizationService};
@@ -310,7 +308,6 @@ pub mod service {
     pub use crate::auth::auth_service::{
         AccessTokenClaims, AuthConfig, AuthService, IdTokenClaims,
     };
-    pub use crate::auth::oidc_service::OidcService;
     pub use crate::auth::oidc_sync_service::OidcSyncService;
     pub use crate::auth::password_service::PasswordService;
     pub use crate::scheduler::{DispatchScheduler, SchedulerConfig, SchedulerError};

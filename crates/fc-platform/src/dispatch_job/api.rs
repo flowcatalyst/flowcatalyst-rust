@@ -19,7 +19,7 @@ use crate::{
     DispatchStatus, RetryStrategy,
 };
 
-/// Dispatch job response DTO (matches Java DispatchJobReadResponse)
+/// Dispatch job response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobResponse {
@@ -98,7 +98,7 @@ impl From<DispatchJob> for DispatchJobResponse {
     }
 }
 
-/// Dispatch job read projection response (matches Java DispatchJobReadResponse)
+/// Dispatch job read projection response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchJobReadResponse {
@@ -328,7 +328,7 @@ pub struct CreateDispatchJobRequest {
     pub metadata: std::collections::HashMap<String, String>,
 }
 
-/// Response for create dispatch job (matches Java DispatchJobResponse)
+/// Response for create dispatch job
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateDispatchJobResponse {

@@ -52,7 +52,7 @@ pub struct StatusChangeResponse {
     pub message: String,
 }
 
-/// Client response DTO (matches Java ClientDto)
+/// Client response DTO
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientResponse {
@@ -81,7 +81,7 @@ impl From<Client> for ClientResponse {
     }
 }
 
-/// Client list response (matches Java ClientListResponse)
+/// Client list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientListResponse {
@@ -110,7 +110,7 @@ pub struct SearchQuery {
     pub query: Option<String>,
 }
 
-/// Add note request (matches Java AddNoteRequest)
+/// Add note request
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct AddNoteRequest {
@@ -127,7 +127,7 @@ pub struct AddNoteResponse {
     pub message: String,
 }
 
-/// Client application config response (matches Java ClientApplicationDto)
+/// Client application config response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientApplicationResponse {
@@ -157,7 +157,7 @@ pub struct ClientApplicationsResponse {
     pub total: usize,
 }
 
-/// Update client applications request (matches Java)
+/// Update client applications request
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateClientApplicationsRequest {
@@ -172,7 +172,6 @@ pub struct ClientsState {
     pub application_repo: Option<Arc<crate::application::repository::ApplicationRepository>>,
     pub application_client_config_repo:
         Option<Arc<crate::application::ApplicationClientConfigRepository>>,
-    pub audit_service: Option<Arc<crate::audit::AuditService>>,
     pub create_use_case:
         Arc<crate::client::operations::CreateClientUseCase<crate::usecase::PgUnitOfWork>>,
     pub update_use_case:
@@ -696,7 +695,7 @@ pub async fn get_client_applications(
     let mut applications = Vec::new();
 
     if let Some(ref app_repo) = state.application_repo {
-        // Get ALL applications (not just active), same as Java
+        // Get ALL applications (not just active)
         let all_apps = app_repo.find_all().await?;
 
         if let Some(ref config_repo) = state.application_client_config_repo {
