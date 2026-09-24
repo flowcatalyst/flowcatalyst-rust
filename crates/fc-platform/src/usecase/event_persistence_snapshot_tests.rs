@@ -27,10 +27,10 @@ use crate::platform_config::operations::events::{
 };
 use crate::principal::entity::UserScope;
 use crate::principal::operations::events::{
-    FederatedClaims, FlowcatalystClaims, RolesAssigned, UserCreated, UserLoggedIn,
+    FederatedClaims, FlowcatalystClaims, PrincipalsSynced, RolesAssigned, UserCreated, UserLoggedIn,
 };
-use crate::process::operations::{ProcessCreated, ProcessUpdated};
-use crate::role::operations::events::RoleCreated;
+use crate::process::operations::{ProcessCreated, ProcessUpdated, ProcessesSynced};
+use crate::role::operations::events::{RoleCreated, RolesSynced};
 use crate::scheduled_job::operations::events::{ScheduledJobCreated, ScheduledJobsSynced};
 use crate::service_account::operations::events::{
     ServiceAccountCreated, ServiceAccountSecretRegenerated, ServiceAccountTokenRegenerated,
@@ -38,7 +38,7 @@ use crate::service_account::operations::events::{
 use crate::service_account::operations::{
     CreateServiceAccountResult, RegenerateAuthTokenResult, RegenerateSigningSecretResult,
 };
-use crate::subscription::operations::events::SubscriptionCreated;
+use crate::subscription::operations::events::{SubscriptionCreated, SubscriptionsSynced};
 use crate::webauthn::operations::events::PasskeyRegistered;
 
 const EVENT_ID: &str = "evt_0SNAPSHOT0001";
@@ -529,6 +529,60 @@ fn passkey_registered() {
     check(&e, EXPECTED_PASSKEY_REGISTERED);
 }
 
+// ── *Synced summary events ──────────────────────────────────────────────────
+
+#[test]
+fn roles_synced() {
+    let e = fixed!(RolesSynced::new(
+        &ctx(),
+        "orders",
+        3,
+        2,
+        1,
+        s(&["orders:viewer"])
+    ));
+    check(&e, EXPECTED_ROLES_SYNCED);
+}
+
+#[test]
+fn subscriptions_synced() {
+    let e = fixed!(SubscriptionsSynced::new(
+        &ctx(),
+        "orders",
+        3,
+        2,
+        1,
+        s(&["orders-webhook"])
+    ));
+    check(&e, EXPECTED_SUBSCRIPTIONS_SYNCED);
+}
+
+#[test]
+fn principals_synced() {
+    let e = fixed!(PrincipalsSynced::new(
+        &ctx(),
+        "orders",
+        3,
+        2,
+        1,
+        s(&["a@example.com"])
+    ));
+    check(&e, EXPECTED_PRINCIPALS_SYNCED);
+}
+
+#[test]
+fn processes_synced() {
+    let e = fixed!(ProcessesSynced::new(
+        &ctx(),
+        "orders",
+        3,
+        2,
+        1,
+        s(&["orders:fulfillment:ship"])
+    ));
+    check(&e, EXPECTED_PROCESSES_SYNCED);
+}
+
 // ── expected rows ───────────────────────────────────────────────────────────
 
 const EXPECTED_APPLICATION_CREATED: &str = r#"{"aud_logs":{"entity_id":"app_1","entity_type":"Application","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Application"}],"correlation_id":"corr-snap","data":{"applicationId":"app_1","applicationType":"APPLICATION","causation_id":"evt_parent","code":"orders","correlation_id":"corr-snap","event_id":"evt_0SNAPSHOT0001","event_type":"platform:iam:application:created","execution_id":"exec-snap","message_group":"platform:application:app_1","name":"Orders","principal_id":"prn_actor","source":"platform:application","spec_version":"1.0","subject":"platform.application.app_1","time":"2026-01-02T03:04:05Z"},"deduplication_id":"platform:iam:application:created-evt_0SNAPSHOT0001","event_type":"platform:iam:application:created","id":"evt_0SNAPSHOT0001","message_group":"platform:application:app_1","source":"platform:application","spec_version":"1.0","subject":"platform.application.app_1","time":"2026-01-02T03:04:05Z"}}"#;
@@ -559,3 +613,7 @@ const EXPECTED_SERVICE_ACCOUNT_TOKEN_REGENERATED: &str = r#"{"aud_logs":{"entity
 const EXPECTED_SERVICE_ACCOUNT_SECRET_REGENERATED: &str = r#"{"aud_logs":{"entity_id":"sac_1","entity_type":"Serviceaccount","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Serviceaccount"}],"correlation_id":"corr-snap","data":{"causation_id":"evt_parent","code":"orders-bot","correlation_id":"corr-snap","event_id":"evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:secret-regenerated","execution_id":"exec-snap","message_group":"platform:serviceaccount:sac_1","principal_id":"prn_actor","serviceAccountId":"sac_1","source":"platform:serviceaccount","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"},"deduplication_id":"platform:iam:serviceaccount:secret-regenerated-evt_0SNAPSHOT0001","event_type":"platform:iam:serviceaccount:secret-regenerated","id":"evt_0SNAPSHOT0001","message_group":"platform:serviceaccount:sac_1","source":"platform:serviceaccount","spec_version":"1.0","subject":"platform.serviceaccount.sac_1","time":"2026-01-02T03:04:05Z"}}"#;
 const EXPECTED_SUBSCRIPTION_CREATED: &str = r#"{"aud_logs":{"entity_id":"sub_1","entity_type":"Subscription","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Subscription"}],"correlation_id":"corr-snap","data":{"causation_id":"evt_parent","clientId":"clt_1","code":"orders-shipped","correlation_id":"corr-snap","endpoint":"https://hooks.example.com/shipped","eventTypes":["orders:fulfillment:shipment:shipped"],"event_id":"evt_0SNAPSHOT0001","event_type":"platform:admin:subscription:created","execution_id":"exec-snap","message_group":"platform:admin:subscription:sub_1","name":"Orders shipped","principal_id":"prn_actor","source":"platform:admin","spec_version":"1.0","subject":"platform.subscription.sub_1","subscriptionId":"sub_1","time":"2026-01-02T03:04:05Z"},"deduplication_id":"platform:admin:subscription:created-evt_0SNAPSHOT0001","event_type":"platform:admin:subscription:created","id":"evt_0SNAPSHOT0001","message_group":"platform:admin:subscription:sub_1","source":"platform:admin","spec_version":"1.0","subject":"platform.subscription.sub_1","time":"2026-01-02T03:04:05Z"}}"#;
 const EXPECTED_PASSKEY_REGISTERED: &str = r#"{"aud_logs":{"entity_id":"pkc_1","entity_type":"Webauthncredential","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Webauthncredential"}],"correlation_id":"corr-snap","data":{"causation_id":"evt_parent","correlation_id":"corr-snap","credentialId":"pkc_1","event_id":"evt_0SNAPSHOT0001","event_type":"platform:iam:passkey:registered","execution_id":"exec-snap","message_group":"platform:webauthncredential:pkc_1","name":"YubiKey","principalId":"prn_1","principal_id":"prn_actor","source":"platform:iam","spec_version":"1.0","subject":"platform.webauthncredential.pkc_1","time":"2026-01-02T03:04:05Z"},"deduplication_id":"platform:iam:passkey:registered-evt_0SNAPSHOT0001","event_type":"platform:iam:passkey:registered","id":"evt_0SNAPSHOT0001","message_group":"platform:webauthncredential:pkc_1","source":"platform:iam","spec_version":"1.0","subject":"platform.webauthncredential.pkc_1","time":"2026-01-02T03:04:05Z"}}"#;
+const EXPECTED_ROLES_SYNCED: &str = r#"{"aud_logs":{"entity_id":"orders","entity_type":"Application","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Application"}],"correlation_id":"corr-snap","data":{"applicationCode":"orders","causation_id":"evt_parent","correlation_id":"corr-snap","created":3,"deleted":1,"event_id":"evt_0SNAPSHOT0001","event_type":"platform:iam:roles:synced","execution_id":"exec-snap","message_group":"platform:application:orders","principal_id":"prn_actor","source":"platform:iam","spec_version":"1.0","subject":"platform.application.orders","syncedNames":["orders:viewer"],"time":"2026-01-02T03:04:05Z","updated":2},"deduplication_id":"platform:iam:roles:synced-evt_0SNAPSHOT0001","event_type":"platform:iam:roles:synced","id":"evt_0SNAPSHOT0001","message_group":"platform:application:orders","source":"platform:iam","spec_version":"1.0","subject":"platform.application.orders","time":"2026-01-02T03:04:05Z"}}"#;
+const EXPECTED_SUBSCRIPTIONS_SYNCED: &str = r#"{"aud_logs":{"entity_id":"orders","entity_type":"Application","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Application"}],"correlation_id":"corr-snap","data":{"applicationCode":"orders","causation_id":"evt_parent","correlation_id":"corr-snap","created":3,"deleted":1,"event_id":"evt_0SNAPSHOT0001","event_type":"platform:admin:subscription:synced","execution_id":"exec-snap","message_group":"platform:application:orders","principal_id":"prn_actor","source":"platform:admin","spec_version":"1.0","subject":"platform.application.orders","syncedCodes":["orders-webhook"],"time":"2026-01-02T03:04:05Z","updated":2},"deduplication_id":"platform:admin:subscription:synced-evt_0SNAPSHOT0001","event_type":"platform:admin:subscription:synced","id":"evt_0SNAPSHOT0001","message_group":"platform:application:orders","source":"platform:admin","spec_version":"1.0","subject":"platform.application.orders","time":"2026-01-02T03:04:05Z"}}"#;
+const EXPECTED_PRINCIPALS_SYNCED: &str = r#"{"aud_logs":{"entity_id":"orders","entity_type":"Application","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Application"}],"correlation_id":"corr-snap","data":{"applicationCode":"orders","causation_id":"evt_parent","correlation_id":"corr-snap","created":3,"deactivated":1,"event_id":"evt_0SNAPSHOT0001","event_type":"platform:iam:principals:synced","execution_id":"exec-snap","message_group":"platform:application:orders","principal_id":"prn_actor","source":"platform:iam","spec_version":"1.0","subject":"platform.application.orders","syncedEmails":["a@example.com"],"time":"2026-01-02T03:04:05Z","updated":2},"deduplication_id":"platform:iam:principals:synced-evt_0SNAPSHOT0001","event_type":"platform:iam:principals:synced","id":"evt_0SNAPSHOT0001","message_group":"platform:application:orders","source":"platform:iam","spec_version":"1.0","subject":"platform.application.orders","time":"2026-01-02T03:04:05Z"}}"#;
+const EXPECTED_PROCESSES_SYNCED: &str = r#"{"aud_logs":{"entity_id":"orders","entity_type":"Application","operation":"SnapshotCommand","operation_json":{"targetId":"cmd-target"},"performed_at":"2026-01-02T03:04:05Z","principal_id":"prn_actor"},"msg_events":{"causation_id":"evt_parent","context_data":[{"key":"principalId","value":"prn_actor"},{"key":"aggregateType","value":"Application"}],"correlation_id":"corr-snap","data":{"applicationCode":"orders","causation_id":"evt_parent","correlation_id":"corr-snap","created":3,"deleted":1,"event_id":"evt_0SNAPSHOT0001","event_type":"platform:admin:processes:synced","execution_id":"exec-snap","message_group":"platform:application:orders","principal_id":"prn_actor","source":"platform:admin","spec_version":"1.0","subject":"platform.application.orders","syncedCodes":["orders:fulfillment:ship"],"time":"2026-01-02T03:04:05Z","updated":2},"deduplication_id":"platform:admin:processes:synced-evt_0SNAPSHOT0001","event_type":"platform:admin:processes:synced","id":"evt_0SNAPSHOT0001","message_group":"platform:application:orders","source":"platform:admin","spec_version":"1.0","subject":"platform.application.orders","time":"2026-01-02T03:04:05Z"}}"#;
