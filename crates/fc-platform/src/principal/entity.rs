@@ -20,7 +20,7 @@ pub enum PrincipalType {
 }
 
 impl PrincipalType {
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::User => "USER",
             Self::Service => "SERVICE",
@@ -52,7 +52,7 @@ pub enum UserScope {
 }
 
 impl UserScope {
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Anchor => "ANCHOR",
             Self::Partner => "PARTNER",
@@ -84,7 +84,7 @@ impl UserScope {
     ) -> bool {
         match self {
             Self::Anchor => true,
-            Self::Partner => assigned_clients.contains(&client_id.to_string()),
+            Self::Partner => assigned_clients.iter().any(|c| c == client_id),
             Self::Client => home_client_id == Some(client_id),
         }
     }

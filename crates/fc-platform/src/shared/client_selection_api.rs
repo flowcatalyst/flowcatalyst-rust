@@ -149,7 +149,7 @@ impl ClientSelectionState {
         }
 
         let accessible = self.get_accessible_client_ids(principal).await?;
-        Ok(accessible.contains(&client_id.to_string()))
+        Ok(accessible.iter().any(|c| c == client_id))
     }
 
     /// Resolve permissions for a set of roles

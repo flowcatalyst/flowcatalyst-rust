@@ -1627,7 +1627,7 @@ pub async fn issue_code(
 /// rejected at logout time (or vice versa).
 pub(crate) fn matches_redirect_uri(uri: &str, registered: &[String]) -> bool {
     // Exact match first
-    if registered.contains(&uri.to_string()) {
+    if registered.iter().any(|r| r == uri) {
         return true;
     }
 

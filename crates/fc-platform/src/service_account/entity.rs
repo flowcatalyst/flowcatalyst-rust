@@ -24,7 +24,7 @@ pub enum WebhookAuthType {
 }
 
 impl WebhookAuthType {
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::None => "NONE",
             Self::BearerToken => "BEARER_TOKEN",
@@ -319,7 +319,7 @@ impl ServiceAccount {
     }
 
     pub fn has_client_access(&self, client_id: &str) -> bool {
-        self.client_ids.is_empty() || self.client_ids.contains(&client_id.to_string())
+        self.client_ids.is_empty() || self.client_ids.iter().any(|c| c == client_id)
     }
 
     pub fn deactivate(&mut self) {

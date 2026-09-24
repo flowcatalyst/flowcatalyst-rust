@@ -14,6 +14,7 @@
 //! - `DispatchAuthService`: HMAC-SHA256 auth tokens for dispatch jobs
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,7 +22,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use thiserror::Error;
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::Semaphore;
 use tokio::time::interval;
 use tracing::{error, info, trace, warn};
 
@@ -373,7 +374,7 @@ pub struct DispatchScheduler {
     config: SchedulerConfig,
     pool: PgPool,
     queue_publisher: Arc<dyn fc_queue::QueuePublisher>,
-    running: Arc<RwLock<bool>>,
+    running: Arc<AtomicBool>,
 }
 
 impl DispatchScheduler {
@@ -386,7 +387,7 @@ impl DispatchScheduler {
             config,
             pool,
             queue_publisher,
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -396,13 +397,10 @@ impl DispatchScheduler {
             return;
         }
 
-        let mut running = self.running.write().await;
-        if *running {
+        if self.running.swap(true, Ordering::SeqCst) {
             warn!("Scheduler already running");
             return;
         }
-        *running = true;
-        drop(running);
 
         info!(
             poll_interval_ms = self.config.poll_interval.as_millis(),
@@ -430,7 +428,7 @@ impl DispatchScheduler {
 
         tokio::spawn(async move {
             loop {
-                if !*running_clone.read().await {
+                if !running_clone.load(Ordering::SeqCst) {
                     break;
                 }
 
@@ -460,7 +458,7 @@ impl DispatchScheduler {
             let mut interval = interval(Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                if !*running_clone2.read().await {
+                if !running_clone2.load(Ordering::SeqCst) {
                     break;
                 }
                 if let Err(e) = stale_poller.recover_stale_jobs().await {
@@ -471,13 +469,12 @@ impl DispatchScheduler {
     }
 
     pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
+        self.running.store(false, Ordering::SeqCst);
         info!("Dispatch scheduler stopped");
     }
 
     pub async fn is_running(&self) -> bool {
-        *self.running.read().await
+        self.running.load(Ordering::SeqCst)
     }
 }
 

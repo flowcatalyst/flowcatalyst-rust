@@ -64,8 +64,9 @@ impl AuthContext {
 
     /// Check if this context can access a specific client
     pub fn can_access_client(&self, client_id: &str) -> bool {
-        self.accessible_clients.contains(&"*".to_string())
-            || self.accessible_clients.contains(&client_id.to_string())
+        self.accessible_clients
+            .iter()
+            .any(|c| c == "*" || c == client_id)
     }
 
     /// Check if this context has a specific permission (4-level pattern matching)
@@ -97,7 +98,7 @@ impl AuthContext {
 
     /// Check if this context has a specific role
     pub fn has_role(&self, role: &str) -> bool {
-        self.roles.contains(&role.to_string())
+        self.roles.iter().any(|r| r == role)
     }
 }
 

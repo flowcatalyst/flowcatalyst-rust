@@ -141,8 +141,8 @@ fn test_client_access_check() {
     let claims = auth_service.validate_token(&token).unwrap();
 
     // Anchor with "*" should have access to any client
-    assert!(auth_service.has_client_access(&claims, "any-client-id"));
-    assert!(auth_service.has_client_access(&claims, "another-client"));
+    assert!(claims.has_client_access("any-client-id"));
+    assert!(claims.has_client_access("another-client"));
 }
 
 #[test]
@@ -153,8 +153,8 @@ fn test_client_scope_limited_access() {
     let token = auth_service.generate_access_token(&principal).unwrap();
     let claims = auth_service.validate_token(&token).unwrap();
 
-    assert!(auth_service.has_client_access(&claims, "my-client"));
-    assert!(!auth_service.has_client_access(&claims, "other-client"));
+    assert!(claims.has_client_access("my-client"));
+    assert!(!claims.has_client_access("other-client"));
 }
 
 #[test]
@@ -166,9 +166,9 @@ fn test_role_check() {
     let token = auth_service.generate_access_token(&principal).unwrap();
     let claims = auth_service.validate_token(&token).unwrap();
 
-    assert!(auth_service.has_role(&claims, "admin"));
-    assert!(auth_service.has_role(&claims, "viewer"));
-    assert!(!auth_service.has_role(&claims, "editor"));
+    assert!(claims.has_role("admin"));
+    assert!(claims.has_role("viewer"));
+    assert!(!claims.has_role("editor"));
 }
 
 #[test]
@@ -178,12 +178,12 @@ fn test_is_anchor_check() {
     let anchor = Principal::new_user("admin@example.com", UserScope::Anchor);
     let anchor_token = auth_service.generate_access_token(&anchor).unwrap();
     let anchor_claims = auth_service.validate_token(&anchor_token).unwrap();
-    assert!(auth_service.is_anchor(&anchor_claims));
+    assert!(anchor_claims.is_anchor());
 
     let client_user = Principal::new_user("user@client.com", UserScope::Client);
     let client_token = auth_service.generate_access_token(&client_user).unwrap();
     let client_claims = auth_service.validate_token(&client_token).unwrap();
-    assert!(!auth_service.is_anchor(&client_claims));
+    assert!(!client_claims.is_anchor());
 }
 
 // ─── Token Introspection Logic Tests ───────────────────────────────────────

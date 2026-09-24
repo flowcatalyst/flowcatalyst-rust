@@ -156,6 +156,34 @@ pub struct AccessTokenClaims {
     pub applications: Vec<String>,
 }
 
+impl AccessTokenClaims {
+    /// Check if the claims grant access to a specific client.
+    /// Handles both plain IDs and "id:identifier" format.
+    pub fn has_client_access(&self, client_id: &str) -> bool {
+        self.clients.iter().any(|c| {
+            c == "*"
+                || c == client_id
+                || c.strip_prefix(client_id)
+                    .is_some_and(|rest| rest.starts_with(':'))
+        })
+    }
+
+    /// Check if the claims carry a specific role.
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.iter().any(|r| r == role)
+    }
+
+    /// Check if the claims are for an anchor user.
+    pub fn is_anchor(&self) -> bool {
+        self.scope == "ANCHOR"
+    }
+
+    /// The principal ID (the `sub` claim).
+    pub fn principal_id(&self) -> &str {
+        &self.sub
+    }
+}
+
 /// Configuration for the auth service
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
@@ -860,30 +888,6 @@ impl AuthService {
         Err(PlatformError::InvalidToken {
             message: "Token signature invalid with all available keys".to_string(),
         })
-    }
-
-    /// Check if claims grant access to a specific client.
-    /// Handles both plain IDs and "id:identifier" format.
-    pub fn has_client_access(&self, claims: &AccessTokenClaims, client_id: &str) -> bool {
-        claims
-            .clients
-            .iter()
-            .any(|c| c == "*" || c == client_id || c.starts_with(&format!("{}:", client_id)))
-    }
-
-    /// Check if claims have a specific role
-    pub fn has_role(&self, claims: &AccessTokenClaims, role: &str) -> bool {
-        claims.roles.contains(&role.to_string())
-    }
-
-    /// Check if claims are for an anchor user
-    pub fn is_anchor(&self, claims: &AccessTokenClaims) -> bool {
-        claims.scope == "ANCHOR"
-    }
-
-    /// Extract principal ID from claims
-    pub fn principal_id<'a>(&self, claims: &'a AccessTokenClaims) -> &'a str {
-        &claims.sub
     }
 }
 

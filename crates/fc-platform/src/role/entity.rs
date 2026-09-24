@@ -21,7 +21,7 @@ pub enum RoleSource {
 }
 
 impl RoleSource {
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Code => "CODE",
             Self::Database => "DATABASE",
@@ -878,9 +878,7 @@ pub mod roles {
     /// principal's `iam_principal_application_access` grants at request time.
     pub fn developer() -> AuthRole {
         AuthRole::new("platform", "developer", "Developer")
-            .with_description(
-                "Developer portal: API documentation + accessible event types",
-            )
+            .with_description("Developer portal: API documentation + accessible event types")
             .with_source(RoleSource::Code)
             .with_permissions([
                 permissions::developer::APPLICATION_OPENAPI_VIEW,

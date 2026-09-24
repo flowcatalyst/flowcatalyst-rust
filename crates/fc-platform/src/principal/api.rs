@@ -754,7 +754,9 @@ pub async fn list_principals(
         .filter(|p: &PrincipalResponse| match &query.roles {
             Some(roles_str) if !roles_str.is_empty() => {
                 let required: Vec<&str> = roles_str.split(',').collect();
-                required.iter().any(|r| p.roles.contains(&r.to_string()))
+                required
+                    .iter()
+                    .any(|r| p.roles.iter().any(|role| role == r))
             }
             _ => true,
         })
