@@ -6,6 +6,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::ExecutionContext;
+
 /// Base trait for all domain events.
 ///
 /// Domain events represent facts about what happened in the domain (past tense).
@@ -74,8 +76,9 @@ pub trait DomainEvent: Send + Sync {
 /// Common metadata for domain events.
 ///
 /// This struct holds the common CloudEvents fields and tracing context.
-/// Event implementations should include this as a field and delegate
-/// the trait methods to it.
+/// Event implementations include it as a `metadata` field and implement
+/// [`DomainEvent`] with [`impl_domain_event!`](crate::impl_domain_event).
+/// Build it with [`EventMetadata::from_ctx`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventMetadata {
     pub event_id: String,
@@ -93,197 +96,31 @@ pub struct EventMetadata {
 }
 
 impl EventMetadata {
-    /// Create new event metadata from an execution context.
-    pub fn new(
-        event_id: String,
+    /// Metadata for a new event raised inside `ctx`.
+    ///
+    /// Generates a fresh event id, stamps `time` with now, and copies the
+    /// execution, correlation, causation and principal ids from the context.
+    pub fn from_ctx(
+        ctx: &ExecutionContext,
         event_type: &str,
         spec_version: &str,
         source: &str,
-        subject: String,
-        message_group: String,
-        execution_id: String,
-        correlation_id: String,
-        causation_id: Option<String>,
-        principal_id: String,
+        subject: impl Into<String>,
+        message_group: impl Into<String>,
     ) -> Self {
         Self {
-            event_id,
+            event_id: crate::shared::tsid::TsidGenerator::generate_untyped(),
             event_type: event_type.to_string(),
             spec_version: spec_version.to_string(),
             source: source.to_string(),
-            subject,
+            subject: subject.into(),
             time: Utc::now(),
-            execution_id,
-            correlation_id,
-            causation_id,
-            principal_id,
-            message_group,
+            execution_id: ctx.execution_id.clone(),
+            correlation_id: ctx.correlation_id.clone(),
+            causation_id: ctx.causation_id.clone(),
+            principal_id: ctx.principal_id.clone(),
+            message_group: message_group.into(),
         }
-    }
-
-    /// Create a builder for event metadata.
-    pub fn builder() -> EventMetadataBuilder {
-        EventMetadataBuilder::new()
-    }
-}
-
-/// Builder for EventMetadata.
-///
-/// Provides a fluent API for constructing event metadata, with a `.from(ctx)`
-/// method that copies all tracing fields from an ExecutionContext.
-///
-/// # Example
-///
-/// ```ignore
-/// let metadata = EventMetadata::builder()
-///     .from(&ctx)
-///     .event_type("platform:iam:user:created")
-///     .spec_version("1.0")
-///     .source("platform:iam")
-///     .subject(format!("platform.user.{}", user_id))
-///     .message_group(format!("platform:user:{}", user_id))
-///     .build();
-/// ```
-#[derive(Default)]
-pub struct EventMetadataBuilder {
-    event_id: Option<String>,
-    event_type: Option<String>,
-    spec_version: Option<String>,
-    source: Option<String>,
-    subject: Option<String>,
-    message_group: Option<String>,
-    execution_id: Option<String>,
-    correlation_id: Option<String>,
-    causation_id: Option<String>,
-    principal_id: Option<String>,
-}
-
-impl EventMetadataBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Copy tracing metadata from an ExecutionContext.
-    ///
-    /// This sets:
-    /// - `event_id` to a new TSID
-    /// - `execution_id` from context
-    /// - `correlation_id` from context
-    /// - `causation_id` from context (if present)
-    /// - `principal_id` from context
-    pub fn from(mut self, ctx: &super::ExecutionContext) -> Self {
-        self.event_id = Some(crate::shared::tsid::TsidGenerator::generate_untyped());
-        self.execution_id = Some(ctx.execution_id.clone());
-        self.correlation_id = Some(ctx.correlation_id.clone());
-        self.causation_id = ctx.causation_id.clone();
-        self.principal_id = Some(ctx.principal_id.clone());
-        self
-    }
-
-    pub fn event_id(mut self, id: impl Into<String>) -> Self {
-        self.event_id = Some(id.into());
-        self
-    }
-
-    pub fn event_type(mut self, event_type: impl Into<String>) -> Self {
-        self.event_type = Some(event_type.into());
-        self
-    }
-
-    pub fn spec_version(mut self, version: impl Into<String>) -> Self {
-        self.spec_version = Some(version.into());
-        self
-    }
-
-    pub fn source(mut self, source: impl Into<String>) -> Self {
-        self.source = Some(source.into());
-        self
-    }
-
-    pub fn subject(mut self, subject: impl Into<String>) -> Self {
-        self.subject = Some(subject.into());
-        self
-    }
-
-    pub fn message_group(mut self, group: impl Into<String>) -> Self {
-        self.message_group = Some(group.into());
-        self
-    }
-
-    pub fn execution_id(mut self, id: impl Into<String>) -> Self {
-        self.execution_id = Some(id.into());
-        self
-    }
-
-    pub fn correlation_id(mut self, id: impl Into<String>) -> Self {
-        self.correlation_id = Some(id.into());
-        self
-    }
-
-    pub fn causation_id(mut self, id: impl Into<String>) -> Self {
-        self.causation_id = Some(id.into());
-        self
-    }
-
-    pub fn principal_id(mut self, id: impl Into<String>) -> Self {
-        self.principal_id = Some(id.into());
-        self
-    }
-
-    /// Build the EventMetadata.
-    ///
-    /// # Panics
-    ///
-    /// Panics if required fields are not set:
-    /// - event_type
-    /// - spec_version
-    /// - source
-    /// - subject
-    /// - message_group
-    /// - execution_id
-    /// - correlation_id
-    /// - principal_id
-    pub fn build(self) -> EventMetadata {
-        EventMetadata {
-            event_id: self
-                .event_id
-                .unwrap_or_else(crate::shared::tsid::TsidGenerator::generate_untyped),
-            event_type: self.event_type.expect("event_type is required"),
-            spec_version: self.spec_version.expect("spec_version is required"),
-            source: self.source.expect("source is required"),
-            subject: self.subject.expect("subject is required"),
-            time: Utc::now(),
-            execution_id: self
-                .execution_id
-                .expect("execution_id is required (use .from(ctx))"),
-            correlation_id: self
-                .correlation_id
-                .expect("correlation_id is required (use .from(ctx))"),
-            causation_id: self.causation_id,
-            principal_id: self
-                .principal_id
-                .expect("principal_id is required (use .from(ctx))"),
-            message_group: self.message_group.expect("message_group is required"),
-        }
-    }
-
-    /// Try to build the EventMetadata, returning an error if fields are missing.
-    pub fn try_build(self) -> Result<EventMetadata, &'static str> {
-        Ok(EventMetadata {
-            event_id: self
-                .event_id
-                .unwrap_or_else(crate::shared::tsid::TsidGenerator::generate_untyped),
-            event_type: self.event_type.ok_or("event_type is required")?,
-            spec_version: self.spec_version.ok_or("spec_version is required")?,
-            source: self.source.ok_or("source is required")?,
-            subject: self.subject.ok_or("subject is required")?,
-            time: Utc::now(),
-            execution_id: self.execution_id.ok_or("execution_id is required")?,
-            correlation_id: self.correlation_id.ok_or("correlation_id is required")?,
-            causation_id: self.causation_id,
-            principal_id: self.principal_id.ok_or("principal_id is required")?,
-            message_group: self.message_group.ok_or("message_group is required")?,
-        })
     }
 }
 
@@ -374,20 +211,59 @@ mod tests {
 
     impl_domain_event!(TestEvent);
 
+    fn sample_metadata() -> EventMetadata {
+        EventMetadata {
+            event_id: "evt-123".to_string(),
+            event_type: "test:domain:entity:created".to_string(),
+            spec_version: "1.0".to_string(),
+            source: "test:domain".to_string(),
+            subject: "domain.entity.123".to_string(),
+            time: Utc::now(),
+            execution_id: "exec-456".to_string(),
+            correlation_id: "corr-789".to_string(),
+            causation_id: None,
+            principal_id: "principal-001".to_string(),
+            message_group: "domain:entity:123".to_string(),
+        }
+    }
+
+    #[test]
+    fn from_ctx_copies_tracing_ids_and_generates_an_event_id() {
+        let ctx = ExecutionContext::with_correlation("prn_test", "corr_from_ctx");
+        let meta = EventMetadata::from_ctx(
+            &ctx,
+            "test.event",
+            "1.0",
+            "test",
+            "sub.1",
+            String::from("grp:1"),
+        );
+
+        assert!(!meta.event_id.is_empty());
+        assert_eq!(meta.event_type, "test.event");
+        assert_eq!(meta.spec_version, "1.0");
+        assert_eq!(meta.source, "test");
+        assert_eq!(meta.subject, "sub.1");
+        assert_eq!(meta.message_group, "grp:1");
+        assert_eq!(meta.execution_id, ctx.execution_id);
+        assert_eq!(meta.correlation_id, "corr_from_ctx");
+        assert_eq!(meta.principal_id, "prn_test");
+        assert!(meta.causation_id.is_none());
+    }
+
+    #[test]
+    fn from_ctx_carries_causation_and_unique_event_ids() {
+        let mut ctx = ExecutionContext::create("prn");
+        ctx.causation_id = Some("evt_parent".to_string());
+        let a = EventMetadata::from_ctx(&ctx, "t", "1", "s", "sub", "grp");
+        let b = EventMetadata::from_ctx(&ctx, "t", "1", "s", "sub", "grp");
+        assert_eq!(a.causation_id.as_deref(), Some("evt_parent"));
+        assert_ne!(a.event_id, b.event_id);
+    }
+
     #[test]
     fn test_event_metadata() {
-        let metadata = EventMetadata::new(
-            "evt-123".to_string(),
-            "test:domain:entity:created",
-            "1.0",
-            "test:domain",
-            "domain.entity.123".to_string(),
-            "domain:entity:123".to_string(),
-            "exec-456".to_string(),
-            "corr-789".to_string(),
-            None,
-            "principal-001".to_string(),
-        );
+        let metadata = sample_metadata();
 
         let event = TestEvent {
             metadata,
@@ -408,18 +284,7 @@ mod tests {
 
     #[test]
     fn test_to_data_json() {
-        let metadata = EventMetadata::new(
-            "evt-123".to_string(),
-            "test:domain:entity:created",
-            "1.0",
-            "test:domain",
-            "domain.entity.123".to_string(),
-            "domain:entity:123".to_string(),
-            "exec-456".to_string(),
-            "corr-789".to_string(),
-            None,
-            "principal-001".to_string(),
-        );
+        let metadata = sample_metadata();
 
         let event = TestEvent {
             metadata,

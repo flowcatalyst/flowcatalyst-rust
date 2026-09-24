@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when a new email domain mapping is created.
@@ -33,22 +32,14 @@ impl EmailDomainMappingCreated {
         identity_provider_id: &str,
         scope_type: &str,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.edm.{}", mapping_id);
-        let message_group = format!("platform:edm:{}", mapping_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.edm.{}", mapping_id),
+                format!("platform:edm:{}", mapping_id),
             ),
             mapping_id: mapping_id.to_string(),
             email_domain: email_domain.to_string(),
@@ -77,22 +68,14 @@ impl EmailDomainMappingUpdated {
     const SOURCE: &'static str = "platform:admin";
 
     pub fn new(ctx: &ExecutionContext, mapping_id: &str, email_domain: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.edm.{}", mapping_id);
-        let message_group = format!("platform:edm:{}", mapping_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.edm.{}", mapping_id),
+                format!("platform:edm:{}", mapping_id),
             ),
             mapping_id: mapping_id.to_string(),
             email_domain: email_domain.to_string(),
@@ -119,22 +102,14 @@ impl EmailDomainMappingDeleted {
     const SOURCE: &'static str = "platform:admin";
 
     pub fn new(ctx: &ExecutionContext, mapping_id: &str, email_domain: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.edm.{}", mapping_id);
-        let message_group = format!("platform:edm:{}", mapping_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.edm.{}", mapping_id),
+                format!("platform:edm:{}", mapping_id),
             ),
             mapping_id: mapping_id.to_string(),
             email_domain: email_domain.to_string(),

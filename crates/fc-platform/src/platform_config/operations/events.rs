@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Emitted when a platform config property is created or updated.
@@ -32,42 +31,16 @@ impl PlatformConfigPropertySet {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:admin";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        config_id: &str,
-        application_code: &str,
-        section: &str,
-        property: &str,
-        scope: &str,
-        client_id: Option<&str>,
-        value_type: &str,
-        was_created: bool,
-    ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.platformconfig.{}", config_id);
-        let message_group = format!("platform:platformconfig:{}", config_id);
-        Self {
-            metadata: EventMetadata::new(
-                event_id,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
-            ),
-            config_id: config_id.to_string(),
-            application_code: application_code.to_string(),
-            section: section.to_string(),
-            property: property.to_string(),
-            scope: scope.to_string(),
-            client_id: client_id.map(String::from),
-            value_type: value_type.to_string(),
-            was_created,
-        }
+    /// Metadata for this event, raised inside `ctx`.
+    pub fn metadata_for(ctx: &ExecutionContext, config_id: &str) -> EventMetadata {
+        EventMetadata::from_ctx(
+            ctx,
+            Self::EVENT_TYPE,
+            Self::SPEC_VERSION,
+            Self::SOURCE,
+            format!("platform.platformconfig.{}", config_id),
+            format!("platform:platformconfig:{}", config_id),
+        )
     }
 }
 
@@ -93,38 +66,16 @@ impl PlatformConfigAccessGranted {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:admin";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        access_id: &str,
-        application_code: &str,
-        role_code: &str,
-        can_read: bool,
-        can_write: bool,
-        was_created: bool,
-    ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.platformconfigaccess.{}", access_id);
-        let message_group = format!("platform:platformconfigaccess:{}", access_id);
-        Self {
-            metadata: EventMetadata::new(
-                event_id,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
-            ),
-            access_id: access_id.to_string(),
-            application_code: application_code.to_string(),
-            role_code: role_code.to_string(),
-            can_read,
-            can_write,
-            was_created,
-        }
+    /// Metadata for this event, raised inside `ctx`.
+    pub fn metadata_for(ctx: &ExecutionContext, access_id: &str) -> EventMetadata {
+        EventMetadata::from_ctx(
+            ctx,
+            Self::EVENT_TYPE,
+            Self::SPEC_VERSION,
+            Self::SOURCE,
+            format!("platform.platformconfigaccess.{}", access_id),
+            format!("platform:platformconfigaccess:{}", access_id),
+        )
     }
 }
 
@@ -153,21 +104,14 @@ impl PlatformConfigAccessRevoked {
         application_code: &str,
         role_code: &str,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.platformconfigaccess.{}", access_id);
-        let message_group = format!("platform:platformconfigaccess:{}", access_id);
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.platformconfigaccess.{}", access_id),
+                format!("platform:platformconfigaccess:{}", access_id),
             ),
             access_id: access_id.to_string(),
             application_code: application_code.to_string(),

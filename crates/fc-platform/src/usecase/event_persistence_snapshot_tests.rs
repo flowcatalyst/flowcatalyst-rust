@@ -123,31 +123,31 @@ fn application_created() {
 
 #[test]
 fn application_client_config_updated() {
-    let e = fixed!(ApplicationClientConfigUpdated::new(
-        &ctx(),
-        "app_1",
-        "clt_1",
-        "acc_1",
-        Some(true),
-        None,
-        false
-    ));
+    let e = fixed!(ApplicationClientConfigUpdated {
+        metadata: ApplicationClientConfigUpdated::metadata_for(&ctx(), "app_1"),
+        application_id: "app_1".to_string(),
+        client_id: "clt_1".to_string(),
+        config_id: "acc_1".to_string(),
+        enabled: Some(true),
+        base_url_override: None,
+        config_changed: false,
+    });
     check(&e, EXPECTED_APPLICATION_CLIENT_CONFIG_UPDATED);
 }
 
 #[test]
 fn application_openapi_spec_synced() {
-    let e = fixed!(ApplicationOpenApiSpecSynced::new(
-        &ctx(),
-        "app_1",
-        "orders",
-        "spec_1",
-        "1.2.0",
-        "sha256:abc",
-        Some("1.1.0".to_string()),
-        true,
-        false
-    ));
+    let e = fixed!(ApplicationOpenApiSpecSynced {
+        metadata: ApplicationOpenApiSpecSynced::metadata_for(&ctx(), "app_1", "spec_1"),
+        application_id: "app_1".to_string(),
+        application_code: "orders".to_string(),
+        spec_id: "spec_1".to_string(),
+        version: "1.2.0".to_string(),
+        spec_hash: "sha256:abc".to_string(),
+        archived_prior_version: Some("1.1.0".to_string()),
+        has_breaking: true,
+        unchanged: false,
+    });
     check(&e, EXPECTED_APPLICATION_OPENAPI_SPEC_SYNCED);
 }
 
@@ -256,39 +256,34 @@ fn identity_provider_created() {
 /// Mirrors `CreateEventTypeUseCase::execute`.
 #[test]
 fn event_type_created() {
-    let ctx = ctx();
-    let event = EventTypeCreated::builder()
-        .with_context(&ctx)
-        .event_type_id("evt_type_1")
-        .code("orders:fulfillment:shipment:shipped")
-        .name("Shipment shipped")
-        .application("orders")
-        .subdomain("fulfillment")
-        .aggregate("shipment")
-        .event_name("shipped")
-        .build();
-    let event = EventTypeCreated {
+    let e = fixed!(EventTypeCreated {
+        metadata: EventTypeCreated::metadata_for(&ctx(), "evt_type_1"),
+        event_type_id: "evt_type_1".to_string(),
+        code: "orders:fulfillment:shipment:shipped".to_string(),
+        name: "Shipment shipped".to_string(),
         description: Some("A shipment left the warehouse".to_string()),
+        application: "orders".to_string(),
+        subdomain: "fulfillment".to_string(),
+        aggregate: "shipment".to_string(),
+        event_name: "shipped".to_string(),
         client_id: Some("clt_1".to_string()),
-        ..event
-    };
-    let e = fixed!(event);
+    });
     check(&e, EXPECTED_EVENT_TYPE_CREATED);
 }
 
 #[test]
 fn event_types_synced() {
-    let e = fixed!(EventTypesSynced::new(
-        &ctx(),
-        "orders",
-        3,
-        2,
-        1,
-        s(&["orders:a:b:c"]),
-        4,
-        5,
-        6
-    ));
+    let e = fixed!(EventTypesSynced {
+        metadata: EventTypesSynced::metadata_for(&ctx(), "orders"),
+        application_code: "orders".to_string(),
+        created: 3,
+        updated: 2,
+        deleted: 1,
+        synced_codes: s(&["orders:a:b:c"]),
+        schemas_created: 4,
+        schemas_updated: 5,
+        schemas_unchanged: 6,
+    });
     check(&e, EXPECTED_EVENT_TYPES_SYNCED);
 }
 
@@ -296,31 +291,31 @@ fn event_types_synced() {
 
 #[test]
 fn platform_config_property_set() {
-    let e = fixed!(PlatformConfigPropertySet::new(
-        &ctx(),
-        "pcf_1",
-        "orders",
-        "limits",
-        "max_batch",
-        "CLIENT",
-        Some("clt_1"),
-        "NUMBER",
-        true
-    ));
+    let e = fixed!(PlatformConfigPropertySet {
+        metadata: PlatformConfigPropertySet::metadata_for(&ctx(), "pcf_1"),
+        config_id: "pcf_1".to_string(),
+        application_code: "orders".to_string(),
+        section: "limits".to_string(),
+        property: "max_batch".to_string(),
+        scope: "CLIENT".to_string(),
+        client_id: Some("clt_1".to_string()),
+        value_type: "NUMBER".to_string(),
+        was_created: true,
+    });
     check(&e, EXPECTED_PLATFORM_CONFIG_PROPERTY_SET);
 }
 
 #[test]
 fn platform_config_access_granted() {
-    let e = fixed!(PlatformConfigAccessGranted::new(
-        &ctx(),
-        "pca_1",
-        "orders",
-        "orders:viewer",
-        true,
-        false,
-        true
-    ));
+    let e = fixed!(PlatformConfigAccessGranted {
+        metadata: PlatformConfigAccessGranted::metadata_for(&ctx(), "pca_1"),
+        access_id: "pca_1".to_string(),
+        application_code: "orders".to_string(),
+        role_code: "orders:viewer".to_string(),
+        can_read: true,
+        can_write: false,
+        was_created: true,
+    });
     check(&e, EXPECTED_PLATFORM_CONFIG_ACCESS_GRANTED);
 }
 
@@ -329,16 +324,14 @@ fn platform_config_access_granted() {
 /// Mirrors `CreateUserUseCase::execute`.
 #[test]
 fn user_created() {
-    let ctx = fresh_ctx();
-    let e = fixed!(UserCreated::builder()
-        .from(&ctx)
-        .principal_id("prn_1")
-        .email("Jane@Example.COM")
-        .name("Jane")
-        .scope(UserScope::Anchor)
-        .client_id(None::<&str>)
-        .is_anchor_user(true)
-        .build());
+    let e = fixed!(UserCreated::new(
+        &fresh_ctx(),
+        "prn_1",
+        "Jane@Example.COM",
+        "Jane",
+        UserScope::Anchor,
+        None
+    ));
     check(&e, EXPECTED_USER_CREATED);
 }
 
@@ -383,30 +376,29 @@ fn roles_assigned() {
 
 #[test]
 fn process_created() {
-    let e = fixed!(ProcessCreated::new(
-        &ctx(),
-        "prc_1",
-        "orders:fulfillment:ship",
-        "Ship",
-        Some("Ship an order"),
-        "orders",
-        "fulfillment",
-        "ship"
-    ));
+    let e = fixed!(ProcessCreated {
+        metadata: ProcessCreated::metadata_for(&ctx(), "prc_1"),
+        process_id: "prc_1".to_string(),
+        code: "orders:fulfillment:ship".to_string(),
+        name: "Ship".to_string(),
+        description: Some("Ship an order".to_string()),
+        application: "orders".to_string(),
+        subdomain: "fulfillment".to_string(),
+        process_name: "ship".to_string(),
+    });
     check(&e, EXPECTED_PROCESS_CREATED);
 }
 
 #[test]
 fn process_updated() {
-    let tags = s(&["x", "y"]);
-    let e = fixed!(ProcessUpdated::new(
-        &ctx(),
-        "prc_1",
-        Some("Ship v2"),
-        None,
-        Some(true),
-        Some(tags.as_slice())
-    ));
+    let e = fixed!(ProcessUpdated {
+        metadata: ProcessUpdated::metadata_for(&ctx(), "prc_1"),
+        process_id: "prc_1".to_string(),
+        name: Some("Ship v2".to_string()),
+        description: None,
+        body_changed: Some(true),
+        tags: Some(s(&["x", "y"])),
+    });
     check(&e, EXPECTED_PROCESS_UPDATED);
 }
 
@@ -429,17 +421,17 @@ fn role_created() {
 
 #[test]
 fn scheduled_job_created() {
-    let e = fixed!(ScheduledJobCreated::new(
-        &ctx(),
-        "sjb_1",
-        Some("clt_1"),
-        "nightly",
-        "Nightly",
-        &s(&["0 0 * * *"]),
-        "UTC",
-        false,
-        true
-    ));
+    let e = fixed!(ScheduledJobCreated {
+        metadata: ScheduledJobCreated::metadata_for(&ctx(), "sjb_1"),
+        scheduled_job_id: "sjb_1".to_string(),
+        client_id: Some("clt_1".to_string()),
+        code: "nightly".to_string(),
+        name: "Nightly".to_string(),
+        crons: s(&["0 0 * * *"]),
+        timezone: "UTC".to_string(),
+        concurrent: false,
+        tracks_completion: true,
+    });
     check(&e, EXPECTED_SCHEDULED_JOB_CREATED);
 }
 

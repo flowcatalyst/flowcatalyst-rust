@@ -113,15 +113,15 @@ impl<U: UnitOfWork> GrantPlatformConfigAccessUseCase<U> {
             access.can_write = cw;
         }
 
-        let event = PlatformConfigAccessGranted::new(
-            ctx,
-            &access.id,
-            &access.application_code,
-            &access.role_code,
-            access.can_read,
-            access.can_write,
+        let event = PlatformConfigAccessGranted {
+            metadata: PlatformConfigAccessGranted::metadata_for(ctx, &access.id),
+            access_id: access.id.clone(),
+            application_code: access.application_code.clone(),
+            role_code: access.role_code.clone(),
+            can_read: access.can_read,
+            can_write: access.can_write,
             was_created,
-        );
+        };
         Ok((access, event))
     }
 }

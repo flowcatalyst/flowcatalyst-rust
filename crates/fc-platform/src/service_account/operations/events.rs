@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when a new service account is created.
@@ -36,22 +35,14 @@ impl ServiceAccountCreated {
         application_id: Option<&str>,
         client_ids: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.serviceaccount.{}", service_account_id);
-        let message_group = format!("platform:serviceaccount:{}", service_account_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.serviceaccount.{}", service_account_id),
+                format!("platform:serviceaccount:{}", service_account_id),
             ),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),
@@ -93,22 +84,14 @@ impl ServiceAccountUpdated {
         client_ids_added: Vec<String>,
         client_ids_removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.serviceaccount.{}", service_account_id);
-        let message_group = format!("platform:serviceaccount:{}", service_account_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.serviceaccount.{}", service_account_id),
+                format!("platform:serviceaccount:{}", service_account_id),
             ),
             service_account_id: service_account_id.to_string(),
             name: name.map(String::from),
@@ -138,22 +121,14 @@ impl ServiceAccountDeleted {
     const SOURCE: &'static str = "platform:serviceaccount";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.serviceaccount.{}", service_account_id);
-        let message_group = format!("platform:serviceaccount:{}", service_account_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.serviceaccount.{}", service_account_id),
+                format!("platform:serviceaccount:{}", service_account_id),
             ),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),
@@ -180,22 +155,14 @@ impl ServiceAccountDeactivated {
     const SOURCE: &'static str = "platform:serviceaccount";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.serviceaccount.{}", service_account_id);
-        let message_group = format!("platform:serviceaccount:{}", service_account_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.serviceaccount.{}", service_account_id),
+                format!("platform:serviceaccount:{}", service_account_id),
             ),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),
@@ -228,22 +195,14 @@ impl ServiceAccountRolesAssigned {
         roles_added: Vec<String>,
         roles_removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.serviceaccount.{}", service_account_id);
-        let message_group = format!("platform:serviceaccount:{}", service_account_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.serviceaccount.{}", service_account_id),
+                format!("platform:serviceaccount:{}", service_account_id),
             ),
             service_account_id: service_account_id.to_string(),
             roles_added,
@@ -271,22 +230,14 @@ impl ServiceAccountTokenRegenerated {
     const SOURCE: &'static str = "platform:serviceaccount";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.serviceaccount.{}", service_account_id);
-        let message_group = format!("platform:serviceaccount:{}", service_account_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.serviceaccount.{}", service_account_id),
+                format!("platform:serviceaccount:{}", service_account_id),
             ),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),
@@ -313,22 +264,14 @@ impl ServiceAccountSecretRegenerated {
     const SOURCE: &'static str = "platform:serviceaccount";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.serviceaccount.{}", service_account_id);
-        let message_group = format!("platform:serviceaccount:{}", service_account_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.serviceaccount.{}", service_account_id),
+                format!("platform:serviceaccount:{}", service_account_id),
             ),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),

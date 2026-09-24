@@ -138,17 +138,17 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
         }
         config.updated_at = chrono::Utc::now();
 
-        let event = PlatformConfigPropertySet::new(
-            ctx,
-            &config.id,
-            &config.application_code,
-            &config.section,
-            &config.property,
-            config.scope.as_str(),
-            config.client_id.as_deref(),
-            config.value_type.as_str(),
+        let event = PlatformConfigPropertySet {
+            metadata: PlatformConfigPropertySet::metadata_for(ctx, &config.id),
+            config_id: config.id.clone(),
+            application_code: config.application_code.clone(),
+            section: config.section.clone(),
+            property: config.property.clone(),
+            scope: config.scope.as_str().to_string(),
+            client_id: config.client_id.clone(),
+            value_type: config.value_type.as_str().to_string(),
             was_created,
-        );
+        };
         Ok((config, event))
     }
 }

@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when a CORS origin is added.
@@ -25,22 +24,14 @@ impl CorsOriginAdded {
     const SOURCE: &'static str = "platform:admin";
 
     pub fn new(ctx: &ExecutionContext, origin_id: &str, origin: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.cors.{}", origin_id);
-        let message_group = format!("platform:cors:{}", origin_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.cors.{}", origin_id),
+                format!("platform:cors:{}", origin_id),
             ),
             origin_id: origin_id.to_string(),
             origin: origin.to_string(),
@@ -67,22 +58,14 @@ impl CorsOriginDeleted {
     const SOURCE: &'static str = "platform:admin";
 
     pub fn new(ctx: &ExecutionContext, origin_id: &str, origin: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.cors.{}", origin_id);
-        let message_group = format!("platform:cors:{}", origin_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.cors.{}", origin_id),
+                format!("platform:cors:{}", origin_id),
             ),
             origin_id: origin_id.to_string(),
             origin: origin.to_string(),

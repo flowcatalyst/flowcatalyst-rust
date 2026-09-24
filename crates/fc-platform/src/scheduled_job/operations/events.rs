@@ -21,14 +21,14 @@ fn group_for(id: &str) -> String {
 }
 
 fn meta(ctx: &ExecutionContext, event_type: &str, id: &str) -> EventMetadata {
-    EventMetadata::builder()
-        .from(ctx)
-        .event_type(event_type)
-        .spec_version(SPEC)
-        .source(SOURCE)
-        .subject(subject_for(id))
-        .message_group(group_for(id))
-        .build()
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC,
+        SOURCE,
+        subject_for(id),
+        group_for(id),
+    )
 }
 
 // ── Created ─────────────────────────────────────────────────────────────────
@@ -53,28 +53,9 @@ impl_domain_event!(ScheduledJobCreated);
 impl ScheduledJobCreated {
     pub const EVENT_TYPE: &'static str = "platform:admin:scheduledjob:created";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        scheduled_job_id: &str,
-        client_id: Option<&str>,
-        code: &str,
-        name: &str,
-        crons: &[String],
-        timezone: &str,
-        concurrent: bool,
-        tracks_completion: bool,
-    ) -> Self {
-        Self {
-            metadata: meta(ctx, Self::EVENT_TYPE, scheduled_job_id),
-            scheduled_job_id: scheduled_job_id.into(),
-            client_id: client_id.map(String::from),
-            code: code.into(),
-            name: name.into(),
-            crons: crons.to_vec(),
-            timezone: timezone.into(),
-            concurrent,
-            tracks_completion,
-        }
+    /// Metadata for this event, raised inside `ctx`.
+    pub fn metadata_for(ctx: &ExecutionContext, scheduled_job_id: &str) -> EventMetadata {
+        meta(ctx, Self::EVENT_TYPE, scheduled_job_id)
     }
 }
 
@@ -222,14 +203,14 @@ impl ScheduledJobsSynced {
     ) -> Self {
         let key = format!("sync:{}:{}", scope, client_id.unwrap_or("platform"));
         Self {
-            metadata: EventMetadata::builder()
-                .from(ctx)
-                .event_type(Self::EVENT_TYPE)
-                .spec_version(SPEC)
-                .source(SOURCE)
-                .subject(format!("platform.scheduledjobs.synced.{}", key))
-                .message_group(format!("platform:scheduledjobs:synced:{}", key))
-                .build(),
+            metadata: EventMetadata::from_ctx(
+                ctx,
+                Self::EVENT_TYPE,
+                SPEC,
+                SOURCE,
+                format!("platform.scheduledjobs.synced.{}", key),
+                format!("platform:scheduledjobs:synced:{}", key),
+            ),
             scope: scope.into(),
             client_id: client_id.map(String::from),
             created,

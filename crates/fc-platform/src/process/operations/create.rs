@@ -124,16 +124,16 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
             }
         };
 
-        let event = ProcessCreated::new(
-            &ctx,
-            &process.id,
-            &process.code,
-            &process.name,
-            process.description.as_deref(),
-            &process.application,
-            &process.subdomain,
-            &process.process_name,
-        );
+        let event = ProcessCreated {
+            metadata: ProcessCreated::metadata_for(&ctx, &process.id),
+            process_id: process.id.clone(),
+            code: process.code.clone(),
+            name: process.name.clone(),
+            description: process.description.clone(),
+            application: process.application.clone(),
+            subdomain: process.subdomain.clone(),
+            process_name: process.process_name.clone(),
+        };
 
         self.unit_of_work
             .commit(&process, &*self.process_repo, event, &command)

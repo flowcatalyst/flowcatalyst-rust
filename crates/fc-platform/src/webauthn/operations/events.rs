@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 const EVENT_SOURCE: &str = "platform:iam";
@@ -14,20 +13,13 @@ fn metadata_for(
     spec_version: &'static str,
     credential_id: &str,
 ) -> EventMetadata {
-    let event_id = TsidGenerator::generate_untyped();
-    let subject = format!("platform.webauthncredential.{}", credential_id);
-    let message_group = format!("platform:webauthncredential:{}", credential_id);
-    EventMetadata::new(
-        event_id,
+    EventMetadata::from_ctx(
+        ctx,
         event_type,
         spec_version,
         EVENT_SOURCE,
-        subject,
-        message_group,
-        ctx.execution_id.clone(),
-        ctx.correlation_id.clone(),
-        ctx.causation_id.clone(),
-        ctx.principal_id.clone(),
+        format!("platform.webauthncredential.{}", credential_id),
+        format!("platform:webauthncredential:{}", credential_id),
     )
 }
 

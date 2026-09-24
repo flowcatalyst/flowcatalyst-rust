@@ -165,14 +165,14 @@ impl<U: UnitOfWork> UpdateProcessUseCase<U> {
 
         process.updated_at = chrono::Utc::now();
 
-        let event = ProcessUpdated::new(
-            ctx,
-            &process.id,
-            changed_name.as_deref(),
-            changed_description.as_deref(),
-            if body_changed { Some(true) } else { None },
-            changed_tags.as_deref(),
-        );
+        let event = ProcessUpdated {
+            metadata: ProcessUpdated::metadata_for(ctx, &process.id),
+            process_id: process.id.clone(),
+            name: changed_name,
+            description: changed_description,
+            body_changed: body_changed.then_some(true),
+            tags: changed_tags,
+        };
         Ok((process, event))
     }
 }

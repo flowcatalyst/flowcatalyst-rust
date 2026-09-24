@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 // ── AnchorDomain Events ──────────────────────────────────────────────────────
@@ -26,22 +25,14 @@ impl AnchorDomainCreated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, id: &str, domain: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.anchordomain.{}", id);
-        let message_group = format!("platform:anchordomain:{}", id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.anchordomain.{}", id),
+                format!("platform:anchordomain:{}", id),
             ),
             anchor_domain_id: id.to_string(),
             domain: domain.to_string(),
@@ -67,22 +58,14 @@ impl AnchorDomainDeleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, id: &str, domain: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.anchordomain.{}", id);
-        let message_group = format!("platform:anchordomain:{}", id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.anchordomain.{}", id),
+                format!("platform:anchordomain:{}", id),
             ),
             anchor_domain_id: id.to_string(),
             domain: domain.to_string(),
@@ -111,22 +94,14 @@ impl AuthConfigCreated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, id: &str, email_domain: &str, config_type: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.authconfig.{}", id);
-        let message_group = format!("platform:authconfig:{}", id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.authconfig.{}", id),
+                format!("platform:authconfig:{}", id),
             ),
             auth_config_id: id.to_string(),
             email_domain: email_domain.to_string(),
@@ -153,22 +128,14 @@ impl AuthConfigUpdated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, id: &str, email_domain: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.authconfig.{}", id);
-        let message_group = format!("platform:authconfig:{}", id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.authconfig.{}", id),
+                format!("platform:authconfig:{}", id),
             ),
             auth_config_id: id.to_string(),
             email_domain: email_domain.to_string(),
@@ -194,22 +161,14 @@ impl AuthConfigDeleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, id: &str, email_domain: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.authconfig.{}", id);
-        let message_group = format!("platform:authconfig:{}", id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.authconfig.{}", id),
+                format!("platform:authconfig:{}", id),
             ),
             auth_config_id: id.to_string(),
             email_domain: email_domain.to_string(),
@@ -237,22 +196,14 @@ impl AnchorDomainUpdated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, id: &str, domain: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.anchordomain.{}", id);
-        let message_group = format!("platform:anchordomain:{}", id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.anchordomain.{}", id),
+                format!("platform:anchordomain:{}", id),
             ),
             anchor_domain_id: id.to_string(),
             domain: domain.to_string(),
@@ -281,22 +232,14 @@ impl IdpRoleMappingCreated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, id: &str, idp_role: &str, mapped_role: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.idprolemapping.{}", id);
-        let message_group = format!("platform:idprolemapping:{}", id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.idprolemapping.{}", id),
+                format!("platform:idprolemapping:{}", id),
             ),
             idp_role_mapping_id: id.to_string(),
             idp_role: idp_role.to_string(),
@@ -322,22 +265,14 @@ impl IdpRoleMappingDeleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, id: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.idprolemapping.{}", id);
-        let message_group = format!("platform:idprolemapping:{}", id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.idprolemapping.{}", id),
+                format!("platform:idprolemapping:{}", id),
             ),
             idp_role_mapping_id: id.to_string(),
         }
@@ -366,22 +301,14 @@ macro_rules! oauth_client_event {
             const SOURCE: &'static str = "platform:iam";
 
             pub fn new(ctx: &ExecutionContext, id: &str, client_id: &str) -> Self {
-                let event_id = TsidGenerator::generate_untyped();
-                let subject = format!("platform.oauthclient.{}", id);
-                let message_group = format!("platform:oauthclient:{}", id);
-
                 Self {
-                    metadata: EventMetadata::new(
-                        event_id,
+                    metadata: EventMetadata::from_ctx(
+                        ctx,
                         Self::EVENT_TYPE,
                         Self::SPEC_VERSION,
                         Self::SOURCE,
-                        subject,
-                        message_group,
-                        ctx.execution_id.clone(),
-                        ctx.correlation_id.clone(),
-                        ctx.causation_id.clone(),
-                        ctx.principal_id.clone(),
+                        format!("platform.oauthclient.{}", id),
+                        format!("platform:oauthclient:{}", id),
                     ),
                     oauth_client_id: id.to_string(),
                     client_id: client_id.to_string(),

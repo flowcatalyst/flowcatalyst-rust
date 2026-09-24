@@ -4,7 +4,6 @@ use crate::client::entity::ClientStatus;
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when a new client is created.
@@ -35,22 +34,14 @@ impl ClientCreated {
         identifier: &str,
         description: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.client.{}", client_id);
-        let message_group = format!("platform:client:{}", client_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.client.{}", client_id),
+                format!("platform:client:{}", client_id),
             ),
             client_id: client_id.to_string(),
             name: name.to_string(),
@@ -87,22 +78,14 @@ impl ClientUpdated {
         name: Option<&str>,
         description: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.client.{}", client_id);
-        let message_group = format!("platform:client:{}", client_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.client.{}", client_id),
+                format!("platform:client:{}", client_id),
             ),
             client_id: client_id.to_string(),
             name: name.map(String::from),
@@ -130,22 +113,14 @@ impl ClientActivated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, client_id: &str, previous_status: ClientStatus) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.client.{}", client_id);
-        let message_group = format!("platform:client:{}", client_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.client.{}", client_id),
+                format!("platform:client:{}", client_id),
             ),
             client_id: client_id.to_string(),
             previous_status: format!("{:?}", previous_status).to_uppercase(),
@@ -172,22 +147,14 @@ impl ClientSuspended {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, client_id: &str, reason: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.client.{}", client_id);
-        let message_group = format!("platform:client:{}", client_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.client.{}", client_id),
+                format!("platform:client:{}", client_id),
             ),
             client_id: client_id.to_string(),
             reason: reason.to_string(),
@@ -215,22 +182,14 @@ impl ClientDeleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, client_id: &str, name: &str, identifier: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.client.{}", client_id);
-        let message_group = format!("platform:client:{}", client_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.client.{}", client_id),
+                format!("platform:client:{}", client_id),
             ),
             client_id: client_id.to_string(),
             name: name.to_string(),
@@ -266,22 +225,14 @@ impl ClientNoteAdded {
         text: &str,
         author: &str,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.client.{}", client_id);
-        let message_group = format!("platform:client:{}", client_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.client.{}", client_id),
+                format!("platform:client:{}", client_id),
             ),
             client_id: client_id.to_string(),
             category: category.to_string(),

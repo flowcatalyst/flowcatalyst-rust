@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when a new connection is created.
@@ -36,22 +35,14 @@ impl ConnectionCreated {
         service_account_id: &str,
         client_id: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.connection.{}", connection_id);
-        let message_group = format!("platform:connection:{}", connection_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.connection.{}", connection_id),
+                format!("platform:connection:{}", connection_id),
             ),
             connection_id: connection_id.to_string(),
             code: code.to_string(),
@@ -91,22 +82,14 @@ impl ConnectionUpdated {
         name: Option<&str>,
         status: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.connection.{}", connection_id);
-        let message_group = format!("platform:connection:{}", connection_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.connection.{}", connection_id),
+                format!("platform:connection:{}", connection_id),
             ),
             connection_id: connection_id.to_string(),
             code: code.to_string(),
@@ -142,22 +125,14 @@ impl ConnectionDeleted {
         code: &str,
         client_id: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.connection.{}", connection_id);
-        let message_group = format!("platform:connection:{}", connection_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.connection.{}", connection_id),
+                format!("platform:connection:{}", connection_id),
             ),
             connection_id: connection_id.to_string(),
             code: code.to_string(),

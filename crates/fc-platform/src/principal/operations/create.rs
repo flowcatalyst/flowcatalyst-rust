@@ -209,18 +209,14 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
             }
         }
 
-        let is_anchor_user = command.scope == UserScope::Anchor;
-
-        // Create domain event using builder pattern
-        let event = UserCreated::builder()
-            .from(&ctx)
-            .principal_id(&principal.id)
-            .email(&email)
-            .name(&principal.name)
-            .scope(command.scope)
-            .client_id(principal.client_id.as_deref())
-            .is_anchor_user(is_anchor_user)
-            .build();
+        let event = UserCreated::new(
+            &ctx,
+            &principal.id,
+            &email,
+            &principal.name,
+            command.scope,
+            principal.client_id.as_deref(),
+        );
 
         // Atomic commit — principal + event + audit log, in one transaction.
         self.unit_of_work

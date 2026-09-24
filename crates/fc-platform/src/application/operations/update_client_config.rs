@@ -152,15 +152,15 @@ impl<U: UnitOfWork> UpdateApplicationClientConfigUseCase<U> {
         }
         config.updated_at = chrono::Utc::now();
 
-        let event = ApplicationClientConfigUpdated::new(
-            ctx,
-            &command.application_id,
-            &command.client_id,
-            &config.id,
-            command.enabled,
-            command.base_url_override.clone(),
+        let event = ApplicationClientConfigUpdated {
+            metadata: ApplicationClientConfigUpdated::metadata_for(ctx, &command.application_id),
+            application_id: command.application_id.clone(),
+            client_id: command.client_id.clone(),
+            config_id: config.id.clone(),
+            enabled: command.enabled,
+            base_url_override: command.base_url_override.clone(),
             config_changed,
-        );
+        };
         Ok((config, event))
     }
 }

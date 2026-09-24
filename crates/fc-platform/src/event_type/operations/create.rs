@@ -164,35 +164,17 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
             }
         };
 
-        // Create domain event
-        let event = EventTypeCreated::builder()
-            .with_context(&ctx)
-            .event_type_id(&event_type.id)
-            .code(&event_type.code)
-            .name(&event_type.name)
-            .application(&event_type.application)
-            .subdomain(&event_type.subdomain)
-            .aggregate(&event_type.aggregate)
-            .event_name(&event_type.event_name)
-            .build();
-
-        // Add optional fields
-        let event = if let Some(desc) = &command.description {
-            EventTypeCreated {
-                description: Some(desc.clone()),
-                ..event
-            }
-        } else {
-            event
-        };
-
-        let event = if let Some(client_id) = &command.client_id {
-            EventTypeCreated {
-                client_id: Some(client_id.clone()),
-                ..event
-            }
-        } else {
-            event
+        let event = EventTypeCreated {
+            metadata: EventTypeCreated::metadata_for(&ctx, &event_type.id),
+            event_type_id: event_type.id.clone(),
+            code: event_type.code.clone(),
+            name: event_type.name.clone(),
+            description: command.description.clone(),
+            application: event_type.application.clone(),
+            subdomain: event_type.subdomain.clone(),
+            aggregate: event_type.aggregate.clone(),
+            event_name: event_type.event_name.clone(),
+            client_id: command.client_id.clone(),
         };
 
         // Atomic commit: entity + event + audit log

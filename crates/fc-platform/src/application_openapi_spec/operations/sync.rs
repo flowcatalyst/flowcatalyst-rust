@@ -145,17 +145,21 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
         // No-op short-circuit: byte-identical to existing CURRENT.
         if let Some(ref existing) = prior {
             if existing.spec_hash == new_hash {
-                let event = ApplicationOpenApiSpecSynced::new(
-                    ctx,
-                    &command.application_id,
-                    &command.application_code,
-                    &existing.id,
-                    &existing.version,
-                    &existing.spec_hash,
-                    None,
-                    false,
-                    true,
-                );
+                let event = ApplicationOpenApiSpecSynced {
+                    metadata: ApplicationOpenApiSpecSynced::metadata_for(
+                        ctx,
+                        &command.application_id,
+                        &existing.id,
+                    ),
+                    application_id: command.application_id.clone(),
+                    application_code: command.application_code.clone(),
+                    spec_id: existing.id.clone(),
+                    version: existing.version.clone(),
+                    spec_hash: existing.spec_hash.clone(),
+                    archived_prior_version: None,
+                    has_breaking: false,
+                    unchanged: true,
+                };
                 return Ok(event);
             }
         }
@@ -213,17 +217,21 @@ impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
             )));
         }
 
-        let event = ApplicationOpenApiSpecSynced::new(
-            ctx,
-            &command.application_id,
-            &command.application_code,
-            &new_spec.id,
-            &new_spec.version,
-            &new_spec.spec_hash,
+        let event = ApplicationOpenApiSpecSynced {
+            metadata: ApplicationOpenApiSpecSynced::metadata_for(
+                ctx,
+                &command.application_id,
+                &new_spec.id,
+            ),
+            application_id: command.application_id.clone(),
+            application_code: command.application_code.clone(),
+            spec_id: new_spec.id.clone(),
+            version: new_spec.version.clone(),
+            spec_hash: new_spec.spec_hash.clone(),
             archived_prior_version,
-            change_notes.has_breaking,
-            false,
-        );
+            has_breaking: change_notes.has_breaking,
+            unchanged: false,
+        };
         Ok(event)
     }
 }

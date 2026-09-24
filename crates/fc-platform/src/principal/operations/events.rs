@@ -4,7 +4,6 @@ use crate::impl_domain_event;
 use crate::principal::entity::UserScope;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when a new user is created.
@@ -31,9 +30,9 @@ impl UserCreated {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:iam";
 
-    /// Create a new UserCreated event (legacy constructor).
+    /// Build the event for a newly created user.
     ///
-    /// Prefer using `UserCreated::builder()` for better readability.
+    /// Derives `email_domain` from `email`, and `is_anchor_user` from `scope`.
     pub fn new(
         ctx: &ExecutionContext,
         principal_id: &str,
@@ -42,143 +41,22 @@ impl UserCreated {
         scope: UserScope,
         client_id: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-        let email_domain = extract_email_domain(email);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             email: email.to_string(),
-            email_domain,
+            email_domain: extract_email_domain(email),
             name: name.to_string(),
             scope: format!("{:?}", scope).to_uppercase(),
             client_id: client_id.map(String::from),
-            is_anchor_user: false,
-        }
-    }
-
-    /// Create a builder for UserCreated event.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let event = UserCreated::builder()
-    ///     .from(&ctx)
-    ///     .principal_id(&user.id)
-    ///     .email(&email)
-    ///     .name(&user.name)
-    ///     .scope(UserScope::Client)
-    ///     .client_id(Some(&client_id))
-    ///     .is_anchor_user(false)
-    ///     .build();
-    /// ```
-    pub fn builder() -> UserCreatedBuilder {
-        UserCreatedBuilder::new()
-    }
-}
-
-/// Builder for UserCreated event.
-#[derive(Default)]
-pub struct UserCreatedBuilder {
-    ctx: Option<ExecutionContext>,
-    principal_id: Option<String>,
-    email: Option<String>,
-    name: Option<String>,
-    scope: Option<UserScope>,
-    client_id: Option<String>,
-    is_anchor_user: bool,
-}
-
-impl UserCreatedBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Copy tracing metadata from ExecutionContext.
-    pub fn from(mut self, ctx: &ExecutionContext) -> Self {
-        self.ctx = Some(ctx.clone());
-        self
-    }
-
-    pub fn principal_id(mut self, id: impl Into<String>) -> Self {
-        self.principal_id = Some(id.into());
-        self
-    }
-
-    pub fn email(mut self, email: impl Into<String>) -> Self {
-        self.email = Some(email.into());
-        self
-    }
-
-    pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.name = Some(name.into());
-        self
-    }
-
-    pub fn scope(mut self, scope: UserScope) -> Self {
-        self.scope = Some(scope);
-        self
-    }
-
-    pub fn client_id(mut self, client_id: Option<impl Into<String>>) -> Self {
-        self.client_id = client_id.map(|s| s.into());
-        self
-    }
-
-    pub fn is_anchor_user(mut self, is_anchor: bool) -> Self {
-        self.is_anchor_user = is_anchor;
-        self
-    }
-
-    /// Build the UserCreated event.
-    ///
-    /// # Panics
-    ///
-    /// Panics if required fields are missing.
-    pub fn build(self) -> UserCreated {
-        let ctx = self
-            .ctx
-            .expect("ExecutionContext is required (use .from(ctx))");
-        let principal_id = self.principal_id.expect("principal_id is required");
-        let email = self.email.expect("email is required");
-        let name = self
-            .name
-            .unwrap_or_else(|| email.split('@').next().unwrap_or("").to_string());
-        let scope = self.scope.expect("scope is required");
-
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-        let email_domain = extract_email_domain(&email);
-
-        UserCreated {
-            metadata: EventMetadata::builder()
-                .from(&ctx)
-                .event_type(UserCreated::EVENT_TYPE)
-                .spec_version(UserCreated::SPEC_VERSION)
-                .source(UserCreated::SOURCE)
-                .subject(subject)
-                .message_group(message_group)
-                .build(),
-            principal_id,
-            email,
-            email_domain,
-            name,
-            scope: format!("{:?}", scope).to_uppercase(),
-            client_id: self.client_id,
-            is_anchor_user: self.is_anchor_user,
+            is_anchor_user: scope == UserScope::Anchor,
         }
     }
 }
@@ -219,22 +97,14 @@ impl UserUpdated {
         name: Option<&str>,
         email: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             name: name.map(String::from),
@@ -261,22 +131,14 @@ impl UserActivated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
         }
@@ -303,22 +165,14 @@ impl UserDeactivated {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str, reason: Option<&str>) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             reason: reason.map(String::from),
@@ -344,22 +198,14 @@ impl UserDeleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
         }
@@ -393,22 +239,14 @@ impl RolesAssigned {
         added: Vec<String>,
         removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             roles,
@@ -437,22 +275,14 @@ impl ClientAccessGranted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str, client_id: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             client_id: client_id.to_string(),
@@ -479,22 +309,14 @@ impl ClientAccessRevoked {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, principal_id: &str, client_id: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             client_id: client_id.to_string(),
@@ -556,22 +378,14 @@ impl UserLoggedIn {
         flowcatalyst_claims: FlowcatalystClaims,
         federated_claims: Option<FederatedClaims>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", user_id);
-        let message_group = format!("platform:user:{}", user_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", user_id),
+                format!("platform:user:{}", user_id),
             ),
             user_id: user_id.to_string(),
             email: email.to_string(),
@@ -612,22 +426,14 @@ impl PrincipalsSynced {
         deactivated: u32,
         synced_emails: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_code);
-        let message_group = format!("platform:application:{}", application_code);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_code),
+                format!("platform:application:{}", application_code),
             ),
             application_code: application_code.to_string(),
             created,
@@ -665,22 +471,14 @@ impl ApplicationAccessAssigned {
         added: Vec<String>,
         removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", user_id);
-        let message_group = format!("platform:user:{}", user_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", user_id),
+                format!("platform:user:{}", user_id),
             ),
             user_id: user_id.to_string(),
             application_ids,
@@ -709,23 +507,15 @@ impl PasswordResetRequested {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(principal_id: &str, email: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-        let ctx = ExecutionContext::create("system");
-
+        // Password reset is unauthenticated — attribute it to "system".
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                &ExecutionContext::create("system"),
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id,
-                ctx.correlation_id,
-                ctx.causation_id,
-                "system".to_string(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             email: email.to_string(),
@@ -752,24 +542,15 @@ impl PasswordResetCompleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(principal_id: &str, email: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-        // Password reset is unauthenticated — use "system" as execution context
-        let ctx = ExecutionContext::create("system");
-
+        // Password reset is unauthenticated — attribute it to "system".
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                &ExecutionContext::create("system"),
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id,
-                ctx.correlation_id,
-                ctx.causation_id,
-                "system".to_string(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             email: email.to_string(),
@@ -781,22 +562,14 @@ impl PasswordResetCompleted {
     /// execution/correlation IDs so audit logs and downstream projections can
     /// trace the action back to them.
     pub fn from_ctx(ctx: &ExecutionContext, principal_id: &str, email: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.user.{}", principal_id);
-        let message_group = format!("platform:user:{}", principal_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.user.{}", principal_id),
+                format!("platform:user:{}", principal_id),
             ),
             principal_id: principal_id.to_string(),
             email: email.to_string(),
@@ -826,45 +599,28 @@ mod tests {
         assert_eq!(event.email, "user@example.com");
         assert_eq!(event.email_domain, "example.com");
         assert_eq!(event.scope, "CLIENT");
+        assert!(!event.is_anchor_user);
     }
 
     #[test]
-    fn test_user_created_builder() {
+    fn test_user_created_copies_ctx_and_derives_anchor_flag() {
         let ctx = ExecutionContext::create("admin-123");
-        let event = UserCreated::builder()
-            .from(&ctx)
-            .principal_id("user-1")
-            .email("john.doe@acme.org")
-            .name("John Doe")
-            .scope(UserScope::Client)
-            .client_id(Some("client-1"))
-            .is_anchor_user(false)
-            .build();
+        let event = UserCreated::new(
+            &ctx,
+            "user-1",
+            "john.doe@acme.org",
+            "John Doe",
+            UserScope::Anchor,
+            None,
+        );
 
-        assert_eq!(event.event_type(), "platform:iam:user:created");
-        assert_eq!(event.principal_id, "user-1");
-        assert_eq!(event.email, "john.doe@acme.org");
         assert_eq!(event.email_domain, "acme.org");
         assert_eq!(event.name, "John Doe");
-        assert_eq!(event.scope, "CLIENT");
-        assert!(!event.is_anchor_user);
+        assert_eq!(event.scope, "ANCHOR");
+        assert!(event.is_anchor_user);
         // Verify tracing context was copied
         assert_eq!(event.execution_id(), ctx.execution_id);
         assert_eq!(event.correlation_id(), ctx.correlation_id);
-    }
-
-    #[test]
-    fn test_user_created_builder_derives_name_from_email() {
-        let ctx = ExecutionContext::create("admin-123");
-        let event = UserCreated::builder()
-            .from(&ctx)
-            .principal_id("user-1")
-            .email("john.doe@acme.org")
-            .scope(UserScope::Anchor)
-            // name not set - should derive from email
-            .build();
-
-        assert_eq!(event.name, "john.doe");
     }
 
     #[test]

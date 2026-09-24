@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when a new application is created.
@@ -33,22 +32,14 @@ impl ApplicationCreated {
         name: &str,
         application_type: &str,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_id),
+                format!("platform:application:{}", application_id),
             ),
             application_id: application_id.to_string(),
             code: code.to_string(),
@@ -85,22 +76,14 @@ impl ApplicationUpdated {
         name: Option<&str>,
         description: Option<&str>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_id),
+                format!("platform:application:{}", application_id),
             ),
             application_id: application_id.to_string(),
             name: name.map(String::from),
@@ -128,22 +111,14 @@ impl ApplicationActivated {
     const SOURCE: &'static str = "platform:application";
 
     pub fn new(ctx: &ExecutionContext, application_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_id),
+                format!("platform:application:{}", application_id),
             ),
             application_id: application_id.to_string(),
             code: code.to_string(),
@@ -170,22 +145,14 @@ impl ApplicationDeactivated {
     const SOURCE: &'static str = "platform:application";
 
     pub fn new(ctx: &ExecutionContext, application_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_id),
+                format!("platform:application:{}", application_id),
             ),
             application_id: application_id.to_string(),
             code: code.to_string(),
@@ -220,22 +187,14 @@ impl ApplicationServiceAccountProvisioned {
         service_account_id: &str,
         service_account_code: &str,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_id),
+                format!("platform:application:{}", application_id),
             ),
             application_id: application_id.to_string(),
             application_code: application_code.to_string(),
@@ -265,22 +224,14 @@ impl ApplicationDeleted {
     const SOURCE: &'static str = "platform:application";
 
     pub fn new(ctx: &ExecutionContext, application_id: &str, code: &str, name: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_id),
+                format!("platform:application:{}", application_id),
             ),
             application_id: application_id.to_string(),
             code: code.to_string(),
@@ -314,22 +265,14 @@ impl ApplicationEnabledForClient {
         client_id: &str,
         config_id: &str,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_id),
+                format!("platform:application:{}", application_id),
             ),
             application_id: application_id.to_string(),
             client_id: client_id.to_string(),
@@ -363,22 +306,14 @@ impl ApplicationDisabledForClient {
         client_id: &str,
         config_id: &str,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_id),
+                format!("platform:application:{}", application_id),
             ),
             application_id: application_id.to_string(),
             client_id: client_id.to_string(),
@@ -412,39 +347,16 @@ impl ApplicationClientConfigUpdated {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:application";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        application_id: &str,
-        client_id: &str,
-        config_id: &str,
-        enabled: Option<bool>,
-        base_url_override: Option<String>,
-        config_changed: bool,
-    ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_id);
-        let message_group = format!("platform:application:{}", application_id);
-
-        Self {
-            metadata: EventMetadata::new(
-                event_id,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
-            ),
-            application_id: application_id.to_string(),
-            client_id: client_id.to_string(),
-            config_id: config_id.to_string(),
-            enabled,
-            base_url_override,
-            config_changed,
-        }
+    /// Metadata for this event, raised inside `ctx`.
+    pub fn metadata_for(ctx: &ExecutionContext, application_id: &str) -> EventMetadata {
+        EventMetadata::from_ctx(
+            ctx,
+            Self::EVENT_TYPE,
+            Self::SPEC_VERSION,
+            Self::SOURCE,
+            format!("platform.application.{}", application_id),
+            format!("platform:application:{}", application_id),
+        )
     }
 }
 
@@ -480,22 +392,14 @@ impl ClientApplicationsUpdated {
         enabled_added: Vec<String>,
         disabled_removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.client.{}", client_id);
-        let message_group = format!("platform:client:{}", client_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.client.{}", client_id),
+                format!("platform:client:{}", client_id),
             ),
             client_id: client_id.to_string(),
             enabled_application_ids,

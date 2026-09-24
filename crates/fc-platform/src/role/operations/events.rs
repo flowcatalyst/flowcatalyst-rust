@@ -3,7 +3,6 @@
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
-use crate::TsidGenerator;
 use serde::{Deserialize, Serialize};
 
 /// Event emitted when a new role is created.
@@ -35,22 +34,14 @@ impl RoleCreated {
         application_code: &str,
         permissions: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.role.{}", role_id);
-        let message_group = format!("platform:role:{}", role_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.role.{}", role_id),
+                format!("platform:role:{}", role_id),
             ),
             role_id: role_id.to_string(),
             code: code.to_string(),
@@ -92,22 +83,14 @@ impl RoleUpdated {
         permissions_added: Vec<String>,
         permissions_removed: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.role.{}", role_id);
-        let message_group = format!("platform:role:{}", role_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.role.{}", role_id),
+                format!("platform:role:{}", role_id),
             ),
             role_id: role_id.to_string(),
             display_name: display_name.map(String::from),
@@ -137,22 +120,14 @@ impl RoleDeleted {
     const SOURCE: &'static str = "platform:iam";
 
     pub fn new(ctx: &ExecutionContext, role_id: &str, code: &str) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.role.{}", role_id);
-        let message_group = format!("platform:role:{}", role_id);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.role.{}", role_id),
+                format!("platform:role:{}", role_id),
             ),
             role_id: role_id.to_string(),
             code: code.to_string(),
@@ -189,22 +164,14 @@ impl RolesSynced {
         deleted: u32,
         synced_names: Vec<String>,
     ) -> Self {
-        let event_id = TsidGenerator::generate_untyped();
-        let subject = format!("platform.application.{}", application_code);
-        let message_group = format!("platform:application:{}", application_code);
-
         Self {
-            metadata: EventMetadata::new(
-                event_id,
+            metadata: EventMetadata::from_ctx(
+                ctx,
                 Self::EVENT_TYPE,
                 Self::SPEC_VERSION,
                 Self::SOURCE,
-                subject,
-                message_group,
-                ctx.execution_id.clone(),
-                ctx.correlation_id.clone(),
-                ctx.causation_id.clone(),
-                ctx.principal_id.clone(),
+                format!("platform.application.{}", application_code),
+                format!("platform:application:{}", application_code),
             ),
             application_code: application_code.to_string(),
             created,
