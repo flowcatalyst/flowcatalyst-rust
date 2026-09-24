@@ -334,3 +334,54 @@ Section A runs as its own track against the Java contract: A1–A4 first, becaus
   `postgres_integration_tests::test_service_account_crud`,
   `api_integration_tests::{test_create_client_via_api, test_batch_dispatch_jobs_via_api, test_batch_events_exceeds_limit}`.
 - **Open:** should Rust provisioning assign the `platform:application-service` role, as Go does?
+
+## Go parity, drop-in replacement (owner, 2026-09-24)
+
+Rust must behave exactly like Go unless an explicit owner ruling says otherwise. The work was aligned against
+flowcatalyst-go at HEAD 73a6918 (merge `dbcd4296`):
+- provisioning assigns `platform:application-service`
+- Go's `CanAccessApplication`
+- service-account scope derived from client links
+- the client list returns every client by default
+- OAuth rotation overlap (`previous_secret_*`, migrations 032/033)
+- the checks Go makes that Rust lacked
+- a sweep of this refactor's wire changes
+
+Two corrections followed. **SUB-7**: sync honours `mode` again (`92ac82aa`), because the ledger rules it that way.
+**A17**: sync rejects unknown pool codes again (`ef2cc2da`), per the owner ruling of 2026-09-24; SUB-6 in
+`docs/owner-questions.md` still says "deferred" and should record that ruling.
+
+### Remaining deviations from Go
+
+| Area | Rust | Go | Why |
+|---|---|---|---|
+| Out-of-scope application | 404 | 403 | Owner ruling (404 identical to not-found) |
+| Service-account create with `applicationId`/`allApplications` | 400 / ignored | accepted | Owner ruling: no application access on create |
+| Unrecognised service-account scope | 400 | stored as sent | X-06 |
+| Unknown enum filter values (dispatch job/pool, login attempt, …) | 400 | empty list | X-06 (LA-5 was deferred; X-06 covers it) |
+| Unknown sync pool code | 400 `DISPATCH_POOL_NOT_FOUND` | ignored | Owner ruling 2026-09-24 (A17) |
+| Application scope on scheduled-jobs sync, SDK app-role routes, `/api/config*`, `/api/config-access*` | checked | none | Owner request (A15) |
+| Error bodies (`VALIDATION_ERROR`/`NOT_FOUND` vs Go's specific code in `error`; `*_CODE_EXISTS` vs `CODE_EXISTS`) | differs | — | Too large for this pass |
+| Timestamps (`to_rfc3339` vs Go's `.000000Z`) | differs | — | Too large |
+| Application scope source (DB vs token claim); service-account id used as principal id | differs | — | Too large |
+| OAuth event types `platform:iam:` vs `platform:admin:` | differs | — | Too large |
+| Read routes without a `CanRead*` permission check | many | checked | Too large; security-relevant |
+| Missing routes: `connections/sync`, `docs/sync`, subscription-sync `clientId` | absent | present | Too large |
+| Service-account create gate: anchor vs Go's write permission + code-format check | differs | — | Too large |
+| Config secrets masked even for anchors; IDP secret with no key → 500 (Go 400) | differs | — | Small, not yet aligned |
+
+### To tighten later (owner note, 2026-09-24)
+
+- **Audit-log ingest** (`POST /api/audit-logs/batch`) matches Go: authentication, then a per-item client-access
+  check that skips items. There is no permission gate, in Go as well. Tighten it by requiring
+  `platform:admin:batch:audit-logs-write` or an application-service audit permission, in Rust, Go and Java
+  together, and give the application-service role that permission so SDK service accounts keep working.
+
+### Go security concerns found
+
+- A CLIENT or PARTNER service account requested with **no clients** becomes ANCHOR, because the tier is derived
+  from client links. Rust matches this (with a code comment); the UI guards against it.
+- A bound service account with `all_applications = true` reaches **every** application. Production has 6 of these.
+- Audit-log ingest has no permission gate (above).
+- Go's audit sink still writes plaintext passwords. `Principal/*Command` rows kept arriving until 2026-09-16
+  (A19); it needs the redaction rule.
