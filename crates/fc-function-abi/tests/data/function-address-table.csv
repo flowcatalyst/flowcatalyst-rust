@@ -1,0 +1,29 @@
+#
+# Shared address-parsing table (docs/spec/function-host-core.md §1, L12).
+# Read directly by io.flowcatalyst.function.FunctionAddressTest, and — over
+# a relative path — by function-host to run the same table through both
+# io.flowcatalyst.function.FunctionAddress (the API jar's own copy) and
+# io.flowcatalyst.platform.function.FunctionAddress (the server's), so the
+# two parsers can never quietly drift apart.
+#
+# Columns: raw (always double-quoted, so an empty string is a legal row),
+# accepted (true/false). For every accepted row, render(raw) == raw — the
+# parser never normalises.
+#
+raw,accepted
+"billing.invoices.create",true
+"b-1.inv-2.c-3",true
+"billing.create",false
+"a.b.c.d",false
+"billing",false
+"billing..create",false
+".b.c",false
+"a.b.",false
+"",false
+"Billing.invoices.create",false
+"billing.in_voices.create",false
+"a.-b.c",false
+"billing.invoices.*",false
+"*.b.c",false
+" a.b.c",false
+"a.b.c ",false
