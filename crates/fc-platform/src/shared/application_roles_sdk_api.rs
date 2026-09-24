@@ -123,10 +123,12 @@ pub struct ApplicationRolesSdkState {
 )]
 pub async fn list_roles(
     State(state): State<ApplicationRolesSdkState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(app_code): Path<String>,
     Query(query): Query<ListRolesQuery>,
 ) -> Result<Json<ListRolesResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::can_read_roles(&auth.0)?;
+
     // Verify application exists
     state
         .application_repo
@@ -183,6 +185,8 @@ pub async fn create_role(
     Path(app_code): Path<String>,
     Json(req): Json<CreateRoleRequest>,
 ) -> Result<Json<RoleDto>, PlatformError> {
+    crate::shared::authorization_service::checks::can_create_roles(&auth.0)?;
+
     // Verify application exists (the use case doesn't load the app row,
     // so we keep this pre-check to surface a 404 cleanly).
     state
@@ -236,6 +240,8 @@ pub async fn delete_role(
     auth: Authenticated,
     Path((app_code, role_name)): Path<(String, String)>,
 ) -> Result<(), PlatformError> {
+    crate::shared::authorization_service::checks::can_delete_roles(&auth.0)?;
+
     let role_code = format!("{}:{}", app_code, role_name);
 
     // Look up the role first so we can enforce SDK-only deletion as a 400

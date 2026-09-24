@@ -686,6 +686,45 @@ pub mod checks {
         }
     }
 
+    /// Read roles through the application-scoped SDK surface.
+    pub fn can_read_roles(context: &AuthContext) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::iam::ROLE_MANAGE,
+            permissions::iam::ROLE_READ,
+            permissions::application_service::ROLE_READ,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot read roles"))
+        }
+    }
+
+    /// Create a single role through the application-scoped SDK surface.
+    pub fn can_create_roles(context: &AuthContext) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::iam::ROLE_MANAGE,
+            permissions::iam::ROLE_CREATE,
+            permissions::application_service::ROLE_CREATE,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot create roles"))
+        }
+    }
+
+    /// Delete a single role through the application-scoped SDK surface.
+    pub fn can_delete_roles(context: &AuthContext) -> Result<()> {
+        if context.has_any_permission(&[
+            permissions::iam::ROLE_MANAGE,
+            permissions::iam::ROLE_DELETE,
+            permissions::application_service::ROLE_DELETE,
+        ]) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot delete roles"))
+        }
+    }
+
     pub fn can_sync_roles(context: &AuthContext) -> Result<()> {
         if context.has_any_permission(&[
             permissions::iam::ROLE_MANAGE,

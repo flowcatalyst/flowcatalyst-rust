@@ -37,6 +37,8 @@ const AUTH_CHECK_PATTERNS: &[&str] = &[
     "can_pause_",
     "can_resume_",
     "can_fire_",
+    // SDK sync endpoints (`/api/applications/{appCode}/*/sync`).
+    "can_sync_",
     // AuthorizationService method calls
     ".authorize(",
     // AuthContext inline checks (used in conditionals that return 403)
