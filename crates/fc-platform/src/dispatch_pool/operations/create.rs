@@ -36,6 +36,8 @@ pub struct CreateDispatchPoolCommand {
     pub concurrency: Option<u32>,
 }
 
+impl crate::usecase::AuditMasked for CreateDispatchPoolCommand {}
+
 /// Use case for creating a new dispatch pool.
 pub struct CreateDispatchPoolUseCase<U: UnitOfWork> {
     dispatch_pool_repo: Arc<DispatchPoolRepository>,

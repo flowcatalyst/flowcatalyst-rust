@@ -19,6 +19,8 @@ pub struct DeleteServiceAccountCommand {
     pub id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteServiceAccountCommand {}
+
 /// Use case for deleting a service account.
 pub struct DeleteServiceAccountUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,

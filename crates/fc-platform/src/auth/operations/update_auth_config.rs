@@ -37,6 +37,8 @@ pub struct UpdateAuthConfigCommand {
     pub config_type: Option<AuthConfigType>,
 }
 
+impl crate::usecase::AuditMasked for UpdateAuthConfigCommand {}
+
 pub struct UpdateAuthConfigUseCase<U: UnitOfWork> {
     auth_config_repo: Arc<ClientAuthConfigRepository>,
     unit_of_work: Arc<U>,

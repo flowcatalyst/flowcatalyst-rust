@@ -35,6 +35,8 @@ pub struct AddSchemaCommand {
     pub schema_type: Option<SchemaType>,
 }
 
+impl crate::usecase::AuditMasked for AddSchemaCommand {}
+
 fn default_mime_type() -> String {
     "application/schema+json".to_string()
 }

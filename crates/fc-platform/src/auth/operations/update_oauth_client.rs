@@ -37,6 +37,8 @@ pub struct UpdateOAuthClientCommand {
     pub active: Option<bool>,
 }
 
+impl crate::usecase::AuditMasked for UpdateOAuthClientCommand {}
+
 pub struct UpdateOAuthClientUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
     unit_of_work: Arc<U>,

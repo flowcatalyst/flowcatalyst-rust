@@ -19,6 +19,8 @@ pub struct DeactivateServiceAccountCommand {
     pub id: String,
 }
 
+impl crate::usecase::AuditMasked for DeactivateServiceAccountCommand {}
+
 /// Use case for deactivating a service account. Flips `active=false` on
 /// the SA without touching its OAuth client — that's the caller's
 /// responsibility (and the application-deactivate cascade does it

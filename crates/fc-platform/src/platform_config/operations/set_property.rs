@@ -5,10 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::PlatformConfigPropertySet;
-use crate::platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig, SECRET_MASK};
+use crate::platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig};
 use crate::platform_config::repository::PlatformConfigRepository;
 use crate::shared::encryption_service::{require_configured, EncryptionService};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    AuditMasked, ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,19 +29,27 @@ pub struct SetPlatformConfigPropertyCommand {
 }
 
 impl SetPlatformConfigPropertyCommand {
-    /// The command as the audit log records it. When the stored property is
-    /// a SECRET, the value is masked: the unit of work serialises the command
-    /// into `aud_logs.operation_json`, and the plaintext must not land there.
-    /// It stays the same type (not a `Cow`) because the audit row's
-    /// `operation` is the command's type name.
-    pub(crate) fn audit_view(&self, stored_type: ConfigValueType) -> Self {
-        match stored_type {
-            ConfigValueType::Secret => Self {
-                value: SECRET_MASK.to_string(),
-                ..self.clone()
-            },
-            ConfigValueType::Plain => self.clone(),
+    /// The audit-masked fields of a set-property command whose `valueType`
+    /// serialises as `value_type` (owner spec `docs/spec/audit-redaction.md`,
+    /// Java repo): `value` unless the type is exactly `PLAIN`. An omitted type
+    /// keeps the property's current type, which may be `SECRET`, so it masks
+    /// too. `value` matches no secret-key name, so without this declaration a
+    /// SECRET value would reach `aud_logs` in the clear.
+    ///
+    /// Shared by the command's own [`AuditMasked`] impl and the temporary
+    /// sweep of stored audit rows, which has only the row's JSON.
+    pub fn audit_masked_fields_for(value_type: Option<&str>) -> &'static [&'static str] {
+        if value_type == Some(ConfigValueType::Plain.as_str()) {
+            &[]
+        } else {
+            &["value"]
         }
+    }
+}
+
+impl AuditMasked for SetPlatformConfigPropertyCommand {
+    fn audit_masked_fields(&self) -> &'static [&'static str] {
+        Self::audit_masked_fields_for(self.value_type.map(|t| t.as_str()))
     }
 }
 
@@ -113,9 +123,10 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        let audited = command.audit_view(config.value_type);
+        // The audit row masks `value` through the command's AuditMasked
+        // declaration; the unit of work applies it.
         self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &audited)
+            .commit(&config, &*self.config_repo, event, &command)
             .await
     }
 }

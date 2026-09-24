@@ -41,6 +41,8 @@ pub struct UpdateServiceAccountCommand {
     pub client_ids: Option<Vec<String>>,
 }
 
+impl crate::usecase::AuditMasked for UpdateServiceAccountCommand {}
+
 /// Use case for updating a service account.
 pub struct UpdateServiceAccountUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,

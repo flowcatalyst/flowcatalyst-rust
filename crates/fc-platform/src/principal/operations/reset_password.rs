@@ -32,6 +32,8 @@ pub struct ResetPasswordCommand {
     pub enforce_password_complexity: Option<bool>,
 }
 
+impl crate::usecase::AuditMasked for ResetPasswordCommand {}
+
 pub struct ResetPasswordUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     password_service: Arc<PasswordService>,

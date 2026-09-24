@@ -17,6 +17,8 @@ pub struct DeleteCorsOriginCommand {
     pub origin_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteCorsOriginCommand {}
+
 pub struct DeleteCorsOriginUseCase<U: UnitOfWork> {
     cors_repo: Arc<CorsOriginRepository>,
     unit_of_work: Arc<U>,

@@ -18,6 +18,8 @@ pub struct ActivateApplicationCommand {
     pub id: String,
 }
 
+impl crate::usecase::AuditMasked for ActivateApplicationCommand {}
+
 /// Use case for activating an application.
 pub struct ActivateApplicationUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,

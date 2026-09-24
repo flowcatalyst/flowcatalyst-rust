@@ -38,6 +38,8 @@ pub struct SyncEventTypesCommand {
     pub remove_unlisted: bool,
 }
 
+impl crate::usecase::AuditMasked for SyncEventTypesCommand {}
+
 /// Result of a sync operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

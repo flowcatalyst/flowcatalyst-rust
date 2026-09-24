@@ -30,6 +30,8 @@ pub struct CreateAuthConfigCommand {
     pub oidc_client_secret_ref: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for CreateAuthConfigCommand {}
+
 pub struct CreateAuthConfigUseCase<U: UnitOfWork> {
     auth_config_repo: Arc<ClientAuthConfigRepository>,
     unit_of_work: Arc<U>,

@@ -82,6 +82,8 @@ pub struct CreateSubscriptionCommand {
     pub data_only: bool,
 }
 
+impl crate::usecase::AuditMasked for CreateSubscriptionCommand {}
+
 /// Use case for creating a new subscription.
 pub struct CreateSubscriptionUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,

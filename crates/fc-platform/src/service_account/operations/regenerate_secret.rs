@@ -28,6 +28,8 @@ pub struct RegenerateSigningSecretCommand {
     pub service_account_id: String,
 }
 
+impl crate::usecase::AuditMasked for RegenerateSigningSecretCommand {}
+
 /// Result returned from regenerate signing secret use case.
 /// Contains the event plus one-time secret that needs to be returned to caller.
 /// The secret is never serialized, so this serializes exactly as the event.

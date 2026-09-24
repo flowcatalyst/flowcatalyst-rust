@@ -23,6 +23,8 @@ pub struct DeprecateSchemaCommand {
     pub version: String,
 }
 
+impl crate::usecase::AuditMasked for DeprecateSchemaCommand {}
+
 /// Use case for deprecating a schema version (CURRENT → DEPRECATED).
 pub struct DeprecateSchemaUseCase<U: UnitOfWork> {
     event_type_repo: Arc<EventTypeRepository>,

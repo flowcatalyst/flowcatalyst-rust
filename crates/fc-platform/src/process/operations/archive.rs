@@ -17,6 +17,8 @@ pub struct ArchiveProcessCommand {
     pub process_id: String,
 }
 
+impl crate::usecase::AuditMasked for ArchiveProcessCommand {}
+
 pub struct ArchiveProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
     unit_of_work: Arc<U>,

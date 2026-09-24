@@ -19,6 +19,8 @@ pub struct DeleteSubscriptionCommand {
     pub subscription_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteSubscriptionCommand {}
+
 /// Use case for deleting a subscription.
 pub struct DeleteSubscriptionUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,

@@ -22,6 +22,8 @@ pub struct SuspendClientCommand {
     pub reason: String,
 }
 
+impl crate::usecase::AuditMasked for SuspendClientCommand {}
+
 /// Use case for suspending an active client.
 pub struct SuspendClientUseCase<U: UnitOfWork> {
     client_repo: Arc<ClientRepository>,

@@ -19,6 +19,8 @@ pub struct PauseScheduledJobCommand {
     pub scheduled_job_id: String,
 }
 
+impl crate::usecase::AuditMasked for PauseScheduledJobCommand {}
+
 pub struct PauseScheduledJobUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
     unit_of_work: Arc<U>,

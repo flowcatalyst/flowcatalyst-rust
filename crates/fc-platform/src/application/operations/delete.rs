@@ -17,6 +17,8 @@ pub struct DeleteApplicationCommand {
     pub application_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteApplicationCommand {}
+
 pub struct DeleteApplicationUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,
     unit_of_work: Arc<U>,

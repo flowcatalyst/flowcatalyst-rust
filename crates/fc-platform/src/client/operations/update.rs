@@ -23,6 +23,8 @@ pub struct UpdateClientCommand {
     pub name: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for UpdateClientCommand {}
+
 /// Use case for updating an existing client.
 pub struct UpdateClientUseCase<U: UnitOfWork> {
     client_repo: Arc<ClientRepository>,

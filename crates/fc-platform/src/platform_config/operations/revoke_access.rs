@@ -18,6 +18,8 @@ pub struct RevokePlatformConfigAccessCommand {
     pub role_code: String,
 }
 
+impl crate::usecase::AuditMasked for RevokePlatformConfigAccessCommand {}
+
 pub struct RevokePlatformConfigAccessUseCase<U: UnitOfWork> {
     access_repo: Arc<PlatformConfigAccessRepository>,
     unit_of_work: Arc<U>,

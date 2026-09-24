@@ -15,6 +15,8 @@ pub struct CreateAnchorDomainCommand {
     pub domain: String,
 }
 
+impl crate::usecase::AuditMasked for CreateAnchorDomainCommand {}
+
 pub struct CreateAnchorDomainUseCase<U: UnitOfWork> {
     anchor_domain_repo: Arc<AnchorDomainRepository>,
     unit_of_work: Arc<U>,

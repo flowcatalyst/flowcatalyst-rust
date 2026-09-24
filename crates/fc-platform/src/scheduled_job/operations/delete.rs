@@ -20,6 +20,8 @@ pub struct DeleteScheduledJobCommand {
     pub scheduled_job_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteScheduledJobCommand {}
+
 pub struct DeleteScheduledJobUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
     unit_of_work: Arc<U>,

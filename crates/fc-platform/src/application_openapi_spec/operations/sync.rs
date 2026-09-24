@@ -34,6 +34,8 @@ pub struct SyncOpenApiSpecCommand {
     pub spec: serde_json::Value,
 }
 
+impl crate::usecase::AuditMasked for SyncOpenApiSpecCommand {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncOpenApiSpecResult {

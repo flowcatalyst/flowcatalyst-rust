@@ -37,6 +37,8 @@ pub struct CreateApplicationCommand {
     pub icon_url: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for CreateApplicationCommand {}
+
 /// Use case for creating a new application.
 pub struct CreateApplicationUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,

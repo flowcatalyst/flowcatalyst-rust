@@ -18,6 +18,8 @@ pub struct ResumeScheduledJobCommand {
     pub scheduled_job_id: String,
 }
 
+impl crate::usecase::AuditMasked for ResumeScheduledJobCommand {}
+
 pub struct ResumeScheduledJobUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
     unit_of_work: Arc<U>,

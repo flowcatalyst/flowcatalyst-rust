@@ -17,6 +17,8 @@ pub struct ActivateOAuthClientCommand {
     pub oauth_client_id: String,
 }
 
+impl crate::usecase::AuditMasked for ActivateOAuthClientCommand {}
+
 pub struct ActivateOAuthClientUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
     unit_of_work: Arc<U>,

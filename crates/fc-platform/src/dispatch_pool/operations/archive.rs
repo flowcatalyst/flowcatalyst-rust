@@ -20,6 +20,8 @@ pub struct ArchiveDispatchPoolCommand {
     pub id: String,
 }
 
+impl crate::usecase::AuditMasked for ArchiveDispatchPoolCommand {}
+
 /// Use case for archiving a dispatch pool.
 pub struct ArchiveDispatchPoolUseCase<U: UnitOfWork> {
     dispatch_pool_repo: Arc<DispatchPoolRepository>,

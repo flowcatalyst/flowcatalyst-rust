@@ -43,6 +43,8 @@ pub struct UpdateScheduledJobCommand {
     pub target_url: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for UpdateScheduledJobCommand {}
+
 pub struct UpdateScheduledJobUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
     unit_of_work: Arc<U>,

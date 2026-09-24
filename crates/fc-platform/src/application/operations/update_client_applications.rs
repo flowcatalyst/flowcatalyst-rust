@@ -31,6 +31,8 @@ pub struct UpdateClientApplicationsCommand {
     pub enabled_application_ids: Vec<String>,
 }
 
+impl crate::usecase::AuditMasked for UpdateClientApplicationsCommand {}
+
 pub struct UpdateClientApplicationsUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,
     client_repo: Arc<ClientRepository>,

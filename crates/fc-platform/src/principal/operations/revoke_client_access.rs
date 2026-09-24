@@ -20,6 +20,8 @@ pub struct RevokeClientAccessCommand {
     pub client_id: String,
 }
 
+impl crate::usecase::AuditMasked for RevokeClientAccessCommand {}
+
 pub struct RevokeClientAccessUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     grant_repo: Arc<ClientAccessGrantRepository>,

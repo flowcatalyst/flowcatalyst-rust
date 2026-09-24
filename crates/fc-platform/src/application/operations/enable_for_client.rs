@@ -21,6 +21,8 @@ pub struct EnableApplicationForClientCommand {
     pub client_id: String,
 }
 
+impl crate::usecase::AuditMasked for EnableApplicationForClientCommand {}
+
 pub struct EnableApplicationForClientUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,
     client_repo: Arc<ClientRepository>,

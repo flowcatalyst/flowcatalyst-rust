@@ -31,6 +31,8 @@ pub struct UpdateIdentityProviderCommand {
     pub allowed_email_domains: Option<Vec<String>>,
 }
 
+impl crate::usecase::AuditMasked for UpdateIdentityProviderCommand {}
+
 /// Use case for updating an existing identity provider.
 pub struct UpdateIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,

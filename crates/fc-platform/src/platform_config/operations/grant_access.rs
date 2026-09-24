@@ -25,6 +25,8 @@ pub struct GrantPlatformConfigAccessCommand {
     pub can_write: Option<bool>,
 }
 
+impl crate::usecase::AuditMasked for GrantPlatformConfigAccessCommand {}
+
 pub struct GrantPlatformConfigAccessUseCase<U: UnitOfWork> {
     access_repo: Arc<PlatformConfigAccessRepository>,
     unit_of_work: Arc<U>,

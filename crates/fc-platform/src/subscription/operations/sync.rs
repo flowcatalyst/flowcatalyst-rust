@@ -52,6 +52,8 @@ pub struct SyncSubscriptionsCommand {
     pub remove_unlisted: bool,
 }
 
+impl crate::usecase::AuditMasked for SyncSubscriptionsCommand {}
+
 pub struct SyncSubscriptionsUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,
     connection_repo: Arc<ConnectionRepository>,

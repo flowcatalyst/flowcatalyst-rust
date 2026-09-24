@@ -32,6 +32,8 @@ pub struct UpdateApplicationClientConfigCommand {
     pub config: Option<serde_json::Value>,
 }
 
+impl crate::usecase::AuditMasked for UpdateApplicationClientConfigCommand {}
+
 pub struct UpdateApplicationClientConfigUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,
     client_repo: Arc<ClientRepository>,

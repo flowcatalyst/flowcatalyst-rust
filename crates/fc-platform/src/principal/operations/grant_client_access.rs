@@ -21,6 +21,8 @@ pub struct GrantClientAccessCommand {
     pub client_id: String,
 }
 
+impl crate::usecase::AuditMasked for GrantClientAccessCommand {}
+
 pub struct GrantClientAccessUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     client_repo: Arc<ClientRepository>,

@@ -26,6 +26,8 @@ pub struct AssignApplicationAccessCommand {
     pub all_applications: Option<bool>,
 }
 
+impl crate::usecase::AuditMasked for AssignApplicationAccessCommand {}
+
 pub struct AssignApplicationAccessUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     application_repo: Arc<ApplicationRepository>,

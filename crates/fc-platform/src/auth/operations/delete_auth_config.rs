@@ -17,6 +17,8 @@ pub struct DeleteAuthConfigCommand {
     pub auth_config_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteAuthConfigCommand {}
+
 pub struct DeleteAuthConfigUseCase<U: UnitOfWork> {
     auth_config_repo: Arc<ClientAuthConfigRepository>,
     unit_of_work: Arc<U>,

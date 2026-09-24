@@ -19,6 +19,8 @@ pub struct DeleteUserCommand {
     pub principal_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteUserCommand {}
+
 /// Use case for deleting a user (soft delete - deactivates permanently).
 pub struct DeleteUserUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,

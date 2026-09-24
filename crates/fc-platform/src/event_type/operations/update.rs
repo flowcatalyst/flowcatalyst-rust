@@ -28,6 +28,8 @@ pub struct UpdateEventTypeCommand {
     pub description: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for UpdateEventTypeCommand {}
+
 /// Use case for updating an existing event type.
 pub struct UpdateEventTypeUseCase<U: UnitOfWork> {
     event_type_repo: Arc<EventTypeRepository>,

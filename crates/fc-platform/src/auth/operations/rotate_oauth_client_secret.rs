@@ -26,6 +26,8 @@ pub struct RotateOAuthClientSecretCommand {
     pub new_client_secret_ref: String,
 }
 
+impl crate::usecase::AuditMasked for RotateOAuthClientSecretCommand {}
+
 pub struct RotateOAuthClientSecretUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
     unit_of_work: Arc<U>,

@@ -18,6 +18,8 @@ pub struct DisableApplicationForClientCommand {
     pub client_id: String,
 }
 
+impl crate::usecase::AuditMasked for DisableApplicationForClientCommand {}
+
 pub struct DisableApplicationForClientUseCase<U: UnitOfWork> {
     config_repo: Arc<ApplicationClientConfigRepository>,
     unit_of_work: Arc<U>,

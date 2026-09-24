@@ -568,6 +568,7 @@ async fn test_unit_of_work_commit() {
     struct CreateClientCommand {
         name: String,
     }
+    impl fc_platform::usecase::AuditMasked for CreateClientCommand {}
     let command = CreateClientCommand {
         name: "UoW Test Client".to_string(),
     };

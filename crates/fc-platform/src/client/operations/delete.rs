@@ -18,6 +18,8 @@ pub struct DeleteClientCommand {
     pub client_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteClientCommand {}
+
 pub struct DeleteClientUseCase<U: UnitOfWork> {
     client_repo: Arc<ClientRepository>,
     unit_of_work: Arc<U>,

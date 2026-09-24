@@ -17,6 +17,8 @@ pub struct DeleteIdpRoleMappingCommand {
     pub mapping_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteIdpRoleMappingCommand {}
+
 pub struct DeleteIdpRoleMappingUseCase<U: UnitOfWork> {
     idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
     unit_of_work: Arc<U>,

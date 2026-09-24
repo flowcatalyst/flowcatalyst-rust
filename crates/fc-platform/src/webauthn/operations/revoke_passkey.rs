@@ -19,6 +19,8 @@ pub struct RevokePasskeyCommand {
     pub credential_id: String,
 }
 
+impl crate::usecase::AuditMasked for RevokePasskeyCommand {}
+
 pub struct RevokePasskeyUseCase<U: UnitOfWork> {
     credential_repo: Arc<WebauthnCredentialRepository>,
     unit_of_work: Arc<U>,

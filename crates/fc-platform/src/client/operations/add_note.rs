@@ -20,6 +20,8 @@ pub struct AddClientNoteCommand {
     pub text: String,
 }
 
+impl crate::usecase::AuditMasked for AddClientNoteCommand {}
+
 pub struct AddClientNoteUseCase<U: UnitOfWork> {
     client_repo: Arc<ClientRepository>,
     unit_of_work: Arc<U>,

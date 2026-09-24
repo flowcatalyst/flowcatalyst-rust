@@ -36,6 +36,8 @@ pub struct SyncProcessesCommand {
     pub remove_unlisted: bool,
 }
 
+impl crate::usecase::AuditMasked for SyncProcessesCommand {}
+
 pub struct SyncProcessesUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
     unit_of_work: Arc<U>,

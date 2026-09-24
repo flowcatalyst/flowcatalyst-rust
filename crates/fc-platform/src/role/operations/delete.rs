@@ -19,6 +19,8 @@ pub struct DeleteRoleCommand {
     pub role_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteRoleCommand {}
+
 /// Use case for deleting a role.
 pub struct DeleteRoleUseCase<U: UnitOfWork> {
     role_repo: Arc<RoleRepository>,

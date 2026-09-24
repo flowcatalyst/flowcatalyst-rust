@@ -695,6 +695,7 @@ pub async fn oidc_callback(
             email: String,
             identity_provider_id: String,
         }
+        impl crate::usecase::AuditMasked for OidcLoginCommand {}
         let command = OidcLoginCommand {
             email: claims.email.clone(),
             identity_provider_id: idp.id.clone(),

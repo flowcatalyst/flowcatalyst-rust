@@ -17,6 +17,8 @@ pub struct DeleteEmailDomainMappingCommand {
     pub mapping_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteEmailDomainMappingCommand {}
+
 pub struct DeleteEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
     unit_of_work: Arc<U>,

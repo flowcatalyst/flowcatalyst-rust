@@ -38,6 +38,8 @@ pub struct RegenerateAuthTokenCommand {
     pub service_account_id: String,
 }
 
+impl crate::usecase::AuditMasked for RegenerateAuthTokenCommand {}
+
 /// Result returned from regenerate auth token use case.
 /// Contains the event plus one-time token that needs to be returned to caller.
 /// The token is never serialized, so this serializes exactly as the event.

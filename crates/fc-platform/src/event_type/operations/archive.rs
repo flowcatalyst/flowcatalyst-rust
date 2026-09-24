@@ -20,6 +20,8 @@ pub struct ArchiveEventTypeCommand {
     pub event_type_id: String,
 }
 
+impl crate::usecase::AuditMasked for ArchiveEventTypeCommand {}
+
 /// Use case for archiving an event type.
 pub struct ArchiveEventTypeUseCase<U: UnitOfWork> {
     event_type_repo: Arc<EventTypeRepository>,

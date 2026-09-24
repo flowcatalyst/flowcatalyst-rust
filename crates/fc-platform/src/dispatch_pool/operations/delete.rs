@@ -19,6 +19,8 @@ pub struct DeleteDispatchPoolCommand {
     pub id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteDispatchPoolCommand {}
+
 /// Use case for deleting a dispatch pool.
 pub struct DeleteDispatchPoolUseCase<U: UnitOfWork> {
     dispatch_pool_repo: Arc<DispatchPoolRepository>,

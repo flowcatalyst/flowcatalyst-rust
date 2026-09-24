@@ -17,6 +17,8 @@ pub struct CreateIdpRoleMappingCommand {
     pub platform_role_name: String,
 }
 
+impl crate::usecase::AuditMasked for CreateIdpRoleMappingCommand {}
+
 pub struct CreateIdpRoleMappingUseCase<U: UnitOfWork> {
     idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
     unit_of_work: Arc<U>,

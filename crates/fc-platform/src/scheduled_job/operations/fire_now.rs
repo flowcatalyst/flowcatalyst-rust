@@ -34,6 +34,8 @@ pub struct FireScheduledJobCommand {
     pub correlation_id: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for FireScheduledJobCommand {}
+
 pub struct FireScheduledJobUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
     instance_repo: Arc<ScheduledJobInstanceRepository>,

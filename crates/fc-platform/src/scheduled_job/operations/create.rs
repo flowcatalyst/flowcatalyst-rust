@@ -37,6 +37,8 @@ pub struct CreateScheduledJobCommand {
     pub target_url: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for CreateScheduledJobCommand {}
+
 fn default_timezone() -> String {
     "UTC".into()
 }

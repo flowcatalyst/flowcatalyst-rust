@@ -26,6 +26,8 @@ pub struct AddCorsOriginCommand {
     pub description: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for AddCorsOriginCommand {}
+
 pub struct AddCorsOriginUseCase<U: UnitOfWork> {
     cors_repo: Arc<CorsOriginRepository>,
     unit_of_work: Arc<U>,

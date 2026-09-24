@@ -46,6 +46,8 @@ pub struct SyncDispatchPoolsCommand {
     pub remove_unlisted: bool,
 }
 
+impl crate::usecase::AuditMasked for SyncDispatchPoolsCommand {}
+
 pub struct SyncDispatchPoolsUseCase<U: UnitOfWork> {
     dispatch_pool_repo: Arc<DispatchPoolRepository>,
     unit_of_work: Arc<U>,

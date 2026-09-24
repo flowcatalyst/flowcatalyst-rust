@@ -67,6 +67,8 @@ pub struct UpdateSubscriptionCommand {
     pub data_only: Option<bool>,
 }
 
+impl crate::usecase::AuditMasked for UpdateSubscriptionCommand {}
+
 /// Use case for updating an existing subscription.
 pub struct UpdateSubscriptionUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,

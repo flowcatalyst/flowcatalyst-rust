@@ -35,6 +35,8 @@ pub struct AuthenticatePasskeyCommand {
     pub authentication_state: Option<PasskeyAuthentication>,
 }
 
+impl crate::usecase::AuditMasked for AuthenticatePasskeyCommand {}
+
 pub struct AuthenticationOutcome {
     pub principal_id: String,
     pub credential_id: String,

@@ -18,6 +18,8 @@ pub struct DeactivateApplicationCommand {
     pub id: String,
 }
 
+impl crate::usecase::AuditMasked for DeactivateApplicationCommand {}
+
 /// Use case for deactivating an application.
 pub struct DeactivateApplicationUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,

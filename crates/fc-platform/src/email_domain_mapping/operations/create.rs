@@ -33,6 +33,8 @@ pub struct CreateEmailDomainMappingCommand {
     pub sync_roles_from_idp: bool,
 }
 
+impl crate::usecase::AuditMasked for CreateEmailDomainMappingCommand {}
+
 pub struct CreateEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
     idp_repo: Arc<IdentityProviderRepository>,

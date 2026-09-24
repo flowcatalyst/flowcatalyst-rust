@@ -20,6 +20,8 @@ pub struct PauseSubscriptionCommand {
     pub subscription_id: String,
 }
 
+impl crate::usecase::AuditMasked for PauseSubscriptionCommand {}
+
 /// Use case for pausing a subscription.
 pub struct PauseSubscriptionUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,

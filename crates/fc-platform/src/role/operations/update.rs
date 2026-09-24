@@ -36,6 +36,8 @@ pub struct UpdateRoleCommand {
     pub client_managed: Option<bool>,
 }
 
+impl crate::usecase::AuditMasked for UpdateRoleCommand {}
+
 /// Use case for updating an existing role.
 pub struct UpdateRoleUseCase<U: UnitOfWork> {
     role_repo: Arc<RoleRepository>,

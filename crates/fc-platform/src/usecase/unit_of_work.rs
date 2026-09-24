@@ -26,6 +26,7 @@ use tracing::{debug, error};
 use super::domain_event::DomainEvent;
 use super::error::UseCaseError;
 use super::result::UseCaseResult;
+use fc_common::audit_redaction::{redacted_command_json, AuditMasked};
 
 // ─── Traits ──────────────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ pub trait UnitOfWork: Send + Sync {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync;
+        C: Serialize + AuditMasked + Send + Sync;
 
     /// Commit an aggregate delete via its repository, plus the domain event
     /// and audit log — all in a single transaction.
@@ -102,7 +103,7 @@ pub trait UnitOfWork: Send + Sync {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync;
+        C: Serialize + AuditMasked + Send + Sync;
 
     /// Emit a domain event and audit log without an entity change.
     ///
@@ -110,7 +111,7 @@ pub trait UnitOfWork: Send + Sync {
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync;
+        C: Serialize + AuditMasked + Send + Sync;
 
     /// Commit a batch of aggregate upserts of the same type via one repository,
     /// plus a single domain event and audit log — all in one transaction.
@@ -129,7 +130,7 @@ pub trait UnitOfWork: Send + Sync {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync;
+        C: Serialize + AuditMasked + Send + Sync;
 }
 
 // ─── PgUnitOfWork ────────────────────────────────────────────────────────────
@@ -216,7 +217,7 @@ impl PgUnitOfWork {
         Ok(())
     }
 
-    async fn persist_audit_log<E: DomainEvent, C: Serialize>(
+    async fn persist_audit_log<E: DomainEvent, C: Serialize + AuditMasked>(
         txn: &mut Transaction<'_, Postgres>,
         event: &E,
         command: &C,
@@ -253,7 +254,7 @@ impl PgUnitOfWork {
         Ok(())
     }
 
-    async fn persist_event_and_audit<E: DomainEvent, C: Serialize>(
+    async fn persist_event_and_audit<E: DomainEvent, C: Serialize + AuditMasked>(
         txn: &mut Transaction<'_, Postgres>,
         event: &E,
         command: &C,
@@ -336,7 +337,15 @@ pub(crate) struct AuditRow<'a> {
 }
 
 impl<'a> AuditRow<'a> {
-    pub(crate) fn from_event<E: DomainEvent, C: Serialize>(event: &'a E, command: &C) -> Self {
+    /// `operation_json` is the command redacted by the audit-redaction rule
+    /// (owner spec `docs/spec/audit-redaction.md`, Java repo): secret-named
+    /// keys and the command's declared [`AuditMasked`] fields become `"***"`
+    /// before the row exists, so no unit-of-work implementation can write a
+    /// password or secret into `aud_logs`.
+    pub(crate) fn from_event<E: DomainEvent, C: Serialize + AuditMasked>(
+        event: &'a E,
+        command: &C,
+    ) -> Self {
         let operation = std::any::type_name::<C>()
             .rsplit("::")
             .next()
@@ -348,7 +357,7 @@ impl<'a> AuditRow<'a> {
             entity_type: PgUnitOfWork::extract_aggregate_type(&meta.subject),
             entity_id: PgUnitOfWork::extract_entity_id(&meta.subject),
             operation,
-            operation_json: serde_json::to_value(command).ok(),
+            operation_json: redacted_command_json(command).ok(),
             principal_id: &meta.principal_id,
             performed_at: meta.time,
         }
@@ -368,7 +377,7 @@ impl UnitOfWork for PgUnitOfWork {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
             Ok(t) => t,
@@ -428,7 +437,7 @@ impl UnitOfWork for PgUnitOfWork {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
             Ok(t) => t,
@@ -487,7 +496,7 @@ impl UnitOfWork for PgUnitOfWork {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
             Ok(t) => t,
@@ -541,7 +550,7 @@ impl UnitOfWork for PgUnitOfWork {
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
             Ok(t) => t,
@@ -622,7 +631,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
         let txn = match guard.as_mut() {
@@ -664,7 +673,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
         let txn = match guard.as_mut() {
@@ -698,7 +707,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
         let txn = match guard.as_mut() {
@@ -728,7 +737,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
         let txn = match guard.as_mut() {
@@ -836,6 +845,9 @@ impl PgUnitOfWork {
 #[cfg(test)]
 pub struct InMemoryUnitOfWork {
     pub committed_events: std::sync::Mutex<Vec<String>>,
+    /// The `operation_json` each commit would write to `aud_logs` —
+    /// redacted exactly as the Postgres implementations redact it.
+    pub committed_audits: std::sync::Mutex<Vec<Option<serde_json::Value>>>,
 }
 
 #[cfg(test)]
@@ -850,7 +862,19 @@ impl InMemoryUnitOfWork {
     pub fn new() -> Self {
         Self {
             committed_events: std::sync::Mutex::new(Vec::new()),
+            committed_audits: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    fn record<E: DomainEvent, C: Serialize + AuditMasked>(&self, event: &E, command: &C) {
+        self.committed_events
+            .lock()
+            .unwrap()
+            .push(event.metadata().event_id.clone());
+        self.committed_audits
+            .lock()
+            .unwrap()
+            .push(AuditRow::from_event(event, command).operation_json);
     }
 }
 
@@ -862,18 +886,15 @@ impl UnitOfWork for InMemoryUnitOfWork {
         _aggregate: &A,
         _repository: &R,
         event: E,
-        _command: &C,
+        command: &C,
     ) -> UseCaseResult<E>
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
-        self.committed_events
-            .lock()
-            .unwrap()
-            .push(event.metadata().event_id.clone());
+        self.record(&event, command);
         UseCaseResult::success(event)
     }
 
@@ -882,30 +903,24 @@ impl UnitOfWork for InMemoryUnitOfWork {
         _aggregate: &A,
         _repository: &R,
         event: E,
-        _command: &C,
+        command: &C,
     ) -> UseCaseResult<E>
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
-        self.committed_events
-            .lock()
-            .unwrap()
-            .push(event.metadata().event_id.clone());
+        self.record(&event, command);
         UseCaseResult::success(event)
     }
 
-    async fn emit_event<E, C>(&self, event: E, _command: &C) -> UseCaseResult<E>
+    async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
-        self.committed_events
-            .lock()
-            .unwrap()
-            .push(event.metadata().event_id.clone());
+        self.record(&event, command);
         UseCaseResult::success(event)
     }
 
@@ -914,18 +929,15 @@ impl UnitOfWork for InMemoryUnitOfWork {
         _aggregates: &[A],
         _repository: &R,
         event: E,
-        _command: &C,
+        command: &C,
     ) -> UseCaseResult<E>
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
         E: DomainEvent + Send + 'static,
-        C: Serialize + Send + Sync,
+        C: Serialize + AuditMasked + Send + Sync,
     {
-        self.committed_events
-            .lock()
-            .unwrap()
-            .push(event.metadata().event_id.clone());
+        self.record(&event, command);
         UseCaseResult::success(event)
     }
 }
@@ -951,5 +963,76 @@ mod tests {
     fn test_extract_entity_id() {
         assert_eq!(PgUnitOfWork::extract_entity_id("platform.user.123"), "123");
         assert_eq!(PgUnitOfWork::extract_entity_id("platform.user"), "");
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LeakyCommand {
+        email: &'static str,
+        new_password: &'static str,
+        webhook: serde_json::Value,
+        value: &'static str,
+    }
+
+    impl AuditMasked for LeakyCommand {
+        fn audit_masked_fields(&self) -> &'static [&'static str] {
+            &["value"]
+        }
+    }
+
+    const LEAKY: LeakyCommand = LeakyCommand {
+        email: "a@b.c",
+        new_password: "hunter2",
+        webhook: serde_json::Value::Null,
+        value: "sk_live_123",
+    };
+
+    fn leaky() -> LeakyCommand {
+        LeakyCommand {
+            webhook: serde_json::json!({"authType": "HMAC_SIGNATURE", "signingSecret": "s3"}),
+            ..LEAKY
+        }
+    }
+
+    fn user_created() -> crate::principal::operations::events::UserCreated {
+        crate::principal::operations::events::UserCreated::new(
+            &super::super::ExecutionContext::create("prn_actor"),
+            "prn_1",
+            "a@b.c",
+            "A",
+            crate::principal::entity::UserScope::Anchor,
+            None,
+        )
+    }
+
+    /// The row every Postgres implementation (PgUnitOfWork and
+    /// TxScopedUnitOfWork both go through `persist_audit_log`) writes.
+    #[test]
+    fn the_audit_row_is_redacted() {
+        let event = user_created();
+        let json = AuditRow::from_event(&event, &leaky())
+            .operation_json
+            .expect("operation_json");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "email": "a@b.c",
+                "newPassword": "***",
+                "webhook": {"authType": "HMAC_SIGNATURE", "signingSecret": "***"},
+                "value": "***",
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_in_memory_unit_of_work_records_the_redacted_audit() {
+        let uow = InMemoryUnitOfWork::new();
+        let _ = uow.emit_event(user_created(), &leaky()).await;
+        let audits = uow.committed_audits.lock().unwrap();
+        let json = audits[0].as_ref().expect("operation_json").to_string();
+        for secret in ["hunter2", "s3", "sk_live_123"] {
+            assert!(!json.contains(secret), "{secret} reached the audit: {json}");
+        }
+        assert!(json.contains("a@b.c"));
     }
 }

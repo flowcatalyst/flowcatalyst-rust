@@ -17,6 +17,8 @@ pub struct DeleteIdentityProviderCommand {
     pub idp_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteIdentityProviderCommand {}
+
 /// Use case for deleting an identity provider.
 pub struct DeleteIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,

@@ -27,6 +27,8 @@ pub struct RegisterPasskeyCommand {
     pub registration_state: Option<PasskeyRegistration>,
 }
 
+impl crate::usecase::AuditMasked for RegisterPasskeyCommand {}
+
 pub struct RegisterPasskeyUseCase<U: UnitOfWork> {
     credential_repo: Arc<WebauthnCredentialRepository>,
     webauthn_service: Arc<WebauthnService>,

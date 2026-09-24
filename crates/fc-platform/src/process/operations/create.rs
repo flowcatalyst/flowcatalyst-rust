@@ -27,6 +27,8 @@ pub struct CreateProcessCommand {
     pub tags: Vec<String>,
 }
 
+impl crate::usecase::AuditMasked for CreateProcessCommand {}
+
 pub struct CreateProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
     unit_of_work: Arc<U>,

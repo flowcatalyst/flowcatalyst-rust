@@ -64,6 +64,8 @@ pub struct SyncScheduledJobsCommand {
     pub archive_unlisted: bool,
 }
 
+impl crate::usecase::AuditMasked for SyncScheduledJobsCommand {}
+
 pub struct SyncScheduledJobsUseCase<U: UnitOfWork> {
     repo: Arc<ScheduledJobRepository>,
     unit_of_work: Arc<U>,

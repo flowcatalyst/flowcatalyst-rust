@@ -35,6 +35,8 @@ pub struct CreateEventTypeCommand {
     pub schema: Option<serde_json::Value>,
 }
 
+impl crate::usecase::AuditMasked for CreateEventTypeCommand {}
+
 /// Use case for creating a new event type.
 ///
 /// # Example

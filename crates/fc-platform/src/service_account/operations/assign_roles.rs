@@ -25,6 +25,8 @@ pub struct AssignRolesCommand {
     pub roles: Vec<String>,
 }
 
+impl crate::usecase::AuditMasked for AssignRolesCommand {}
+
 /// Use case for assigning roles to a service account.
 pub struct AssignRolesUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,

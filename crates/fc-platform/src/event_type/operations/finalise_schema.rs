@@ -23,6 +23,8 @@ pub struct FinaliseSchemaCommand {
     pub version: String,
 }
 
+impl crate::usecase::AuditMasked for FinaliseSchemaCommand {}
+
 /// Use case for finalising a schema version (FINALISING → CURRENT).
 pub struct FinaliseSchemaUseCase<U: UnitOfWork> {
     event_type_repo: Arc<EventTypeRepository>,

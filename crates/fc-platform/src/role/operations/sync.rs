@@ -41,6 +41,8 @@ pub struct SyncRolesCommand {
     pub remove_unlisted: bool,
 }
 
+impl crate::usecase::AuditMasked for SyncRolesCommand {}
+
 pub struct SyncRolesUseCase<U: UnitOfWork> {
     role_repo: Arc<RoleRepository>,
     application_repo: Arc<crate::ApplicationRepository>,

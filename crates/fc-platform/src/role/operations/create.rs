@@ -40,6 +40,8 @@ pub struct CreateRoleCommand {
     pub source: RoleSource,
 }
 
+impl crate::usecase::AuditMasked for CreateRoleCommand {}
+
 /// Use case for creating a new role.
 pub struct CreateRoleUseCase<U: UnitOfWork> {
     role_repo: Arc<RoleRepository>,

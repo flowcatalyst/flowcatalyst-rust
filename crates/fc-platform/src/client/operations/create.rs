@@ -27,6 +27,8 @@ pub struct CreateClientCommand {
     pub identifier: String,
 }
 
+impl crate::usecase::AuditMasked for CreateClientCommand {}
+
 /// Use case for creating a new client.
 pub struct CreateClientUseCase<U: UnitOfWork> {
     client_repo: Arc<ClientRepository>,

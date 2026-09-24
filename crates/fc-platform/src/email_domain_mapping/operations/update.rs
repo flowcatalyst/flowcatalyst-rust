@@ -34,6 +34,8 @@ pub struct UpdateEmailDomainMappingCommand {
     pub allowed_role_ids: Option<Vec<String>>,
 }
 
+impl crate::usecase::AuditMasked for UpdateEmailDomainMappingCommand {}
+
 pub struct UpdateEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
     unit_of_work: Arc<U>,

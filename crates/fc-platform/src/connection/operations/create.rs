@@ -33,6 +33,8 @@ pub struct CreateConnectionCommand {
     pub client_id: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for CreateConnectionCommand {}
+
 pub struct CreateConnectionUseCase<U: UnitOfWork> {
     connection_repo: Arc<ConnectionRepository>,
     service_account_repo: Arc<ServiceAccountRepository>,

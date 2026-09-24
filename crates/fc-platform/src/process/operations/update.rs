@@ -27,6 +27,8 @@ pub struct UpdateProcessCommand {
     pub tags: Option<Vec<String>>,
 }
 
+impl crate::usecase::AuditMasked for UpdateProcessCommand {}
+
 pub struct UpdateProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
     unit_of_work: Arc<U>,

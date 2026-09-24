@@ -64,6 +64,8 @@ pub struct CreateServiceAccountCommand {
     pub application_id: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for CreateServiceAccountCommand {}
+
 /// Result returned from create service account use case.
 /// Contains the event plus one-time secrets that need to be returned to caller.
 /// The secrets are never serialized, so this serializes exactly as the event.

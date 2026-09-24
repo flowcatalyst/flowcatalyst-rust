@@ -18,6 +18,8 @@ pub struct DeleteConnectionCommand {
     pub connection_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteConnectionCommand {}
+
 pub struct DeleteConnectionUseCase<U: UnitOfWork> {
     connection_repo: Arc<ConnectionRepository>,
     subscription_repo: Arc<SubscriptionRepository>,

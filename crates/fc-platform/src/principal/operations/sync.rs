@@ -50,6 +50,8 @@ pub struct SyncPrincipalsCommand {
     pub remove_unlisted: bool,
 }
 
+impl crate::usecase::AuditMasked for SyncPrincipalsCommand {}
+
 pub struct SyncPrincipalsUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
     application_repo: Arc<ApplicationRepository>,

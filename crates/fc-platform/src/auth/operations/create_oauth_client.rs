@@ -39,6 +39,8 @@ pub struct CreateOAuthClientCommand {
     pub created_by: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for CreateOAuthClientCommand {}
+
 pub struct CreateOAuthClientUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
     unit_of_work: Arc<U>,

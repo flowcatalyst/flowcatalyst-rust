@@ -23,6 +23,8 @@ pub struct DeactivateUserCommand {
     pub reason: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for DeactivateUserCommand {}
+
 /// Use case for deactivating an active user.
 pub struct DeactivateUserUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,

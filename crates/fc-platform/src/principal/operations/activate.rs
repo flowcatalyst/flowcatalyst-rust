@@ -19,6 +19,8 @@ pub struct ActivateUserCommand {
     pub principal_id: String,
 }
 
+impl crate::usecase::AuditMasked for ActivateUserCommand {}
+
 /// Use case for activating a deactivated user.
 pub struct ActivateUserUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,

@@ -28,6 +28,8 @@ pub struct UpdateConnectionCommand {
     pub service_account_id: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for UpdateConnectionCommand {}
+
 pub struct UpdateConnectionUseCase<U: UnitOfWork> {
     connection_repo: Arc<ConnectionRepository>,
     unit_of_work: Arc<U>,

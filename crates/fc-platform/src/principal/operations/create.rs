@@ -67,6 +67,8 @@ pub struct CreateUserCommand {
     pub idp_type: Option<IdentityProviderType>,
 }
 
+impl crate::usecase::AuditMasked for CreateUserCommand {}
+
 /// Use case for creating a new user.
 pub struct CreateUserUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,

@@ -17,6 +17,8 @@ pub struct DeleteAnchorDomainCommand {
     pub anchor_domain_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteAnchorDomainCommand {}
+
 pub struct DeleteAnchorDomainUseCase<U: UnitOfWork> {
     anchor_domain_repo: Arc<AnchorDomainRepository>,
     unit_of_work: Arc<U>,

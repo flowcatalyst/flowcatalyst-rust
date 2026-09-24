@@ -21,6 +21,8 @@ pub struct DeleteEventTypeCommand {
     pub event_type_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteEventTypeCommand {}
+
 /// Use case for deleting an event type.
 ///
 /// Can only delete if:

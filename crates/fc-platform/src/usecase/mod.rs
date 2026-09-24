@@ -23,3 +23,7 @@ pub use execution_context::ExecutionContext;
 pub use result::UseCaseResult;
 pub use unit_of_work::{DbTx, HasId, Persist, PgUnitOfWork, UnitOfWork};
 pub use use_case::UseCase;
+
+/// A command's declared audit-masked fields (see `fc_common::audit_redaction`).
+/// Every command a unit of work audits implements it; most declare none.
+pub use fc_common::audit_redaction::AuditMasked;

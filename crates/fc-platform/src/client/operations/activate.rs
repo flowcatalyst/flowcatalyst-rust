@@ -19,6 +19,8 @@ pub struct ActivateClientCommand {
     pub client_id: String,
 }
 
+impl crate::usecase::AuditMasked for ActivateClientCommand {}
+
 /// Use case for activating a suspended or pending client.
 pub struct ActivateClientUseCase<U: UnitOfWork> {
     client_repo: Arc<ClientRepository>,

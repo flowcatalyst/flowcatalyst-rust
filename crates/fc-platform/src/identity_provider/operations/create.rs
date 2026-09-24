@@ -30,6 +30,8 @@ pub struct CreateIdentityProviderCommand {
     pub allowed_email_domains: Vec<String>,
 }
 
+impl crate::usecase::AuditMasked for CreateIdentityProviderCommand {}
+
 /// Use case for creating a new identity provider.
 pub struct CreateIdentityProviderUseCase<U: UnitOfWork> {
     idp_repo: Arc<IdentityProviderRepository>,

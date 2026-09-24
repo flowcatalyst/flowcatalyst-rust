@@ -27,6 +27,8 @@ pub struct AttachServiceAccountToApplicationCommand {
     pub service_account_code: String,
 }
 
+impl crate::usecase::AuditMasked for AttachServiceAccountToApplicationCommand {}
+
 pub struct AttachServiceAccountToApplicationUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,
     unit_of_work: Arc<U>,

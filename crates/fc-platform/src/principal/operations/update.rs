@@ -44,6 +44,8 @@ pub struct UpdateUserCommand {
     pub client_id: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for UpdateUserCommand {}
+
 /// Use case for updating an existing user.
 pub struct UpdateUserUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,

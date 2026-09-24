@@ -17,6 +17,8 @@ pub struct DeleteProcessCommand {
     pub process_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteProcessCommand {}
+
 pub struct DeleteProcessUseCase<U: UnitOfWork> {
     process_repo: Arc<ProcessRepository>,
     unit_of_work: Arc<U>,

@@ -10,7 +10,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
 
 use super::unit_of_work::{AuditRow, EventRow};
-use super::{DomainEvent, ExecutionContext};
+use super::{AuditMasked, DomainEvent, ExecutionContext};
 
 use crate::application::operations::events::{ApplicationClientConfigUpdated, ApplicationCreated};
 use crate::application_openapi_spec::operations::events::ApplicationOpenApiSpecSynced;
@@ -93,12 +93,14 @@ struct SnapshotCommand {
     target_id: &'static str,
 }
 
+impl AuditMasked for SnapshotCommand {}
+
 const CMD: SnapshotCommand = SnapshotCommand {
     target_id: "cmd-target",
 };
 
 /// Everything a commit writes for `event`, as one compact JSON string.
-fn persisted<E: DomainEvent, C: Serialize>(event: &E, command: &C) -> String {
+fn persisted<E: DomainEvent, C: Serialize + AuditMasked>(event: &E, command: &C) -> String {
     let event_row = EventRow::from_event(event).expect("event row");
     let audit_row = AuditRow::from_event(event, command);
     serde_json::to_string(&serde_json::json!({
@@ -613,6 +615,12 @@ fn test_encryption() -> EncryptionService {
     EncryptionService::new(&EncryptionService::generate_key()).unwrap()
 }
 
+/// The `aud_logs.operation_json` column of `persisted(..)` output.
+fn audit_json(rows: &str) -> serde_json::Value {
+    let json: serde_json::Value = serde_json::from_str(rows).expect("rows are JSON");
+    json["aud_logs"]["operation_json"].clone()
+}
+
 #[track_caller]
 fn assert_no_plaintext(rows: &str, plaintext: &str) {
     assert!(
@@ -642,7 +650,13 @@ fn oauth_client_secret_rotation_persists_only_the_hash() {
     );
     let rows = persisted(&e, &cmd);
     assert_no_plaintext(&rows, OAUTH_CLIENT_SECRET);
-    assert!(rows.contains("hashed:v1:"));
+    // The hash itself no longer reaches the audit row either: the
+    // audit-redaction rule masks every `*SecretRef` key.
+    assert!(!rows.contains("hashed:v1:"));
+    assert_eq!(
+        audit_json(&rows)["newClientSecretRef"],
+        fc_common::audit_redaction::MASK
+    );
 }
 
 #[test]
@@ -672,7 +686,13 @@ fn identity_provider_create_persists_no_plaintext_secret() {
     ));
     let rows = persisted(&e, &cmd);
     assert_no_plaintext(&rows, IDP_SECRET);
-    assert!(rows.contains("encrypted:"));
+    // Neither the plaintext nor the sealed ref reaches the audit row: the
+    // audit-redaction rule masks every `*SecretRef` key.
+    assert!(!rows.contains("encrypted:"));
+    assert_eq!(
+        audit_json(&rows)["oidcClientSecretRef"],
+        fc_common::audit_redaction::MASK
+    );
 }
 
 #[test]
@@ -692,7 +712,13 @@ fn identity_provider_update_persists_no_plaintext_secret() {
     let e = fixed!(IdentityProviderUpdated::new(&ctx(), "idp_1", None));
     let rows = persisted(&e, &cmd);
     assert_no_plaintext(&rows, IDP_SECRET);
-    assert!(rows.contains("encrypted:"));
+    // Neither the plaintext nor the sealed ref reaches the audit row: the
+    // audit-redaction rule masks every `*SecretRef` key.
+    assert!(!rows.contains("encrypted:"));
+    assert_eq!(
+        audit_json(&rows)["oidcClientSecretRef"],
+        fc_common::audit_redaction::MASK
+    );
 }
 
 #[test]
@@ -766,21 +792,21 @@ fn service_account_commands_persist_no_generated_credentials() {
 }
 
 /// Setting a SECRET property: the audit row records the command with the
-/// value masked, and the operation name is unchanged. A PLAIN value is
-/// recorded as sent.
+/// value masked (the command's declared AuditMasked field), and the
+/// operation name is unchanged. Only an explicit PLAIN type records the
+/// value as sent: an omitted type keeps the property's current type, which
+/// may be SECRET (owner spec `docs/spec/audit-redaction.md`, Java repo).
 #[test]
 fn platform_config_secret_persists_no_plaintext_value() {
     const SECRET: &str = "smtp-plaintext-password";
-    let cmd = SetPlatformConfigPropertyCommand {
+    let cmd = |value_type: Option<ConfigValueType>| SetPlatformConfigPropertyCommand {
         application_code: "orders".to_string(),
         section: "email".to_string(),
-        property: "smtp_password".to_string(),
+        property: "smtp_host".to_string(),
         value: SECRET.to_string(),
         scope: ConfigScope::Global,
         client_id: None,
-        // Omitted on an update of an existing SECRET: the stored type
-        // decides, not the command.
-        value_type: None,
+        value_type,
         description: None,
     };
     let e = fixed!(PlatformConfigPropertySet {
@@ -788,24 +814,27 @@ fn platform_config_secret_persists_no_plaintext_value() {
         config_id: "pcf_1".to_string(),
         application_code: "orders".to_string(),
         section: "email".to_string(),
-        property: "smtp_password".to_string(),
+        property: "smtp_host".to_string(),
         scope: "GLOBAL".to_string(),
         client_id: None,
         value_type: "SECRET".to_string(),
         was_created: false,
     });
 
-    let rows = persisted(&e, &cmd.audit_view(ConfigValueType::Secret));
-    assert_no_plaintext(&rows, SECRET);
-    let json: serde_json::Value = serde_json::from_str(&rows).unwrap();
-    assert_eq!(
-        json["aud_logs"]["operation"],
-        "SetPlatformConfigPropertyCommand"
-    );
-    assert_eq!(json["aud_logs"]["operation_json"]["value"], "***");
+    for value_type in [Some(ConfigValueType::Secret), None] {
+        let rows = persisted(&e, &cmd(value_type));
+        assert_no_plaintext(&rows, SECRET);
+        let json: serde_json::Value = serde_json::from_str(&rows).unwrap();
+        assert_eq!(
+            json["aud_logs"]["operation"],
+            "SetPlatformConfigPropertyCommand"
+        );
+        assert_eq!(json["aud_logs"]["operation_json"]["value"], "***");
+    }
 
-    let rows = persisted(&e, &cmd.audit_view(ConfigValueType::Plain));
+    let rows = persisted(&e, &cmd(Some(ConfigValueType::Plain)));
     assert!(rows.contains(SECRET), "a PLAIN value is audited as sent");
+    assert_eq!(audit_json(&rows)["valueType"], "PLAIN");
 }
 
 // ── expected rows ───────────────────────────────────────────────────────────

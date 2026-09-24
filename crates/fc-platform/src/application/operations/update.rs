@@ -35,6 +35,8 @@ pub struct UpdateApplicationCommand {
     pub icon_url: Option<String>,
 }
 
+impl crate::usecase::AuditMasked for UpdateApplicationCommand {}
+
 /// Use case for updating an application.
 pub struct UpdateApplicationUseCase<U: UnitOfWork> {
     application_repo: Arc<ApplicationRepository>,

@@ -17,6 +17,8 @@ pub struct DeleteOAuthClientCommand {
     pub oauth_client_id: String,
 }
 
+impl crate::usecase::AuditMasked for DeleteOAuthClientCommand {}
+
 pub struct DeleteOAuthClientUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
     unit_of_work: Arc<U>,
