@@ -133,6 +133,15 @@ struct PrincipalApplicationAccessRow {
     application_id: String,
 }
 
+/// The application-access facts for one principal, without hydrating the
+/// rest of it: the application it is bound to (an application's service
+/// account) and its explicit `iam_principal_application_access` grants.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PrincipalApplicationBinding {
+    pub application_id: Option<String>,
+    pub granted_application_ids: Vec<String>,
+}
+
 // ── Repository ───────────────────────────────────────────────────────────────
 
 pub struct PrincipalRepository {
@@ -231,6 +240,25 @@ impl PrincipalRepository {
             Some(r) => Ok(Some(self.hydrate_principal(r).await?)),
             None => Ok(None),
         }
+    }
+
+    /// Load the application binding and grants for one principal in a single
+    /// indexed query (both lookups hit a primary key). `None` when no such
+    /// principal exists.
+    pub async fn find_application_binding(
+        &self,
+        principal_id: &str,
+    ) -> Result<Option<PrincipalApplicationBinding>> {
+        let row = sqlx::query_as::<_, PrincipalApplicationBinding>(
+            "SELECT p.application_id,
+                    ARRAY(SELECT a.application_id FROM iam_principal_application_access a
+                          WHERE a.principal_id = p.id) AS granted_application_ids
+             FROM iam_principals p WHERE p.id = $1",
+        )
+        .bind(principal_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     pub async fn find_by_service_account(

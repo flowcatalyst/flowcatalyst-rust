@@ -2,10 +2,13 @@
 //!
 //! Permission-based access control with role resolution.
 
+use crate::application::entity::Application;
 use crate::permissions;
+use crate::principal::repository::PrincipalApplicationBinding;
 use crate::shared::error::{PlatformError, Result};
 use crate::AccessTokenClaims;
 use crate::RoleRepository;
+use crate::{ApplicationRepository, PrincipalRepository};
 use crate::{PrincipalType, UserScope};
 use dashmap::DashMap;
 use std::collections::HashSet;
@@ -231,6 +234,122 @@ impl AuthorizationService {
             )));
         }
         Ok(())
+    }
+}
+
+/// Which applications a principal may act on. Application access is its own
+/// axis, orthogonal to the client tier: every service account is ANCHOR
+/// scope, so tier cannot say "only its own application".
+///
+/// Derived from existing data, matching Go's defaults (Go stores an
+/// `all_applications` flag, default true, cleared only when an application's
+/// service account is provisioned):
+/// - a principal bound to an application (`iam_principals.application_id`,
+///   set for an application's service account) may act on that application
+///   plus its explicit `iam_principal_application_access` grants, even at
+///   anchor tier;
+/// - an unbound principal may act on every application.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApplicationScope {
+    /// Every application, present and future.
+    All,
+    /// Only these application ids.
+    Only(HashSet<String>),
+}
+
+impl ApplicationScope {
+    /// Build the scope from a principal's binding. `None` (no such principal)
+    /// grants nothing.
+    pub fn from_binding(binding: Option<PrincipalApplicationBinding>) -> Self {
+        match binding {
+            None => Self::Only(HashSet::new()),
+            Some(PrincipalApplicationBinding {
+                application_id: None,
+                ..
+            }) => Self::All,
+            Some(PrincipalApplicationBinding {
+                application_id: Some(own),
+                granted_application_ids,
+            }) => {
+                let mut ids: HashSet<String> = granted_application_ids.into_iter().collect();
+                ids.insert(own);
+                Self::Only(ids)
+            }
+        }
+    }
+
+    pub fn allows(&self, application_id: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(ids) => ids.contains(application_id),
+        }
+    }
+}
+
+/// Cached application scope with TTL
+struct CachedApplicationScope {
+    scope: ApplicationScope,
+    cached_at: Instant,
+}
+
+/// Resolves `/{appCode}` path targets against the caller's application
+/// scope. The scope costs one indexed query per principal, cached for the
+/// same TTL as resolved permissions.
+pub struct ApplicationAccessService {
+    principal_repo: Arc<PrincipalRepository>,
+    application_repo: Arc<ApplicationRepository>,
+    /// Cache: principal id → application scope
+    scope_cache: DashMap<String, CachedApplicationScope>,
+}
+
+impl ApplicationAccessService {
+    pub fn new(
+        principal_repo: Arc<PrincipalRepository>,
+        application_repo: Arc<ApplicationRepository>,
+    ) -> Self {
+        Self {
+            principal_repo,
+            application_repo,
+            scope_cache: DashMap::new(),
+        }
+    }
+
+    /// The caller's application scope (cached).
+    pub async fn scope_for(&self, principal_id: &str) -> Result<ApplicationScope> {
+        if let Some(entry) = self.scope_cache.get(principal_id) {
+            if entry.cached_at.elapsed().as_secs() < PERMISSION_CACHE_TTL_SECS {
+                return Ok(entry.scope.clone());
+            }
+        }
+
+        let binding = self
+            .principal_repo
+            .find_application_binding(principal_id)
+            .await?;
+        let scope = ApplicationScope::from_binding(binding);
+        self.scope_cache.insert(
+            principal_id.to_string(),
+            CachedApplicationScope {
+                scope: scope.clone(),
+                cached_at: Instant::now(),
+            },
+        );
+        Ok(scope)
+    }
+
+    /// Resolve the application named by `app_code` and require the caller
+    /// may act on it. Call after the handler's permission check. A missing
+    /// application and one outside the caller's scope give the same 404.
+    pub async fn require_application_access(
+        &self,
+        context: &AuthContext,
+        app_code: &str,
+    ) -> Result<Application> {
+        let (application, scope) = tokio::try_join!(
+            self.application_repo.find_by_code(app_code),
+            self.scope_for(&context.principal_id),
+        )?;
+        checks::require_application_access(context, &scope, app_code, application)
     }
 }
 
@@ -771,6 +890,28 @@ pub mod checks {
             Err(PlatformError::forbidden("Cannot sync principals"))
         }
     }
+
+    /// Resource scope for `/{appCode}` routes. `application` is what
+    /// `app_code` resolved to (`None` if nothing). The caller may act on it
+    /// when its scope covers it or it is the application's own service
+    /// account. Otherwise the answer is the same 404 as a missing
+    /// application, so the route can't be used to probe which codes exist.
+    pub fn require_application_access(
+        context: &AuthContext,
+        scope: &ApplicationScope,
+        app_code: &str,
+        application: Option<Application>,
+    ) -> Result<Application> {
+        match application {
+            Some(app)
+                if scope.allows(&app.id)
+                    || app.service_account_id.as_deref() == Some(&context.principal_id) =>
+            {
+                Ok(app)
+            }
+            _ => Err(PlatformError::not_found("Application", app_code)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1099,5 +1240,86 @@ mod tests {
         assert!(checks::can_read_event_types(&ctx).is_ok());
         assert!(checks::can_read_subscriptions(&ctx).is_ok());
         assert!(checks::can_read_dispatch_jobs(&ctx).is_ok());
+    }
+
+    // ── Application scope ─────────────────────────────────────────────
+
+    fn binding(own: Option<&str>, granted: &[&str]) -> Option<PrincipalApplicationBinding> {
+        Some(PrincipalApplicationBinding {
+            application_id: own.map(String::from),
+            granted_application_ids: granted.iter().map(|s| s.to_string()).collect(),
+        })
+    }
+
+    #[test]
+    fn test_application_scope_from_binding() {
+        // Unbound principal: every application.
+        let all = ApplicationScope::from_binding(binding(None, &[]));
+        assert_eq!(all, ApplicationScope::All);
+        assert!(all.allows("app_any"));
+        // Grants don't narrow an unbound principal.
+        assert!(ApplicationScope::from_binding(binding(None, &["app_1"])).allows("app_2"));
+
+        // Bound principal: its own application.
+        let own = ApplicationScope::from_binding(binding(Some("app_own"), &[]));
+        assert!(own.allows("app_own"));
+        assert!(!own.allows("app_other"));
+
+        // Bound principal with grants: own plus each grant, nothing else.
+        let many = ApplicationScope::from_binding(binding(Some("app_own"), &["app_1", "app_2"]));
+        assert!(many.allows("app_own"));
+        assert!(many.allows("app_1"));
+        assert!(many.allows("app_2"));
+        assert!(!many.allows("app_3"));
+
+        // No such principal: nothing.
+        assert!(!ApplicationScope::from_binding(None).allows("app_own"));
+    }
+
+    fn app(id: &str, code: &str, service_account_id: Option<&str>) -> Application {
+        let mut app = Application::new(code, code);
+        app.id = id.to_string();
+        app.service_account_id = service_account_id.map(String::from);
+        app
+    }
+
+    #[test]
+    fn test_require_application_access() {
+        // Anchor scope and the ADMIN_ALL wildcard don't widen a bound scope.
+        let ctx = create_test_context(vec!["platform:*:*:*"], "ANCHOR", vec!["*"]);
+        let own = ApplicationScope::from_binding(binding(Some("app_a"), &[]));
+
+        let ok = checks::require_application_access(&ctx, &own, "a", Some(app("app_a", "a", None)));
+        assert_eq!(ok.expect("own application").id, "app_a");
+
+        let out_of_scope =
+            checks::require_application_access(&ctx, &own, "b", Some(app("app_b", "b", None)))
+                .unwrap_err();
+        let missing = checks::require_application_access(&ctx, &own, "b", None).unwrap_err();
+        assert!(matches!(out_of_scope, PlatformError::NotFound { .. }));
+        assert_eq!(format!("{:?}", out_of_scope), format!("{:?}", missing));
+
+        // An unbound caller still gets 404 for a missing application.
+        let missing_all =
+            checks::require_application_access(&ctx, &ApplicationScope::All, "b", None)
+                .unwrap_err();
+        assert_eq!(format!("{:?}", missing_all), format!("{:?}", missing));
+    }
+
+    #[test]
+    fn test_require_application_access_own_service_account() {
+        // The application's attached service account passes even when its
+        // principal row carries no binding.
+        let ctx = create_test_context(vec![], "ANCHOR", vec![]);
+        let nothing = ApplicationScope::from_binding(None);
+        let attached = app("app_a", "a", Some(&ctx.principal_id));
+        assert!(checks::require_application_access(&ctx, &nothing, "a", Some(attached)).is_ok());
+        assert!(checks::require_application_access(
+            &ctx,
+            &nothing,
+            "a",
+            Some(app("app_a", "a", None))
+        )
+        .is_err());
     }
 }
