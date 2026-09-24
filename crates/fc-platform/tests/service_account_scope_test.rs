@@ -1,7 +1,7 @@
-//! A service account's client tier is the one chosen for it, and it lands on
-//! the principal its tokens are built from. Before this, every service
-//! account was ANCHOR and passed every `require_anchor` guard. Requires
-//! Docker.
+//! A service account's client tier follows its client links, as in Go (none
+//! → ANCHOR, one → CLIENT, several → PARTNER), and lands on the principal its
+//! tokens are built from. The requested scope is stored as sent and echoed,
+//! but doesn't decide the tier. Requires Docker.
 
 #[path = "support/mod.rs"]
 mod support;
@@ -79,9 +79,10 @@ async fn client_scope_service_account_is_not_anchor() {
         json!({ "code": "clt-bot", "name": "Client bot", "scope": "CLIENT", "clientIds": [clt] }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["serviceAccount"]["scope"], "CLIENT");
     assert_eq!(body["serviceAccount"]["clientIds"], json!([clt]));
+    assert_eq!(body["principalId"], body["serviceAccount"]["id"]);
 
     let id = body["serviceAccount"]["id"].as_str().unwrap();
     let p = principal(&app, id).await;
@@ -111,7 +112,7 @@ async fn anchor_scope_service_account_is_still_anchor() {
         json!({ "code": "anchor-bot", "name": "Anchor bot", "scope": "ANCHOR" }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["serviceAccount"]["scope"], "ANCHOR");
 
     let p = principal(&app, body["serviceAccount"]["id"].as_str().unwrap()).await;
@@ -123,16 +124,17 @@ async fn anchor_scope_service_account_is_still_anchor() {
     );
     assert_eq!(
         anchor_only_status(&app, &token, "made-by-anchor-bot").await,
-        StatusCode::OK
+        StatusCode::CREATED
     );
 }
 
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn bad_scope_or_links_are_rejected() {
+async fn unknown_scope_or_client_is_rejected() {
     let app = setup().await;
     let clt = create_client(&app, "scope-bad").await;
 
+    // Unrecognised values are a 400 (X-06); Go stores them as sent.
     for scope in ["ROOT", "client", "Anchor", ""] {
         let (status, body) = create_sa(
             &app,
@@ -140,19 +142,6 @@ async fn bad_scope_or_links_are_rejected() {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{scope:?}: {body}");
-    }
-
-    for (scope, clients) in [
-        ("ANCHOR", json!([clt])),
-        ("CLIENT", json!([])),
-        ("PARTNER", json!([])),
-    ] {
-        let (status, body) = create_sa(
-            &app,
-            json!({ "code": "bad-links", "name": "x", "scope": scope, "clientIds": clients }),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{scope}: {body}");
     }
 
     // A client that doesn't exist is named, not silently linked.
@@ -164,7 +153,7 @@ async fn bad_scope_or_links_are_rejected() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 
     // Nothing was created by any of these.
-    for code in ["bad-scope", "bad-links", "ghost"] {
+    for code in ["bad-scope", "ghost"] {
         assert!(app
             .repos
             .service_account_repo
@@ -172,6 +161,35 @@ async fn bad_scope_or_links_are_rejected() {
             .await
             .unwrap()
             .is_none());
+    }
+}
+
+/// A scope that disagrees with the links is stored as sent, and the tier
+/// follows the links, as Go does (create_credentials.go:102, 125). CLIENT
+/// with no clients therefore gives an ANCHOR principal: a known Go behaviour,
+/// kept on purpose and flagged to the owner as a risk.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn requested_scope_is_stored_and_the_tier_follows_the_links() {
+    let app = setup().await;
+    let clt = create_client(&app, "scope-go").await;
+
+    for (code, scope, clients, tier) in [
+        ("anchor-one", "ANCHOR", json!([clt]), UserScope::Client),
+        ("client-none", "CLIENT", json!([]), UserScope::Anchor),
+        ("partner-none", "PARTNER", json!([]), UserScope::Anchor),
+        ("partner-one", "PARTNER", json!([clt]), UserScope::Client),
+    ] {
+        let (status, body) = create_sa(
+            &app,
+            json!({ "code": code, "name": code, "scope": scope, "clientIds": clients }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{code}: {body}");
+        assert_eq!(body["serviceAccount"]["scope"], scope, "{code}");
+        assert_eq!(body["serviceAccount"]["clientIds"], clients, "{code}");
+        let p = principal(&app, body["serviceAccount"]["id"].as_str().unwrap()).await;
+        assert_eq!(p.scope, tier, "{code}");
     }
 }
 
@@ -193,7 +211,8 @@ async fn absent_scope_follows_the_client_links() {
             json!({ "code": code, "name": code, "clientIds": clients }),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{code}: {body}");
+        assert_eq!(status, StatusCode::CREATED, "{code}: {body}");
+        assert!(body["serviceAccount"].get("scope").is_none(), "{code}");
         let p = principal(&app, body["serviceAccount"]["id"].as_str().unwrap()).await;
         assert_eq!(p.scope, expected, "{code}");
     }
@@ -258,9 +277,16 @@ async fn update_moves_the_principal_reach() {
     assert_eq!(p.client_id.as_deref(), Some(b.as_str()));
     assert!(p.assigned_clients.is_empty());
 
-    // A scope the links don't support is refused and changes nothing.
+    // A scope alone is stored as sent and leaves the principal as it is, as
+    // in Go; an unrecognised one is a 400.
     let resp = app.put(&path, &admin, json!({ "scope": "ANCHOR" })).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let (_, read) = read_json(app.get(&path, &admin).await).await;
+    assert_eq!(read["scope"], "ANCHOR");
+    assert_eq!(read["clientIds"], json!([b]));
+    let p = principal(&app, &id).await;
+    assert_eq!(p.scope, UserScope::Client);
+    assert_eq!(p.client_id.as_deref(), Some(b.as_str()));
     let resp = app.put(&path, &admin, json!({ "scope": "anchor" })).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     assert_eq!(principal(&app, &id).await.scope, UserScope::Client);

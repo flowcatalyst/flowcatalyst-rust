@@ -603,7 +603,11 @@ pub async fn create_dispatch_job(
             &req.payload,
         )
     } else {
-        DispatchJob::for_task(&req.code, source, &req.target_url, &req.payload)
+        // A task keeps a supplied eventId, as in Go (sdk/dispatch_jobs_batch.go:144).
+        DispatchJob {
+            event_id: req.event_id.clone(),
+            ..DispatchJob::for_task(&req.code, source, &req.target_url, &req.payload)
+        }
     };
 
     // Apply optional fields
@@ -732,7 +736,16 @@ pub async fn batch_create_dispatch_jobs(
                 &job_req.payload,
             )
         } else {
-            DispatchJob::for_task(&job_req.code, source, &job_req.target_url, &job_req.payload)
+            // A task keeps a supplied eventId, as in Go (sdk/dispatch_jobs_batch.go:144).
+            DispatchJob {
+                event_id: job_req.event_id.clone(),
+                ..DispatchJob::for_task(
+                    &job_req.code,
+                    source,
+                    &job_req.target_url,
+                    &job_req.payload,
+                )
+            }
         };
 
         // Apply optional fields

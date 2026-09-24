@@ -96,8 +96,10 @@ crate::shared::enum_str::str_enum!(DispatchProtocol, "dispatch protocol", {
 /// Retry strategy for failed jobs.
 ///
 /// Stored and sent lowercase (`immediate` / `fixed` / `exponential`), as the
-/// stored data and the Go port spell it. The uppercase forms are legacy
-/// spellings that are still accepted on input.
+/// stored data and the Go port spell it. `IMMEDIATE` and `FIXED_DELAY` are
+/// legacy values still accepted, stored or sent; `EXPONENTIAL_BACKOFF` is
+/// not, exactly as Go's `ParseRetryStrategy` (dispatchjob/entity.go:71-82)
+/// and its CHECK constraint (migration 052).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RetryStrategy {
     /// Immediate retry
@@ -108,14 +110,14 @@ pub enum RetryStrategy {
     FixedDelay,
     /// Exponential backoff
     #[default]
-    #[serde(rename = "exponential", alias = "EXPONENTIAL_BACKOFF")]
+    #[serde(rename = "exponential")]
     ExponentialBackoff,
 }
 
 crate::shared::enum_str::str_enum!(RetryStrategy, "retry strategy", {
     Immediate => "immediate" | "IMMEDIATE",
     FixedDelay => "fixed" | "FIXED_DELAY",
-    ExponentialBackoff => "exponential" | "EXPONENTIAL_BACKOFF",
+    ExponentialBackoff => "exponential",
 });
 
 /// Error type classification — matches TS DispatchErrorType
@@ -858,10 +860,8 @@ mod tests {
             RetryStrategy::from_str("exponential"),
             Ok(RetryStrategy::ExponentialBackoff)
         );
-        assert_eq!(
-            RetryStrategy::from_str("EXPONENTIAL_BACKOFF"),
-            Ok(RetryStrategy::ExponentialBackoff)
-        );
+        // Go refuses this one (it never held in stored data).
+        assert!(RetryStrategy::from_str("EXPONENTIAL_BACKOFF").is_err());
         assert!(RetryStrategy::from_str("unknown").is_err());
     }
 
@@ -879,11 +879,10 @@ mod tests {
                 v
             );
         }
-        // Earlier serde spellings still read.
+        // Legacy spellings Go accepts still read.
         for (s, v) in [
             ("IMMEDIATE", RetryStrategy::Immediate),
             ("FIXED_DELAY", RetryStrategy::FixedDelay),
-            ("EXPONENTIAL_BACKOFF", RetryStrategy::ExponentialBackoff),
         ] {
             assert_eq!(
                 serde_json::from_value::<RetryStrategy>(serde_json::json!(s)).unwrap(),

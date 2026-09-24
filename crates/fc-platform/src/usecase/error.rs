@@ -421,7 +421,8 @@ mod tests {
             (
                 UseCaseError::commit("tx failed"),
                 500,
-                json!({"error": "INTERNAL_ERROR", "message": "Internal error: COMMIT_FAILED: tx failed"}),
+                // The cause is logged, never sent (Go's shape).
+                json!({"error": "INTERNAL_ERROR", "message": "Internal server error"}),
             ),
         ];
         for (err, status, body) in cases {

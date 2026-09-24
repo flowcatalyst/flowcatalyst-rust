@@ -92,11 +92,10 @@ function getClientName(clientId: string): string {
 	return getClientLabel(clientId);
 }
 
-function getClientNames(scope: string, clientIds: string[]): string {
-	// ANCHOR reaches every client; below it, no links means no client.
-	if (scope === "ANCHOR") return "All";
+function getClientNames(clientIds: string[]): string {
+	// The tier follows the links: no links is ANCHOR, which reaches every client.
 	const first = clientIds?.[0];
-	if (first === undefined) return "None";
+	if (first === undefined) return "All";
 	if (clientIds.length === 1) return getClientName(first);
 	if (clientIds.length <= 2)
 		return clientIds.map((id) => getClientName(id)).join(", ");
@@ -209,7 +208,7 @@ function formatDate(dateStr: string | undefined | null) {
 
         <Column header="Clients" style="width: 15%">
           <template #body="{ data }">
-            <span class="client-name-text">{{ getClientNames(data.scope, data.clientIds) }}</span>
+            <span class="client-name-text">{{ getClientNames(data.clientIds) }}</span>
           </template>
         </Column>
 

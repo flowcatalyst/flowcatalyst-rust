@@ -636,6 +636,49 @@ async fn test_dispatch_pool_crud() {
     assert_eq!(suspended.status, DispatchPoolStatus::Suspended);
 }
 
+/// Migrations 032 (the iam_service_accounts part of Go's 035) and 033 (Go's
+/// 046 + 047) are no-ops on a database Go already migrated: re-running them
+/// changes nothing, and a tracker without the entries is backfilled by their
+/// probes.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_go_mirrored_migrations_are_idempotent() {
+    let (pool, _container) = setup_test_db().await;
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/032_service_account_scope_and_client_ids.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("re-running 032 is a no-op");
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/033_oauth_client_secret_grace.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("re-running 033 is a no-op");
+
+    sqlx::query("DELETE FROM _schema_migrations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    run_migrations(&pool, MigrationProfile::Production)
+        .await
+        .expect("migrations over existing columns");
+    for id in [
+        "032_service_account_scope_and_client_ids",
+        "033_oauth_client_secret_grace",
+    ] {
+        let (tracked,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM _schema_migrations WHERE migration_id = $1)",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(tracked, "{id}");
+    }
+}
+
 // ─── Service Account Repository Tests ─────────────────────────────────────
 
 #[tokio::test]

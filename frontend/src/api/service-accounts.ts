@@ -8,9 +8,12 @@ export interface ServiceAccount {
 	code: string;
 	name: string;
 	description: string | null;
-	/** Client tier of the linked principal (what its tokens carry). */
-	scope: PrincipalScope;
-	/** Clients reached: none for ANCHOR, the home client for CLIENT, the grants for PARTNER. */
+	/** The requested scope as stored; absent when none was requested. */
+	scope?: PrincipalScope;
+	/**
+	 * Client links. The token tier follows them: none is ANCHOR (every client),
+	 * one is CLIENT, several is PARTNER.
+	 */
 	clientIds: string[];
 	applicationId: string | null;
 	active: boolean;
@@ -28,8 +31,8 @@ export interface ServiceAccountListResponse {
 
 /**
  * A new service account has no application access; grant applications
- * afterwards on its detail page. `scope` must agree with `clientIds`:
- * ANCHOR none, CLIENT exactly one, PARTNER at least one.
+ * afterwards on its detail page. `scope` is stored as sent; the token tier
+ * follows `clientIds` (none ANCHOR, one CLIENT, several PARTNER).
  */
 export interface CreateServiceAccountRequest {
 	code: string;

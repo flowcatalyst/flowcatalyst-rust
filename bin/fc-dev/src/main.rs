@@ -807,6 +807,12 @@ async fn main() -> Result<()> {
         platform_application_id.clone(),
     );
 
+    // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
+    // purger does the same).
+    fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
+        repos.oauth_client_repo.clone(),
+    );
+
     // Background prune for the Postgres rate-limit table (no-op for Redis).
     // Runs hourly; keeps `iam_rate_limit_events` from growing past peak QPS
     // × max policy window.

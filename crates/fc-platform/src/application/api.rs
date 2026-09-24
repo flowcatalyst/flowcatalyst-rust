@@ -748,7 +748,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
     auth: Authenticated,
     Path(id): Path<String>,
-) -> Result<Json<ProvisionServiceAccountResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<ProvisionServiceAccountResponse>), PlatformError> {
     use crate::application::operations::{
         AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
     };
@@ -817,11 +817,11 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 code: sa_code.clone(),
                 name: sa_name,
                 description: Some(sa_description),
-                // ANCHOR with no client links, as Go provisions it
-                // (provision_service_account.go: NewService's default, and
-                // client_reach.go "also every application-provisioned
-                // account"). Its reach is confined by application instead.
-                scope: Some(crate::principal::entity::UserScope::Anchor),
+                // No requested scope and no client links, as Go provisions it
+                // (provision_service_account.go:106-114: `serviceaccount.New`
+                // leaves Scope nil and `principal.NewService` is ANCHOR). Its
+                // reach is confined by application instead.
+                scope: None,
                 client_ids: Vec::new(),
                 application_id: Some(app_id.clone()),
             };
@@ -855,8 +855,9 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 client_secret_ref: Some(client_secret_ref),
                 redirect_uris: Vec::new(),
                 post_logout_redirect_uris: Vec::new(),
-                grant_types: vec![GrantType::ClientCredentials],
-                default_scopes: Vec::new(),
+                // provision_service_account.go:124-125
+                grant_types: vec![GrantType::ClientCredentials, GrantType::RefreshToken],
+                default_scopes: vec!["openid".to_string()],
                 pkce_required: false,
                 application_ids: vec![app_id],
                 allowed_origins: Vec::new(),
@@ -880,18 +881,22 @@ pub async fn provision_service_account<U: UnitOfWork>(
         .await?
         .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
 
-    Ok(Json(ProvisionServiceAccountResponse {
-        message: "Service account provisioned".to_string(),
-        service_account: ServiceAccountCredentialsResponse {
-            principal_id: service_account.id,
-            name: service_account.name,
-            oauth_client: OAuthClientCredentials {
-                id: oauth_row_id,
-                client_id: oauth_public_client_id,
-                client_secret: Some(client_secret_plaintext),
+    // 201, as Go answers (application/api/api.go:57).
+    Ok((
+        StatusCode::CREATED,
+        Json(ProvisionServiceAccountResponse {
+            message: "Service account provisioned".to_string(),
+            service_account: ServiceAccountCredentialsResponse {
+                principal_id: service_account.id,
+                name: service_account.name,
+                oauth_client: OAuthClientCredentials {
+                    id: oauth_row_id,
+                    client_id: oauth_public_client_id,
+                    client_secret: Some(client_secret_plaintext),
+                },
             },
-        },
-    }))
+        }),
+    ))
 }
 
 /// Provision an OAuth Login Client for an application.

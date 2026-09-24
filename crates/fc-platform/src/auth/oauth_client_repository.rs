@@ -24,6 +24,9 @@ struct OAuthClientRow {
     client_name: String,
     client_type: String,
     client_secret_ref: Option<String>,
+    previous_secret_ref: Option<String>,
+    previous_secret_expires_at: Option<DateTime<Utc>>,
+    previous_secret_last_used_at: Option<DateTime<Utc>>,
     default_scopes: Option<String>,
     pkce_required: bool,
     service_account_principal_id: Option<String>,
@@ -52,6 +55,9 @@ impl TryFrom<OAuthClientRow> for OAuthClient {
             client_name: r.client_name,
             client_type,
             client_secret_ref: r.client_secret_ref,
+            previous_secret_ref: r.previous_secret_ref,
+            previous_secret_expires_at: r.previous_secret_expires_at,
+            previous_secret_last_used_at: r.previous_secret_last_used_at,
             redirect_uris: vec![],             // loaded separately
             post_logout_redirect_uris: vec![], // loaded separately
             grant_types: vec![],               // loaded separately
@@ -395,8 +401,9 @@ impl OAuthClientRepository {
             r#"INSERT INTO oauth_clients
                 (id, client_id, client_name, client_type, client_secret_ref,
                  default_scopes, pkce_required, service_account_principal_id, active,
-                 created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())"#,
+                 created_at, updated_at, previous_secret_ref, previous_secret_expires_at,
+                 previous_secret_last_used_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), $10, $11, $12)"#,
         )
         .bind(&client.id)
         .bind(&client.client_id)
@@ -407,6 +414,9 @@ impl OAuthClientRepository {
         .bind(client.pkce_required)
         .bind(&client.service_account_principal_id)
         .bind(client.active)
+        .bind(&client.previous_secret_ref)
+        .bind(client.previous_secret_expires_at)
+        .bind(client.previous_secret_last_used_at)
         .execute(&self.pool)
         .await?;
 
@@ -557,7 +567,9 @@ impl OAuthClientRepository {
                 client_id = $2, client_name = $3, client_type = $4,
                 client_secret_ref = $5, default_scopes = $6,
                 pkce_required = $7, service_account_principal_id = $8,
-                active = $9, updated_at = NOW()
+                active = $9, updated_at = NOW(),
+                previous_secret_ref = $10, previous_secret_expires_at = $11,
+                previous_secret_last_used_at = $12
             WHERE id = $1"#,
         )
         .bind(&client.id)
@@ -569,6 +581,9 @@ impl OAuthClientRepository {
         .bind(client.pkce_required)
         .bind(&client.service_account_principal_id)
         .bind(client.active)
+        .bind(&client.previous_secret_ref)
+        .bind(client.previous_secret_expires_at)
+        .bind(client.previous_secret_last_used_at)
         .execute(&self.pool)
         .await?;
 
@@ -613,6 +628,81 @@ impl OAuthClientRepository {
         .await?;
         self.invalidate_cache(client).await;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// `rewrite_secret_ref` for the rotation-overlap secret
+    /// (`previous_secret_ref`): used when a client authenticated with its
+    /// superseded secret in an older stored shape (Go's
+    /// `RewritePreviousSecretRef`). Only rewrites while the row still holds
+    /// `verified_ref`.
+    pub async fn rewrite_previous_secret_ref(
+        &self,
+        client: &OAuthClient,
+        verified_ref: &str,
+        new_ref: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE oauth_clients SET previous_secret_ref = $3, updated_at = NOW() \
+             WHERE id = $1 AND previous_secret_ref = $2",
+        )
+        .bind(&client.id)
+        .bind(verified_ref)
+        .bind(new_ref)
+        .execute(&self.pool)
+        .await?;
+        self.invalidate_cache(client).await;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Stamp when a client last authenticated with its superseded secret,
+    /// skipping the write unless the stored stamp is older than
+    /// `stale_before` (Go's `TouchPreviousSecretUsed`,
+    /// sqlc/queries/auth.sql:247-256). Only touches a client that still has
+    /// an overlap in flight, so a late authentication can't resurrect the
+    /// field after a revoke. Infrastructure on the token endpoint's hot path:
+    /// no event or audit row.
+    pub async fn touch_previous_secret_used(
+        &self,
+        id: &str,
+        now: DateTime<Utc>,
+        stale_before: DateTime<Utc>,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE oauth_clients SET previous_secret_last_used_at = $2 \
+             WHERE id = $1 \
+               AND previous_secret_ref IS NOT NULL \
+               AND (previous_secret_last_used_at IS NULL OR previous_secret_last_used_at < $3)",
+        )
+        .bind(id)
+        .bind(now)
+        .bind(stale_before)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// Clear rotation-overlap secrets whose window has closed, so a
+    /// superseded secret isn't kept at rest once it can no longer
+    /// authenticate (Go's `PurgeLapsedPreviousSecrets`,
+    /// sqlc/queries/auth.sql:235-244). Verification already refuses an
+    /// expired previous ref, so this is hygiene, not enforcement. Returns how
+    /// many rows were cleared.
+    pub async fn purge_lapsed_previous_secrets(&self) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE oauth_clients \
+             SET previous_secret_ref = NULL, \
+                 previous_secret_expires_at = NULL \
+             WHERE previous_secret_ref IS NOT NULL \
+               AND previous_secret_expires_at IS NOT NULL \
+               AND previous_secret_expires_at < NOW()",
+        )
+        .execute(&self.pool)
+        .await?;
+        let cleared = result.rows_affected();
+        if cleared > 0 {
+            self.cache_by_client_id.write().await.clear();
+        }
+        Ok(cleared)
     }
 
     pub async fn delete(&self, id: &str) -> Result<bool> {
@@ -683,13 +773,17 @@ impl crate::usecase::Persist<OAuthClient> for OAuthClientRepository {
             r#"INSERT INTO oauth_clients
                 (id, client_id, client_name, client_type, client_secret_ref,
                  default_scopes, pkce_required, service_account_principal_id, active,
-                 created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                 created_at, updated_at, previous_secret_ref, previous_secret_expires_at,
+                 previous_secret_last_used_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT (id) DO UPDATE SET
                 client_id = EXCLUDED.client_id,
                 client_name = EXCLUDED.client_name,
                 client_type = EXCLUDED.client_type,
                 client_secret_ref = EXCLUDED.client_secret_ref,
+                previous_secret_ref = EXCLUDED.previous_secret_ref,
+                previous_secret_expires_at = EXCLUDED.previous_secret_expires_at,
+                previous_secret_last_used_at = EXCLUDED.previous_secret_last_used_at,
                 default_scopes = EXCLUDED.default_scopes,
                 pkce_required = EXCLUDED.pkce_required,
                 service_account_principal_id = EXCLUDED.service_account_principal_id,
@@ -707,6 +801,9 @@ impl crate::usecase::Persist<OAuthClient> for OAuthClientRepository {
         .bind(c.active)
         .bind(c.created_at)
         .bind(c.updated_at)
+        .bind(&c.previous_secret_ref)
+        .bind(c.previous_secret_expires_at)
+        .bind(c.previous_secret_last_used_at)
         .execute(&mut **tx.inner)
         .await?;
 

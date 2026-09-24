@@ -238,7 +238,9 @@ pub async fn update_connection(
         name: req.name,
         description: req.description,
         external_id: req.external_id,
-        status: crate::shared::enum_str::parse_opt(req.status.as_deref())?,
+        // Trimmed before the exact match, as in Go
+        // (connection/operations/update.go:85).
+        status: crate::shared::enum_str::parse_opt(req.status.as_deref().map(str::trim))?,
         service_account_id: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);

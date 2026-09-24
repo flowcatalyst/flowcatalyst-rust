@@ -37,7 +37,9 @@ const createdServiceAccountId = ref<string | null>(null);
 
 const isValid = computed(() => {
 	if (!code.value.trim() || !name.value.trim()) return false;
-	// The scope must agree with the client links (the API rejects otherwise).
+	// Keep the requested scope and the client links consistent. The API stores
+	// the scope as sent, but the token tier follows the links (none is ANCHOR),
+	// so CLIENT with no client would make an ANCHOR account.
 	if (scope.value === "CLIENT") return selectedClientIds.value.length === 1;
 	if (scope.value === "PARTNER") return selectedClientIds.value.length > 0;
 	return true;

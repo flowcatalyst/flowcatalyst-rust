@@ -96,8 +96,8 @@ pub struct ClientsQuery {
     #[serde(flatten)]
     pub pagination: PaginationParams,
 
-    /// Filter by status (`ACTIVE`, `INACTIVE`, `SUSPENDED`). Absent means
-    /// `ACTIVE`; an unknown value is a 400.
+    /// Filter by status (`ACTIVE`, `INACTIVE`, `SUSPENDED`). Absent returns
+    /// every client, as Go does; an unknown value is a 400.
     pub status: Option<String>,
 }
 
@@ -274,14 +274,11 @@ pub async fn get_client(
     Ok(Json(client.into()))
 }
 
-/// The status the client list filters on. Absent or empty means `ACTIVE`
-/// (what the list has always returned); an unknown value is a 400 (X-06),
-/// never "no filter".
-fn list_status_filter(status: Option<&str>) -> Result<ClientStatus, PlatformError> {
-    Ok(
-        crate::shared::enum_str::parse_opt(crate::shared::enum_str::non_empty(status))?
-            .unwrap_or(ClientStatus::Active),
-    )
+/// The status the client list filters on. Absent or empty means no filter:
+/// every client, as Go's list returns (client/api/api.go:59-70). An unknown
+/// value is a 400 (X-06), never "no filter".
+fn list_status_filter(status: Option<&str>) -> Result<Option<ClientStatus>, PlatformError> {
+    crate::shared::enum_str::parse_opt(crate::shared::enum_str::non_empty(status))
 }
 
 /// List clients
@@ -293,7 +290,7 @@ fn list_status_filter(status: Option<&str>) -> Result<ClientStatus, PlatformErro
     params(
         ("page" = Option<u32>, Query, description = "Page number"),
         ("limit" = Option<u32>, Query, description = "Items per page"),
-        ("status" = Option<String>, Query, description = "Filter by status (ACTIVE, INACTIVE, SUSPENDED); defaults to ACTIVE")
+        ("status" = Option<String>, Query, description = "Filter by status (ACTIVE, INACTIVE, SUSPENDED); absent returns every client")
     ),
     responses(
         (status = 200, description = "List of clients", body = ClientListResponse),
@@ -307,7 +304,7 @@ pub async fn list_clients(
     Query(query): Query<ClientsQuery>,
 ) -> Result<Json<ClientListResponse>, PlatformError> {
     let status = list_status_filter(query.status.as_deref())?;
-    let clients = state.client_repo.find_by_status(status).await?;
+    let clients = state.client_repo.list(status).await?;
 
     // Filter by access
     let filtered: Vec<ClientResponse> = clients
@@ -1050,15 +1047,16 @@ mod tests {
     }
     #[test]
     fn list_status_filter_is_strict() {
-        assert_eq!(list_status_filter(None).unwrap(), ClientStatus::Active);
-        assert_eq!(list_status_filter(Some("")).unwrap(), ClientStatus::Active);
+        // Absent or empty: no filter, every client (Go).
+        assert_eq!(list_status_filter(None).unwrap(), None);
+        assert_eq!(list_status_filter(Some("")).unwrap(), None);
         assert_eq!(
             list_status_filter(Some("SUSPENDED")).unwrap(),
-            ClientStatus::Suspended
+            Some(ClientStatus::Suspended)
         );
         assert_eq!(
             list_status_filter(Some("INACTIVE")).unwrap(),
-            ClientStatus::Inactive
+            Some(ClientStatus::Inactive)
         );
         // Unknown or wrongly-cased values are a 400, not "no filter".
         for bad in ["paused", "active", "ALL"] {

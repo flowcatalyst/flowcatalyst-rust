@@ -156,8 +156,8 @@ pub struct SetApplicationAccessRequest {
 
     /// Access to every application, present and future. Omitted leaves it
     /// unchanged, so a caller that only edits the list never flips it. Only
-    /// a caller that itself has all-applications access may set it true, and
-    /// not on a principal bound to an application (Go's endpoint shape).
+    /// a caller that itself has all-applications access may set it true
+    /// (Go's rule, principal/api/api.go:1204).
     #[serde(default)]
     pub all_applications: Option<bool>,
 }
@@ -1776,13 +1776,6 @@ pub async fn set_application_access(
         {
             return Err(PlatformError::forbidden(
                 "Only an all-applications administrator may grant all-applications access",
-            ));
-        }
-        // A principal bound to an application is confined to it whatever the
-        // flag says, so setting it would be a no-op that reads as a grant.
-        if principal.application_id.is_some() {
-            return Err(PlatformError::validation(
-                "allApplications cannot be set on a principal bound to an application",
             ));
         }
     }

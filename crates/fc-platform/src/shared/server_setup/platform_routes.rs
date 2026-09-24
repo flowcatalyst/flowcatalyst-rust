@@ -470,6 +470,12 @@ pub fn build_platform_routes(
             unit_of_work.clone(),
         ),
     );
+    let revoke_oauth_client_previous_secret_use_case = Arc::new(
+        crate::auth::operations::RevokeOAuthClientPreviousSecretUseCase::new(
+            repos.oauth_client_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
     let oauth_clients_state = OAuthClientsState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
         create_oauth_client_use_case,
@@ -478,6 +484,7 @@ pub fn build_platform_routes(
         activate_oauth_client_use_case,
         deactivate_oauth_client_use_case,
         rotate_oauth_client_secret_use_case,
+        revoke_oauth_client_previous_secret_use_case,
     };
     let create_anchor_domain_use_case =
         Arc::new(crate::auth::operations::CreateAnchorDomainUseCase::new(
@@ -806,6 +813,7 @@ pub fn build_platform_routes(
     );
     let platform_config_state = PlatformConfigState {
         config_repo: repos.platform_config_repo.clone(),
+        access_repo: repos.platform_config_access_repo.clone(),
         app_access: app_access.clone(),
         set_property_use_case: set_platform_config_property_use_case,
     };

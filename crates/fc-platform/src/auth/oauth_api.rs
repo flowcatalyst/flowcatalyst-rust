@@ -527,44 +527,85 @@ pub async fn authorize(
     Redirect::temporary(&login_url).into_response()
 }
 
-/// Check `provided` against a client's stored secret ref and, when it
-/// matches a shape other than the current `hashed:v1:` form (an older
-/// `encrypted:` ref, a bare envelope, or a hash under a previous app key),
-/// rewrite the ref to [`EncryptionService::hash_secret`] of the secret the
-/// caller just proved it holds. Mirrors the Go platform's
-/// `acceptClientSecret`, which shares the `oauth_clients` table.
+/// Check `provided` against one stored secret ref and, when it matches a
+/// shape other than the current `hashed:v1:` form (an older `encrypted:`
+/// ref, a bare envelope, or a hash under a previous app key), report that
+/// the ref needs rewriting. Returns `(matched, needs_rehash)`.
+fn check_secret_ref(state: &OAuthState, stored: Option<&str>, provided: &str) -> (bool, bool) {
+    match (state.encryption_service.as_deref(), stored) {
+        (Some(enc), Some(stored)) => enc.verify_secret(stored, provided),
+        _ => (false, false),
+    }
+}
+
+/// How often the previous secret's last-used stamp is written per client. A
+/// fleet mid-rollout may authenticate thousands of times an hour on the old
+/// secret; one write a minute is plenty (Go's `previousSecretTouchInterval`).
+const PREVIOUS_SECRET_TOUCH_INTERVAL_SECS: i64 = 60;
+
+/// Verify `provided` against the client's current secret and, failing that,
+/// against a previous secret whose rotation overlap is still open, so a fleet
+/// holding the old secret can be rolled gradually. Mirrors Go's
+/// `acceptClientSecret` (auth/oauthapi/token.go:347-383), which shares the
+/// `oauth_clients` table.
 ///
-/// The rewrite is best-effort: authentication has already succeeded, so a
-/// failure is logged and dropped. It goes straight to the repository rather
-/// than through a use case: it changes the at-rest format of a secret, not
-/// the secret itself, and runs on the token endpoint's hot path. A domain
-/// event and audit row per migrated client would record a storage upgrade,
-/// not a business fact (same reasoning as the other infrastructure
-/// exceptions in `CLAUDE.md`).
+/// Both compares always run, so accepting an old secret is not measurably
+/// slower or faster than accepting a new one. A match against a ref that
+/// isn't yet the current `hashed:v1:` form is rewritten to
+/// [`EncryptionService::hash_secret`] of the secret the caller just proved it
+/// holds; use of the previous secret is stamped (coalesced to once a
+/// minute). Both writes are best-effort: authentication has already
+/// succeeded, so a failure is logged and dropped. They go straight to the
+/// repository rather than through a use case: they record storage format and
+/// usage, not a business fact, and run on the token endpoint's hot path
+/// (same reasoning as the other infrastructure exceptions in `CLAUDE.md`).
 ///
 /// [`EncryptionService::hash_secret`]: crate::shared::encryption_service::EncryptionService::hash_secret
-async fn verify_client_secret(
-    state: &OAuthState,
-    client: &OAuthClient,
-    stored: &str,
-    provided: &str,
-) -> bool {
+async fn accept_client_secret(state: &OAuthState, client: &OAuthClient, provided: &str) -> bool {
     let Some(enc) = state.encryption_service.as_deref() else {
         error!(client_id = %client.client_id, "Cannot verify client secret — FLOWCATALYST_APP_KEY not configured");
         return false;
     };
-    let (ok, needs_rehash) = enc.verify_secret(stored, provided);
-    if ok && needs_rehash {
-        let hashed = enc.hash_secret(provided);
+    let current = client.client_secret_ref.as_deref();
+    let previous = client.usable_previous_secret_ref();
+    let (current_ok, current_rehash) = check_secret_ref(state, current, provided);
+    let (previous_ok, previous_rehash) = check_secret_ref(state, previous, provided);
+
+    if previous_ok {
+        let now = chrono::Utc::now();
+        let stale_before = now - chrono::Duration::seconds(PREVIOUS_SECRET_TOUCH_INTERVAL_SECS);
+        match state
+            .oauth_client_repo
+            .touch_previous_secret_used(&client.id, now, stale_before)
+            .await
+        {
+            Ok(_) => {
+                info!(oauth_client_id = %client.id, "Client authenticated with its superseded secret")
+            }
+            Err(e) => {
+                warn!(oauth_client_id = %client.id, error = %e, "Could not record previous-secret use")
+            }
+        }
+    }
+    if let (true, true, Some(stored)) = (current_ok, current_rehash, current) {
         if let Err(e) = state
             .oauth_client_repo
-            .rewrite_secret_ref(client, stored, &hashed)
+            .rewrite_secret_ref(client, stored, &enc.hash_secret(provided))
             .await
         {
             warn!(client_id = %client.client_id, error = %e, "Could not migrate client secret to hashed form");
         }
     }
-    ok
+    if let (true, true, Some(stored)) = (previous_ok, previous_rehash, previous) {
+        if let Err(e) = state
+            .oauth_client_repo
+            .rewrite_previous_secret_ref(client, stored, &enc.hash_secret(provided))
+            .await
+        {
+            warn!(client_id = %client.client_id, error = %e, "Could not migrate client's previous secret to hashed form");
+        }
+    }
+    current_ok || previous_ok
 }
 
 /// Authenticate an OAuth client from the request.
@@ -697,7 +738,7 @@ async fn authenticate_client(
 
     // If confidential client (has a secret), verify it against the stored
     // verify-only ref (see `verify_client_secret`).
-    if let Some(ref secret_ref) = client.client_secret_ref {
+    if client.client_secret_ref.is_some() {
         let provided_secret = client_secret.ok_or_else(|| {
             (
                 StatusCode::UNAUTHORIZED,
@@ -711,7 +752,7 @@ async fn authenticate_client(
                 .into_response()
         })?;
 
-        let verified = verify_client_secret(state, &client, secret_ref, &provided_secret).await;
+        let verified = accept_client_secret(state, &client, &provided_secret).await;
 
         if !verified {
             warn!(client_id = %client_id, "Client secret verification failed");
@@ -1442,22 +1483,19 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     }
 
     // Verify client_secret against stored hash
-    let secret_hash = match &client.client_secret_ref {
-        Some(hash) => hash,
-        None => {
-            warn!(client_id = %client_id, "Client has no secret configured");
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "invalid_client".to_string(),
-                    error_description: Some("Invalid client credentials".to_string()),
-                }),
-            )
-                .into_response();
-        }
-    };
+    if client.client_secret_ref.is_none() {
+        warn!(client_id = %client_id, "Client has no secret configured");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "invalid_client".to_string(),
+                error_description: Some("Invalid client credentials".to_string()),
+            }),
+        )
+            .into_response();
+    }
 
-    let verified = verify_client_secret(&state, &client, secret_hash, &client_secret).await;
+    let verified = accept_client_secret(&state, &client, &client_secret).await;
 
     if !verified {
         warn!(client_id = %client_id, "Client secret verification failed");

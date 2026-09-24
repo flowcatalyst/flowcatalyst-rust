@@ -248,9 +248,18 @@ impl IntoResponse for PlatformError {
                 .into_response();
         }
 
+        // A 500 carries its code and a fixed message; the cause (SQL error
+        // text, internal detail) is only logged above, never sent, as in Go
+        // (shared/httperror: an internal error's cause is logged, not
+        // serialised).
+        let message = if status == StatusCode::INTERNAL_SERVER_ERROR {
+            "Internal server error".to_string()
+        } else {
+            self.to_string()
+        };
         let body = ErrorResponse {
             error: error_code,
-            message: self.to_string(),
+            message,
         };
 
         (status, Json(body)).into_response()

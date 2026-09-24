@@ -185,6 +185,12 @@ async fn main() -> Result<()> {
         fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
     );
 
+    // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
+    // purger does the same).
+    fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
+        repos.oauth_client_repo.clone(),
+    );
+
     // Hourly prune for the Postgres rate-limit table (no-op for Redis).
     {
         let store = rate_limit_store.clone();

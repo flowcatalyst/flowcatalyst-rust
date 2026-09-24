@@ -657,11 +657,7 @@ async function deleteServiceAccount() {
         <div class="app-access">
           <div class="all-apps-row">
             <template v-if="appEditMode">
-              <ToggleSwitch
-                v-model="editAllApplications"
-                inputId="allApplications"
-                :disabled="!!serviceAccount.applicationId"
-              />
+              <ToggleSwitch v-model="editAllApplications" inputId="allApplications" />
               <label for="allApplications">All applications</label>
             </template>
             <Tag
@@ -671,14 +667,8 @@ async function deleteServiceAccount() {
             />
           </div>
           <small class="help-text">
-            <template v-if="serviceAccount.applicationId">
-              Provisioned for an application: it always reaches that application, plus any
-              granted here. All applications doesn't apply.
-            </template>
-            <template v-else>
-              All applications reaches every application, including future ones. Off, the
-              service account reaches only the applications granted here.
-            </template>
+            All applications reaches every application, including future ones. Off, the
+            service account reaches only the applications granted here.
           </small>
 
           <MultiSelect

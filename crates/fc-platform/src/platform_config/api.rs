@@ -109,10 +109,68 @@ pub struct ConfigValueResponse {
 #[derive(Clone)]
 pub struct PlatformConfigState {
     pub config_repo: Arc<PlatformConfigRepository>,
+    /// Role-based access grants, for non-anchor callers.
+    pub access_repo: Arc<super::access_repository::PlatformConfigAccessRepository>,
     /// Resolves `{appCode}` and confines the caller to its applications.
     pub app_access: Arc<ApplicationAccessService>,
     pub set_property_use_case:
         Arc<super::operations::SetPlatformConfigPropertyUseCase<crate::usecase::PgUnitOfWork>>,
+}
+
+/// Go's property-route rule (platformconfig/api/api.go:47-57, 90-100,
+/// 147-157, operations/set_property.go:60-73): an anchor caller passes; any
+/// other caller needs a platform-config access grant on one of its roles
+/// for the application, with read or write as asked, else 403.
+async fn require_config_access(
+    state: &PlatformConfigState,
+    ctx: &crate::AuthContext,
+    app_code: &str,
+    write: bool,
+) -> Result<(), PlatformError> {
+    if ctx.is_anchor() {
+        return Ok(());
+    }
+    let granted = if ctx.roles.is_empty() {
+        false
+    } else {
+        state
+            .access_repo
+            .find_by_role_codes(app_code, &ctx.roles)
+            .await?
+            .iter()
+            .any(|a| if write { a.can_write } else { a.can_read })
+    };
+    if granted {
+        Ok(())
+    } else if write {
+        Err(PlatformError::forbidden(format!(
+            "No write access to platform config for {}",
+            app_code
+        )))
+    } else {
+        Err(PlatformError::forbidden(format!(
+            "No read access to platform config for {}",
+            app_code
+        )))
+    }
+}
+
+/// Read a config property: anchor, or a read grant (Go).
+async fn can_read_config(
+    state: &PlatformConfigState,
+    ctx: &crate::AuthContext,
+    app_code: &str,
+) -> Result<(), PlatformError> {
+    require_config_access(state, ctx, app_code, false).await
+}
+
+/// Write a config property: anchor, or a write grant (Go).
+async fn can_write_config(
+    state: &PlatformConfigState,
+    ctx: &crate::AuthContext,
+    app_code: &str,
+) -> Result<(), PlatformError> {
+    require_config_access(state, ctx, app_code, true).await
 }
 
 /// List all configs for an application
@@ -137,6 +195,7 @@ pub async fn list_configs(
     Path(app_code): Path<String>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigListResponse>, PlatformError> {
+    can_read_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -177,6 +236,7 @@ pub async fn get_section(
     Path((app_code, section)): Path<(String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigSectionResponse>, PlatformError> {
+    can_read_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -229,6 +289,7 @@ pub async fn get_property(
     Path((app_code, section, property)): Path<(String, String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigValueResponse>, PlatformError> {
+    can_read_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -292,7 +353,7 @@ pub async fn set_property(
     use crate::platform_config::operations::SetPlatformConfigPropertyCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    can_write_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -361,7 +422,7 @@ pub async fn delete_property(
     Path((app_code, section, property)): Path<(String, String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    can_write_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
