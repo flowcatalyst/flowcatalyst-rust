@@ -6,18 +6,18 @@
 //! # Example
 //!
 //! ```ignore
-//! use fc_sdk::outbox::{OutboxDriver, OutboxMessage};
+//! use fc_sdk::outbox::{OutboxDriver, OutboxError, OutboxMessage};
 //!
 //! struct MyPgDriver { pool: sqlx::PgPool }
 //!
 //! #[async_trait::async_trait]
 //! impl OutboxDriver for MyPgDriver {
-//!     async fn insert(&self, message: OutboxMessage) -> anyhow::Result<()> {
+//!     async fn insert(&self, message: OutboxMessage) -> Result<(), OutboxError> {
 //!         sqlx::query("INSERT INTO outbox_messages ...")
 //!             .bind(&message.id).execute(&self.pool).await?;
 //!         Ok(())
 //!     }
-//!     async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> anyhow::Result<()> {
+//!     async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> Result<(), OutboxError> {
 //!         for m in messages { self.insert(m).await?; }
 //!         Ok(())
 //!     }
@@ -27,6 +27,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use super::error::OutboxError;
 
 /// Message types supported by the outbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,10 +91,10 @@ pub struct OutboxMessage {
 #[async_trait]
 pub trait OutboxDriver: Send + Sync {
     /// Insert a single message into the outbox.
-    async fn insert(&self, message: OutboxMessage) -> anyhow::Result<()>;
+    async fn insert(&self, message: OutboxMessage) -> Result<(), OutboxError>;
 
     /// Insert multiple messages into the outbox (batch).
-    async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> anyhow::Result<()>;
+    async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> Result<(), OutboxError>;
 }
 
 #[cfg(test)]

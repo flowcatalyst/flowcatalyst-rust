@@ -97,6 +97,7 @@ pub mod unit_of_work;
 // Simple outbox pattern (OutboxManager + DTOs + Driver)
 pub mod driver;
 pub mod dto;
+pub mod error;
 pub mod manager;
 pub mod sqlx_pg_driver;
 
@@ -116,5 +117,6 @@ pub use unit_of_work::{
 
 pub use driver::{MessageType, OutboxDriver, OutboxMessage, OutboxStatus};
 pub use dto::{ContextDataEntry, CreateAuditLogDto, CreateDispatchJobDto, CreateEventDto};
+pub use error::OutboxError;
 pub use manager::OutboxManager;
 pub use sqlx_pg_driver::SqlxPgDriver;

@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod enhanced_processor;
+pub mod error;
 pub mod group_distributor;
 pub mod http_dispatcher;
 pub mod message_group_processor;
@@ -18,6 +19,7 @@ pub mod sqlite;
 // Re-export key types
 pub use buffer::{BufferFullError, GlobalBuffer, GlobalBufferConfig};
 pub use enhanced_processor::{EnhancedOutboxProcessor, EnhancedProcessorConfig, ProcessorMetrics};
+pub use error::OutboxError;
 pub use group_distributor::{DistributorStats, GroupDistributor, GroupDistributorConfig};
 pub use http_dispatcher::{
     BatchRequest, BatchResponse, HttpDispatcher, HttpDispatcherConfig, ItemStatus,

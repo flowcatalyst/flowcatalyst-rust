@@ -29,6 +29,7 @@ use crate::tsid::TsidGenerator;
 
 use super::driver::{MessageType, OutboxDriver, OutboxMessage, OutboxStatus};
 use super::dto::{CreateAuditLogDto, CreateDispatchJobDto, CreateEventDto};
+use super::error::OutboxError;
 
 /// Manages outbox message creation.
 pub struct OutboxManager {
@@ -45,7 +46,7 @@ impl OutboxManager {
     }
 
     /// Create a single event in the outbox. Returns the generated TSID.
-    pub async fn create_event(&self, event: CreateEventDto) -> anyhow::Result<String> {
+    pub async fn create_event(&self, event: CreateEventDto) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
         let id = TsidGenerator::generate_untyped();
@@ -69,7 +70,10 @@ impl OutboxManager {
     }
 
     /// Create multiple events in the outbox (batch). Returns the generated TSIDs.
-    pub async fn create_events(&self, events: Vec<CreateEventDto>) -> anyhow::Result<Vec<String>> {
+    pub async fn create_events(
+        &self,
+        events: Vec<CreateEventDto>,
+    ) -> Result<Vec<String>, OutboxError> {
         if events.is_empty() {
             return Ok(Vec::new());
         }
@@ -102,7 +106,10 @@ impl OutboxManager {
     }
 
     /// Create a single dispatch job in the outbox. Returns the generated TSID.
-    pub async fn create_dispatch_job(&self, job: CreateDispatchJobDto) -> anyhow::Result<String> {
+    pub async fn create_dispatch_job(
+        &self,
+        job: CreateDispatchJobDto,
+    ) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
         let id = TsidGenerator::generate_untyped();
@@ -124,7 +131,7 @@ impl OutboxManager {
     pub async fn create_dispatch_jobs(
         &self,
         jobs: Vec<CreateDispatchJobDto>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>, OutboxError> {
         if jobs.is_empty() {
             return Ok(Vec::new());
         }
@@ -152,7 +159,7 @@ impl OutboxManager {
     }
 
     /// Create a single audit log in the outbox. Returns the generated TSID.
-    pub async fn create_audit_log(&self, audit: CreateAuditLogDto) -> anyhow::Result<String> {
+    pub async fn create_audit_log(&self, audit: CreateAuditLogDto) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
         let id = TsidGenerator::generate_untyped();
@@ -174,7 +181,7 @@ impl OutboxManager {
     pub async fn create_audit_logs(
         &self,
         audits: Vec<CreateAuditLogDto>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>, OutboxError> {
         if audits.is_empty() {
             return Ok(Vec::new());
         }
@@ -228,11 +235,9 @@ impl OutboxManager {
         }
     }
 
-    fn ensure_client_id(&self) -> anyhow::Result<()> {
+    fn ensure_client_id(&self) -> Result<(), OutboxError> {
         if self.client_id.is_empty() {
-            anyhow::bail!(
-                "OutboxManager: client_id is required. Provide a valid client ID when constructing the OutboxManager."
-            );
+            return Err(OutboxError::MissingClientId);
         }
         Ok(())
     }
@@ -262,11 +267,11 @@ mod tests {
 
     #[async_trait::async_trait]
     impl OutboxDriver for MockDriver {
-        async fn insert(&self, message: OutboxMessage) -> anyhow::Result<()> {
+        async fn insert(&self, message: OutboxMessage) -> Result<(), OutboxError> {
             self.messages.lock().unwrap().push(message);
             Ok(())
         }
-        async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> anyhow::Result<()> {
+        async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> Result<(), OutboxError> {
             self.messages.lock().unwrap().extend(messages);
             Ok(())
         }

@@ -190,7 +190,7 @@ impl EnhancedOutboxProcessor {
     }
 
     /// Unblock a message group
-    pub async fn unblock_group(&self, group_id: &str) -> Result<(), String> {
+    pub async fn unblock_group(&self, group_id: &str) -> Result<(), crate::OutboxError> {
         self.distributor.unblock_group(group_id).await
     }
 
@@ -285,7 +285,7 @@ impl EnhancedOutboxProcessor {
                                         item_type,
                                         vec![item_id.clone()],
                                         OutboxStatus::INTERNAL_ERROR,
-                                        Some(e),
+                                        Some(e.to_string()),
                                     )
                                     .await
                                 {
@@ -474,7 +474,7 @@ impl EnhancedOutboxProcessor {
                                         item_type,
                                         vec![item_id.clone()],
                                         OutboxStatus::INTERNAL_ERROR,
-                                        Some(e),
+                                        Some(e.to_string()),
                                     )
                                     .await
                                 {

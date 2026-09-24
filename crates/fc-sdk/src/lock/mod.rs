@@ -52,19 +52,19 @@ mod memory;
 
 #[cfg(feature = "lock-postgres")]
 mod pg;
-#[cfg(feature = "lock-postgres")]
-mod schema;
 #[cfg(feature = "lock-redis")]
 mod redis;
+#[cfg(feature = "lock-postgres")]
+mod schema;
 
 pub use memory::{MemoryLockProvider, NoOpLockProvider};
 
+#[cfg(feature = "lock-redis")]
+pub use self::redis::RedisLockProvider;
 #[cfg(feature = "lock-postgres")]
 pub use pg::PgLockProvider;
 #[cfg(feature = "lock-postgres")]
 pub use schema::{init_lock_schema, init_lock_schema_with_table, CREATE_LOCK_TABLE_SQL};
-#[cfg(feature = "lock-redis")]
-pub use self::redis::RedisLockProvider;
 
 /// Errors from a [`LockProvider`] implementation. Acquire-result-of-`None`
 /// (i.e. lock contended) is NOT an error — only backend faults are.
@@ -73,9 +73,26 @@ pub enum LockError {
     /// TTL was zero or negative.
     #[error("lock TTL must be greater than zero")]
     InvalidTtl,
+    /// TTL is larger than the backend (or the platform clock) can represent.
+    #[error("lock TTL {0:?} is too large for this backend")]
+    TtlTooLarge(Duration),
     /// Backend-level I/O failure (network, query, etc.).
     #[error("lock backend error: {0}")]
-    Backend(String),
+    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
+#[cfg(feature = "lock-postgres")]
+impl From<sqlx::Error> for LockError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Backend(Box::new(e))
+    }
+}
+
+#[cfg(feature = "lock-redis")]
+impl From<::redis::RedisError> for LockError {
+    fn from(e: ::redis::RedisError) -> Self {
+        Self::Backend(Box::new(e))
+    }
 }
 
 /// Pluggable distributed lock contract. Mirrors the TypeScript SDK's
@@ -89,11 +106,7 @@ pub trait LockProvider: Send + Sync {
     /// Try to acquire `key` for at most `ttl`. Returns `Ok(Some(handle))` on
     /// success, `Ok(None)` if another holder owns it, and `Err` only on
     /// backend faults.
-    async fn acquire(
-        &self,
-        key: &str,
-        ttl: Duration,
-    ) -> Result<Option<LockHandle>, LockError>;
+    async fn acquire(&self, key: &str, ttl: Duration) -> Result<Option<LockHandle>, LockError>;
 }
 
 /// Handle returned by a successful [`LockProvider::acquire`]. Drop will NOT

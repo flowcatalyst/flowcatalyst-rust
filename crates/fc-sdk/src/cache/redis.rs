@@ -56,40 +56,26 @@ impl Cache for RedisCache {
     async fn get_bytes(&self, key: &str) -> Result<Option<Vec<u8>>, CacheError> {
         let mut conn = self.conn.clone();
         let full_key = self.make_key(key);
-        let value: Option<Vec<u8>> = conn
-            .get(&full_key)
-            .await
-            .map_err(|e| CacheError::Backend(e.to_string()))?;
+        let value: Option<Vec<u8>> = conn.get(&full_key).await?;
         Ok(value)
     }
 
-    async fn set_bytes(
-        &self,
-        key: &str,
-        value: Vec<u8>,
-        ttl: Duration,
-    ) -> Result<(), CacheError> {
+    async fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<(), CacheError> {
         ensure_positive_ttl(ttl)?;
         let mut conn = self.conn.clone();
         let full_key = self.make_key(key);
         let ttl_ms: usize = ttl
             .as_millis()
             .try_into()
-            .map_err(|_| CacheError::Backend("TTL exceeds Redis maximum".into()))?;
-        let _: () = conn
-            .pset_ex(&full_key, value, ttl_ms as u64)
-            .await
-            .map_err(|e| CacheError::Backend(e.to_string()))?;
+            .map_err(|_| CacheError::TtlTooLarge(ttl))?;
+        let _: () = conn.pset_ex(&full_key, value, ttl_ms as u64).await?;
         Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<(), CacheError> {
         let mut conn = self.conn.clone();
         let full_key = self.make_key(key);
-        let _: i64 = conn
-            .del(&full_key)
-            .await
-            .map_err(|e| CacheError::Backend(e.to_string()))?;
+        let _: i64 = conn.del(&full_key).await?;
         Ok(())
     }
 }

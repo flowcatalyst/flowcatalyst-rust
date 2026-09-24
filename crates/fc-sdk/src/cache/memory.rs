@@ -66,16 +66,11 @@ impl Cache for MemoryCache {
         Ok(None)
     }
 
-    async fn set_bytes(
-        &self,
-        key: &str,
-        value: Vec<u8>,
-        ttl: Duration,
-    ) -> Result<(), CacheError> {
+    async fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<(), CacheError> {
         ensure_positive_ttl(ttl)?;
         let expires_at = Instant::now()
             .checked_add(ttl)
-            .ok_or_else(|| CacheError::Backend("TTL overflow on Instant".into()))?;
+            .ok_or(CacheError::TtlTooLarge(ttl))?;
         let mut guard = self.inner.write().await;
         guard.insert(key.to_string(), Entry { value, expires_at });
         Ok(())
@@ -144,9 +139,14 @@ mod tests {
     #[tokio::test]
     async fn typed_get_set_round_trip() {
         let cache = MemoryCache::new();
-        super::super::set(&cache, "user:1", &"Alice".to_string(), Duration::from_secs(60))
-            .await
-            .unwrap();
+        super::super::set(
+            &cache,
+            "user:1",
+            &"Alice".to_string(),
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
         let v: Option<String> = super::super::get(&cache, "user:1").await.unwrap();
         assert_eq!(v.as_deref(), Some("Alice"));
     }
@@ -159,17 +159,13 @@ mod tests {
             .unwrap();
         let counter = std::sync::Arc::new(std::sync::Mutex::new(0));
         let counter_clone = counter.clone();
-        let v: String = super::super::get_or_set(
-            &cache,
-            "k",
-            Duration::from_secs(60),
-            move || async move {
+        let v: String =
+            super::super::get_or_set(&cache, "k", Duration::from_secs(60), move || async move {
                 *counter_clone.lock().unwrap() += 1;
                 Ok("fresh".to_string())
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
         assert_eq!(v, "cached");
         assert_eq!(*counter.lock().unwrap(), 0);
     }
@@ -177,12 +173,9 @@ mod tests {
     #[tokio::test]
     async fn get_or_set_invokes_supplier_on_miss() {
         let cache = MemoryCache::new();
-        let v: String = super::super::get_or_set(
-            &cache,
-            "k",
-            Duration::from_secs(60),
-            || async { Ok("fresh".to_string()) },
-        )
+        let v: String = super::super::get_or_set(&cache, "k", Duration::from_secs(60), || async {
+            Ok("fresh".to_string())
+        })
         .await
         .unwrap();
         assert_eq!(v, "fresh");

@@ -10,6 +10,8 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
 use tracing::{error, info, trace, warn};
 
+use crate::error::OutboxError;
+
 /// Message dispatch result
 #[derive(Debug, Clone)]
 pub enum DispatchResult {
@@ -155,7 +157,7 @@ impl MessageGroupProcessor {
     }
 
     /// Enqueue an outbox item for processing
-    pub async fn enqueue(&self, item: OutboxItem) -> Result<(), String> {
+    pub async fn enqueue(&self, item: OutboxItem) -> Result<(), OutboxError> {
         let mut queue = self.queue.lock().await;
 
         if queue.len() >= self.config.max_queue_depth {
@@ -164,7 +166,7 @@ impl MessageGroupProcessor {
                 self.group_id,
                 queue.len()
             );
-            return Err("Queue depth exceeded".to_string());
+            return Err(OutboxError::QueueFull);
         }
 
         queue.push_back(TrackedMessage::new(item));

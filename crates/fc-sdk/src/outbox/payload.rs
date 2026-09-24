@@ -10,6 +10,8 @@ use sqlx::{PgPool, Postgres, Transaction};
 use crate::tsid::TsidGenerator;
 use crate::usecase::DomainEvent;
 
+use super::error::OutboxError;
+
 /// Write a dispatch job to the outbox for async processing.
 ///
 /// Dispatch jobs are created when you need the platform to deliver a webhook
@@ -40,7 +42,7 @@ pub async fn write_dispatch_job(
     table: &str,
     job: &DispatchJobPayload,
     client_id: Option<&str>,
-) -> anyhow::Result<()> {
+) -> Result<(), OutboxError> {
     let id = TsidGenerator::generate_untyped();
     let payload = serde_json::to_value(job)?;
     let payload_size = payload.to_string().len() as i32;
@@ -71,7 +73,7 @@ pub async fn write_event<E: DomainEvent + Serialize>(
     table: &str,
     event: &E,
     client_id: Option<&str>,
-) -> anyhow::Result<()> {
+) -> Result<(), OutboxError> {
     let id = TsidGenerator::generate_untyped();
     let data_json: serde_json::Value =
         serde_json::from_str(&event.to_data_json()).unwrap_or(serde_json::json!({}));
@@ -117,7 +119,7 @@ pub async fn write_audit_log(
     table: &str,
     audit: &AuditLogPayload,
     client_id: Option<&str>,
-) -> anyhow::Result<()> {
+) -> Result<(), OutboxError> {
     let id = TsidGenerator::generate_untyped();
     let payload = serde_json::to_value(audit)?;
     let payload_size = payload.to_string().len() as i32;
@@ -146,7 +148,7 @@ pub async fn emit_event<E: DomainEvent + Serialize>(
     table: &str,
     event: &E,
     client_id: Option<&str>,
-) -> anyhow::Result<()> {
+) -> Result<(), OutboxError> {
     let mut txn = pool.begin().await?;
     write_event(&mut txn, table, event, client_id).await?;
     txn.commit().await?;
@@ -159,7 +161,7 @@ pub async fn emit_dispatch_job(
     table: &str,
     job: &DispatchJobPayload,
     client_id: Option<&str>,
-) -> anyhow::Result<()> {
+) -> Result<(), OutboxError> {
     let mut txn = pool.begin().await?;
     write_dispatch_job(&mut txn, table, job, client_id).await?;
     txn.commit().await?;
@@ -172,7 +174,7 @@ pub async fn emit_audit_log(
     table: &str,
     audit: &AuditLogPayload,
     client_id: Option<&str>,
-) -> anyhow::Result<()> {
+) -> Result<(), OutboxError> {
     let mut txn = pool.begin().await?;
     write_audit_log(&mut txn, table, audit, client_id).await?;
     txn.commit().await?;

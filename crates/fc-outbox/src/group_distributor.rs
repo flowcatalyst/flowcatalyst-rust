@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tracing::{debug, info, warn};
 
+use crate::error::OutboxError;
 use crate::message_group_processor::{
     BatchMessageDispatcher, DispatchResult, MessageGroupProcessor, MessageGroupProcessorConfig,
     ProcessorState, TrackedMessage,
@@ -73,7 +74,7 @@ impl GroupDistributor {
     }
 
     /// Distribute an outbox item to the appropriate processor
-    pub async fn distribute(&self, item: OutboxItem) -> Result<(), String> {
+    pub async fn distribute(&self, item: OutboxItem) -> Result<(), OutboxError> {
         let group_id = match &item.message_group {
             Some(gid) => gid.clone(),
             None => {
@@ -104,7 +105,7 @@ impl GroupDistributor {
     async fn get_or_create_processor(
         &self,
         group_id: &str,
-    ) -> Result<Arc<MessageGroupProcessor>, String> {
+    ) -> Result<Arc<MessageGroupProcessor>, OutboxError> {
         // First try read lock
         {
             let groups = self.groups.read().await;
@@ -130,7 +131,7 @@ impl GroupDistributor {
             self.cleanup_idle_groups_internal(&mut groups).await;
 
             if groups.len() >= self.config.max_groups {
-                return Err("Maximum group count reached".to_string());
+                return Err(OutboxError::MaxGroupsReached);
             }
         }
 
@@ -167,16 +168,18 @@ impl GroupDistributor {
     }
 
     /// Dispatch an item directly (for items without a group)
-    async fn dispatch_direct(&self, item: OutboxItem) -> Result<(), String> {
+    async fn dispatch_direct(&self, item: OutboxItem) -> Result<(), OutboxError> {
         let batch_result = self.dispatcher.dispatch_batch(&[item]).await;
 
-        match batch_result.results.first() {
-            Some(r) => match &r.result {
+        match batch_result.results.into_iter().next() {
+            Some(r) => match r.result {
                 DispatchResult::Success => Ok(()),
-                DispatchResult::Failure { error, .. } => Err(error.clone()),
-                DispatchResult::Blocked { reason } => Err(reason.clone()),
+                DispatchResult::Failure { error, retryable } => {
+                    Err(OutboxError::DispatchFailed { error, retryable })
+                }
+                DispatchResult::Blocked { reason } => Err(OutboxError::Blocked { reason }),
             },
-            None => Err("No result from dispatch".to_string()),
+            None => Err(OutboxError::NoDispatchResult),
         }
     }
 
@@ -259,13 +262,13 @@ impl GroupDistributor {
     }
 
     /// Unblock a specific group
-    pub async fn unblock_group(&self, group_id: &str) -> Result<(), String> {
+    pub async fn unblock_group(&self, group_id: &str) -> Result<(), OutboxError> {
         let groups = self.groups.read().await;
         if let Some(entry) = groups.get(group_id) {
             entry.processor.unblock().await;
             Ok(())
         } else {
-            Err(format!("Group {} not found", group_id))
+            Err(OutboxError::GroupNotFound(group_id.to_string()))
         }
     }
 
@@ -273,34 +276,34 @@ impl GroupDistributor {
     pub async fn skip_blocking_message(
         &self,
         group_id: &str,
-    ) -> Result<Option<TrackedMessage>, String> {
+    ) -> Result<Option<TrackedMessage>, OutboxError> {
         let groups = self.groups.read().await;
         if let Some(entry) = groups.get(group_id) {
             Ok(entry.processor.skip_blocking_message().await)
         } else {
-            Err(format!("Group {} not found", group_id))
+            Err(OutboxError::GroupNotFound(group_id.to_string()))
         }
     }
 
     /// Pause a specific group
-    pub async fn pause_group(&self, group_id: &str) -> Result<(), String> {
+    pub async fn pause_group(&self, group_id: &str) -> Result<(), OutboxError> {
         let groups = self.groups.read().await;
         if let Some(entry) = groups.get(group_id) {
             entry.processor.pause().await;
             Ok(())
         } else {
-            Err(format!("Group {} not found", group_id))
+            Err(OutboxError::GroupNotFound(group_id.to_string()))
         }
     }
 
     /// Resume a specific group
-    pub async fn resume_group(&self, group_id: &str) -> Result<(), String> {
+    pub async fn resume_group(&self, group_id: &str) -> Result<(), OutboxError> {
         let groups = self.groups.read().await;
         if let Some(entry) = groups.get(group_id) {
             entry.processor.resume().await;
             Ok(())
         } else {
-            Err(format!("Group {} not found", group_id))
+            Err(OutboxError::GroupNotFound(group_id.to_string()))
         }
     }
 
