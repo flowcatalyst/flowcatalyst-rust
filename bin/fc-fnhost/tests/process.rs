@@ -71,8 +71,32 @@ fn base_env(command: &mut Command, url: &str, cache: &std::path::Path) {
 #[tokio::test]
 async fn exit_after_start_runs_a_real_reconcile_then_exits_0() {
     let (platform, url) = support::start().await;
+    // A real component (fc-fnhost-core's committed test guest) for `wasm`,
+    // and a `jvm` entry, which this host has no runtime for.
+    let component = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/fc-fnhost-core/tests/fixtures/wasm/pure.wasm"
+    ))
+    .unwrap();
+    let mut wasm = support::entry(
+        "app.svc.fn",
+        1,
+        "wasm",
+        "warm",
+        &format!(
+            "platform://fnc_1/{}",
+            &support::sha256_digest(&component)[7..]
+        ),
+        &component,
+    );
+    wasm["manifest"]["entrypoint"] = json!("wasi:http/incoming-handler");
+    platform
+        .artifacts
+        .lock()
+        .insert(support::version_id("app.svc.fn", 1), component);
     platform.set_document(json!({"functions": [
-        support::entry("app.svc.fn", 1, "wasm", "warm", "platform://fnc_1/00", b"x")
+        wasm,
+        support::entry("app.svc.jvm", 1, "jvm", "warm", "platform://fnc_2/00", b"x")
     ]}));
     let cache = tempfile::tempdir().unwrap();
     let mut command = host();
@@ -87,12 +111,20 @@ async fn exit_after_start_runs_a_real_reconcile_then_exits_0() {
         "{}",
         String::from_utf8_lossy(&status.stderr)
     );
-    // the binary has no runtimes registered yet: the wasm entry is RUNTIME_UNSUPPORTED
     let beats = platform.heartbeats.lock().clone();
-    assert!(
-        beats
+    let state_of = |address: &str| {
+        beats[0]["loaded"]
+            .as_array()
+            .unwrap()
             .iter()
-            .any(|b| b["loaded"][0]["error"] == "RUNTIME_UNSUPPORTED"),
+            .find(|e| e["address"] == address)
+            .cloned()
+            .unwrap_or_else(|| panic!("{address} missing from {beats:?}"))
+    };
+    assert_eq!(state_of("app.svc.fn")["state"], "LOADED", "{beats:?}");
+    assert_eq!(
+        state_of("app.svc.jvm")["error"],
+        "RUNTIME_UNSUPPORTED",
         "{beats:?}"
     );
     assert_eq!(beats.last().unwrap()["state"], "DRAINING");
