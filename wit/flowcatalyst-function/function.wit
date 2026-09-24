@@ -1,0 +1,224 @@
+/// The FlowCatalyst function contract, version 0.1.0.
+///
+/// A FlowCatalyst function is a WASI 0.2 component that exports
+/// `wasi:http/incoming-handler`: the host hands it each invocation as an
+/// HTTP request and sends its HTTP response back to the caller. That is
+/// the whole `wasi:http/proxy` world, so a function that uses nothing else
+/// runs unchanged on `wasmtime serve`, Spin or wasmCloud.
+///
+/// The interfaces in this package are what the FlowCatalyst host adds on
+/// top. **Every one of them is optional**: a component imports only the
+/// interfaces it calls, and one that imports none of them is a plain
+/// `wasi:http/proxy` component. A component that imports one of them runs
+/// elsewhere only where that interface is provided or virtualised.
+///
+/// The host's rules, which the types below cannot express:
+///
+/// - One component instance serves exactly one request (instance per
+///   request, the `wasi:http` model). Globals do not survive between calls.
+/// - The request and response bodies are buffered in full. The request body
+///   is capped by the endpoint's `maxBodyBytes`; the response body by the
+///   function's `limits.wasmMemoryMb`.
+/// - Linear memory is capped by `limits.wasmMemoryMb`: growing past it
+///   fails the allocation, which in most languages traps, and the caller
+///   gets `500`.
+/// - The invocation stops at the endpoint's `timeoutMs`: the caller gets
+///   `504` and the instance is discarded, wherever the guest was.
+/// - WASI is configured with no preopened directories, no environment, no
+///   arguments and no sockets. Clocks and random work. Standard output is
+///   logged at INFO and standard error at WARN on the function's logger
+///   (`fn.<address>`), one line per `\n`, split at 8 KiB.
+/// - Outbound HTTP (`wasi:http/outgoing-handler`) reaches only the hosts the
+///   manifest lists in `httpAllow` (an exact host, or `*.suffix` for
+///   subdomains, never the apex), over `https` (plain `http` only to
+///   loopback). Redirects are returned to the guest, never followed. The
+///   timeout is the smallest of the guest's own request options, the time
+///   left before the invocation's deadline, and 30 s. A refused call fails
+///   with the `wasi:http` error code `HTTP-request-denied`.
+///
+/// `deps/` holds the WASI 0.2.12 packages this one refers to, copied
+/// unchanged from wasmtime-wasi-http 49.0.1 (WebAssembly/WASI, Apache-2.0
+/// WITH LLVM-exception).
+package flowcatalyst:function@0.1.0;
+
+/// The function's manifest-declared configuration.
+interface config {
+    /// The value of `key` when the manifest declares it under `config` and
+    /// the platform holds a value for it; `none` otherwise, including for a
+    /// key the platform holds but the manifest does not declare.
+    get: func(key: string) -> option<string>;
+}
+
+/// The function's manifest-declared secrets.
+interface secrets {
+    /// The value of `key` when the manifest declares it under `secrets` and
+    /// the platform holds a non-empty value for it; `none` otherwise. The
+    /// host never logs a secret value, and neither should the function.
+    get: func(key: string) -> option<string>;
+}
+
+/// Structured log lines on the function's own logger (`fn.<address>`). Each
+/// line carries the invocation's fields (`function`, `version`,
+/// `execution_id`, `correlation_id`).
+interface log {
+    enum level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    log: func(level: level, message: string);
+}
+
+/// Publishing events to the platform, on the function's behalf.
+interface events {
+    /// An event to publish. The fields are FlowCatalyst's `OutboundEvent`.
+    record outbound-event {
+        /// The event type code (`application:subdomain:aggregate:event`). The
+        /// function's application must own it.
+        %type: string,
+        /// The CloudEvents `source`. Not yet carried by the platform's
+        /// events route, which derives it; accepted for forward
+        /// compatibility.
+        source: option<string>,
+        /// The CloudEvents `subject`.
+        subject: option<string>,
+        /// The media type of `data`. Not yet carried by the platform's
+        /// events route (the payload is always JSON); accepted for forward
+        /// compatibility.
+        data-content-type: option<string>,
+        /// The payload, as JSON text. `none` is an event with no payload.
+        data: option<string>,
+        /// Links this event to the flow that caused it. `none` takes the
+        /// invocation's correlation id (see `invocation.context`).
+        correlation-id: option<string>,
+        /// The id of the event that directly caused this one. `none` takes
+        /// the invocation's causation id: the inbound event's id when the
+        /// call is a verified webhook delivery of an event.
+        causation-id: option<string>,
+        /// The ordering group the event belongs to.
+        message-group: option<string>,
+        /// The id the platform deduplicates the event on. Required, never
+        /// blank.
+        dedup-id: string,
+    }
+
+    /// The platform refused the event.
+    record refusal {
+        /// The platform's own error code, for example `EVENT_TYPE_NOT_OWNED`,
+        /// `DEDUP_ID_DUPLICATE`, `HOST_UNKNOWN` or
+        /// `FUNCTION_NOT_SERVED_BY_HOST`.
+        code: string,
+        /// The HTTP status the platform answered with. A 5xx is worth a
+        /// retry; a 4xx is not.
+        status: u16,
+    }
+
+    variant emit-error {
+        /// The host refused the event before it reached the platform. The
+        /// payload is the code: `INVALID_EVENT: type is required`,
+        /// `INVALID_EVENT: data is not JSON` or `DEDUP_ID_REQUIRED`.
+        invalid(string),
+        /// The platform refused the event.
+        refused(refusal),
+        /// The platform could not be reached (code `UNAVAILABLE`, status
+        /// 503). Worth a retry.
+        unavailable,
+    }
+
+    /// Publishes one event through the host's control plane. Returns once
+    /// the platform has accepted or refused it.
+    emit: func(event: outbound-event) -> result<_, emit-error>;
+}
+
+/// What the host knows about the current invocation beyond the HTTP request
+/// itself.
+interface invocation {
+    /// An authenticated platform principal: a user or service account
+    /// bearer token the host verified. Every field comes from the verified
+    /// token. Email and name are deliberately absent.
+    record principal {
+        /// The principal's id (JWT `sub`).
+        id: string,
+        /// The principal's kind, for example `USER` or `SERVICE`.
+        principal-type: string,
+        /// `ANCHOR`, `PARTNER` or `CLIENT`, when the token carries one.
+        tier: option<string>,
+        /// The client ids the principal can access; `*` means every client.
+        clients: list<string>,
+        /// Assigned role codes.
+        roles: list<string>,
+        /// Explicit application ids; ignored when `all-applications`.
+        applications: list<string>,
+        /// Access to every application.
+        all-applications: bool,
+        /// Flattened permission codes, sorted. A `*` segment is a wildcard.
+        permissions: list<string>,
+    }
+
+    /// Who made the call, decided by the matched endpoint's `auth`.
+    variant caller {
+        /// `auth: webhook`: a platform delivery whose signature the host
+        /// verified.
+        platform,
+        /// `auth: none`: the host checked nothing.
+        anonymous,
+        /// `auth: platform`: a verified platform bearer token.
+        principal(principal),
+    }
+
+    record invocation-context {
+        /// Unique per attempt: the `execution_id` on every log line.
+        invocation-id: string,
+        /// The function's address, `application.service.function`.
+        address: string,
+        /// The version handling the call.
+        version: s32,
+        caller: caller,
+        /// The correlation id events emitted by this invocation default to:
+        /// the inbound event's own correlation id on a verified webhook
+        /// delivery, else the `X-Correlation-Id` header, else the invocation
+        /// id.
+        correlation-id: string,
+        /// The causation id events emitted by this invocation default to:
+        /// the inbound event's id on a verified webhook delivery of an
+        /// event, `none` otherwise.
+        causation-id: option<string>,
+        /// The `Host` (or `:authority`) the call arrived on.
+        original-host: option<string>,
+        /// The request path as it arrived, before the host stripped its
+        /// `/functions/{address}` or public-route prefix. The request the
+        /// function handles carries the stripped path.
+        original-path: option<string>,
+        /// The caller's address: the TCP peer, or on the public listener
+        /// the right-most `X-Forwarded-For` entry when the peer is a
+        /// trusted proxy.
+        remote-address: option<string>,
+        /// The parameters the matched endpoint's path pattern bound,
+        /// percent-decoded, in pattern order.
+        path-params: list<tuple<string, string>>,
+    }
+
+    /// The current invocation.
+    context: func() -> invocation-context;
+}
+
+/// Everything a function may import from FlowCatalyst. Bind this world for
+/// the FlowCatalyst half of a function (the `wasi:http` half comes from the
+/// WASI bindings of the guest's language).
+world imports {
+    import config;
+    import secrets;
+    import log;
+    import events;
+    import invocation;
+}
+
+/// A FlowCatalyst function: a `wasi:http/proxy` component that may also
+/// import any of this package's interfaces.
+world function {
+    include wasi:http/proxy@0.2.12;
+    include imports;
+}
