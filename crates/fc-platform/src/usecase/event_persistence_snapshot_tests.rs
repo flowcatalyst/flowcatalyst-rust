@@ -98,9 +98,18 @@ fn persisted<E: DomainEvent, C: Serialize>(event: &E, command: &C) -> String {
 }
 
 #[track_caller]
+/// Compares as parsed JSON, not strings. Workspace builds unify
+/// `serde_json/preserve_order` in (declaration-order keys) while a
+/// `-p fc-platform` build sorts keys; the columns are JSONB, so key order is
+/// not part of what gets persisted. `Value` equality ignores map order in
+/// both modes but still checks every key, value and array position.
 fn check<E: DomainEvent>(event: &E, expected: &str) {
     let actual = persisted(event, &CMD);
-    assert_eq!(actual, expected, "\nactual:\n{actual}\n");
+    let actual_json: serde_json::Value =
+        serde_json::from_str(&actual).expect("persisted() produced invalid JSON");
+    let expected_json: serde_json::Value =
+        serde_json::from_str(expected).expect("snapshot constant is invalid JSON");
+    assert_eq!(actual_json, expected_json, "\nactual:\n{actual}\n");
 }
 
 fn s(v: &[&str]) -> Vec<String> {
