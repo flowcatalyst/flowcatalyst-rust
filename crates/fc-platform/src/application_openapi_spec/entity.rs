@@ -14,15 +14,6 @@ pub enum OpenApiSpecStatus {
     Archived,
 }
 
-impl OpenApiSpecStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "ARCHIVED" => Self::Archived,
-            _ => Self::Current,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(OpenApiSpecStatus, "open api spec status", {
     Current => "CURRENT",
     Archived => "ARCHIVED",
@@ -115,6 +106,7 @@ impl OpenApiSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn new_spec_has_oas_prefix_and_current_status() {
@@ -128,7 +120,7 @@ mod tests {
     #[test]
     fn status_round_trip() {
         for v in [OpenApiSpecStatus::Current, OpenApiSpecStatus::Archived] {
-            assert_eq!(OpenApiSpecStatus::from_str(v.as_str()), v);
+            assert_eq!(OpenApiSpecStatus::from_str(v.as_str()), Ok(v));
         }
     }
 }

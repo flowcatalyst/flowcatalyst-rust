@@ -14,7 +14,8 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ScheduledJob, ScheduledJobStatus};
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 #[derive(sqlx::FromRow)]
@@ -41,15 +42,17 @@ struct ScheduledJobRow {
     version: i32,
 }
 
-impl From<ScheduledJobRow> for ScheduledJob {
-    fn from(r: ScheduledJobRow) -> Self {
-        Self {
+impl TryFrom<ScheduledJobRow> for ScheduledJob {
+    type Error = PlatformError;
+    fn try_from(r: ScheduledJobRow) -> Result<Self> {
+        let status = decode(&r.status, "msg_scheduled_jobs", "status", &r.id)?;
+        Ok(Self {
             id: r.id,
             client_id: r.client_id,
             code: r.code,
             name: r.name,
             description: r.description,
-            status: ScheduledJobStatus::from_str(&r.status),
+            status,
             crons: r.crons,
             timezone: r.timezone,
             payload: r.payload,
@@ -64,7 +67,7 @@ impl From<ScheduledJobRow> for ScheduledJob {
             created_by: r.created_by,
             updated_by: r.updated_by,
             version: r.version,
-        }
+        })
     }
 }
 
@@ -91,7 +94,7 @@ impl ScheduledJobRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(ScheduledJob::from))
+        row.map(ScheduledJob::try_from).transpose()
     }
 
     /// Look up by `(client_id, code)`. Pass `client_id = None` for platform-scoped jobs.
@@ -121,7 +124,7 @@ impl ScheduledJobRepository {
                 .await?
             }
         };
-        Ok(row.map(ScheduledJob::from))
+        row.map(ScheduledJob::try_from).transpose()
     }
 
     pub async fn find_all(&self) -> Result<Vec<ScheduledJob>> {
@@ -130,7 +133,7 @@ impl ScheduledJobRepository {
         ))
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(ScheduledJob::from).collect())
+        rows.into_iter().map(ScheduledJob::try_from).collect()
     }
 
     pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<ScheduledJob>> {
@@ -141,7 +144,7 @@ impl ScheduledJobRepository {
         .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(ScheduledJob::from).collect())
+        rows.into_iter().map(ScheduledJob::try_from).collect()
     }
 
     /// Combined-filter list with optional pagination. AND semantics across
@@ -197,7 +200,7 @@ impl ScheduledJobRepository {
         }
 
         let rows: Vec<ScheduledJobRow> = qb.build_query_as().fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(ScheduledJob::from).collect())
+        rows.into_iter().map(ScheduledJob::try_from).collect()
     }
 
     /// Total count for pagination, sharing the same filter shape as
@@ -259,7 +262,7 @@ impl ScheduledJobRepository {
         ))
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(ScheduledJob::from).collect())
+        rows.into_iter().map(ScheduledJob::try_from).collect()
     }
 
     /// Mark a slot as fired. Idempotent against re-runs of the same poller

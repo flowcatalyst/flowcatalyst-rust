@@ -41,6 +41,7 @@ use std::io::{stdin, stdout, BufRead, Write};
 use std::path::PathBuf;
 use tracing::info;
 
+use fc_common::tsid::{self, EntityType};
 use fc_platform::application::entity::{Application, ApplicationType};
 use fc_platform::application::repository::ApplicationRepository;
 use fc_platform::auth::oauth_client_repository::OAuthClientRepository;
@@ -57,7 +58,6 @@ use fc_platform::principal::repository::PrincipalRepository;
 use fc_platform::service_account::entity::ServiceAccount;
 use fc_platform::service_account::repository::ServiceAccountRepository;
 use fc_platform::shared::encryption_service::EncryptionService;
-use fc_common::tsid::{self, EntityType};
 
 #[derive(clap::Args, Debug)]
 pub struct InitArgs {
@@ -182,12 +182,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     .context("check for existing anchor user")?;
 
     if !any_anchor {
-        let admin_email = resolve(
-            args.admin_email.clone(),
-            "Admin email",
-            None,
-            args.yes,
-        )?;
+        let admin_email = resolve(args.admin_email.clone(), "Admin email", None, args.yes)?;
         let admin_password =
             resolve_secret(args.admin_password.clone(), "Admin password", args.yes)?;
         create_admin(&pool, &principal_repo, &admin_email, &admin_password).await?;
@@ -203,7 +198,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
         .context("look up default client")?
     {
         Some(c) => {
-            println!("→ reusing default client \"{}\" (id={})", c.identifier, c.id);
+            println!(
+                "→ reusing default client \"{}\" (id={})",
+                c.identifier, c.id
+            );
             c.id
         }
         None => {
@@ -212,7 +210,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
                 .insert(&c)
                 .await
                 .context("insert default client")?;
-            println!("  → default client \"{}\" created (id={})", c.identifier, c.id);
+            println!(
+                "  → default client \"{}\" created (id={})",
+                c.identifier, c.id
+            );
             c.id
         }
     };
@@ -226,7 +227,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
         Some("APPLICATION".to_string()),
         args.yes,
     )?;
-    let app_type = ApplicationType::from_str(&raw_type.to_uppercase());
+    let app_type: ApplicationType = raw_type
+        .to_uppercase()
+        .parse()
+        .context("application type")?;
     let description = resolve(
         args.description.clone(),
         "Description (optional)",
@@ -307,7 +311,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
     let oauth_row_id = tsid::generate(EntityType::OAuthClient);
     let public_client_id = tsid::generate(EntityType::OAuthClient);
 
-    let mut oauth_client = OAuthClient::new(&public_client_id, format!("{} Service Account Client", name));
+    let mut oauth_client = OAuthClient::new(
+        &public_client_id,
+        format!("{} Service Account Client", name),
+    );
     oauth_client.id = oauth_row_id;
     oauth_client.client_type = OAuthClientType::Confidential;
     oauth_client.client_secret_ref = Some(format!("encrypted:{}", client_secret_ref));
@@ -325,7 +332,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
         ("FLOWCATALYST_BASE_URL", args.api_base_url.as_str()),
         ("FLOWCATALYST_APP_CODE", code.as_str()),
         ("FLOWCATALYST_CLIENT_ID", public_client_id.as_str()),
-        ("FLOWCATALYST_CLIENT_SECRET", client_secret_plaintext.as_str()),
+        (
+            "FLOWCATALYST_CLIENT_SECRET",
+            client_secret_plaintext.as_str(),
+        ),
     ];
     let env_path = args.root.join(".env");
     write_env_updates(&env_path, &updates).context("write .env")?;
@@ -333,7 +343,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
     println!("\n✓ Application scaffolded.\n");
     println!("  Application:     {} (code={})", name, code);
     println!("  Service account: {}", sa.id);
-    println!("  OAuth client:    {} (clientId={})", oauth_client.id, public_client_id);
+    println!(
+        "  OAuth client:    {} (clientId={})",
+        oauth_client.id, public_client_id
+    );
     println!("  Default client:  {}", client_id);
     println!();
     println!(
@@ -362,9 +375,8 @@ fn resolve(
         return Ok(v);
     }
     if yes {
-        return default.ok_or_else(|| {
-            anyhow::anyhow!("--yes mode requires a flag value for: {}", question)
-        });
+        return default
+            .ok_or_else(|| anyhow::anyhow!("--yes mode requires a flag value for: {}", question));
     }
     let suffix = match default.as_deref() {
         Some(d) if !d.is_empty() => format!(" [{}]", d),
@@ -457,8 +469,7 @@ async fn create_admin(
     // Hash password (try the strict policy; relax if the operator picked
     // something the default policy refuses — matches bootstrap_admin's
     // fallback so they can't lock themselves out).
-    let password_service =
-        PasswordService::new(Argon2Config::default(), PasswordPolicy::default());
+    let password_service = PasswordService::new(Argon2Config::default(), PasswordPolicy::default());
     let password_hash = match password_service.hash_password(password) {
         Ok(h) => h,
         Err(_) => {
@@ -558,13 +569,21 @@ pub(crate) fn write_env_updates(path: &PathBuf, updates: &[(&str, &str)]) -> Res
     println!(
         "  → {} {}",
         path.display(),
-        if original.is_empty() { "created" } else { "updated" }
+        if original.is_empty() {
+            "created"
+        } else {
+            "updated"
+        }
     );
     Ok(())
 }
 
 fn quote_env_value(value: &str) -> String {
-    if value.is_empty() || value.chars().any(|c| c.is_whitespace() || "#'\"`$".contains(c)) {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|c| c.is_whitespace() || "#'\"`$".contains(c))
+    {
         format!("'{}'", value.replace('\'', "'\\''"))
     } else {
         value.to_string()

@@ -11,8 +11,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-use crate::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
-use crate::shared::error::Result;
+use crate::auth::oauth_entity::{GrantType, OAuthClient};
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 
 // ── Row structs ─────────────────────────────────────────────────────
 
@@ -31,8 +32,10 @@ struct OAuthClientRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<OAuthClientRow> for OAuthClient {
-    fn from(r: OAuthClientRow) -> Self {
+impl TryFrom<OAuthClientRow> for OAuthClient {
+    type Error = PlatformError;
+    fn try_from(r: OAuthClientRow) -> Result<Self> {
+        let client_type = decode(&r.client_type, "oauth_clients", "client_type", &r.id)?;
         let default_scopes: Vec<String> = r
             .default_scopes
             .map(|s| {
@@ -43,15 +46,15 @@ impl From<OAuthClientRow> for OAuthClient {
             })
             .unwrap_or_default();
 
-        Self {
+        Ok(Self {
             id: r.id,
             client_id: r.client_id,
             client_name: r.client_name,
-            client_type: OAuthClientType::from_str(&r.client_type),
+            client_type,
             client_secret_ref: r.client_secret_ref,
-            redirect_uris: vec![], // loaded separately
+            redirect_uris: vec![],             // loaded separately
             post_logout_redirect_uris: vec![], // loaded separately
-            grant_types: vec![],   // loaded separately
+            grant_types: vec![],               // loaded separately
             default_scopes,
             pkce_required: r.pkce_required,
             application_ids: vec![], // loaded separately
@@ -61,7 +64,7 @@ impl From<OAuthClientRow> for OAuthClient {
             created_at: r.created_at,
             updated_at: r.updated_at,
             created_by: None,
-        }
+        })
     }
 }
 
@@ -106,10 +109,7 @@ impl OAuthClientRepository {
         Ok(rows)
     }
 
-    async fn load_post_logout_redirect_uris(
-        &self,
-        oauth_client_id: &str,
-    ) -> Result<Vec<String>> {
+    async fn load_post_logout_redirect_uris(&self, oauth_client_id: &str) -> Result<Vec<String>> {
         let rows = sqlx::query_scalar::<_, String>(
             "SELECT post_logout_redirect_uri FROM oauth_client_post_logout_redirect_uris \
              WHERE oauth_client_id = $1",
@@ -127,10 +127,9 @@ impl OAuthClientRepository {
         .bind(oauth_client_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|s| GrantType::from_str(&s))
-            .collect())
+        rows.iter()
+            .map(|g| decode(g, "oauth_client_grant_types", "grant_type", oauth_client_id))
+            .collect()
     }
 
     async fn load_application_ids(&self, oauth_client_id: &str) -> Result<Vec<String>> {
@@ -241,9 +240,13 @@ impl OAuthClientRepository {
 
         let mut grant_map: HashMap<String, Vec<GrantType>> = HashMap::new();
         for r in grant_rows {
-            if let Some(gt) = GrantType::from_str(&r.grant_type) {
-                grant_map.entry(r.oauth_client_id).or_default().push(gt);
-            }
+            let gt = decode(
+                &r.grant_type,
+                "oauth_client_grant_types",
+                "grant_type",
+                &r.oauth_client_id,
+            )?;
+            grant_map.entry(r.oauth_client_id).or_default().push(gt);
         }
 
         let mut app_map: HashMap<String, Vec<String>> = HashMap::new();
@@ -427,7 +430,7 @@ impl OAuthClientRepository {
             .fetch_optional(&self.pool)
             .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(OAuthClient::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(OAuthClient::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -450,7 +453,7 @@ impl OAuthClientRepository {
                 .await?;
         match row {
             Some(r) => {
-                let client = self.hydrate(OAuthClient::from(r)).await?;
+                let client = self.hydrate(OAuthClient::try_from(r)?).await?;
                 // Populate cache
                 self.cache_by_client_id.write().await.insert(
                     client_id.to_string(),
@@ -470,7 +473,10 @@ impl OAuthClientRepository {
             sqlx::query_as::<_, OAuthClientRow>("SELECT * FROM oauth_clients WHERE active = true")
                 .fetch_all(&self.pool)
                 .await?;
-        let clients: Vec<OAuthClient> = rows.into_iter().map(OAuthClient::from).collect();
+        let clients: Vec<OAuthClient> = rows
+            .into_iter()
+            .map(OAuthClient::try_from)
+            .collect::<Result<_>>()?;
         self.hydrate_all(clients).await
     }
 
@@ -478,7 +484,10 @@ impl OAuthClientRepository {
         let rows = sqlx::query_as::<_, OAuthClientRow>("SELECT * FROM oauth_clients")
             .fetch_all(&self.pool)
             .await?;
-        let clients: Vec<OAuthClient> = rows.into_iter().map(OAuthClient::from).collect();
+        let clients: Vec<OAuthClient> = rows
+            .into_iter()
+            .map(OAuthClient::try_from)
+            .collect::<Result<_>>()?;
         self.hydrate_all(clients).await
     }
 
@@ -496,7 +505,10 @@ impl OAuthClientRepository {
         .bind(principal_id)
         .fetch_all(&self.pool)
         .await?;
-        let clients: Vec<OAuthClient> = rows.into_iter().map(OAuthClient::from).collect();
+        let clients: Vec<OAuthClient> = rows
+            .into_iter()
+            .map(OAuthClient::try_from)
+            .collect::<Result<_>>()?;
         self.hydrate_all(clients).await
     }
 
@@ -517,7 +529,10 @@ impl OAuthClientRepository {
                 .bind(&client_ids)
                 .fetch_all(&self.pool)
                 .await?;
-        let clients: Vec<OAuthClient> = rows.into_iter().map(OAuthClient::from).collect();
+        let clients: Vec<OAuthClient> = rows
+            .into_iter()
+            .map(OAuthClient::try_from)
+            .collect::<Result<_>>()?;
         self.hydrate_all(clients).await
     }
 

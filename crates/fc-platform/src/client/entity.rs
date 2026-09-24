@@ -19,19 +19,6 @@ pub enum ClientStatus {
     Suspended,
 }
 
-impl ClientStatus {
-    // Lenient: unknown input maps to Active by design (legacy DB rows).
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "ACTIVE" => Self::Active,
-            "INACTIVE" => Self::Inactive,
-            "SUSPENDED" => Self::Suspended,
-            _ => Self::Active,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(ClientStatus, "client status", {
     Active => "ACTIVE",
     Inactive => "INACTIVE",
@@ -162,6 +149,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_client() {
@@ -204,12 +192,18 @@ mod tests {
 
     #[test]
     fn test_client_status_from_str() {
-        assert_eq!(ClientStatus::from_str("ACTIVE"), ClientStatus::Active);
-        assert_eq!(ClientStatus::from_str("INACTIVE"), ClientStatus::Inactive);
-        assert_eq!(ClientStatus::from_str("SUSPENDED"), ClientStatus::Suspended);
-        // Unknown values default to Active
-        assert_eq!(ClientStatus::from_str("unknown"), ClientStatus::Active);
-        assert_eq!(ClientStatus::from_str(""), ClientStatus::Active);
+        assert_eq!(ClientStatus::from_str("ACTIVE"), Ok(ClientStatus::Active));
+        assert_eq!(
+            ClientStatus::from_str("INACTIVE"),
+            Ok(ClientStatus::Inactive)
+        );
+        assert_eq!(
+            ClientStatus::from_str("SUSPENDED"),
+            Ok(ClientStatus::Suspended)
+        );
+        // Unknown values are rejected (X-06)
+        assert!(ClientStatus::from_str("unknown").is_err());
+        assert!(ClientStatus::from_str("").is_err());
     }
 
     #[test]
@@ -227,7 +221,7 @@ mod tests {
             let s = status.as_str();
             assert_eq!(
                 ClientStatus::from_str(s),
-                status,
+                Ok(status),
                 "Roundtrip failed for {:?}",
                 status
             );

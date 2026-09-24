@@ -395,4 +395,72 @@ mod tests {
             crate::process::entity::ProcessSource::as_str,
         );
     }
+
+    /// Every value the production database held at the 2026-09-24 audit
+    /// decodes under the enum its column is read as. A failure here means a
+    /// deploy would turn live rows into read errors.
+    #[test]
+    fn production_stored_values_all_decode() {
+        fn all<T: std::str::FromStr<Err = UnknownEnumValue>>(values: &[&str]) {
+            for v in values {
+                assert!(v.parse::<T>().is_ok(), "{v} must decode");
+            }
+        }
+        use crate::application::entity::ApplicationType;
+        use crate::application_openapi_spec::entity::OpenApiSpecStatus;
+        use crate::auth::oauth_entity::{GrantType, OAuthClientType};
+        use crate::client::entity::ClientStatus;
+        use crate::connection::entity::ConnectionStatus;
+        use crate::dispatch_job::entity::{
+            parse_dispatch_status, DispatchAttemptStatus, DispatchKind, DispatchProtocol,
+            ErrorType, RetryStrategy,
+        };
+        use crate::dispatch_pool::entity::DispatchPoolStatus;
+        use crate::email_domain_mapping::entity::ScopeType;
+        use crate::event_type::entity::{
+            EventTypeSource, EventTypeStatus, SchemaType, SpecVersionStatus,
+        };
+        use crate::identity_provider::entity::IdentityProviderType;
+        use crate::login_attempt::entity::{AttemptType, LoginOutcome};
+        use crate::platform_config::entity::{ConfigScope, ConfigValueType};
+        use crate::principal::entity::{PrincipalType, UserScope};
+        use crate::process::entity::{ProcessSource, ProcessStatus};
+        use crate::role::entity::RoleSource;
+        use crate::service_account::entity::{AssignmentSource, SigningAlgorithm, WebhookAuthType};
+        use crate::subscription::entity::{SubscriptionSource, SubscriptionStatus};
+
+        all::<OpenApiSpecStatus>(&["ARCHIVED", "CURRENT"]);
+        all::<ApplicationType>(&["APPLICATION"]);
+        all::<ConfigScope>(&["GLOBAL", "CLIENT"]);
+        all::<ConfigValueType>(&["PLAIN"]);
+        all::<AttemptType>(&["SERVICE_ACCOUNT_TOKEN", "USER_LOGIN"]);
+        all::<LoginOutcome>(&["SUCCESS", "FAILURE"]);
+        all::<AssignmentSource>(&["ADMIN_ASSIGNED", "PROVISIONED"]);
+        all::<IdentityProviderType>(&["OIDC", "INTERNAL"]);
+        all::<UserScope>(&["CLIENT", "ANCHOR", "PARTNER"]);
+        all::<PrincipalType>(&["USER", "SERVICE"]);
+        all::<RoleSource>(&["SDK", "CODE", "DATABASE"]);
+        all::<WebhookAuthType>(&["BEARER_TOKEN"]);
+        all::<SigningAlgorithm>(&["HMAC_SHA256"]);
+        all::<ConnectionStatus>(&["ACTIVE"]);
+        all::<ErrorType>(&["HTTP_ERROR"]);
+        all::<DispatchAttemptStatus>(&["SUCCESS", "FAILURE"]);
+        all::<DispatchKind>(&["EVENT"]);
+        all::<DispatchProtocol>(&["HTTP_WEBHOOK"]);
+        all::<RetryStrategy>(&["exponential"]);
+        assert!(parse_dispatch_status("COMPLETED").is_ok());
+        all::<DispatchPoolStatus>(&["ACTIVE"]);
+        all::<SchemaType>(&["JSON_SCHEMA"]);
+        all::<SpecVersionStatus>(&["FINALISING", "CURRENT"]);
+        all::<EventTypeSource>(&["API", "UI"]);
+        all::<EventTypeStatus>(&["CURRENT"]);
+        all::<ProcessSource>(&["API", "CODE"]);
+        all::<ProcessStatus>(&["CURRENT"]);
+        all::<SubscriptionSource>(&["UI"]);
+        all::<SubscriptionStatus>(&["ACTIVE"]);
+        all::<GrantType>(&["client_credentials", "refresh_token", "authorization_code"]);
+        all::<OAuthClientType>(&["CONFIDENTIAL", "PUBLIC"]);
+        all::<ClientStatus>(&["ACTIVE"]);
+        all::<ScopeType>(&["CLIENT", "ANCHOR"]);
+    }
 }

@@ -11,15 +11,6 @@ pub enum ProcessStatus {
     Archived,
 }
 
-impl ProcessStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "ARCHIVED" => Self::Archived,
-            _ => Self::Current,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(ProcessStatus, "process status", {
     Current => "CURRENT",
     Archived => "ARCHIVED",
@@ -32,16 +23,6 @@ pub enum ProcessSource {
     Api,
     #[default]
     Ui,
-}
-
-impl ProcessSource {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "CODE" => Self::Code,
-            "API" => Self::Api,
-            _ => Self::Ui,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(ProcessSource, "process source", {
@@ -128,6 +109,7 @@ impl Process {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn new_accepts_valid_three_part_code() {
@@ -170,17 +152,23 @@ mod tests {
     }
 
     #[test]
-    fn status_roundtrip_with_fallback() {
-        assert_eq!(ProcessStatus::from_str("CURRENT"), ProcessStatus::Current);
-        assert_eq!(ProcessStatus::from_str("ARCHIVED"), ProcessStatus::Archived);
-        assert_eq!(ProcessStatus::from_str("UNKNOWN"), ProcessStatus::Current);
+    fn status_roundtrip_rejects_unknown() {
+        assert_eq!(
+            ProcessStatus::from_str("CURRENT"),
+            Ok(ProcessStatus::Current)
+        );
+        assert_eq!(
+            ProcessStatus::from_str("ARCHIVED"),
+            Ok(ProcessStatus::Archived)
+        );
+        assert!(ProcessStatus::from_str("UNKNOWN").is_err());
     }
 
     #[test]
-    fn source_roundtrip_with_fallback() {
-        assert_eq!(ProcessSource::from_str("CODE"), ProcessSource::Code);
-        assert_eq!(ProcessSource::from_str("API"), ProcessSource::Api);
-        assert_eq!(ProcessSource::from_str("UI"), ProcessSource::Ui);
-        assert_eq!(ProcessSource::from_str("XYZ"), ProcessSource::Ui);
+    fn source_roundtrip_rejects_unknown() {
+        assert_eq!(ProcessSource::from_str("CODE"), Ok(ProcessSource::Code));
+        assert_eq!(ProcessSource::from_str("API"), Ok(ProcessSource::Api));
+        assert_eq!(ProcessSource::from_str("UI"), Ok(ProcessSource::Ui));
+        assert!(ProcessSource::from_str("XYZ").is_err());
     }
 }

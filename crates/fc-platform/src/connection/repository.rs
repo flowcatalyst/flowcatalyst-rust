@@ -5,7 +5,8 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{Connection, ConnectionStatus};
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 /// Row mapping for msg_connections table
@@ -24,21 +25,23 @@ struct ConnectionRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<ConnectionRow> for Connection {
-    fn from(r: ConnectionRow) -> Self {
-        Self {
+impl TryFrom<ConnectionRow> for Connection {
+    type Error = PlatformError;
+    fn try_from(r: ConnectionRow) -> Result<Self> {
+        let status = decode(&r.status, "msg_connections", "status", &r.id)?;
+        Ok(Self {
             id: r.id,
             code: r.code,
             name: r.name,
             description: r.description,
             external_id: r.external_id,
-            status: ConnectionStatus::from_str(&r.status),
+            status,
             service_account_id: r.service_account_id,
             client_id: r.client_id,
             client_identifier: r.client_identifier,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -78,7 +81,7 @@ impl ConnectionRepository {
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(Connection::from))
+        row.map(Connection::try_from).transpose()
     }
 
     pub async fn find_by_code_and_client(
@@ -102,7 +105,7 @@ impl ConnectionRepository {
             .fetch_optional(&self.pool)
             .await?
         };
-        Ok(row.map(Connection::from))
+        row.map(Connection::try_from).transpose()
     }
 
     pub async fn find_all(&self) -> Result<Vec<Connection>> {
@@ -110,7 +113,7 @@ impl ConnectionRepository {
             sqlx::query_as::<_, ConnectionRow>("SELECT * FROM msg_connections ORDER BY code ASC")
                 .fetch_all(&self.pool)
                 .await?;
-        Ok(rows.into_iter().map(Connection::from).collect())
+        rows.into_iter().map(Connection::try_from).collect()
     }
 
     pub async fn find_with_filters(
@@ -141,7 +144,7 @@ impl ConnectionRepository {
 
         qb.push(" ORDER BY code ASC");
         let rows: Vec<ConnectionRow> = qb.build_query_as().fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(Connection::from).collect())
+        rows.into_iter().map(Connection::try_from).collect()
     }
 
     pub async fn find_by_status(&self, status: &str) -> Result<Vec<Connection>> {
@@ -151,7 +154,7 @@ impl ConnectionRepository {
         .bind(status)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Connection::from).collect())
+        rows.into_iter().map(Connection::try_from).collect()
     }
 
     pub async fn find_by_client_id(&self, client_id: &str) -> Result<Vec<Connection>> {
@@ -161,7 +164,7 @@ impl ConnectionRepository {
         .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Connection::from).collect())
+        rows.into_iter().map(Connection::try_from).collect()
     }
 
     pub async fn find_by_service_account(
@@ -174,7 +177,7 @@ impl ConnectionRepository {
         .bind(service_account_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Connection::from).collect())
+        rows.into_iter().map(Connection::try_from).collect()
     }
 
     pub async fn update(&self, conn: &Connection) -> Result<()> {

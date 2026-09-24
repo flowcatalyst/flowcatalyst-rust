@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
-use super::entity::{Process, ProcessSource, ProcessStatus};
-use crate::shared::error::Result;
+use super::entity::{Process, ProcessStatus};
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 #[derive(sqlx::FromRow)]
@@ -26,15 +27,18 @@ struct ProcessRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<ProcessRow> for Process {
-    fn from(r: ProcessRow) -> Self {
-        Self {
+impl TryFrom<ProcessRow> for Process {
+    type Error = PlatformError;
+    fn try_from(r: ProcessRow) -> Result<Self> {
+        let status = decode(&r.status, "msg_processes", "status", &r.id)?;
+        let source = decode(&r.source, "msg_processes", "source", &r.id)?;
+        Ok(Self {
             id: r.id,
             code: r.code,
             name: r.name,
             description: r.description,
-            status: ProcessStatus::from_str(&r.status),
-            source: ProcessSource::from_str(&r.source),
+            status,
+            source,
             application: r.application,
             subdomain: r.subdomain,
             process_name: r.process_name,
@@ -44,7 +48,7 @@ impl From<ProcessRow> for Process {
             created_by: None,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -122,7 +126,7 @@ impl ProcessRepository {
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(Process::from))
+        row.map(Process::try_from).transpose()
     }
 
     pub async fn find_by_code(&self, code: &str) -> Result<Option<Process>> {
@@ -130,14 +134,14 @@ impl ProcessRepository {
             .bind(code)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(Process::from))
+        row.map(Process::try_from).transpose()
     }
 
     pub async fn find_all(&self) -> Result<Vec<Process>> {
         let rows = sqlx::query_as::<_, ProcessRow>("SELECT * FROM msg_processes ORDER BY code ASC")
             .fetch_all(&self.pool)
             .await?;
-        Ok(rows.into_iter().map(Process::from).collect())
+        rows.into_iter().map(Process::try_from).collect()
     }
 
     pub async fn find_by_application(&self, application: &str) -> Result<Vec<Process>> {
@@ -147,7 +151,7 @@ impl ProcessRepository {
         .bind(application)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Process::from).collect())
+        rows.into_iter().map(Process::try_from).collect()
     }
 
     pub async fn find_with_filters(
@@ -188,7 +192,7 @@ impl ProcessRepository {
 
         qb.push(" ORDER BY code ASC");
         let rows: Vec<ProcessRow> = qb.build_query_as().fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(Process::from).collect())
+        rows.into_iter().map(Process::try_from).collect()
     }
 
     pub async fn exists_by_code(&self, code: &str) -> Result<bool> {

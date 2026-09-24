@@ -13,10 +13,10 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{
-    CompletionStatus, InstanceStatus, LogLevel, ScheduledJobInstance, ScheduledJobInstanceLog,
-    TriggerKind,
+    CompletionStatus, InstanceStatus, ScheduledJobInstance, ScheduledJobInstanceLog, TriggerKind,
 };
-use crate::shared::error::Result;
+use crate::shared::enum_str::{decode, decode_opt};
+use crate::shared::error::{PlatformError, Result};
 
 #[derive(sqlx::FromRow)]
 struct InstanceRow {
@@ -38,29 +38,40 @@ struct InstanceRow {
     created_at: DateTime<Utc>,
 }
 
-impl From<InstanceRow> for ScheduledJobInstance {
-    fn from(r: InstanceRow) -> Self {
-        Self {
+impl TryFrom<InstanceRow> for ScheduledJobInstance {
+    type Error = PlatformError;
+    fn try_from(r: InstanceRow) -> Result<Self> {
+        let trigger_kind = decode(
+            &r.trigger_kind,
+            "msg_scheduled_job_instances",
+            "trigger_kind",
+            &r.id,
+        )?;
+        let status = decode(&r.status, "msg_scheduled_job_instances", "status", &r.id)?;
+        let completion_status = decode_opt(
+            r.completion_status.as_deref(),
+            "msg_scheduled_job_instances",
+            "completion_status",
+            &r.id,
+        )?;
+        Ok(Self {
             id: r.id,
             scheduled_job_id: r.scheduled_job_id,
             client_id: r.client_id,
             job_code: r.job_code,
-            trigger_kind: TriggerKind::from_str(&r.trigger_kind),
+            trigger_kind,
             scheduled_for: r.scheduled_for,
             fired_at: r.fired_at,
             delivered_at: r.delivered_at,
             completed_at: r.completed_at,
-            status: InstanceStatus::from_str(&r.status),
+            status,
             delivery_attempts: r.delivery_attempts,
             delivery_error: r.delivery_error,
-            completion_status: r
-                .completion_status
-                .as_deref()
-                .and_then(CompletionStatus::from_str),
+            completion_status,
             completion_result: r.completion_result,
             correlation_id: r.correlation_id,
             created_at: r.created_at,
-        }
+        })
     }
 }
 
@@ -76,18 +87,20 @@ struct LogRow {
     created_at: DateTime<Utc>,
 }
 
-impl From<LogRow> for ScheduledJobInstanceLog {
-    fn from(r: LogRow) -> Self {
-        Self {
+impl TryFrom<LogRow> for ScheduledJobInstanceLog {
+    type Error = PlatformError;
+    fn try_from(r: LogRow) -> Result<Self> {
+        let level = decode(&r.level, "msg_scheduled_job_instance_logs", "level", &r.id)?;
+        Ok(Self {
             id: r.id,
             instance_id: r.instance_id,
             scheduled_job_id: r.scheduled_job_id,
             client_id: r.client_id,
-            level: LogLevel::from_str(&r.level),
+            level,
             message: r.message,
             metadata: r.metadata,
             created_at: r.created_at,
-        }
+        })
     }
 }
 
@@ -248,7 +261,7 @@ impl ScheduledJobInstanceRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(ScheduledJobInstance::from))
+        row.map(ScheduledJobInstance::try_from).transpose()
     }
 
     /// True if the job has any non-terminal instance — used by the UI as the
@@ -310,7 +323,9 @@ impl ScheduledJobInstanceRepository {
         }
 
         let rows: Vec<InstanceRow> = qb.build_query_as().fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(ScheduledJobInstance::from).collect())
+        rows.into_iter()
+            .map(ScheduledJobInstance::try_from)
+            .collect()
     }
 
     pub async fn count(&self, f: &InstanceListFilters<'_>) -> Result<i64> {
@@ -389,9 +404,8 @@ impl ScheduledJobInstanceRepository {
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(ScheduledJobInstanceLog::from)
-            .collect())
+        rows.into_iter()
+            .map(ScheduledJobInstanceLog::try_from)
+            .collect()
     }
 }

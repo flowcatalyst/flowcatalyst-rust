@@ -1,10 +1,11 @@
 //! DispatchJob Repository — PostgreSQL via SQLx
 
 use crate::dispatch_job::entity::{
-    default_content_type, DispatchAttemptStatus, DispatchKind, DispatchMetadata, DispatchMode,
-    DispatchProtocol, ErrorType, RetryStrategy,
+    default_content_type, DispatchAttemptStatus, DispatchMetadata, ErrorType,
 };
-use crate::shared::error::Result;
+use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
+use crate::shared::enum_str::{corrupt_value, decode};
+use crate::shared::error::{PlatformError, Result};
 use crate::{DispatchJob, DispatchJobRead, DispatchStatus};
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -51,19 +52,31 @@ struct DispatchJobRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<DispatchJobRow> for DispatchJob {
-    fn from(r: DispatchJobRow) -> Self {
+impl TryFrom<DispatchJobRow> for DispatchJob {
+    type Error = PlatformError;
+    fn try_from(r: DispatchJobRow) -> Result<Self> {
+        let kind = decode(&r.kind, "msg_dispatch_jobs", "kind", &r.id)?;
+        let protocol = decode(&r.protocol, "msg_dispatch_jobs", "protocol", &r.id)?;
+        let mode = parse_dispatch_mode(Some(&r.mode));
+        let retry_strategy = decode(
+            &r.retry_strategy,
+            "msg_dispatch_jobs",
+            "retry_strategy",
+            &r.id,
+        )?;
+        let status = parse_dispatch_status(&r.status)
+            .map_err(|_| corrupt_value("msg_dispatch_jobs", "status", &r.status, &r.id))?;
         let metadata: Vec<DispatchMetadata> =
             serde_json::from_value(r.metadata).unwrap_or_default();
-        Self {
+        Ok(Self {
             id: r.id,
             external_id: r.external_id,
-            kind: DispatchKind::from_str(&r.kind),
+            kind,
             code: r.code,
             source: r.source,
             subject: r.subject,
             target_url: r.target_url,
-            protocol: DispatchProtocol::from_str(&r.protocol),
+            protocol,
             payload: r.payload,
             payload_content_type: r.payload_content_type.unwrap_or_else(default_content_type),
             data_only: r.data_only,
@@ -74,13 +87,13 @@ impl From<DispatchJobRow> for DispatchJob {
             service_account_id: r.service_account_id,
             dispatch_pool_id: r.dispatch_pool_id,
             message_group: r.message_group,
-            mode: DispatchMode::from_str(&r.mode),
+            mode,
             sequence: r.sequence,
             timeout_seconds: r.timeout_seconds as u32,
             schema_id: r.schema_id,
             max_retries: r.max_retries as u32,
-            retry_strategy: RetryStrategy::from_str(&r.retry_strategy),
-            status: DispatchStatus::from_str(&r.status),
+            retry_strategy,
+            status,
             attempt_count: r.attempt_count as u32,
             last_error: r.last_error,
             attempts: vec![],
@@ -93,7 +106,7 @@ impl From<DispatchJobRow> for DispatchJob {
             last_attempt_at: r.last_attempt_at,
             completed_at: r.completed_at,
             duration_millis: r.duration_millis,
-        }
+        })
     }
 }
 
@@ -138,32 +151,44 @@ struct DispatchJobReadRow {
     projected_at: Option<DateTime<Utc>>,
 }
 
-impl From<DispatchJobReadRow> for DispatchJobRead {
-    fn from(r: DispatchJobReadRow) -> Self {
-        Self {
+impl TryFrom<DispatchJobReadRow> for DispatchJobRead {
+    type Error = PlatformError;
+    fn try_from(r: DispatchJobReadRow) -> Result<Self> {
+        let kind = decode(&r.kind, "msg_dispatch_jobs_read", "kind", &r.id)?;
+        let protocol = decode(&r.protocol, "msg_dispatch_jobs_read", "protocol", &r.id)?;
+        let mode = parse_dispatch_mode(Some(&r.mode));
+        let status = parse_dispatch_status(&r.status)
+            .map_err(|_| corrupt_value("msg_dispatch_jobs_read", "status", &r.status, &r.id))?;
+        let retry_strategy = decode(
+            &r.retry_strategy,
+            "msg_dispatch_jobs_read",
+            "retry_strategy",
+            &r.id,
+        )?;
+        Ok(Self {
             id: r.id,
             external_id: r.external_id,
             source: r.source,
-            kind: DispatchKind::from_str(&r.kind),
+            kind,
             code: r.code,
             subject: r.subject,
             event_id: r.event_id,
             correlation_id: r.correlation_id,
             target_url: r.target_url,
-            protocol: DispatchProtocol::from_str(&r.protocol),
+            protocol,
             client_id: r.client_id,
             subscription_id: r.subscription_id,
             service_account_id: r.service_account_id,
             dispatch_pool_id: r.dispatch_pool_id,
             message_group: r.message_group,
-            mode: DispatchMode::from_str(&r.mode),
+            mode,
             sequence: r.sequence,
-            status: DispatchStatus::from_str(&r.status),
+            status,
             attempt_count: r.attempt_count as u32,
             max_retries: r.max_retries as u32,
             last_error: r.last_error,
             timeout_seconds: r.timeout_seconds as u32,
-            retry_strategy: RetryStrategy::from_str(&r.retry_strategy),
+            retry_strategy,
             application: r.application,
             subdomain: r.subdomain,
             aggregate: r.aggregate,
@@ -178,7 +203,7 @@ impl From<DispatchJobReadRow> for DispatchJobRead {
             is_completed: r.is_completed.unwrap_or_default(),
             is_terminal: r.is_terminal.unwrap_or_default(),
             projected_at: r.projected_at,
-        }
+        })
     }
 }
 
@@ -271,7 +296,7 @@ impl DispatchJobRepository {
                 .fetch_optional(&self.pool)
                 .await?;
 
-        Ok(row.map(DispatchJob::from))
+        row.map(DispatchJob::try_from).transpose()
     }
 
     pub async fn find_by_event_id(&self, event_id: &str) -> Result<Vec<DispatchJob>> {
@@ -282,7 +307,7 @@ impl DispatchJobRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(DispatchJob::from).collect())
+        rows.into_iter().map(DispatchJob::try_from).collect()
     }
 
     pub async fn find_by_subscription_id(
@@ -298,7 +323,7 @@ impl DispatchJobRepository {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
             let rows = sqlx::query_as::<_, DispatchJobRow>(
                 "SELECT * FROM msg_dispatch_jobs WHERE subscription_id = $1",
@@ -306,7 +331,7 @@ impl DispatchJobRepository {
             .bind(subscription_id)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         }
     }
 
@@ -323,7 +348,7 @@ impl DispatchJobRepository {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
             let rows = sqlx::query_as::<_, DispatchJobRow>(
                 "SELECT * FROM msg_dispatch_jobs WHERE status = $1",
@@ -331,7 +356,7 @@ impl DispatchJobRepository {
             .bind(status.as_str())
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         }
     }
 
@@ -347,7 +372,7 @@ impl DispatchJobRepository {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
             let rows = sqlx::query_as::<_, DispatchJobRow>(
                 "SELECT * FROM msg_dispatch_jobs \
@@ -356,7 +381,7 @@ impl DispatchJobRepository {
             .bind(now)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         }
     }
 
@@ -375,7 +400,7 @@ impl DispatchJobRepository {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
             let rows = sqlx::query_as::<_, DispatchJobRow>(
                 "SELECT * FROM msg_dispatch_jobs \
@@ -384,7 +409,7 @@ impl DispatchJobRepository {
             .bind(stale_threshold)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         }
     }
 
@@ -397,7 +422,7 @@ impl DispatchJobRepository {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         } else {
             let rows = sqlx::query_as::<_, DispatchJobRow>(
                 "SELECT * FROM msg_dispatch_jobs WHERE client_id = $1",
@@ -405,7 +430,7 @@ impl DispatchJobRepository {
             .bind(client_id)
             .fetch_all(&self.pool)
             .await?;
-            Ok(rows.into_iter().map(DispatchJob::from).collect())
+            rows.into_iter().map(DispatchJob::try_from).collect()
         }
     }
 
@@ -417,7 +442,7 @@ impl DispatchJobRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(DispatchJob::from).collect())
+        rows.into_iter().map(DispatchJob::try_from).collect()
     }
 
     /// Find dispatch jobs with optional combined filters (AND logic).
@@ -465,7 +490,7 @@ impl DispatchJobRepository {
         }
 
         let rows: Vec<DispatchJobRow> = qb.build_query_as().fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(DispatchJob::from).collect())
+        rows.into_iter().map(DispatchJob::try_from).collect()
     }
 
     pub async fn update(&self, job: &DispatchJob) -> Result<()> {
@@ -721,7 +746,7 @@ impl DispatchJobRepository {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(DispatchJobRead::from))
+        row.map(DispatchJobRead::try_from).transpose()
     }
 
     /// Cursor-paginated read of `msg_dispatch_jobs_read`. Drops `SELECT COUNT(*)` and the
@@ -802,7 +827,7 @@ impl DispatchJobRepository {
         qb.push(" ORDER BY created_at DESC, id DESC LIMIT ")
             .push_bind(fetch_limit);
         let rows: Vec<DispatchJobReadRow> = qb.build_query_as().fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(DispatchJobRead::from).collect())
+        rows.into_iter().map(DispatchJobRead::try_from).collect()
     }
 
     pub async fn insert_read_projection(&self, p: &DispatchJobRead) -> Result<()> {
@@ -1069,7 +1094,7 @@ impl DispatchJobRepository {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.into_iter().map(DispatchJob::from).collect())
+        rows.into_iter().map(DispatchJob::try_from).collect()
     }
 
     // ── Attempt tracking ─────────────────────────────────────────────────

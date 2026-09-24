@@ -18,16 +18,6 @@ pub enum ScheduledJobStatus {
     Archived,
 }
 
-impl ScheduledJobStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "PAUSED" => Self::Paused,
-            "ARCHIVED" => Self::Archived,
-            _ => Self::Active,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(ScheduledJobStatus, "scheduled job status", {
     Active => "ACTIVE",
     Paused => "PAUSED",
@@ -202,15 +192,6 @@ pub enum TriggerKind {
     Manual,
 }
 
-impl TriggerKind {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "MANUAL" => Self::Manual,
-            _ => Self::Cron,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(TriggerKind, "trigger kind", {
     Cron => "CRON",
     Manual => "MANUAL",
@@ -232,17 +213,6 @@ pub enum InstanceStatus {
 }
 
 impl InstanceStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "IN_FLIGHT" => Self::InFlight,
-            "DELIVERED" => Self::Delivered,
-            "COMPLETED" => Self::Completed,
-            "FAILED" => Self::Failed,
-            "DELIVERY_FAILED" => Self::DeliveryFailed,
-            _ => Self::Queued,
-        }
-    }
-
     /// True if no further state transitions are expected (apart from manual
     /// admin actions).
     pub fn is_terminal(&self) -> bool {
@@ -267,16 +237,6 @@ pub enum CompletionStatus {
     Failure,
 }
 
-impl CompletionStatus {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "SUCCESS" => Some(Self::Success),
-            "FAILURE" => Some(Self::Failure),
-            _ => None,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(CompletionStatus, "completion status", {
     Success => "SUCCESS",
     Failure => "FAILURE",
@@ -292,17 +252,6 @@ pub enum LogLevel {
     Info,
     Warn,
     Error,
-}
-
-impl LogLevel {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "DEBUG" => Self::Debug,
-            "WARN" => Self::Warn,
-            "ERROR" => Self::Error,
-            _ => Self::Info,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(LogLevel, "log level", {
@@ -364,6 +313,7 @@ pub struct ScheduledJobInstanceLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn new_active_with_defaults() {
@@ -399,18 +349,15 @@ mod tests {
     }
 
     #[test]
-    fn status_roundtrip_with_fallback() {
+    fn status_roundtrip_rejects_unknown() {
         for s in [
             ScheduledJobStatus::Active,
             ScheduledJobStatus::Paused,
             ScheduledJobStatus::Archived,
         ] {
-            assert_eq!(ScheduledJobStatus::from_str(s.as_str()), s);
+            assert_eq!(ScheduledJobStatus::from_str(s.as_str()), Ok(s));
         }
-        assert_eq!(
-            ScheduledJobStatus::from_str("UNKNOWN"),
-            ScheduledJobStatus::Active
-        );
+        assert!(ScheduledJobStatus::from_str("UNKNOWN").is_err());
     }
 
     #[test]
@@ -433,7 +380,7 @@ mod tests {
             InstanceStatus::Failed,
             InstanceStatus::DeliveryFailed,
         ] {
-            assert_eq!(InstanceStatus::from_str(s.as_str()), s);
+            assert_eq!(InstanceStatus::from_str(s.as_str()), Ok(s));
         }
     }
 
@@ -445,16 +392,16 @@ mod tests {
             LogLevel::Warn,
             LogLevel::Error,
         ] {
-            assert_eq!(LogLevel::from_str(s.as_str()), s);
+            assert_eq!(LogLevel::from_str(s.as_str()), Ok(s));
         }
-        assert_eq!(LogLevel::from_str("WHAT"), LogLevel::Info);
+        assert!(LogLevel::from_str("WHAT").is_err());
     }
 
     #[test]
     fn trigger_kind_roundtrip() {
-        assert_eq!(TriggerKind::from_str("CRON"), TriggerKind::Cron);
-        assert_eq!(TriggerKind::from_str("MANUAL"), TriggerKind::Manual);
-        assert_eq!(TriggerKind::from_str("OTHER"), TriggerKind::Cron);
+        assert_eq!(TriggerKind::from_str("CRON"), Ok(TriggerKind::Cron));
+        assert_eq!(TriggerKind::from_str("MANUAL"), Ok(TriggerKind::Manual));
+        assert!(TriggerKind::from_str("OTHER").is_err());
     }
 
     #[test]

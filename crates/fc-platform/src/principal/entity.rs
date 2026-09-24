@@ -19,17 +19,6 @@ pub enum PrincipalType {
     Service,
 }
 
-impl PrincipalType {
-    // Lenient: unknown input maps to User by design (legacy DB rows).
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "SERVICE" => Self::Service,
-            _ => Self::User,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(PrincipalType, "principal type", {
     User => "USER",
     Service => "SERVICE",
@@ -50,16 +39,6 @@ pub enum UserScope {
 }
 
 impl UserScope {
-    // Lenient: unknown input maps to Client (most restrictive scope).
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "ANCHOR" => Self::Anchor,
-            "PARTNER" => Self::Partner,
-            _ => Self::Client,
-        }
-    }
-
     /// Check if this scope has access to all clients
     pub fn is_anchor(&self) -> bool {
         matches!(self, Self::Anchor)
@@ -422,24 +401,28 @@ impl ClientAccessGrant {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     // ── PrincipalType / UserScope enum roundtrips ─────────────────────────
 
     #[test]
-    fn principal_type_roundtrip_with_fallback() {
-        assert_eq!(PrincipalType::from_str("USER"), PrincipalType::User);
-        assert_eq!(PrincipalType::from_str("SERVICE"), PrincipalType::Service);
-        // Unknown falls back to User
-        assert_eq!(PrincipalType::from_str("UNKNOWN"), PrincipalType::User);
+    fn principal_type_roundtrip_rejects_unknown() {
+        assert_eq!(PrincipalType::from_str("USER"), Ok(PrincipalType::User));
+        assert_eq!(
+            PrincipalType::from_str("SERVICE"),
+            Ok(PrincipalType::Service)
+        );
+        // Unknown values are rejected (X-06)
+        assert!(PrincipalType::from_str("UNKNOWN").is_err());
     }
 
     #[test]
-    fn user_scope_roundtrip_with_fallback() {
-        assert_eq!(UserScope::from_str("ANCHOR"), UserScope::Anchor);
-        assert_eq!(UserScope::from_str("PARTNER"), UserScope::Partner);
-        assert_eq!(UserScope::from_str("CLIENT"), UserScope::Client);
-        // Unknown falls back to Client
-        assert_eq!(UserScope::from_str("UNKNOWN"), UserScope::Client);
+    fn user_scope_roundtrip_rejects_unknown() {
+        assert_eq!(UserScope::from_str("ANCHOR"), Ok(UserScope::Anchor));
+        assert_eq!(UserScope::from_str("PARTNER"), Ok(UserScope::Partner));
+        assert_eq!(UserScope::from_str("CLIENT"), Ok(UserScope::Client));
+        // Unknown values are rejected (X-06)
+        assert!(UserScope::from_str("UNKNOWN").is_err());
     }
 
     #[test]

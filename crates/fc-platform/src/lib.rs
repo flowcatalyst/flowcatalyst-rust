@@ -1,9 +1,3 @@
-// Domain enums across this crate expose `pub fn from_str(s: &str) -> Self`
-// helpers that intentionally don't follow `std::str::FromStr` semantics —
-// they map unknown input to a sane default rather than returning a parse
-// error. Doing this per-enum with `#[allow]` would noise up ~30 call sites.
-#![allow(clippy::should_implement_trait)]
-
 //! FlowCatalyst Platform
 //!
 //! Core platform providing:

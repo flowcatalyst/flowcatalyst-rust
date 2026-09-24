@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use super::entity::{ConfigScope, ConfigValueType, PlatformConfig};
-use crate::shared::error::Result;
+use super::entity::PlatformConfig;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 
 #[derive(sqlx::FromRow)]
 struct PlatformConfigRow {
@@ -22,21 +23,24 @@ struct PlatformConfigRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<PlatformConfigRow> for PlatformConfig {
-    fn from(r: PlatformConfigRow) -> Self {
-        Self {
+impl TryFrom<PlatformConfigRow> for PlatformConfig {
+    type Error = PlatformError;
+    fn try_from(r: PlatformConfigRow) -> Result<Self> {
+        let scope = decode(&r.scope, "app_platform_configs", "scope", &r.id)?;
+        let value_type = decode(&r.value_type, "app_platform_configs", "value_type", &r.id)?;
+        Ok(Self {
             id: r.id,
             application_code: r.application_code,
             section: r.section,
             property: r.property,
-            scope: ConfigScope::from_str(&r.scope),
+            scope,
             client_id: r.client_id,
-            value_type: ConfigValueType::from_str(&r.value_type),
+            value_type,
             value: r.value,
             description: r.description,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -56,7 +60,7 @@ impl PlatformConfigRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(PlatformConfig::from))
+        row.map(PlatformConfig::try_from).transpose()
     }
 
     pub async fn find_by_key(
@@ -93,7 +97,7 @@ impl PlatformConfigRepository {
             .fetch_optional(&self.pool)
             .await?
         };
-        Ok(row.map(PlatformConfig::from))
+        row.map(PlatformConfig::try_from).transpose()
     }
 
     pub async fn find_by_section(
@@ -131,7 +135,7 @@ impl PlatformConfigRepository {
             query = query.bind(p);
         }
         let rows = query.fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(PlatformConfig::from).collect())
+        rows.into_iter().map(PlatformConfig::try_from).collect()
     }
 
     pub async fn find_by_application(
@@ -165,7 +169,7 @@ impl PlatformConfigRepository {
             query = query.bind(p);
         }
         let rows = query.fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(PlatformConfig::from).collect())
+        rows.into_iter().map(PlatformConfig::try_from).collect()
     }
 
     pub async fn insert(&self, config: &PlatformConfig) -> Result<()> {

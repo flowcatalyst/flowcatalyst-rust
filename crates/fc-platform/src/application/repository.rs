@@ -5,7 +5,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{Application, ApplicationType};
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 /// Row mapping for app_applications table
@@ -28,11 +29,18 @@ struct ApplicationRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<ApplicationRow> for Application {
-    fn from(r: ApplicationRow) -> Self {
-        Self {
+impl TryFrom<ApplicationRow> for Application {
+    type Error = PlatformError;
+    fn try_from(r: ApplicationRow) -> Result<Self> {
+        let application_type = decode(
+            &r.application_type,
+            "app_applications",
+            "application_type",
+            &r.id,
+        )?;
+        Ok(Self {
             id: r.id,
-            application_type: ApplicationType::from_str(&r.application_type),
+            application_type,
             code: r.code,
             name: r.name,
             description: r.description,
@@ -45,7 +53,7 @@ impl From<ApplicationRow> for Application {
             active: r.active,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -89,7 +97,7 @@ impl ApplicationRepository {
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await?;
-        Ok(row.map(Application::from))
+        row.map(Application::try_from).transpose()
     }
 
     pub async fn find_by_code(&self, code: &str) -> Result<Option<Application>> {
@@ -98,7 +106,7 @@ impl ApplicationRepository {
                 .bind(code)
                 .fetch_optional(&self.pool)
                 .await?;
-        Ok(row.map(Application::from))
+        row.map(Application::try_from).transpose()
     }
 
     pub async fn find_active(&self) -> Result<Vec<Application>> {
@@ -107,14 +115,14 @@ impl ApplicationRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Application::from).collect())
+        rows.into_iter().map(Application::try_from).collect()
     }
 
     pub async fn find_all(&self) -> Result<Vec<Application>> {
         let rows = sqlx::query_as::<_, ApplicationRow>("SELECT * FROM app_applications")
             .fetch_all(&self.pool)
             .await?;
-        Ok(rows.into_iter().map(Application::from).collect())
+        rows.into_iter().map(Application::try_from).collect()
     }
 
     pub async fn find_paged(&self, limit: i64, offset: i64) -> Result<(Vec<Application>, i64)> {
@@ -130,7 +138,12 @@ impl ApplicationRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok((rows.into_iter().map(Application::from).collect(), total.0))
+        Ok((
+            rows.into_iter()
+                .map(Application::try_from)
+                .collect::<Result<_>>()?,
+            total.0,
+        ))
     }
 
     pub async fn find_by_type(&self, app_type: ApplicationType) -> Result<Vec<Application>> {
@@ -140,7 +153,7 @@ impl ApplicationRepository {
         .bind(app_type.as_str())
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Application::from).collect())
+        rows.into_iter().map(Application::try_from).collect()
     }
 
     pub async fn find_by_service_account(
@@ -153,7 +166,7 @@ impl ApplicationRepository {
         .bind(service_account_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(Application::from))
+        row.map(Application::try_from).transpose()
     }
 
     pub async fn exists(&self, id: &str) -> Result<bool> {

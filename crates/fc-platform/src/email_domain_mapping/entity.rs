@@ -11,16 +11,6 @@ pub enum ScopeType {
     Client,
 }
 
-impl ScopeType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "PARTNER" => Self::Partner,
-            "CLIENT" => Self::Client,
-            _ => Self::Anchor,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(ScopeType, "scope type", {
     Anchor => "ANCHOR",
     Partner => "PARTNER",
@@ -71,6 +61,7 @@ impl EmailDomainMapping {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_email_domain_mapping() {
@@ -103,12 +94,12 @@ mod tests {
 
     #[test]
     fn test_scope_type_from_str() {
-        assert_eq!(ScopeType::from_str("PARTNER"), ScopeType::Partner);
-        assert_eq!(ScopeType::from_str("CLIENT"), ScopeType::Client);
-        // Default/fallback is Anchor
-        assert_eq!(ScopeType::from_str("ANCHOR"), ScopeType::Anchor);
-        assert_eq!(ScopeType::from_str("unknown"), ScopeType::Anchor);
-        assert_eq!(ScopeType::from_str(""), ScopeType::Anchor);
+        assert_eq!(ScopeType::from_str("PARTNER"), Ok(ScopeType::Partner));
+        assert_eq!(ScopeType::from_str("CLIENT"), Ok(ScopeType::Client));
+        // Unknown values are rejected (X-06)
+        assert_eq!(ScopeType::from_str("ANCHOR"), Ok(ScopeType::Anchor));
+        assert!(ScopeType::from_str("unknown").is_err());
+        assert!(ScopeType::from_str("").is_err());
     }
 
     #[test]

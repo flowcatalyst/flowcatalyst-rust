@@ -10,15 +10,6 @@ pub enum AttemptType {
     ServiceAccountToken,
 }
 
-impl AttemptType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "SERVICE_ACCOUNT_TOKEN" => Self::ServiceAccountToken,
-            _ => Self::UserLogin,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(AttemptType, "attempt type", {
     UserLogin => "USER_LOGIN",
     ServiceAccountToken => "SERVICE_ACCOUNT_TOKEN",
@@ -29,15 +20,6 @@ crate::shared::enum_str::str_enum!(AttemptType, "attempt type", {
 pub enum LoginOutcome {
     Success,
     Failure,
-}
-
-impl LoginOutcome {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "FAILURE" => Self::Failure,
-            _ => Self::Success,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(LoginOutcome, "login outcome", {
@@ -78,29 +60,33 @@ impl LoginAttempt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
-    fn attempt_type_roundtrip_with_fallback() {
-        assert_eq!(AttemptType::from_str("USER_LOGIN"), AttemptType::UserLogin);
+    fn attempt_type_roundtrip_rejects_unknown() {
+        assert_eq!(
+            AttemptType::from_str("USER_LOGIN"),
+            Ok(AttemptType::UserLogin)
+        );
         assert_eq!(
             AttemptType::from_str("SERVICE_ACCOUNT_TOKEN"),
-            AttemptType::ServiceAccountToken
+            Ok(AttemptType::ServiceAccountToken)
         );
-        // Unknown falls back to UserLogin
-        assert_eq!(AttemptType::from_str("UNKNOWN"), AttemptType::UserLogin);
+        // Unknown values are rejected (X-06)
+        assert!(AttemptType::from_str("UNKNOWN").is_err());
         for t in [AttemptType::UserLogin, AttemptType::ServiceAccountToken] {
-            assert_eq!(AttemptType::from_str(t.as_str()), t);
+            assert_eq!(AttemptType::from_str(t.as_str()), Ok(t));
         }
     }
 
     #[test]
-    fn login_outcome_roundtrip_with_fallback() {
-        assert_eq!(LoginOutcome::from_str("SUCCESS"), LoginOutcome::Success);
-        assert_eq!(LoginOutcome::from_str("FAILURE"), LoginOutcome::Failure);
-        // Unknown falls back to Success
-        assert_eq!(LoginOutcome::from_str("UNKNOWN"), LoginOutcome::Success);
+    fn login_outcome_roundtrip_rejects_unknown() {
+        assert_eq!(LoginOutcome::from_str("SUCCESS"), Ok(LoginOutcome::Success));
+        assert_eq!(LoginOutcome::from_str("FAILURE"), Ok(LoginOutcome::Failure));
+        // Unknown values are rejected (X-06)
+        assert!(LoginOutcome::from_str("UNKNOWN").is_err());
         for o in [LoginOutcome::Success, LoginOutcome::Failure] {
-            assert_eq!(LoginOutcome::from_str(o.as_str()), o);
+            assert_eq!(LoginOutcome::from_str(o.as_str()), Ok(o));
         }
     }
 

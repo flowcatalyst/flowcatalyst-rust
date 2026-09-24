@@ -380,12 +380,16 @@ impl ServiceAccountRepository {
                     "wh_signing_algorithm",
                     &sa.id,
                 )?;
+                // An unknown auth type must never read as NONE: that would
+                // deliver webhooks unauthenticated (X-06).
+                let auth_type: Option<WebhookAuthType> = decode_opt(
+                    sa.wh_auth_type.as_deref(),
+                    "iam_service_accounts",
+                    "wh_auth_type",
+                    &sa.id,
+                )?;
                 WebhookCredentials {
-                    auth_type: sa
-                        .wh_auth_type
-                        .as_deref()
-                        .map(WebhookAuthType::from_str)
-                        .unwrap_or_default(),
+                    auth_type: auth_type.unwrap_or_default(),
                     token: sa.wh_auth_token_ref.clone(),
                     username: None,
                     password: None,
@@ -565,5 +569,79 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
             .execute(&mut **tx.inner)
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn principal_row() -> PrincipalRow {
+        PrincipalRow {
+            id: "prn_1".to_string(),
+            principal_type: "SERVICE".to_string(),
+            scope: None,
+            client_id: None,
+            application_id: None,
+            name: "svc".to_string(),
+            active: true,
+            service_account_id: Some("sac_1".to_string()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn sa_row(auth_type: Option<&str>, algorithm: Option<&str>) -> ServiceAccountRow {
+        ServiceAccountRow {
+            id: "sac_1".to_string(),
+            code: "svc".to_string(),
+            name: "svc".to_string(),
+            description: None,
+            application_id: None,
+            active: true,
+            wh_auth_type: auth_type.map(str::to_string),
+            wh_auth_token_ref: None,
+            wh_signing_secret_ref: None,
+            wh_signing_algorithm: algorithm.map(str::to_string),
+            last_used_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn unknown_stored_webhook_auth_type_is_a_read_error_not_none() {
+        let row = sa_row(Some("OAUTH_MAGIC"), None);
+        let err = ServiceAccountRepository::build_service_account_sync(
+            principal_row(),
+            Some(&row),
+            vec![],
+        )
+        .unwrap_err()
+        .to_string();
+        for part in ["iam_service_accounts.wh_auth_type", "sac_1", "OAUTH_MAGIC"] {
+            assert!(err.contains(part), "{err} should mention {part}");
+        }
+    }
+
+    #[test]
+    fn stored_values_decode_including_legacy_signing_algorithm() {
+        for alg in ["HMAC_SHA256", "SHA256"] {
+            let row = sa_row(Some("BEARER_TOKEN"), Some(alg));
+            let sa = ServiceAccountRepository::build_service_account_sync(
+                principal_row(),
+                Some(&row),
+                vec![],
+            )
+            .unwrap();
+            assert_eq!(
+                sa.webhook_credentials.auth_type,
+                WebhookAuthType::BearerToken
+            );
+            assert_eq!(
+                sa.webhook_credentials.signing_algorithm,
+                Some(crate::SigningAlgorithm::HmacSha256)
+            );
+        }
     }
 }

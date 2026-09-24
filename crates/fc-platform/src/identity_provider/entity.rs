@@ -10,15 +10,6 @@ pub enum IdentityProviderType {
     Oidc,
 }
 
-impl IdentityProviderType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "OIDC" => Self::Oidc,
-            _ => Self::Internal,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(IdentityProviderType, "identity provider type", {
     Internal => "INTERNAL",
     Oidc => "OIDC",
@@ -72,6 +63,7 @@ impl IdentityProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_internal_identity_provider() {
@@ -127,21 +119,15 @@ mod tests {
     fn test_identity_provider_type_from_str() {
         assert_eq!(
             IdentityProviderType::from_str("OIDC"),
-            IdentityProviderType::Oidc
+            Ok(IdentityProviderType::Oidc)
         );
         assert_eq!(
             IdentityProviderType::from_str("INTERNAL"),
-            IdentityProviderType::Internal
+            Ok(IdentityProviderType::Internal)
         );
-        // Default/fallback is Internal
-        assert_eq!(
-            IdentityProviderType::from_str("unknown"),
-            IdentityProviderType::Internal
-        );
-        assert_eq!(
-            IdentityProviderType::from_str(""),
-            IdentityProviderType::Internal
-        );
+        // Unknown values are rejected (X-06)
+        assert!(IdentityProviderType::from_str("unknown").is_err());
+        assert!(IdentityProviderType::from_str("").is_err());
     }
 
     #[test]

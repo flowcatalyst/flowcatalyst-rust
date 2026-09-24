@@ -270,8 +270,10 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_job_mode_case_insensitive() {
+    fn dispatch_job_mode_is_exact_and_miscased_reads_as_default() {
+        // Like Go's ParseDispatchMode: exact spellings only; anything else is
+        // the X-01 default (with a warning), not a case-folded match.
         let job = make_job("j_ci", None, None, "block_on_error");
-        assert_eq!(job.dispatch_mode(), DispatchMode::BlockOnError);
+        assert_eq!(job.dispatch_mode(), DispatchMode::NextOnError);
     }
 }

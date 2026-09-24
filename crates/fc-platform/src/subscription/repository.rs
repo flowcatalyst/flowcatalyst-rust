@@ -4,12 +4,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use super::entity::{
-    ConfigEntry, EventTypeBinding, Subscription, SubscriptionSource, SubscriptionStatus,
-};
-use crate::shared::error::Result;
+use super::entity::{ConfigEntry, EventTypeBinding, Subscription};
+use crate::dispatch_job::entity::parse_dispatch_mode;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
-use fc_common::DispatchMode;
 
 // ── Row types ────────────────────────────────────────────────────────────────
 
@@ -42,9 +41,13 @@ struct SubscriptionRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<SubscriptionRow> for Subscription {
-    fn from(r: SubscriptionRow) -> Self {
-        Self {
+impl TryFrom<SubscriptionRow> for Subscription {
+    type Error = PlatformError;
+    fn try_from(r: SubscriptionRow) -> Result<Self> {
+        let source = decode(&r.source, "msg_subscriptions", "source", &r.id)?;
+        let status = decode(&r.status, "msg_subscriptions", "status", &r.id)?;
+        let mode = parse_dispatch_mode(Some(&r.mode));
+        Ok(Self {
             id: r.id,
             code: r.code,
             application_code: r.application_code,
@@ -58,14 +61,14 @@ impl From<SubscriptionRow> for Subscription {
             endpoint: r.target,
             queue: r.queue,
             custom_config: vec![], // loaded separately
-            source: SubscriptionSource::from_str(&r.source),
-            status: SubscriptionStatus::from_str(&r.status),
+            source,
+            status,
             max_age_seconds: r.max_age_seconds,
             dispatch_pool_id: r.dispatch_pool_id,
             dispatch_pool_code: r.dispatch_pool_code,
             delay_seconds: r.delay_seconds,
             sequence: r.sequence,
-            mode: DispatchMode::from_str(&r.mode),
+            mode,
             timeout_seconds: r.timeout_seconds,
             max_retries: r.max_retries,
             service_account_id: r.service_account_id,
@@ -73,7 +76,7 @@ impl From<SubscriptionRow> for Subscription {
             created_by: None,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -195,20 +198,19 @@ impl SubscriptionRepository {
                 });
         }
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|r| {
                 let id = r.id.clone();
-                let mut sub = Subscription::from(r);
+                let mut sub = Subscription::try_from(r)?;
                 if let Some(ets) = et_map.remove(&id) {
                     sub.event_types = ets;
                 }
                 if let Some(cfgs) = cfg_map.remove(&id) {
                     sub.custom_config = cfgs;
                 }
-                sub
+                Ok(sub)
             })
-            .collect())
+            .collect()
     }
 
     pub async fn insert(&self, sub: &Subscription) -> Result<()> {
@@ -330,7 +332,7 @@ impl SubscriptionRepository {
                 .fetch_optional(&self.pool)
                 .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(Subscription::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(Subscription::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -451,7 +453,7 @@ impl SubscriptionRepository {
                 .fetch_optional(&self.pool)
                 .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(Subscription::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(Subscription::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -478,7 +480,7 @@ impl SubscriptionRepository {
             .await?
         };
         match row {
-            Some(r) => Ok(Some(self.hydrate(Subscription::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(Subscription::try_from(r)?).await?)),
             None => Ok(None),
         }
     }

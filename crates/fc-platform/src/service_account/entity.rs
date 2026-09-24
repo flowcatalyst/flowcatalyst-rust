@@ -23,18 +23,6 @@ pub enum WebhookAuthType {
     HmacSignature,
 }
 
-impl WebhookAuthType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "BEARER_TOKEN" => Self::BearerToken,
-            "BASIC_AUTH" => Self::BasicAuth,
-            "API_KEY" => Self::ApiKey,
-            "HMAC_SIGNATURE" => Self::HmacSignature,
-            _ => Self::None,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(WebhookAuthType, "webhook auth type", {
     None => "NONE",
     BearerToken => "BEARER_TOKEN",
@@ -386,6 +374,7 @@ impl ServiceAccount {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_service_account() {
@@ -517,24 +506,27 @@ mod tests {
 
     #[test]
     fn test_webhook_auth_type_from_str() {
-        assert_eq!(WebhookAuthType::from_str("NONE"), WebhookAuthType::None);
+        assert_eq!(WebhookAuthType::from_str("NONE"), Ok(WebhookAuthType::None));
         assert_eq!(
             WebhookAuthType::from_str("BEARER_TOKEN"),
-            WebhookAuthType::BearerToken
+            Ok(WebhookAuthType::BearerToken)
         );
         assert_eq!(
             WebhookAuthType::from_str("BASIC_AUTH"),
-            WebhookAuthType::BasicAuth
+            Ok(WebhookAuthType::BasicAuth)
         );
         assert_eq!(
             WebhookAuthType::from_str("API_KEY"),
-            WebhookAuthType::ApiKey
+            Ok(WebhookAuthType::ApiKey)
         );
         assert_eq!(
             WebhookAuthType::from_str("HMAC_SIGNATURE"),
-            WebhookAuthType::HmacSignature
+            Ok(WebhookAuthType::HmacSignature)
         );
-        assert_eq!(WebhookAuthType::from_str("unknown"), WebhookAuthType::None);
+        // An unknown auth type must be an error, never NONE: reading it as
+        // NONE would deliver the webhook unauthenticated (X-06).
+        assert!(WebhookAuthType::from_str("unknown").is_err());
+        assert!(WebhookAuthType::from_str("bearer_token").is_err());
     }
 
     #[test]
@@ -553,7 +545,7 @@ mod tests {
         ] {
             assert_eq!(
                 WebhookAuthType::from_str(t.as_str()),
-                t,
+                Ok(t),
                 "Roundtrip failed for {:?}",
                 t
             );

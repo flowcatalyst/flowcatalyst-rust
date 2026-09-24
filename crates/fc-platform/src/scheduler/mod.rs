@@ -72,12 +72,21 @@ pub struct SchedulerJobRow {
 }
 
 impl SchedulerJobRow {
+    /// Lenient by ruling X-01: an unknown mode reads as NEXT_ON_ERROR.
     pub fn dispatch_mode(&self) -> DispatchMode {
-        DispatchMode::from_str(&self.mode)
+        crate::dispatch_job::entity::parse_dispatch_mode(Some(&self.mode))
     }
 
-    pub fn dispatch_status(&self) -> DispatchStatus {
-        DispatchStatus::from_str(&self.status)
+    /// Strict (X-06): an unknown status is a corrupt row.
+    pub fn dispatch_status(&self) -> crate::shared::error::Result<DispatchStatus> {
+        crate::dispatch_job::entity::parse_dispatch_status(&self.status).map_err(|_| {
+            crate::shared::enum_str::corrupt_value(
+                "msg_dispatch_jobs",
+                "status",
+                &self.status,
+                &self.id,
+            )
+        })
     }
 }
 
@@ -484,17 +493,24 @@ mod tests {
 
     #[test]
     fn test_dispatch_mode_from_str() {
-        assert_eq!(DispatchMode::from_str("IMMEDIATE"), DispatchMode::Immediate);
+        use crate::dispatch_job::entity::parse_dispatch_mode;
         assert_eq!(
-            DispatchMode::from_str("NEXT_ON_ERROR"),
+            parse_dispatch_mode(Some("IMMEDIATE")),
+            DispatchMode::Immediate
+        );
+        assert_eq!(
+            parse_dispatch_mode(Some("NEXT_ON_ERROR")),
             DispatchMode::NextOnError
         );
         assert_eq!(
-            DispatchMode::from_str("BLOCK_ON_ERROR"),
+            parse_dispatch_mode(Some("BLOCK_ON_ERROR")),
             DispatchMode::BlockOnError
         );
         // Ledger A-09/X-01: unspecified/unrecognised ⇒ NEXT_ON_ERROR.
-        assert_eq!(DispatchMode::from_str("unknown"), DispatchMode::NextOnError);
+        assert_eq!(
+            parse_dispatch_mode(Some("unknown")),
+            DispatchMode::NextOnError
+        );
     }
 
     #[test]
@@ -514,7 +530,12 @@ mod tests {
             last_error: None,
             subscription_id: None,
         };
-        assert_eq!(job.dispatch_status(), DispatchStatus::Queued);
+        assert_eq!(job.dispatch_status().unwrap(), DispatchStatus::Queued);
+        let corrupt = SchedulerJobRow {
+            status: "queued".to_string(),
+            ..job
+        };
+        assert!(corrupt.dispatch_status().is_err());
     }
 
     #[test]

@@ -75,15 +75,6 @@ pub enum DispatchKind {
     Task,
 }
 
-impl DispatchKind {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "TASK" => Self::Task,
-            _ => Self::Event,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(DispatchKind, "dispatch kind", {
     Event => "EVENT",
     Task => "TASK",
@@ -102,12 +93,6 @@ crate::shared::enum_str::str_enum!(DispatchProtocol, "dispatch protocol", {
     HttpWebhook => "HTTP_WEBHOOK",
 });
 
-impl DispatchProtocol {
-    pub fn from_str(_s: &str) -> Self {
-        Self::HttpWebhook
-    }
-}
-
 /// Retry strategy for failed jobs.
 ///
 /// Stored and sent lowercase (`immediate` / `fixed` / `exponential`), as the
@@ -125,17 +110,6 @@ pub enum RetryStrategy {
     #[default]
     #[serde(rename = "exponential", alias = "EXPONENTIAL_BACKOFF")]
     ExponentialBackoff,
-}
-
-impl RetryStrategy {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "immediate" | "IMMEDIATE" => Self::Immediate,
-            "fixed" | "FIXED_DELAY" => Self::FixedDelay,
-            "exponential" | "EXPONENTIAL_BACKOFF" => Self::ExponentialBackoff,
-            _ => Self::ExponentialBackoff,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(RetryStrategy, "retry strategy", {
@@ -158,18 +132,6 @@ pub enum ErrorType {
     Validation,
     /// Unknown error
     Unknown,
-}
-
-impl ErrorType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "CONNECTION" => Self::Connection,
-            "TIMEOUT" => Self::Timeout,
-            "HTTP_ERROR" => Self::HttpError,
-            "VALIDATION" => Self::Validation,
-            _ => Self::Unknown,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(ErrorType, "error type", {
@@ -665,6 +627,7 @@ impl DispatchJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_dispatch_job_for_event() {
@@ -739,9 +702,9 @@ mod tests {
 
     #[test]
     fn test_dispatch_kind_from_str() {
-        assert_eq!(DispatchKind::from_str("EVENT"), DispatchKind::Event);
-        assert_eq!(DispatchKind::from_str("TASK"), DispatchKind::Task);
-        assert_eq!(DispatchKind::from_str("unknown"), DispatchKind::Event);
+        assert_eq!(DispatchKind::from_str("EVENT"), Ok(DispatchKind::Event));
+        assert_eq!(DispatchKind::from_str("TASK"), Ok(DispatchKind::Task));
+        assert!(DispatchKind::from_str("unknown").is_err());
     }
 
     #[test]
@@ -752,7 +715,7 @@ mod tests {
     #[test]
     fn test_dispatch_kind_roundtrip() {
         for kind in [DispatchKind::Event, DispatchKind::Task] {
-            assert_eq!(DispatchKind::from_str(kind.as_str()), kind);
+            assert_eq!(DispatchKind::from_str(kind.as_str()), Ok(kind));
         }
     }
 
@@ -771,27 +734,33 @@ mod tests {
 
     #[test]
     fn test_dispatch_status_from_str() {
-        assert_eq!(DispatchStatus::from_str("PENDING"), DispatchStatus::Pending);
-        assert_eq!(DispatchStatus::from_str("QUEUED"), DispatchStatus::Queued);
         assert_eq!(
-            DispatchStatus::from_str("PROCESSING"),
-            DispatchStatus::Processing
+            parse_dispatch_status("PENDING"),
+            Ok(DispatchStatus::Pending)
+        );
+        assert_eq!(parse_dispatch_status("QUEUED"), Ok(DispatchStatus::Queued));
+        assert_eq!(
+            parse_dispatch_status("PROCESSING"),
+            Ok(DispatchStatus::Processing)
         );
         assert_eq!(
-            DispatchStatus::from_str("IN_PROGRESS"),
-            DispatchStatus::Processing
+            parse_dispatch_status("IN_PROGRESS"),
+            Ok(DispatchStatus::Processing)
         );
         assert_eq!(
-            DispatchStatus::from_str("COMPLETED"),
-            DispatchStatus::Completed
+            parse_dispatch_status("COMPLETED"),
+            Ok(DispatchStatus::Completed)
         );
-        assert_eq!(DispatchStatus::from_str("FAILED"), DispatchStatus::Failed);
+        assert_eq!(parse_dispatch_status("FAILED"), Ok(DispatchStatus::Failed));
         assert_eq!(
-            DispatchStatus::from_str("CANCELLED"),
-            DispatchStatus::Cancelled
+            parse_dispatch_status("CANCELLED"),
+            Ok(DispatchStatus::Cancelled)
         );
-        assert_eq!(DispatchStatus::from_str("EXPIRED"), DispatchStatus::Expired);
-        assert_eq!(DispatchStatus::from_str("unknown"), DispatchStatus::Pending);
+        assert_eq!(
+            parse_dispatch_status("EXPIRED"),
+            Ok(DispatchStatus::Expired)
+        );
+        assert!(parse_dispatch_status("unknown").is_err());
     }
 
     #[test]
@@ -811,8 +780,8 @@ mod tests {
             DispatchStatus::Expired,
         ] {
             assert_eq!(
-                DispatchStatus::from_str(s.as_str()),
-                s,
+                parse_dispatch_status(s.as_str()),
+                Ok(s),
                 "Roundtrip failed for {:?}",
                 s
             );
@@ -848,12 +817,9 @@ mod tests {
     fn test_dispatch_protocol_from_str() {
         assert_eq!(
             DispatchProtocol::from_str("HTTP_WEBHOOK"),
-            DispatchProtocol::HttpWebhook
+            Ok(DispatchProtocol::HttpWebhook)
         );
-        assert_eq!(
-            DispatchProtocol::from_str("anything"),
-            DispatchProtocol::HttpWebhook
-        );
+        assert!(DispatchProtocol::from_str("anything").is_err());
     }
 
     #[test]
@@ -874,29 +840,29 @@ mod tests {
     fn test_retry_strategy_from_str() {
         assert_eq!(
             RetryStrategy::from_str("immediate"),
-            RetryStrategy::Immediate
+            Ok(RetryStrategy::Immediate)
         );
         assert_eq!(
             RetryStrategy::from_str("IMMEDIATE"),
-            RetryStrategy::Immediate
+            Ok(RetryStrategy::Immediate)
         );
-        assert_eq!(RetryStrategy::from_str("fixed"), RetryStrategy::FixedDelay);
+        assert_eq!(
+            RetryStrategy::from_str("fixed"),
+            Ok(RetryStrategy::FixedDelay)
+        );
         assert_eq!(
             RetryStrategy::from_str("FIXED_DELAY"),
-            RetryStrategy::FixedDelay
+            Ok(RetryStrategy::FixedDelay)
         );
         assert_eq!(
             RetryStrategy::from_str("exponential"),
-            RetryStrategy::ExponentialBackoff
+            Ok(RetryStrategy::ExponentialBackoff)
         );
         assert_eq!(
             RetryStrategy::from_str("EXPONENTIAL_BACKOFF"),
-            RetryStrategy::ExponentialBackoff
+            Ok(RetryStrategy::ExponentialBackoff)
         );
-        assert_eq!(
-            RetryStrategy::from_str("unknown"),
-            RetryStrategy::ExponentialBackoff
-        );
+        assert!(RetryStrategy::from_str("unknown").is_err());
     }
 
     #[test]
@@ -996,7 +962,7 @@ mod tests {
         for mode in [DispatchMode::Immediate, DispatchMode::BlockOnError] {
             let s = mode.as_str();
             assert_eq!(
-                DispatchMode::from_str(s),
+                parse_dispatch_mode(Some(s)),
                 mode,
                 "Roundtrip failed for {:?}",
                 mode

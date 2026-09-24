@@ -13,15 +13,6 @@ pub enum SubscriptionStatus {
     Paused,
 }
 
-impl SubscriptionStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "PAUSED" => Self::Paused,
-            _ => Self::Active,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(SubscriptionStatus, "subscription status", {
     Active => "ACTIVE",
     Paused => "PAUSED",
@@ -35,16 +26,6 @@ pub enum SubscriptionSource {
     Api,
     #[default]
     Ui,
-}
-
-impl SubscriptionSource {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "CODE" => Self::Code,
-            "API" => Self::Api,
-            _ => Self::Ui,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(SubscriptionSource, "subscription source", {
@@ -241,6 +222,7 @@ impl Subscription {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_subscription() {
@@ -392,16 +374,13 @@ mod tests {
     fn test_subscription_status_from_str() {
         assert_eq!(
             SubscriptionStatus::from_str("ACTIVE"),
-            SubscriptionStatus::Active
+            Ok(SubscriptionStatus::Active)
         );
         assert_eq!(
             SubscriptionStatus::from_str("PAUSED"),
-            SubscriptionStatus::Paused
+            Ok(SubscriptionStatus::Paused)
         );
-        assert_eq!(
-            SubscriptionStatus::from_str("unknown"),
-            SubscriptionStatus::Active
-        );
+        assert!(SubscriptionStatus::from_str("unknown").is_err());
     }
 
     #[test]
@@ -420,14 +399,17 @@ mod tests {
     fn test_subscription_source_from_str() {
         assert_eq!(
             SubscriptionSource::from_str("CODE"),
-            SubscriptionSource::Code
+            Ok(SubscriptionSource::Code)
         );
-        assert_eq!(SubscriptionSource::from_str("API"), SubscriptionSource::Api);
-        assert_eq!(SubscriptionSource::from_str("UI"), SubscriptionSource::Ui);
         assert_eq!(
-            SubscriptionSource::from_str("unknown"),
-            SubscriptionSource::Ui
+            SubscriptionSource::from_str("API"),
+            Ok(SubscriptionSource::Api)
         );
+        assert_eq!(
+            SubscriptionSource::from_str("UI"),
+            Ok(SubscriptionSource::Ui)
+        );
+        assert!(SubscriptionSource::from_str("unknown").is_err());
     }
 
     #[test]
@@ -547,10 +529,7 @@ mod tests {
 
     #[test]
     fn subscription_status_from_str_falls_back_to_active() {
-        assert_eq!(
-            SubscriptionStatus::from_str("UNKNOWN"),
-            SubscriptionStatus::Active
-        );
-        assert_eq!(SubscriptionStatus::from_str(""), SubscriptionStatus::Active);
+        assert!(SubscriptionStatus::from_str("UNKNOWN").is_err());
+        assert!(SubscriptionStatus::from_str("").is_err());
     }
 }

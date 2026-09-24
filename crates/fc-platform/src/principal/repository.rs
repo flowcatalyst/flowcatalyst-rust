@@ -9,7 +9,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
 use crate::service_account::entity::RoleAssignment;
-use crate::shared::enum_str::decode_opt;
+use crate::shared::enum_str::{decode, decode_opt};
 use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
@@ -37,13 +37,12 @@ struct PrincipalRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<PrincipalRow> for Principal {
-    fn from(r: PrincipalRow) -> Self {
-        let principal_type = PrincipalType::from_str(&r.principal_type);
-        let scope = r
-            .scope
-            .as_deref()
-            .map(UserScope::from_str)
+impl TryFrom<PrincipalRow> for Principal {
+    type Error = PlatformError;
+    fn try_from(r: PrincipalRow) -> Result<Self> {
+        let principal_type = decode(&r.principal_type, "iam_principals", "type", &r.id)?;
+        // A NULL scope is an unscoped row, read as CLIENT (the narrowest).
+        let scope = decode_opt(r.scope.as_deref(), "iam_principals", "scope", &r.id)?
             .unwrap_or(UserScope::Client);
 
         let user_identity = if principal_type == PrincipalType::User {
@@ -68,7 +67,7 @@ impl From<PrincipalRow> for Principal {
             external_id: ext_id.clone(),
         });
 
-        Self {
+        Ok(Self {
             id: r.id,
             principal_type,
             scope,
@@ -85,7 +84,7 @@ impl From<PrincipalRow> for Principal {
             created_at: r.created_at,
             updated_at: r.updated_at,
             external_identity,
-        }
+        })
     }
 }
 
@@ -619,7 +618,7 @@ impl PrincipalRepository {
     async fn hydrate_principal(&self, row: PrincipalRow) -> Result<Principal> {
         let id = row.id.clone();
         let home_client_id = row.client_id.clone();
-        let mut principal = Principal::from(row);
+        let mut principal = Principal::try_from(row)?;
 
         // Load roles
         let role_rows = sqlx::query_as::<_, PrincipalRoleRow>(
@@ -773,7 +772,7 @@ impl PrincipalRepository {
             .into_iter()
             .map(|m| {
                 let id = m.id.clone();
-                let mut principal = Principal::from(m);
+                let mut principal = Principal::try_from(m)?;
                 if let Some(roles) = role_map.remove(&id) {
                     principal.roles = roles;
                 }
@@ -796,9 +795,9 @@ impl PrincipalRepository {
                 if let Some(apps) = app_access_map.remove(&id) {
                     principal.accessible_application_ids = apps;
                 }
-                principal
+                Ok(principal)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(principals)
     }

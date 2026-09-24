@@ -5,7 +5,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{DispatchPool, DispatchPoolStatus};
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 /// Row mapping for msg_dispatch_pools table
@@ -24,9 +25,11 @@ struct DispatchPoolRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<DispatchPoolRow> for DispatchPool {
-    fn from(r: DispatchPoolRow) -> Self {
-        Self {
+impl TryFrom<DispatchPoolRow> for DispatchPool {
+    type Error = PlatformError;
+    fn try_from(r: DispatchPoolRow) -> Result<Self> {
+        let status = decode(&r.status, "msg_dispatch_pools", "status", &r.id)?;
+        Ok(Self {
             id: r.id,
             code: r.code,
             name: r.name,
@@ -35,10 +38,10 @@ impl From<DispatchPoolRow> for DispatchPool {
             concurrency: r.concurrency,
             client_id: r.client_id,
             client_identifier: r.client_identifier,
-            status: DispatchPoolStatus::from_str(&r.status),
+            status,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -79,7 +82,7 @@ impl DispatchPoolRepository {
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await?;
-        Ok(row.map(DispatchPool::from))
+        row.map(DispatchPool::try_from).transpose()
     }
 
     pub async fn find_by_code(
@@ -103,7 +106,7 @@ impl DispatchPoolRepository {
             .fetch_optional(&self.pool)
             .await?
         };
-        Ok(row.map(DispatchPool::from))
+        row.map(DispatchPool::try_from).transpose()
     }
 
     pub async fn find_all(&self) -> Result<Vec<DispatchPool>> {
@@ -112,7 +115,7 @@ impl DispatchPoolRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(DispatchPool::from).collect())
+        rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
     pub async fn find_by_status(&self, status: DispatchPoolStatus) -> Result<Vec<DispatchPool>> {
@@ -122,7 +125,7 @@ impl DispatchPoolRepository {
         .bind(status.as_str())
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(DispatchPool::from).collect())
+        rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
     /// Search dispatch pools by code or name (case-insensitive partial match)
@@ -134,7 +137,7 @@ impl DispatchPoolRepository {
         .bind(&pattern)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(DispatchPool::from).collect())
+        rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
     pub async fn find_active(&self) -> Result<Vec<DispatchPool>> {
@@ -143,7 +146,7 @@ impl DispatchPoolRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(DispatchPool::from).collect())
+        rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
     pub async fn find_by_client(&self, client_id: Option<&str>) -> Result<Vec<DispatchPool>> {
@@ -161,7 +164,7 @@ impl DispatchPoolRepository {
             .fetch_all(&self.pool)
             .await?
         };
-        Ok(rows.into_iter().map(DispatchPool::from).collect())
+        rows.into_iter().map(DispatchPool::try_from).collect()
     }
 
     pub async fn update(&self, pool: &DispatchPool) -> Result<()> {

@@ -5,7 +5,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use super::entity::{Client, ClientNote, ClientStatus};
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 /// Row mapping for tnt_clients table
@@ -22,24 +23,26 @@ struct ClientRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<ClientRow> for Client {
-    fn from(r: ClientRow) -> Self {
+impl TryFrom<ClientRow> for Client {
+    type Error = PlatformError;
+    fn try_from(r: ClientRow) -> Result<Self> {
+        let status = decode(&r.status, "tnt_clients", "status", &r.id)?;
         let notes: Vec<ClientNote> = r
             .notes
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
 
-        Self {
+        Ok(Self {
             id: r.id,
             name: r.name,
             identifier: r.identifier,
-            status: ClientStatus::from_str(&r.status),
+            status,
             status_reason: r.status_reason,
             status_changed_at: r.status_changed_at,
             notes,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -78,7 +81,7 @@ impl ClientRepository {
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(Client::from))
+        row.map(Client::try_from).transpose()
     }
 
     pub async fn find_by_identifier(&self, identifier: &str) -> Result<Option<Client>> {
@@ -86,7 +89,7 @@ impl ClientRepository {
             .bind(identifier)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(Client::from))
+        row.map(Client::try_from).transpose()
     }
 
     pub async fn find_active(&self) -> Result<Vec<Client>> {
@@ -94,14 +97,14 @@ impl ClientRepository {
             sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE status = 'ACTIVE'")
                 .fetch_all(&self.pool)
                 .await?;
-        Ok(rows.into_iter().map(Client::from).collect())
+        rows.into_iter().map(Client::try_from).collect()
     }
 
     pub async fn find_all(&self) -> Result<Vec<Client>> {
         let rows = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients")
             .fetch_all(&self.pool)
             .await?;
-        Ok(rows.into_iter().map(Client::from).collect())
+        rows.into_iter().map(Client::try_from).collect()
     }
 
     /// Search clients by name or identifier (case-insensitive partial match)
@@ -113,7 +116,7 @@ impl ClientRepository {
         .bind(&pattern)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(Client::from).collect())
+        rows.into_iter().map(Client::try_from).collect()
     }
 
     pub async fn find_by_status(&self, status: ClientStatus) -> Result<Vec<Client>> {
@@ -121,7 +124,7 @@ impl ClientRepository {
             .bind(status.as_str())
             .fetch_all(&self.pool)
             .await?;
-        Ok(rows.into_iter().map(Client::from).collect())
+        rows.into_iter().map(Client::try_from).collect()
     }
 
     pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Client>> {
@@ -132,7 +135,7 @@ impl ClientRepository {
             .bind(ids)
             .fetch_all(&self.pool)
             .await?;
-        Ok(rows.into_iter().map(Client::from).collect())
+        rows.into_iter().map(Client::try_from).collect()
     }
 
     pub async fn exists(&self, id: &str) -> Result<bool> {

@@ -4,10 +4,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
-use super::entity::{
-    EventType, EventTypeSource, EventTypeStatus, SchemaType, SpecVersion, SpecVersionStatus,
-};
-use crate::shared::error::Result;
+use super::entity::{EventType, EventTypeStatus, SpecVersion};
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 /// Row mapping for msg_event_types table
@@ -27,17 +26,20 @@ struct EventTypeRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<EventTypeRow> for EventType {
-    fn from(r: EventTypeRow) -> Self {
+impl TryFrom<EventTypeRow> for EventType {
+    type Error = PlatformError;
+    fn try_from(r: EventTypeRow) -> Result<Self> {
+        let status = decode(&r.status, "msg_event_types", "status", &r.id)?;
+        let source = decode(&r.source, "msg_event_types", "source", &r.id)?;
         let event_name = r.code.split(':').nth(3).unwrap_or("").to_string();
-        Self {
+        Ok(Self {
             id: r.id,
             code: r.code,
             name: r.name,
             description: r.description,
             spec_versions: vec![], // loaded separately
-            status: EventTypeStatus::from_str(&r.status),
-            source: EventTypeSource::from_str(&r.source),
+            status,
+            source,
             client_scoped: r.client_scoped,
             application: r.application,
             subdomain: r.subdomain,
@@ -47,7 +49,7 @@ impl From<EventTypeRow> for EventType {
             created_by: None, // not stored in msg_event_types
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -65,19 +67,27 @@ struct SpecVersionRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<SpecVersionRow> for SpecVersion {
-    fn from(r: SpecVersionRow) -> Self {
-        Self {
+impl TryFrom<SpecVersionRow> for SpecVersion {
+    type Error = PlatformError;
+    fn try_from(r: SpecVersionRow) -> Result<Self> {
+        let schema_type = decode(
+            &r.schema_type,
+            "msg_event_type_spec_versions",
+            "schema_type",
+            &r.id,
+        )?;
+        let status = decode(&r.status, "msg_event_type_spec_versions", "status", &r.id)?;
+        Ok(Self {
             id: r.id,
             event_type_id: r.event_type_id,
             version: r.version,
             mime_type: r.mime_type,
             schema_content: r.schema_content,
-            schema_type: SchemaType::from_str(&r.schema_type),
-            status: SpecVersionStatus::from_str(&r.status),
+            schema_type,
+            status,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -98,7 +108,7 @@ impl EventTypeRepository {
         .bind(event_type_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(SpecVersion::from).collect())
+        rows.into_iter().map(SpecVersion::try_from).collect()
     }
 
     async fn hydrate(&self, mut et: EventType) -> Result<EventType> {
@@ -128,20 +138,19 @@ impl EventTypeRepository {
             spec_map
                 .entry(event_type_id)
                 .or_default()
-                .push(SpecVersion::from(row));
+                .push(SpecVersion::try_from(row)?);
         }
 
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|row| {
                 let id = row.id.clone();
-                let mut et = EventType::from(row);
+                let mut et = EventType::try_from(row)?;
                 if let Some(specs) = spec_map.remove(&id) {
                     et.spec_versions = specs;
                 }
-                et
+                Ok(et)
             })
-            .collect())
+            .collect()
     }
 
     pub async fn insert(&self, et: &EventType) -> Result<()> {
@@ -197,7 +206,7 @@ impl EventTypeRepository {
             .fetch_optional(&self.pool)
             .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(EventType::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(EventType::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -209,7 +218,7 @@ impl EventTypeRepository {
                 .fetch_optional(&self.pool)
                 .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(EventType::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(EventType::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -314,7 +323,7 @@ impl EventTypeRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(EventType::from).collect())
+        rows.into_iter().map(EventType::try_from).collect()
     }
 
     pub async fn exists_by_code(&self, code: &str) -> Result<bool> {

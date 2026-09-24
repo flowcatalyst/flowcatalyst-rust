@@ -4,8 +4,9 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::collections::HashMap;
 
-use super::entity::{IdentityProvider, IdentityProviderType};
-use crate::shared::error::Result;
+use super::entity::IdentityProvider;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 
 // ── Row structs ─────────────────────────────────────────────────────
 
@@ -24,13 +25,15 @@ struct IdentityProviderRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<IdentityProviderRow> for IdentityProvider {
-    fn from(r: IdentityProviderRow) -> Self {
-        Self {
+impl TryFrom<IdentityProviderRow> for IdentityProvider {
+    type Error = PlatformError;
+    fn try_from(r: IdentityProviderRow) -> Result<Self> {
+        let r#type = decode(&r.r#type, "oauth_identity_providers", "type", &r.id)?;
+        Ok(Self {
             id: r.id,
             code: r.code,
             name: r.name,
-            r#type: IdentityProviderType::from_str(&r.r#type),
+            r#type,
             oidc_issuer_url: r.oidc_issuer_url,
             oidc_client_id: r.oidc_client_id,
             oidc_client_secret_ref: r.oidc_client_secret_ref,
@@ -39,7 +42,7 @@ impl From<IdentityProviderRow> for IdentityProvider {
             allowed_email_domains: Vec::new(), // loaded separately
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -108,7 +111,7 @@ impl IdentityProviderRepository {
         .fetch_optional(&self.pool)
         .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(IdentityProvider::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(IdentityProvider::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -121,7 +124,7 @@ impl IdentityProviderRepository {
         .fetch_optional(&self.pool)
         .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(IdentityProvider::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(IdentityProvider::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -132,7 +135,10 @@ impl IdentityProviderRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        let idps: Vec<IdentityProvider> = rows.into_iter().map(IdentityProvider::from).collect();
+        let idps: Vec<IdentityProvider> = rows
+            .into_iter()
+            .map(IdentityProvider::try_from)
+            .collect::<Result<_>>()?;
         self.hydrate_all(idps).await
     }
 

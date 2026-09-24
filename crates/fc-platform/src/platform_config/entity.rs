@@ -10,15 +10,6 @@ pub enum ConfigScope {
     Client,
 }
 
-impl ConfigScope {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "CLIENT" => Self::Client,
-            _ => Self::Global,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(ConfigScope, "config scope", {
     Global => "GLOBAL",
     Client => "CLIENT",
@@ -29,15 +20,6 @@ crate::shared::enum_str::str_enum!(ConfigScope, "config scope", {
 pub enum ConfigValueType {
     Plain,
     Secret,
-}
-
-impl ConfigValueType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "SECRET" => Self::Secret,
-            _ => Self::Plain,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(ConfigValueType, "config value type", {
@@ -96,6 +78,7 @@ impl PlatformConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_platform_config() {
@@ -141,9 +124,9 @@ mod tests {
 
     #[test]
     fn test_config_scope_from_str() {
-        assert_eq!(ConfigScope::from_str("GLOBAL"), ConfigScope::Global);
-        assert_eq!(ConfigScope::from_str("CLIENT"), ConfigScope::Client);
-        assert_eq!(ConfigScope::from_str("unknown"), ConfigScope::Global);
+        assert_eq!(ConfigScope::from_str("GLOBAL"), Ok(ConfigScope::Global));
+        assert_eq!(ConfigScope::from_str("CLIENT"), Ok(ConfigScope::Client));
+        assert!(ConfigScope::from_str("unknown").is_err());
     }
 
     #[test]
@@ -151,7 +134,7 @@ mod tests {
         for s in [ConfigScope::Global, ConfigScope::Client] {
             assert_eq!(
                 ConfigScope::from_str(s.as_str()),
-                s,
+                Ok(s),
                 "Roundtrip failed for {:?}",
                 s
             );
@@ -168,9 +151,15 @@ mod tests {
 
     #[test]
     fn test_config_value_type_from_str() {
-        assert_eq!(ConfigValueType::from_str("PLAIN"), ConfigValueType::Plain);
-        assert_eq!(ConfigValueType::from_str("SECRET"), ConfigValueType::Secret);
-        assert_eq!(ConfigValueType::from_str("unknown"), ConfigValueType::Plain);
+        assert_eq!(
+            ConfigValueType::from_str("PLAIN"),
+            Ok(ConfigValueType::Plain)
+        );
+        assert_eq!(
+            ConfigValueType::from_str("SECRET"),
+            Ok(ConfigValueType::Secret)
+        );
+        assert!(ConfigValueType::from_str("unknown").is_err());
     }
 
     #[test]
@@ -178,7 +167,7 @@ mod tests {
         for t in [ConfigValueType::Plain, ConfigValueType::Secret] {
             assert_eq!(
                 ConfigValueType::from_str(t.as_str()),
-                t,
+                Ok(t),
                 "Roundtrip failed for {:?}",
                 t
             );

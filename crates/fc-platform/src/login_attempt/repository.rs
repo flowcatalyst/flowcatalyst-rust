@@ -4,7 +4,8 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{AttemptType, LoginAttempt, LoginOutcome};
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 
 #[derive(sqlx::FromRow)]
 struct LoginAttemptRow {
@@ -19,19 +20,22 @@ struct LoginAttemptRow {
     attempted_at: DateTime<Utc>,
 }
 
-impl From<LoginAttemptRow> for LoginAttempt {
-    fn from(r: LoginAttemptRow) -> Self {
-        Self {
+impl TryFrom<LoginAttemptRow> for LoginAttempt {
+    type Error = PlatformError;
+    fn try_from(r: LoginAttemptRow) -> Result<Self> {
+        let attempt_type = decode(&r.attempt_type, "iam_login_attempts", "attempt_type", &r.id)?;
+        let outcome = decode(&r.outcome, "iam_login_attempts", "outcome", &r.id)?;
+        Ok(Self {
             id: r.id,
-            attempt_type: AttemptType::from_str(&r.attempt_type),
-            outcome: LoginOutcome::from_str(&r.outcome),
+            attempt_type,
+            outcome,
             failure_reason: r.failure_reason,
             identifier: r.identifier,
             principal_id: r.principal_id,
             ip_address: r.ip_address,
             user_agent: r.user_agent,
             attempted_at: r.attempted_at,
-        }
+        })
     }
 }
 
@@ -138,7 +142,7 @@ impl LoginAttemptRepository {
         qb.push(" ORDER BY attempted_at DESC, id DESC LIMIT ")
             .push_bind(fetch_limit);
         let rows: Vec<LoginAttemptRow> = qb.build_query_as().fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(LoginAttempt::from).collect())
+        rows.into_iter().map(LoginAttempt::try_from).collect()
     }
 
     /// Last successful login attempt timestamp for an identifier. Used by the

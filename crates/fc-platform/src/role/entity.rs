@@ -20,18 +20,6 @@ pub enum RoleSource {
     Sdk,
 }
 
-impl RoleSource {
-    // Lenient: unknown input maps to Database by design (DB rows).
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "CODE" => Self::Code,
-            "SDK" => Self::Sdk,
-            _ => Self::Database,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(RoleSource, "role source", {
     Code => "CODE",
     Database => "DATABASE",

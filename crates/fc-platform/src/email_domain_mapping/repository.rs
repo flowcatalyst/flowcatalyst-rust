@@ -4,8 +4,9 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::collections::HashMap;
 
-use super::entity::{EmailDomainMapping, ScopeType};
-use crate::shared::error::Result;
+use super::entity::EmailDomainMapping;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 
 // ── Row structs ─────────────────────────────────────────────────────
 
@@ -22,13 +23,20 @@ struct EmailDomainMappingRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<EmailDomainMappingRow> for EmailDomainMapping {
-    fn from(r: EmailDomainMappingRow) -> Self {
-        Self {
+impl TryFrom<EmailDomainMappingRow> for EmailDomainMapping {
+    type Error = PlatformError;
+    fn try_from(r: EmailDomainMappingRow) -> Result<Self> {
+        let scope_type = decode(
+            &r.scope_type,
+            "tnt_email_domain_mappings",
+            "scope_type",
+            &r.id,
+        )?;
+        Ok(Self {
             id: r.id,
             email_domain: r.email_domain,
             identity_provider_id: r.identity_provider_id,
-            scope_type: ScopeType::from_str(&r.scope_type),
+            scope_type,
             primary_client_id: r.primary_client_id,
             additional_client_ids: Vec::new(), // loaded separately
             granted_client_ids: Vec::new(),    // loaded separately
@@ -37,7 +45,7 @@ impl From<EmailDomainMappingRow> for EmailDomainMapping {
             sync_roles_from_idp: r.sync_roles_from_idp,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -149,7 +157,7 @@ impl EmailDomainMappingRepository {
         .fetch_optional(&self.pool)
         .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(EmailDomainMapping::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(EmailDomainMapping::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -162,7 +170,7 @@ impl EmailDomainMappingRepository {
         .fetch_optional(&self.pool)
         .await?;
         match row {
-            Some(r) => Ok(Some(self.hydrate(EmailDomainMapping::from(r)).await?)),
+            Some(r) => Ok(Some(self.hydrate(EmailDomainMapping::try_from(r)?).await?)),
             None => Ok(None),
         }
     }
@@ -173,8 +181,10 @@ impl EmailDomainMappingRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        let edms: Vec<EmailDomainMapping> =
-            rows.into_iter().map(EmailDomainMapping::from).collect();
+        let edms: Vec<EmailDomainMapping> = rows
+            .into_iter()
+            .map(EmailDomainMapping::try_from)
+            .collect::<Result<_>>()?;
         self.hydrate_all(edms).await
     }
 

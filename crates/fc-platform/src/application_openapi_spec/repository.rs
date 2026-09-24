@@ -8,8 +8,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use super::entity::{ChangeNotes, OpenApiSpec, OpenApiSpecStatus};
-use crate::shared::error::Result;
+use super::entity::{ChangeNotes, OpenApiSpec};
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 #[derive(sqlx::FromRow)]
@@ -28,13 +29,15 @@ struct OpenApiSpecRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<OpenApiSpecRow> for OpenApiSpec {
-    fn from(r: OpenApiSpecRow) -> Self {
-        Self {
+impl TryFrom<OpenApiSpecRow> for OpenApiSpec {
+    type Error = PlatformError;
+    fn try_from(r: OpenApiSpecRow) -> Result<Self> {
+        let status = decode(&r.status, "app_application_openapi_specs", "status", &r.id)?;
+        Ok(Self {
             id: r.id,
             application_id: r.application_id,
             version: r.version,
-            status: OpenApiSpecStatus::from_str(&r.status),
+            status,
             spec: r.spec,
             spec_hash: r.spec_hash,
             change_notes: r
@@ -45,7 +48,7 @@ impl From<OpenApiSpecRow> for OpenApiSpec {
             synced_by: r.synced_by,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -77,13 +80,10 @@ impl OpenApiSpecRepository {
         .bind(application_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(OpenApiSpec::from))
+        row.map(OpenApiSpec::try_from).transpose()
     }
 
-    pub async fn find_all_by_application(
-        &self,
-        application_id: &str,
-    ) -> Result<Vec<OpenApiSpec>> {
+    pub async fn find_all_by_application(&self, application_id: &str) -> Result<Vec<OpenApiSpec>> {
         let rows = sqlx::query_as::<_, OpenApiSpecRow>(&format!(
             "SELECT {SELECT_COLS} FROM app_application_openapi_specs \
              WHERE application_id = $1 ORDER BY synced_at DESC"
@@ -91,7 +91,7 @@ impl OpenApiSpecRepository {
         .bind(application_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(OpenApiSpec::from).collect())
+        rows.into_iter().map(OpenApiSpec::try_from).collect()
     }
 
     /// Does any row (CURRENT or ARCHIVED) already occupy this version slot?
@@ -121,7 +121,7 @@ impl OpenApiSpecRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(OpenApiSpec::from))
+        row.map(OpenApiSpec::try_from).transpose()
     }
 
     /// Insert a fresh row. Used by the sync use case after the prior CURRENT

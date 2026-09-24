@@ -17,15 +17,6 @@ pub enum OAuthClientType {
     Confidential,
 }
 
-impl OAuthClientType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "CONFIDENTIAL" => Self::Confidential,
-            _ => Self::Public,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(OAuthClientType, "OAuth client type", {
     Public => "PUBLIC",
     Confidential => "CONFIDENTIAL",
@@ -39,18 +30,6 @@ pub enum GrantType {
     ClientCredentials,
     RefreshToken,
     Password,
-}
-
-impl GrantType {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "authorization_code" => Some(Self::AuthorizationCode),
-            "client_credentials" => Some(Self::ClientCredentials),
-            "refresh_token" => Some(Self::RefreshToken),
-            "password" => Some(Self::Password),
-            _ => None,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(GrantType, "grant type", {

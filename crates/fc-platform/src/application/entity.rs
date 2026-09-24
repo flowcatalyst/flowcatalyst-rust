@@ -12,15 +12,6 @@ pub enum ApplicationType {
     Integration,
 }
 
-impl ApplicationType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "INTEGRATION" => Self::Integration,
-            _ => Self::Application,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(ApplicationType, "application type", {
     Application => "APPLICATION",
     Integration => "INTEGRATION",
@@ -106,6 +97,7 @@ impl Application {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_application() {
@@ -154,18 +146,15 @@ mod tests {
     fn test_application_type_from_str() {
         assert_eq!(
             ApplicationType::from_str("APPLICATION"),
-            ApplicationType::Application
+            Ok(ApplicationType::Application)
         );
         assert_eq!(
             ApplicationType::from_str("INTEGRATION"),
-            ApplicationType::Integration
+            Ok(ApplicationType::Integration)
         );
-        // Unknown defaults to Application
-        assert_eq!(
-            ApplicationType::from_str("unknown"),
-            ApplicationType::Application
-        );
-        assert_eq!(ApplicationType::from_str(""), ApplicationType::Application);
+        // Unknown values are rejected (X-06)
+        assert!(ApplicationType::from_str("unknown").is_err());
+        assert!(ApplicationType::from_str("").is_err());
     }
 
     #[test]
@@ -179,7 +168,7 @@ mod tests {
             let s = t.as_str();
             assert_eq!(
                 ApplicationType::from_str(s),
-                t,
+                Ok(t),
                 "Roundtrip failed for {:?}",
                 t
             );

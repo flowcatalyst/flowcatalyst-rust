@@ -13,16 +13,6 @@ pub enum DispatchPoolStatus {
     Archived,
 }
 
-impl DispatchPoolStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "SUSPENDED" => Self::Suspended,
-            "ARCHIVED" => Self::Archived,
-            _ => Self::Active,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(DispatchPoolStatus, "dispatch pool status", {
     Active => "ACTIVE",
     Suspended => "SUSPENDED",
@@ -100,6 +90,7 @@ impl DispatchPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_dispatch_pool() {
@@ -146,20 +137,17 @@ mod tests {
     fn test_dispatch_pool_status_from_str() {
         assert_eq!(
             DispatchPoolStatus::from_str("ACTIVE"),
-            DispatchPoolStatus::Active
+            Ok(DispatchPoolStatus::Active)
         );
         assert_eq!(
             DispatchPoolStatus::from_str("SUSPENDED"),
-            DispatchPoolStatus::Suspended
+            Ok(DispatchPoolStatus::Suspended)
         );
         assert_eq!(
             DispatchPoolStatus::from_str("ARCHIVED"),
-            DispatchPoolStatus::Archived
+            Ok(DispatchPoolStatus::Archived)
         );
-        assert_eq!(
-            DispatchPoolStatus::from_str("unknown"),
-            DispatchPoolStatus::Active
-        );
+        assert!(DispatchPoolStatus::from_str("unknown").is_err());
     }
 
     #[test]
@@ -176,7 +164,7 @@ mod tests {
         ] {
             assert_eq!(
                 DispatchPoolStatus::from_str(s.as_str()),
-                s,
+                Ok(s),
                 "Roundtrip failed for {:?}",
                 s
             );

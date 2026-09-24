@@ -8,7 +8,8 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{AuthRole, RoleSource};
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 /// Row mapping for iam_roles table
@@ -26,14 +27,16 @@ struct RoleRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<RoleRow> for AuthRole {
-    fn from(r: RoleRow) -> Self {
+impl TryFrom<RoleRow> for AuthRole {
+    type Error = PlatformError;
+    fn try_from(r: RoleRow) -> Result<Self> {
+        let source = decode(&r.source, "iam_roles", "source", &r.id)?;
         // Extract application_code from the role name (part before first colon) if not set
         let application_code = r
             .application_code
             .unwrap_or_else(|| r.name.split(':').next().unwrap_or("unknown").to_string());
 
-        Self {
+        Ok(Self {
             id: r.id,
             application_id: r.application_id,
             name: r.name,
@@ -41,11 +44,11 @@ impl From<RoleRow> for AuthRole {
             description: r.description,
             application_code,
             permissions: std::collections::HashSet::new(), // loaded from junction table
-            source: RoleSource::from_str(&r.source),
+            source,
             client_managed: r.client_managed,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -98,7 +101,7 @@ impl RoleRepository {
 
         match row {
             Some(r) => {
-                let mut role = AuthRole::from(r);
+                let mut role = AuthRole::try_from(r)?;
                 role.permissions = self.load_permissions(&role.id).await?;
                 Ok(Some(role))
             }
@@ -115,7 +118,7 @@ impl RoleRepository {
 
         match row {
             Some(r) => {
-                let mut role = AuthRole::from(r);
+                let mut role = AuthRole::try_from(r)?;
                 role.permissions = self.load_permissions(&role.id).await?;
                 Ok(Some(role))
             }
@@ -415,19 +418,16 @@ impl RoleRepository {
         }
 
         // Build domain entities
-        let roles = rows
-            .into_iter()
+        rows.into_iter()
             .map(|r| {
                 let id = r.id.clone();
-                let mut role = AuthRole::from(r);
+                let mut role = AuthRole::try_from(r)?;
                 if let Some(perms) = perm_map.remove(&id) {
                     role.permissions = perms;
                 }
-                role
+                Ok(role)
             })
-            .collect();
-
-        Ok(roles)
+            .collect()
     }
 }
 

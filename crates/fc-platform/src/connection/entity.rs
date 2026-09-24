@@ -12,15 +12,6 @@ pub enum ConnectionStatus {
     Paused,
 }
 
-impl ConnectionStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "PAUSED" => Self::Paused,
-            _ => Self::Active,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(ConnectionStatus, "connection status", {
     Active => "ACTIVE",
     Paused => "PAUSED",
@@ -95,6 +86,7 @@ impl Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_new_connection() {
@@ -153,18 +145,15 @@ mod tests {
     fn test_connection_status_from_str() {
         assert_eq!(
             ConnectionStatus::from_str("ACTIVE"),
-            ConnectionStatus::Active
+            Ok(ConnectionStatus::Active)
         );
         assert_eq!(
             ConnectionStatus::from_str("PAUSED"),
-            ConnectionStatus::Paused
+            Ok(ConnectionStatus::Paused)
         );
-        // Default/fallback is Active
-        assert_eq!(
-            ConnectionStatus::from_str("unknown"),
-            ConnectionStatus::Active
-        );
-        assert_eq!(ConnectionStatus::from_str(""), ConnectionStatus::Active);
+        // Unknown values are rejected (X-06)
+        assert!(ConnectionStatus::from_str("unknown").is_err());
+        assert!(ConnectionStatus::from_str("").is_err());
     }
 
     #[test]

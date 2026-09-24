@@ -12,15 +12,6 @@ pub enum EventTypeStatus {
     Archived,
 }
 
-impl EventTypeStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "ARCHIVED" => Self::Archived,
-            _ => Self::Current,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(EventTypeStatus, "event type status", {
     Current => "CURRENT",
     Archived => "ARCHIVED",
@@ -34,16 +25,6 @@ pub enum EventTypeSource {
     Api,
     #[default]
     Ui,
-}
-
-impl EventTypeSource {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "CODE" => Self::Code,
-            "API" => Self::Api,
-            _ => Self::Ui,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(EventTypeSource, "event type source", {
@@ -62,16 +43,6 @@ pub enum SpecVersionStatus {
     Deprecated,
 }
 
-impl SpecVersionStatus {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "CURRENT" => Self::Current,
-            "DEPRECATED" => Self::Deprecated,
-            _ => Self::Finalising,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(SpecVersionStatus, "spec version status", {
     Finalising => "FINALISING",
     Current => "CURRENT",
@@ -87,16 +58,6 @@ pub enum SchemaType {
     Xsd,
     #[serde(rename = "PROTO")]
     Proto,
-}
-
-impl SchemaType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "XSD" | "XML_SCHEMA" => Self::Xsd,
-            "PROTO" | "PROTOBUF" => Self::Proto,
-            _ => Self::JsonSchema,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(SchemaType, "schema type", {
@@ -249,6 +210,7 @@ impl EventType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     // ── EventType::new validation ────────────────────────────────────────
 
@@ -334,66 +296,63 @@ mod tests {
         assert!(sv.is_deprecated());
     }
 
-    // ── Enum roundtrips with fallback ─────────────────────────────────────
+    // ── Enum roundtrips, strict ─────────────────────────────────────
 
     #[test]
-    fn event_type_status_roundtrip_with_fallback() {
+    fn event_type_status_roundtrip_rejects_unknown() {
         assert_eq!(
             EventTypeStatus::from_str("CURRENT"),
-            EventTypeStatus::Current
+            Ok(EventTypeStatus::Current)
         );
         assert_eq!(
             EventTypeStatus::from_str("ARCHIVED"),
-            EventTypeStatus::Archived
+            Ok(EventTypeStatus::Archived)
         );
-        // Unknown falls back to Current
-        assert_eq!(
-            EventTypeStatus::from_str("UNKNOWN"),
-            EventTypeStatus::Current
-        );
+        // Unknown values are rejected (X-06)
+        assert!(EventTypeStatus::from_str("UNKNOWN").is_err());
         for s in [EventTypeStatus::Current, EventTypeStatus::Archived] {
-            assert_eq!(EventTypeStatus::from_str(s.as_str()), s);
+            assert_eq!(EventTypeStatus::from_str(s.as_str()), Ok(s));
         }
     }
 
     #[test]
-    fn event_type_source_roundtrip_with_fallback() {
-        assert_eq!(EventTypeSource::from_str("CODE"), EventTypeSource::Code);
-        assert_eq!(EventTypeSource::from_str("API"), EventTypeSource::Api);
-        assert_eq!(EventTypeSource::from_str("UI"), EventTypeSource::Ui);
-        // Unknown falls back to Ui
-        assert_eq!(EventTypeSource::from_str("UNKNOWN"), EventTypeSource::Ui);
+    fn event_type_source_roundtrip_rejects_unknown() {
+        assert_eq!(EventTypeSource::from_str("CODE"), Ok(EventTypeSource::Code));
+        assert_eq!(EventTypeSource::from_str("API"), Ok(EventTypeSource::Api));
+        assert_eq!(EventTypeSource::from_str("UI"), Ok(EventTypeSource::Ui));
+        // Unknown values are rejected (X-06)
+        assert!(EventTypeSource::from_str("UNKNOWN").is_err());
     }
 
     #[test]
-    fn spec_version_status_roundtrip_with_fallback() {
+    fn spec_version_status_roundtrip_rejects_unknown() {
         assert_eq!(
             SpecVersionStatus::from_str("CURRENT"),
-            SpecVersionStatus::Current
+            Ok(SpecVersionStatus::Current)
         );
         assert_eq!(
             SpecVersionStatus::from_str("DEPRECATED"),
-            SpecVersionStatus::Deprecated
+            Ok(SpecVersionStatus::Deprecated)
         );
         assert_eq!(
             SpecVersionStatus::from_str("FINALISING"),
-            SpecVersionStatus::Finalising
+            Ok(SpecVersionStatus::Finalising)
         );
-        // Unknown falls back to Finalising
-        assert_eq!(
-            SpecVersionStatus::from_str("UNKNOWN"),
-            SpecVersionStatus::Finalising
-        );
+        // Unknown values are rejected (X-06)
+        assert!(SpecVersionStatus::from_str("UNKNOWN").is_err());
     }
 
     #[test]
     fn schema_type_accepts_aliases() {
-        assert_eq!(SchemaType::from_str("JSON_SCHEMA"), SchemaType::JsonSchema);
-        assert_eq!(SchemaType::from_str("XSD"), SchemaType::Xsd);
-        assert_eq!(SchemaType::from_str("XML_SCHEMA"), SchemaType::Xsd);
-        assert_eq!(SchemaType::from_str("PROTO"), SchemaType::Proto);
-        assert_eq!(SchemaType::from_str("PROTOBUF"), SchemaType::Proto);
-        // Unknown falls back to JsonSchema
-        assert_eq!(SchemaType::from_str("UNKNOWN"), SchemaType::JsonSchema);
+        assert_eq!(
+            SchemaType::from_str("JSON_SCHEMA"),
+            Ok(SchemaType::JsonSchema)
+        );
+        assert_eq!(SchemaType::from_str("XSD"), Ok(SchemaType::Xsd));
+        assert_eq!(SchemaType::from_str("XML_SCHEMA"), Ok(SchemaType::Xsd));
+        assert_eq!(SchemaType::from_str("PROTO"), Ok(SchemaType::Proto));
+        assert_eq!(SchemaType::from_str("PROTOBUF"), Ok(SchemaType::Proto));
+        // Unknown values are rejected (X-06)
+        assert!(SchemaType::from_str("UNKNOWN").is_err());
     }
 }

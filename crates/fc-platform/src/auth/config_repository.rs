@@ -4,11 +4,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::auth::config_entity::{
-    AnchorDomain, AuthConfigType, AuthProvider, ClientAuthConfig, IdpRoleMapping,
-};
+use crate::auth::config_entity::{AnchorDomain, ClientAuthConfig, IdpRoleMapping};
 use crate::principal::entity::ClientAccessGrant;
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 // ── Row types ────────────────────────────────────────────────────────────────
@@ -50,20 +49,33 @@ struct ClientAuthConfigRow {
     updated_at: DateTime<Utc>,
 }
 
-impl From<ClientAuthConfigRow> for ClientAuthConfig {
-    fn from(r: ClientAuthConfigRow) -> Self {
+impl TryFrom<ClientAuthConfigRow> for ClientAuthConfig {
+    type Error = PlatformError;
+    fn try_from(r: ClientAuthConfigRow) -> Result<Self> {
+        let config_type = decode(
+            &r.config_type,
+            "tnt_client_auth_configs",
+            "config_type",
+            &r.id,
+        )?;
+        let auth_provider = decode(
+            &r.auth_provider,
+            "tnt_client_auth_configs",
+            "auth_provider",
+            &r.id,
+        )?;
         let additional_client_ids: Vec<String> =
             serde_json::from_value(r.additional_client_ids).unwrap_or_default();
         let granted_client_ids: Vec<String> =
             serde_json::from_value(r.granted_client_ids).unwrap_or_default();
-        Self {
+        Ok(Self {
             id: r.id,
             email_domain: r.email_domain,
-            config_type: AuthConfigType::from_str(&r.config_type),
+            config_type,
             primary_client_id: r.primary_client_id,
             additional_client_ids,
             granted_client_ids,
-            auth_provider: AuthProvider::from_str(&r.auth_provider),
+            auth_provider,
             oidc_issuer_url: r.oidc_issuer_url,
             oidc_client_id: r.oidc_client_id,
             oidc_multi_tenant: r.oidc_multi_tenant,
@@ -71,7 +83,7 @@ impl From<ClientAuthConfigRow> for ClientAuthConfig {
             oidc_client_secret_ref: r.oidc_client_secret_ref,
             created_at: r.created_at,
             updated_at: r.updated_at,
-        }
+        })
     }
 }
 
@@ -256,7 +268,7 @@ impl ClientAuthConfigRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(ClientAuthConfig::from))
+        row.map(ClientAuthConfig::try_from).transpose()
     }
 
     pub async fn find_by_email_domain(&self, domain: &str) -> Result<Option<ClientAuthConfig>> {
@@ -266,7 +278,7 @@ impl ClientAuthConfigRepository {
         .bind(domain.to_lowercase())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(ClientAuthConfig::from))
+        row.map(ClientAuthConfig::try_from).transpose()
     }
 
     pub async fn find_by_client_id(&self, client_id: &str) -> Result<Vec<ClientAuthConfig>> {
@@ -276,7 +288,7 @@ impl ClientAuthConfigRepository {
         .bind(client_id)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(ClientAuthConfig::from).collect())
+        rows.into_iter().map(ClientAuthConfig::try_from).collect()
     }
 
     pub async fn find_all(&self) -> Result<Vec<ClientAuthConfig>> {
@@ -285,7 +297,7 @@ impl ClientAuthConfigRepository {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(ClientAuthConfig::from).collect())
+        rows.into_iter().map(ClientAuthConfig::try_from).collect()
     }
 
     pub async fn update(&self, config: &ClientAuthConfig) -> Result<()> {

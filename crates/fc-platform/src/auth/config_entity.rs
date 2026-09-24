@@ -12,15 +12,6 @@ pub enum AuthProvider {
     Oidc,
 }
 
-impl AuthProvider {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "OIDC" => Self::Oidc,
-            _ => Self::Internal,
-        }
-    }
-}
-
 crate::shared::enum_str::str_enum!(AuthProvider, "auth provider", {
     Internal => "INTERNAL",
     Oidc => "OIDC",
@@ -34,16 +25,6 @@ pub enum AuthConfigType {
     Partner,
     #[default]
     Client,
-}
-
-impl AuthConfigType {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "ANCHOR" => Self::Anchor,
-            "PARTNER" => Self::Partner,
-            _ => Self::Client,
-        }
-    }
 }
 
 crate::shared::enum_str::str_enum!(AuthConfigType, "auth config type", {
