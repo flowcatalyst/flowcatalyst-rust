@@ -20,6 +20,7 @@ pub mod hostname;
 pub mod http_method;
 pub mod json;
 pub mod manifest;
+pub mod operations;
 pub mod policy_repository;
 pub mod pool_url_template;
 pub mod repository;
