@@ -603,30 +603,6 @@ impl QueueManager {
         Self::builder(mediator_config).build()
     }
 
-    pub fn with_limits(
-        mediator_config: HttpMediatorConfig,
-        max_pools: usize,
-        pool_warning_threshold: usize,
-    ) -> Self {
-        Self::builder(mediator_config)
-            .max_pools(max_pools)
-            .pool_warning_threshold(pool_warning_threshold)
-            .build()
-    }
-
-    pub fn with_config(
-        mediator_config: HttpMediatorConfig,
-        max_pools: usize,
-        pool_warning_threshold: usize,
-        stall_config: StallConfig,
-    ) -> Self {
-        Self::builder(mediator_config)
-            .max_pools(max_pools)
-            .pool_warning_threshold(pool_warning_threshold)
-            .stall_config(stall_config)
-            .build()
-    }
-
     /// Get the shared circuit breaker registry. This is the instance every
     /// pool records into; wire it into the monitoring API and lifecycle
     /// eviction so they observe/act on the real breaker state.

@@ -1,5 +1,5 @@
 //! HTTP-level tests for `FC_ROUTER_HTTP_PREFIX` route nesting
-//! (`create_router_with_options`'s `router_http_prefix` parameter).
+//! (`RouterOptions::router_http_prefix`).
 //!
 //! Drop-in-compat requirement (see `docs/router-specification.md` §10):
 //! when a prefix is configured, the *entire* route tree — public and
@@ -22,7 +22,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use fc_common::{MediationOutcome, Message};
 use fc_queue::QueuePublisher;
 use fc_router::{
-    api::{create_router_with_options, AuthConfig, AuthState},
+    api::{create_router_with_options, AuthConfig, AuthState, RouterDeps, RouterOptions},
     HealthService, HealthServiceConfig, Mediator, QueueManager, WarningService,
     WarningServiceConfig,
 };
@@ -56,28 +56,34 @@ impl Mediator for NoOpMediator {
 
 /// Build a router with (optionally) a prefix and (optionally) BasicAuth,
 /// no queues/pools required for the health/monitoring surface under test.
-async fn build_app(router_http_prefix: Option<&str>, auth_state: Option<AuthState>) -> axum::Router {
+async fn build_app(
+    router_http_prefix: Option<&str>,
+    auth_state: Option<AuthState>,
+) -> axum::Router {
     let publisher: Arc<dyn QueuePublisher> = Arc::new(NoOpPublisher);
     let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
         Arc::new(NoOpMediator) as Arc<dyn Mediator>,
     ));
     let warnings = Arc::new(WarningService::new(WarningServiceConfig::default()));
-    let health = Arc::new(HealthService::new(HealthServiceConfig::default(), warnings.clone()));
+    let health = Arc::new(HealthService::new(
+        HealthServiceConfig::default(),
+        warnings.clone(),
+    ));
     let breakers = manager.circuit_breaker_registry().clone();
 
     create_router_with_options(
-        publisher,
-        manager,
-        warnings,
-        health,
-        breakers,
-        false,
-        "default".to_string(),
-        None,
-        None,
-        None,
-        auth_state,
-        router_http_prefix.map(str::to_string),
+        RouterDeps {
+            publisher,
+            queue_manager: manager,
+            warning_service: warnings,
+            health_service: health,
+            circuit_breaker_registry: breakers,
+        },
+        RouterOptions {
+            auth_state,
+            router_http_prefix: router_http_prefix.map(str::to_string),
+            ..RouterOptions::default()
+        },
     )
 }
 
@@ -134,7 +140,11 @@ async fn prefix_serves_health_and_monitoring_at_both_root_and_nested() {
     for path in ["/health/live", "/health/ready", "/metrics", "/monitoring"] {
         assert_eq!(get(&app, path).await, StatusCode::OK, "root path {path}");
         let nested = format!("/router{path}");
-        assert_eq!(get(&app, &nested).await, StatusCode::OK, "nested path {nested}");
+        assert_eq!(
+            get(&app, &nested).await,
+            StatusCode::OK,
+            "nested path {nested}"
+        );
     }
 }
 
@@ -149,7 +159,10 @@ async fn prefix_with_trailing_slash_is_normalized() {
     let app = build_app(Some("/router/"), None).await;
     assert_eq!(get(&app, "/router/health/live").await, StatusCode::OK);
     // No double-slash route.
-    assert_eq!(get(&app, "/router//health/live").await, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get(&app, "/router//health/live").await,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]
@@ -158,7 +171,10 @@ async fn blank_or_root_prefix_disables_nesting() {
         let app = build_app(Some(prefix), None).await;
         assert_eq!(get(&app, "/health/live").await, StatusCode::OK);
         // Nothing nested under any prefix-shaped path.
-        assert_eq!(get(&app, "/router/health/live").await, StatusCode::NOT_FOUND);
+        assert_eq!(
+            get(&app, "/router/health/live").await,
+            StatusCode::NOT_FOUND
+        );
     }
 }
 
@@ -175,11 +191,19 @@ async fn prefix_with_auth_keeps_public_routes_open_at_both_mounts() {
 
     for path in ["/health/live", "/health/ready", "/metrics"] {
         let (status, _) = get_with_auth(&app, path, None).await;
-        assert_eq!(status, StatusCode::OK, "root public path {path} must be open");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "root public path {path} must be open"
+        );
 
         let nested = format!("/router{path}");
         let (status, _) = get_with_auth(&app, &nested, None).await;
-        assert_eq!(status, StatusCode::OK, "nested public path {nested} must be open");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "nested public path {nested} must be open"
+        );
     }
 }
 
@@ -190,19 +214,43 @@ async fn prefix_with_auth_guards_protected_routes_at_both_mounts() {
 
     // No credentials: 401 at both root and nested.
     let (status, _) = get_with_auth(&app, "/monitoring", None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "root protected path with no creds");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "root protected path with no creds"
+    );
     let (status, _) = get_with_auth(&app, "/router/monitoring", None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "nested protected path with no creds");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "nested protected path with no creds"
+    );
 
     // Wrong credentials: still 401 at both.
     let (status, _) = get_with_auth(&app, "/monitoring", Some(("u", "wrong"))).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "root protected path with wrong creds");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "root protected path with wrong creds"
+    );
     let (status, _) = get_with_auth(&app, "/router/monitoring", Some(("u", "wrong"))).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "nested protected path with wrong creds");
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "nested protected path with wrong creds"
+    );
 
     // Valid credentials: 200 at both.
     let (status, _) = get_with_auth(&app, "/monitoring", Some(("u", "p"))).await;
-    assert_eq!(status, StatusCode::OK, "root protected path with valid creds");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "root protected path with valid creds"
+    );
     let (status, _) = get_with_auth(&app, "/router/monitoring", Some(("u", "p"))).await;
-    assert_eq!(status, StatusCode::OK, "nested protected path with valid creds");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "nested protected path with valid creds"
+    );
 }

@@ -23,10 +23,11 @@ use fc_common::{PoolConfig, QueueConfig, RouterConfig, WarningSeverity};
 use fc_queue::sqs::SqsQueueConsumer;
 use fc_queue::QueueScheme;
 use fc_router::{
-    api::create_router_with_options, create_notification_service_with_scheduler, ConfigSyncConfig,
-    ConfigSyncService, ConsumerFactory, HealthService, HealthServiceConfig, HttpMediatorConfig,
-    LifecycleConfig, LifecycleManager, NotificationConfig, QueueManager, StandbyAwareProcessor,
-    StandbyRouterConfig, WarningService, WarningServiceConfig,
+    api::{create_router_with_options, RouterDeps, RouterOptions},
+    create_notification_service_with_scheduler, ConfigSyncConfig, ConfigSyncService,
+    ConsumerFactory, HealthService, HealthServiceConfig, HttpMediatorConfig, LifecycleConfig,
+    LifecycleManager, NotificationConfig, QueueManager, StandbyAwareProcessor, StandbyRouterConfig,
+    WarningService, WarningServiceConfig,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -346,21 +347,24 @@ async fn main() -> Result<()> {
     };
 
     let app = create_router_with_options(
-        publisher,
-        queue_manager.clone(),
-        warning_service.clone(),
-        health_service.clone(),
-        circuit_breaker_registry,
-        standby.is_some(),
-        standby
-            .as_ref()
-            .map(|s| s.instance_id().to_string())
-            .unwrap_or_else(|| "default".to_string()),
-        None, // stream_health_service
-        None, // traffic_strategy
-        Some(metrics_handle),
-        auth_state,
-        router_http_prefix,
+        RouterDeps {
+            publisher,
+            queue_manager: queue_manager.clone(),
+            warning_service: warning_service.clone(),
+            health_service: health_service.clone(),
+            circuit_breaker_registry,
+        },
+        RouterOptions {
+            standby_enabled: standby.is_some(),
+            instance_id: standby
+                .as_ref()
+                .map(|s| s.instance_id().to_string())
+                .unwrap_or_else(|| "default".to_string()),
+            metrics_handle: Some(metrics_handle),
+            auth_state,
+            router_http_prefix,
+            ..RouterOptions::default()
+        },
     )
     .layer(TraceLayer::new_for_http())
     .layer(

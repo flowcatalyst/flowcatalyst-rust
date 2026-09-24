@@ -328,6 +328,46 @@ impl CachedBrokerStats {
 )]
 pub struct ApiDoc;
 
+/// The services every router API handler reads. See
+/// [`create_router_with_options`].
+pub struct RouterDeps {
+    pub publisher: Arc<dyn QueuePublisher>,
+    pub queue_manager: Arc<QueueManager>,
+    pub warning_service: Arc<WarningService>,
+    pub health_service: Arc<HealthService>,
+    pub circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
+}
+
+/// Optional router API features. `Default` is what [`create_router`] uses:
+/// no standby, instance id `"default"`, no auth, no prefix.
+pub struct RouterOptions {
+    pub standby_enabled: bool,
+    pub instance_id: String,
+    pub stream_health_service: Option<Arc<StreamHealthService>>,
+    /// Traffic strategy for ALB target group management.
+    pub traffic_strategy: Option<Arc<dyn crate::traffic::TrafficStrategy>>,
+    /// Prometheus handle for rendering `/metrics`.
+    pub metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
+    /// Authentication; `None` (or mode `None`) leaves every route open.
+    pub auth_state: Option<AuthState>,
+    /// Additionally nest the whole route tree under this path prefix.
+    pub router_http_prefix: Option<String>,
+}
+
+impl Default for RouterOptions {
+    fn default() -> Self {
+        Self {
+            standby_enabled: false,
+            instance_id: "default".to_string(),
+            stream_health_service: None,
+            traffic_strategy: None,
+            metrics_handle: None,
+            auth_state: None,
+            router_http_prefix: None,
+        }
+    }
+}
+
 /// Create the full router with all endpoints (no auth)
 pub fn create_router(
     publisher: Arc<dyn QueuePublisher>,
@@ -337,18 +377,14 @@ pub fn create_router(
     circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
 ) -> Router {
     create_router_with_options(
-        publisher,
-        queue_manager,
-        warning_service,
-        health_service,
-        circuit_breaker_registry,
-        false,
-        "default".to_string(),
-        None,
-        None,
-        None,
-        None,
-        None,
+        RouterDeps {
+            publisher,
+            queue_manager,
+            warning_service,
+            health_service,
+            circuit_breaker_registry,
+        },
+        RouterOptions::default(),
     )
 }
 
@@ -374,24 +410,23 @@ pub fn create_router(
 /// happened before nesting runs, so the nested public routes (health,
 /// metrics, swagger, …) stay auth-free under the prefix too — nesting only
 /// adds path-prefix matching, it never re-applies (or removes) a layer.
-// Router wiring requires every component as an explicit param so the caller
-// can swap individual pieces (different queue, no-op health service, etc.)
-// in tests. A builder would just be a rename of the same surface.
-#[allow(clippy::too_many_arguments)]
-pub fn create_router_with_options(
-    publisher: Arc<dyn QueuePublisher>,
-    queue_manager: Arc<QueueManager>,
-    warning_service: Arc<WarningService>,
-    health_service: Arc<HealthService>,
-    circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
-    standby_enabled: bool,
-    instance_id: String,
-    stream_health_service: Option<Arc<StreamHealthService>>,
-    traffic_strategy: Option<Arc<dyn crate::traffic::TrafficStrategy>>,
-    metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
-    auth_state: Option<AuthState>,
-    router_http_prefix: Option<String>,
-) -> Router {
+pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> Router {
+    let RouterDeps {
+        publisher,
+        queue_manager,
+        warning_service,
+        health_service,
+        circuit_breaker_registry,
+    } = deps;
+    let RouterOptions {
+        standby_enabled,
+        instance_id,
+        stream_health_service,
+        traffic_strategy,
+        metrics_handle,
+        auth_state,
+        router_http_prefix,
+    } = options;
     let cached_broker_stats = Arc::new(CachedBrokerStats::new(queue_manager.clone()));
 
     // Background refresh of cached broker stats. The task holds only a `Weak`
@@ -450,9 +485,15 @@ pub fn create_router_with_options(
     let protected_routes = Router::new()
         // Detailed monitoring
         .route("/monitoring", get(monitoring::monitoring_handler))
-        .route("/monitoring/health", get(monitoring::dashboard_health_handler))
+        .route(
+            "/monitoring/health",
+            get(monitoring::dashboard_health_handler),
+        )
         .route("/monitoring/pools", get(monitoring::pool_stats_handler))
-        .route("/monitoring/pools/{poolCode}", put(mutations::update_pool_config))
+        .route(
+            "/monitoring/pools/{poolCode}",
+            put(mutations::update_pool_config),
+        )
         .route("/monitoring/queues", get(monitoring::queue_metrics_handler))
         .route(
             "/monitoring/broker-stats/refresh",
@@ -467,7 +508,10 @@ pub fn create_router_with_options(
             "/monitoring/pool-stats",
             get(monitoring::dashboard_pool_stats_handler),
         )
-        .route("/monitoring/warnings", get(warnings::dashboard_warnings_handler))
+        .route(
+            "/monitoring/warnings",
+            get(warnings::dashboard_warnings_handler),
+        )
         .route(
             "/monitoring/warnings/{id}/acknowledge",
             post(warnings::monitoring_acknowledge_warning),
@@ -516,7 +560,10 @@ pub fn create_router_with_options(
             "/monitoring/in-flight-messages/{messageId}/ack",
             post(mutations::in_flight_force_ack),
         )
-        .route("/monitoring/mediating", get(monitoring::dashboard_mediating_handler))
+        .route(
+            "/monitoring/mediating",
+            get(monitoring::dashboard_mediating_handler),
+        )
         .route(
             "/monitoring/blocked-groups",
             get(group_monitoring::blocked_groups_handler),
@@ -529,14 +576,29 @@ pub fn create_router_with_options(
             "/monitoring/group-flushes/{pool}/{group}/clear",
             post(group_monitoring::clear_group_flush_handler),
         )
-        .route("/monitoring/dashboard", get(dashboard::dashboard_html_handler))
-        .route("/monitoring/consumer-health", get(health::consumer_health_handler))
-        .route("/monitoring/standby-status", get(config::get_standby_status))
-        .route("/monitoring/traffic-status", get(config::get_traffic_status))
+        .route(
+            "/monitoring/dashboard",
+            get(dashboard::dashboard_html_handler),
+        )
+        .route(
+            "/monitoring/consumer-health",
+            get(health::consumer_health_handler),
+        )
+        .route(
+            "/monitoring/standby-status",
+            get(config::get_standby_status),
+        )
+        .route(
+            "/monitoring/traffic-status",
+            get(config::get_traffic_status),
+        )
         // Java-compatible dashboard path alias
         .route("/dashboard.html", get(dashboard::dashboard_html_handler))
         // Stream processor health endpoints
-        .route("/monitoring/stream-health", get(health::stream_health_handler))
+        .route(
+            "/monitoring/stream-health",
+            get(health::stream_health_handler),
+        )
         .route(
             "/monitoring/stream-health/live",
             get(health::stream_liveness_handler),
@@ -553,7 +615,10 @@ pub fn create_router_with_options(
             "/warnings",
             get(warnings::list_warnings).delete(warnings::clear_all_warnings),
         )
-        .route("/warnings/{id}/acknowledge", post(warnings::acknowledge_warning))
+        .route(
+            "/warnings/{id}/acknowledge",
+            post(warnings::acknowledge_warning),
+        )
         .route(
             "/warnings/acknowledge-all",
             post(warnings::acknowledge_all_warnings),
@@ -573,18 +638,33 @@ pub fn create_router_with_options(
         .route("/api/test/fail", post(test_endpoints::test_fail))
         .route("/api/test/success", post(test_endpoints::test_success))
         .route("/api/test/pending", post(test_endpoints::test_pending))
-        .route("/api/test/client-error", post(test_endpoints::test_client_error))
-        .route("/api/test/server-error", post(test_endpoints::test_server_error))
+        .route(
+            "/api/test/client-error",
+            post(test_endpoints::test_client_error),
+        )
+        .route(
+            "/api/test/server-error",
+            post(test_endpoints::test_server_error),
+        )
         .route(
             "/api/test/stats",
             get(test_endpoints::test_stats).post(test_endpoints::reset_test_stats),
         )
-        .route("/api/test/stats/reset", post(test_endpoints::reset_test_stats))
+        .route(
+            "/api/test/stats/reset",
+            post(test_endpoints::reset_test_stats),
+        )
         // Java-compatible benchmark endpoints (aliases for test endpoints)
         .route("/api/benchmark/process", post(test_endpoints::test_fast))
-        .route("/api/benchmark/process-slow", post(test_endpoints::test_slow))
+        .route(
+            "/api/benchmark/process-slow",
+            post(test_endpoints::test_slow),
+        )
         .route("/api/benchmark/stats", get(test_endpoints::test_stats))
-        .route("/api/benchmark/reset", post(test_endpoints::reset_test_stats))
+        .route(
+            "/api/benchmark/reset",
+            post(test_endpoints::reset_test_stats),
+        )
         // Message publishing
         .route("/messages", post(messages::publish_message))
         .with_state(state);
