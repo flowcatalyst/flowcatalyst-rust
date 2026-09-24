@@ -66,7 +66,7 @@ struct QueueMessageCallback {
     /// `pipeline_key` itself is scoped, so an ACK-failed retry never
     /// collides with another queue's entry at the same broker id.
     queue_identifier: String,
-    consumer: Arc<dyn QueueConsumer + Send + Sync>,
+    consumer: Arc<dyn QueueConsumer>,
     in_pipeline: Arc<DashMap<String, InFlightMessage>>,
     app_message_to_pipeline_key: Arc<DashMap<String, String>>,
     pending_delete: Arc<DashMap<String, Instant>>,
@@ -917,7 +917,7 @@ mod callback_drop_tests {
             pipeline_key,
             app_message_id,
             queue_identifier: "queue-id".to_string(),
-            consumer: consumer as Arc<dyn QueueConsumer + Send + Sync>,
+            consumer: consumer as Arc<dyn QueueConsumer>,
             in_pipeline: in_pipeline.clone(),
             app_message_to_pipeline_key: app_index.clone(),
             pending_delete,

@@ -235,7 +235,7 @@ impl QueueManager {
         // would stall concurrent reloads/health reads for however long
         // this whole loop takes. G10: keyed by identifier() (resolution),
         // not the config queue name `self.consumers` uses.
-        let consumers: HashMap<String, Arc<dyn QueueConsumer + Send + Sync>> = {
+        let consumers: HashMap<String, Arc<dyn QueueConsumer>> = {
             let guard = self.consumers_by_id.read().await;
             guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };

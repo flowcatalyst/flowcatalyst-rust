@@ -1023,9 +1023,9 @@ impl ConsumerFactory for SlowConsumerFactory {
     async fn create_consumer(
         &self,
         config: &fc_common::QueueConfig,
-    ) -> fc_router::Result<Arc<dyn QueueConsumer + Send + Sync>> {
+    ) -> fc_router::Result<Arc<dyn QueueConsumer>> {
         tokio::time::sleep(self.delay).await;
-        Ok(Arc::new(MockQueueConsumer::new(&config.name)) as Arc<dyn QueueConsumer + Send + Sync>)
+        Ok(Arc::new(MockQueueConsumer::new(&config.name)) as Arc<dyn QueueConsumer>)
     }
 }
 
@@ -1313,11 +1313,11 @@ impl ConsumerFactory for CountingConsumerFactory {
     async fn create_consumer(
         &self,
         config: &fc_common::QueueConfig,
-    ) -> fc_router::Result<Arc<dyn QueueConsumer + Send + Sync>> {
+    ) -> fc_router::Result<Arc<dyn QueueConsumer>> {
         self.created.fetch_add(1, Ordering::SeqCst);
         let mock = Arc::new(MockQueueConsumer::new(&config.name));
         self.handles.lock().push(mock.clone());
-        Ok(mock as Arc<dyn QueueConsumer + Send + Sync>)
+        Ok(mock as Arc<dyn QueueConsumer>)
     }
 }
 
@@ -1343,11 +1343,11 @@ impl ConsumerFactory for FlakyConsumerFactory {
     async fn create_consumer(
         &self,
         config: &fc_common::QueueConfig,
-    ) -> fc_router::Result<Arc<dyn QueueConsumer + Send + Sync>> {
+    ) -> fc_router::Result<Arc<dyn QueueConsumer>> {
         let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
         if call_index != 1 {
             Ok(Arc::new(MockQueueConsumer::new(&config.name))
-                as Arc<dyn QueueConsumer + Send + Sync>)
+                as Arc<dyn QueueConsumer>)
         } else {
             // Cheapest way to manufacture a `RouterError` from outside the
             // crate: `RouterError::Serialization` has a `#[from]` conversion
@@ -1466,11 +1466,11 @@ impl ConsumerFactory for IdentifierDiffersFromNameFactory {
     async fn create_consumer(
         &self,
         config: &fc_common::QueueConfig,
-    ) -> fc_router::Result<Arc<dyn QueueConsumer + Send + Sync>> {
+    ) -> fc_router::Result<Arc<dyn QueueConsumer>> {
         self.created.fetch_add(1, Ordering::SeqCst);
         let mock = Arc::new(MockQueueConsumer::new(&format!("{}/router", config.name)));
         self.handles.lock().push(mock.clone());
-        Ok(mock as Arc<dyn QueueConsumer + Send + Sync>)
+        Ok(mock as Arc<dyn QueueConsumer>)
     }
 }
 

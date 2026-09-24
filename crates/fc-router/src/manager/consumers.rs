@@ -79,7 +79,7 @@ impl QueueManager {
     /// rather than abandoned mid-poll.
     pub(super) fn spawn_consumer_poll_task(
         self: &Arc<Self>,
-        consumer: Arc<dyn QueueConsumer + Send + Sync>,
+        consumer: Arc<dyn QueueConsumer>,
     ) -> tokio::task::JoinHandle<()> {
         // Item 1 (router bench rig, 2026-09-07): refuse to spawn a second
         // poll task for a queue that already has one running — see the
@@ -314,7 +314,7 @@ impl QueueManager {
         // this consistent with every other consumers-read site in the file
         // (see item 4 of the manager shutdown/lock convention), even though
         // `is_healthy()` itself is synchronous today.
-        let consumers: Vec<Arc<dyn QueueConsumer + Send + Sync>> = {
+        let consumers: Vec<Arc<dyn QueueConsumer>> = {
             let guard = self.consumers.read().await;
             if guard.is_empty() {
                 return true; // No consumers configured — nothing to check
@@ -547,7 +547,7 @@ impl QueueManager {
         // be an SQS API call, and holding the read lock across it would
         // stall reloads / other readers for however long the whole sweep
         // takes.
-        let consumers: Vec<(String, Arc<dyn QueueConsumer + Send + Sync>)> = {
+        let consumers: Vec<(String, Arc<dyn QueueConsumer>)> = {
             let guard = self.consumers.read().await;
             guard
                 .iter()

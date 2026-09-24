@@ -78,14 +78,14 @@ type MediatorFactory = Arc<
 
 /// `(queue_id, consumer)` pair — used by `sync_queue_consumers` to shuttle
 /// consumers created/removed outside the `consumers` map's lock.
-type ConsumerEntry = (String, Arc<dyn QueueConsumer + Send + Sync>);
+type ConsumerEntry = (String, Arc<dyn QueueConsumer>);
 
 /// `(queue_id, consumer, queue_config)` triple — the "just created, not yet
 /// inserted" shape `sync_queue_consumers` collects before its brief insert
 /// write-lock.
 type NewConsumerEntry = (
     String,
-    Arc<dyn QueueConsumer + Send + Sync>,
+    Arc<dyn QueueConsumer>,
     fc_common::QueueConfig,
 );
 
@@ -97,7 +97,7 @@ pub trait ConsumerFactory {
     async fn create_consumer(
         &self,
         config: &fc_common::QueueConfig,
-    ) -> Result<Arc<dyn QueueConsumer + Send + Sync>>;
+    ) -> Result<Arc<dyn QueueConsumer>>;
 }
 
 /// Which lifecycle phase a tracked pool is in — see [`PoolEntry`] and the
@@ -224,7 +224,7 @@ pub struct QueueManager {
     /// `identifier()`. **Do not** resolve a consumer from a
     /// `QueueIdentifier` read off a polled/tracked message through this
     /// map — see `consumers_by_id` below (G10).
-    consumers: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
+    consumers: RwLock<HashMap<String, Arc<dyn QueueConsumer>>>,
 
     /// `Consumer::identifier()`-keyed index mirroring `consumers`,
     /// maintained on every insert/remove ([`Self::add_consumer`],
@@ -240,7 +240,7 @@ pub struct QueueManager {
     /// config's queue name/key is an operator-chosen label; resolving the
     /// wrong one silently drops the ack/nack — the message then redelivers
     /// forever (G10, `docs/go-mirror/2026-09-06-go-fix-list.md`).
-    consumers_by_id: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
+    consumers_by_id: RwLock<HashMap<String, Arc<dyn QueueConsumer>>>,
 
     /// Current pool configurations (for detecting changes).
     ///
@@ -705,7 +705,7 @@ impl QueueManager {
     }
 
     /// Add a queue consumer
-    pub async fn add_consumer(&self, consumer: Arc<dyn QueueConsumer + Send + Sync>) {
+    pub async fn add_consumer(&self, consumer: Arc<dyn QueueConsumer>) {
         let id = consumer.identifier().to_string();
         self.consumers.write().await.insert(id.clone(), consumer.clone());
         // G10: keep the identifier-keyed resolution index in lockstep.

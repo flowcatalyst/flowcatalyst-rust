@@ -243,7 +243,7 @@ impl QueueManager {
         // awaiting `stop()` on each — never hold `consumers` across an
         // `.await` (see the field's doc comment / item 4 of the manager
         // shutdown convention).
-        let consumers: Vec<Arc<dyn QueueConsumer + Send + Sync>> = {
+        let consumers: Vec<Arc<dyn QueueConsumer>> = {
             let guard = self.consumers.read().await;
             guard.values().cloned().collect()
         };
@@ -432,7 +432,7 @@ mod start_double_spawn_tests {
             .unwrap();
 
         let counter = Arc::new(BlockingPollConsumer::new("dup"));
-        let consumer: Arc<dyn QueueConsumer + Send + Sync> = counter.clone();
+        let consumer: Arc<dyn QueueConsumer> = counter.clone();
 
         // Mirrors `sync_queue_consumers`: the consumer is registered in
         // `self.consumers` AND already has a poll task running, both
@@ -503,7 +503,7 @@ mod start_double_spawn_tests {
             .unwrap();
 
         let counter = Arc::new(BlockingPollConsumer::new("never-started"));
-        let consumer: Arc<dyn QueueConsumer + Send + Sync> = counter.clone();
+        let consumer: Arc<dyn QueueConsumer> = counter.clone();
         manager.add_consumer(consumer.clone()).await;
 
         // See the previous test's comment on why this, not counting

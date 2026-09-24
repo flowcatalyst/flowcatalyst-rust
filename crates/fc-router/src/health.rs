@@ -133,7 +133,7 @@ pub struct HealthService {
     /// `QueueConsumer::last_broker_activity()` as a second liveness signal
     /// while a poll is in flight. Empty for a backend that never overrides
     /// the trait default — this adds nothing for those.
-    consumer_broker: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
+    consumer_broker: RwLock<HashMap<String, Arc<dyn QueueConsumer>>>,
 }
 
 impl HealthService {
@@ -209,7 +209,7 @@ impl HealthService {
     pub fn register_consumer(
         &self,
         consumer_id: &str,
-        consumer: Arc<dyn QueueConsumer + Send + Sync>,
+        consumer: Arc<dyn QueueConsumer>,
     ) {
         self.consumer_broker
             .write()

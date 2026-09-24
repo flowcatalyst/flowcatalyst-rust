@@ -697,7 +697,7 @@ impl ConsumerFactory for SchemeConsumerFactory {
     async fn create_consumer(
         &self,
         config: &QueueConfig,
-    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer + Send + Sync>, fc_router::RouterError>
+    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError>
     {
         let scheme = fc_queue::resolve_scheme(&config.uri).map_err(|e| {
             fc_router::RouterError::Consumer(format!(
@@ -734,7 +734,7 @@ impl ConsumerFactory for SchemeConsumerFactory {
 /// consumer via `NatsQueueConsumer::new`.
 async fn build_nats_consumer(
     config: &QueueConfig,
-) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer + Send + Sync>, fc_router::RouterError> {
+) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
     let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(|e| {
         fc_router::RouterError::Consumer(format!(
             "queue [{}]: invalid NATS URI: {}",
@@ -769,7 +769,7 @@ async fn build_nats_consumer(
 /// identity for Postgres.
 async fn build_postgres_consumer(
     config: &QueueConfig,
-) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer + Send + Sync>, fc_router::RouterError> {
+) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
     // Item 1 (router bench rig, 2026-09-07): a hardcoded max_connections(4)
     // starved this queue's acks under load (see
     // `fc_queue::postgres::default_max_connections`'s doc comment for the
