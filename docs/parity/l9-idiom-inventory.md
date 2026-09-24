@@ -335,7 +335,7 @@ Section A runs as its own track against the Java contract: A1–A4 first, becaus
   `api_integration_tests::{test_create_client_via_api, test_batch_dispatch_jobs_via_api, test_batch_events_exceeds_limit}`.
 - **Open:** should Rust provisioning assign the `platform:application-service` role, as Go does?
 
-## Go parity, drop-in replacement (owner, 2026-09-24)
+## Go parity, drop-in replacement (owner, 2026-09-24; superseded by Java below)
 
 Rust must behave exactly like Go unless an explicit owner ruling says otherwise. The work was aligned against
 flowcatalyst-go at HEAD 73a6918 (merge `dbcd4296`):
@@ -351,24 +351,61 @@ Two corrections followed. **SUB-7**: sync honours `mode` again (`92ac82aa`), bec
 **A17**: sync rejects unknown pool codes again (`ef2cc2da`), per the owner ruling of 2026-09-24; SUB-6 in
 `docs/owner-questions.md` still says "deferred" and should record that ruling.
 
-### Remaining deviations from Go
+### Reference changed to Java (owner, 2026-09-24)
 
-| Area | Rust | Go | Why |
-|---|---|---|---|
-| Out-of-scope application | 404 | 403 | Owner ruling (404 identical to not-found) |
-| Service-account create with `applicationId`/`allApplications` | 400 / ignored | accepted | Owner ruling: no application access on create |
-| Unrecognised service-account scope | 400 | stored as sent | X-06 |
-| Unknown enum filter values (dispatch job/pool, login attempt, …) | 400 | empty list | X-06 (LA-5 was deferred; X-06 covers it) |
-| Unknown sync pool code | 400 `DISPATCH_POOL_NOT_FOUND` | ignored | Owner ruling 2026-09-24 (A17) |
-| Application scope on scheduled-jobs sync, SDK app-role routes, `/api/config*`, `/api/config-access*` | checked | none | Owner request (A15) |
-| Error bodies (`VALIDATION_ERROR`/`NOT_FOUND` vs Go's specific code in `error`; `*_CODE_EXISTS` vs `CODE_EXISTS`) | differs | — | Too large for this pass |
-| Timestamps (`to_rfc3339` vs Go's `.000000Z`) | differs | — | Too large |
-| Application scope source (DB vs token claim); service-account id used as principal id | differs | — | Too large |
-| OAuth event types `platform:iam:` vs `platform:admin:` | differs | — | Too large |
-| Read routes without a `CanRead*` permission check | many | checked | Too large; security-relevant |
-| Missing routes: `connections/sync`, `docs/sync`, subscription-sync `clientId` | absent | present | Too large |
-| Service-account create gate: anchor vs Go's write permission + code-format check | differs | — | Too large |
-| Config secrets masked even for anchors; IDP secret with no key → 500 (Go 400) | differs | — | Small, not yet aligned |
+On 2026-09-24 the owner made Java the reference for the Rust platform: "You can use Java as the reference now."
+Precedence is now owner rulings, then Java (`../flowcatalyst-javalin` at `0118cdca`; its code wins over its
+specs), then Go only where Java has nothing to say. Every Go-driven change on this branch was re-checked against
+Java:
+
+- **Java agrees, nothing to do:** service-account scope stored as sent and tier derived from the client links
+  (`CreateServiceAccountWithCredentials.java:93-115`), the 201 create body (`ServiceAccountApi.java:171-178`),
+  migrations 031/032/033 (Java `V1__baseline.sql:360,443-444`, `V2`, `V3`), `all_applications` and
+  `canAccessApplication` (`AuthContext.java:87-89`), provisioning (`ProvisionServiceAccount.java:47-52,107-131`),
+  `hashed:v1:` client secrets with rehash on use (`Secrets.java:38-44`, `ClientAuthentication.java:127-146`),
+  rotation overlap (24 h default, `GRACE_INVALID`, `NOT_CONFIDENTIAL`, revoke answers `{success,message}`,
+  purger; `RotateOAuthClientSecret.java:27-49`, `OAuthClientApi.java:214-220`, `Purger.java:104`), PKCE S256 only
+  (`OAuthAuthorizeApi.java:125-128`), the client list returning every client by identifier (`ClientApi.java:126-130`),
+  the sweep's retry-strategy aliases, `DEVELOPER_TOKEN`, TASK `eventId`, strict `clientType`, trimmed connection
+  status, omitted null `assignmentSource`, 500 bodies without the cause, the audit ingest
+  (`IngestApi.java:231-292`), and the P4 wire spellings (`RetryStrategy.java`, `DispatchMode.java`,
+  `AttemptErrorType.java`, attempt `SUCCESS`/`FAILURE`, `ADMIN_ASSIGNED`).
+- **Aligned to Java:** the dispatch-pool sweep has no extra anchor gate (`cca61675`); config property routes are
+  gated by `platform:admin:config:view`/`:manage` with no anchor pass and no grant lookup (`5de4c4dd`); OAuth
+  client events are `platform:admin:oauth-client:*` (`69e69f47`); use-case errors carry their own code, message
+  and details (`ceb1f002`); an IDP secret with no app key is 400 `ENCRYPTION_NOT_CONFIGURED` (`6a8c6e24`);
+  service-account codes follow `ServiceAccountCode` and conflict as `CODE_EXISTS` (`cd1da9cf`).
+- **Data written by Go that Rust must still read:** `hashed:v1:` and legacy secret refs (verified, rehashed on
+  use), `iam_principals.all_applications`, `platform:admin:config:update` on stored roles (accepted as manage;
+  Java's V17 rewrites it, a data migration Rust does not run), stored `ADMIN`/`FAILED`/`SHA256`/`IMMEDIATE`/
+  `FIXED_DELAY` aliases (still read), and the service-account codes and scopes already stored (read as
+  they are).
+
+### Remaining deviations from Java
+
+| Area | Rust | Java | Go | Why |
+|---|---|---|---|---|
+| Out-of-scope application | 404 | 403 `FORBIDDEN` (`Checks.java:138-143`) | 403 | Owner ruling (404 identical to not-found) |
+| Service-account create with `applicationId` | 400 | confines the account to it (`CreateServiceAccountWithCredentials.java:116-118`) | accepted | Owner ruling: no application access on create |
+| Unrecognised service-account `scope` | 400 | stored as sent (free-form tag, `CreateCommand.java:14`) | stored as sent | X-06 |
+| Stored `signing_algorithm`, `assignment_source` | strict enums (unknown is a read error) | free strings (`RoleAssignment.java:6-12`) | free strings | X-06; P4 checked the stored values against the prod audit |
+| Unknown sync pool code | 400 `DISPATCH_POOL_NOT_FOUND` | ignored (`SyncSubscriptions.java:198-201`) | ignored | Owner ruling 2026-09-24 (A17) |
+| Subscription sync `mode` | honoured | ignored (`SyncSubscriptions.java:187`) | ignored | Owner ruling SUB-7 |
+| Application scope on scheduled-jobs sync, SDK app-role routes, `/api/config*`, `/api/config-access*` | checked | not checked (config: no per-application restriction, `config-permissions.md` §A.2) | not checked | Owner request (A15) |
+| Client list `status` | filters when given (strict) | ignored | no filter | Additive; X-06 for bad values |
+| Config-access grant routes | still served, own anchor + permission gate; grants no longer open property routes | withdrawn (`config-permissions.md` §A.3) | served | Removal left for cutover (Go still serves them; the table stays) |
+| SECRET config values | masked for everyone | unmasked for `config:manage` holders (`PlatformConfigApi.java:121-125`) | unmasked for anchors | Needs decrypt-on-read of mixed Go/Rust rows; small follow-up, security-sensitive |
+| Service-account create gate | anchor | any of `service-account:create/update/delete`, no client-access check (`ServiceAccountApi.java:167`) | write permission | Security: Java's gate lets a non-anchor holder create a client-less account, which is ANCHOR tier. Owner to confirm |
+| OAuth client routes | anchor only | anchor plus the per-action `platform:auth:oauth-client:*` permission (`OAuthClientApi.java:202-225`) | — | Part of the read/write permission-check gap below |
+| Handler-level error bodies | `VALIDATION_ERROR` / `NOT_FOUND` / `FORBIDDEN` with prefixed messages | the specific code (`<Resource>_NOT_FOUND`, …), plain message | specific code | Too large: every handler-level `PlatformError::validation`/`not_found` needs a code |
+| JSON nulls | `null` fields sent | omitted (`Json.java:52-54`, `NON_ABSENT`) | mostly omitted (`omitempty`) | Too large: every DTO needs `skip_serializing_if` |
+| Timestamps | `to_rfc3339()` (`+00:00`, variable precision) or chrono serde (`Z`, variable) | exactly six fractional digits and `Z` (`MicroInstantSerializer.java`) | same as Java | Too large: 94 `to_rfc3339` sites in 29 files plus ~40 `DateTime` DTO fields |
+| `$schema` on bodies, pagination, path-param names, 204s | differ | see `docs/java-parity-plan.md` §1.2 | — | Lane L0 |
+| OAuth client event payloads and message group | Rust fields; message group `platform:oauthclient:{id}` | `clientName` on created/updated, no message group (`EventMetadata.java:56`) | — | Small; payload shape is a consumer contract |
+| Application scope source (DB vs token claim); service-account id used as principal id | differ | claim-based; separate ids | — | Too large |
+| Read routes without a view-permission check | many | checked | checked | Too large; security-relevant |
+| Missing routes: `connections/sync`, `docs/sync`, subscription-sync `clientId` | absent | present (`SdkSyncApi.java:100-110`) | present | Too large (lane L4d) |
+| Built-in role catalogue | Rust's own set (config codes aligned in `5de4c4dd`) | `PlatformRoles.java` | own set | Out of scope; role sync rewrites built-in roles at start |
 
 ### To tighten later (owner note, 2026-09-24)
 
