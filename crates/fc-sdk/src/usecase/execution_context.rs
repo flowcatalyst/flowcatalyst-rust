@@ -44,7 +44,8 @@ pub struct ExecutionContext {
 impl ExecutionContext {
     /// Create a new execution context for a fresh request.
     ///
-    /// Automatically picks up thread-local [`TracingContext`] if available.
+    /// Picks up the task-local [`TracingContext`] when called inside
+    /// [`TracingContext::scope`] / [`TracingContext::sync_scope`].
     pub fn create(principal_id: impl Into<String>) -> Self {
         if let Some(tracing_ctx) = TracingContext::current() {
             return Self::from_tracing_context(&tracing_ctx, principal_id);
@@ -71,7 +72,7 @@ impl ExecutionContext {
         let exec_id = format!("exec-{}", TsidGenerator::generate_untyped());
         Self {
             execution_id: exec_id,
-            correlation_id: tracing_context.correlation_id(),
+            correlation_id: tracing_context.correlation_id().to_string(),
             causation_id: tracing_context.causation_id().map(|s| s.to_string()),
             principal_id: principal_id.into(),
             initiated_at: Utc::now(),
@@ -99,8 +100,8 @@ impl ExecutionContext {
     pub fn from_parent_event<E: DomainEvent>(parent: &E, principal_id: impl Into<String>) -> Self {
         Self {
             execution_id: format!("exec-{}", TsidGenerator::generate_untyped()),
-            correlation_id: parent.correlation_id().to_string(),
-            causation_id: Some(parent.event_id().to_string()),
+            correlation_id: parent.metadata().correlation_id.clone(),
+            causation_id: Some(parent.metadata().event_id.clone()),
             principal_id: principal_id.into(),
             initiated_at: Utc::now(),
         }
@@ -161,9 +162,6 @@ mod tests {
 
     #[test]
     fn create_generates_ids_and_sets_principal() {
-        // Clear any thread-local tracing context to ensure isolated test
-        TracingContext::clear_current();
-
         let ctx = ExecutionContext::create("prn_user1");
 
         assert!(ctx.execution_id.starts_with("exec-"));
@@ -177,7 +175,7 @@ mod tests {
 
     #[test]
     fn create_picks_up_tracing_context() {
-        TracingContext::run_with_context("trace-corr-123", Some("cause-evt-1".into()), || {
+        TracingContext::new("trace-corr-123", Some("cause-evt-1".into())).sync_scope(|| {
             let ctx = ExecutionContext::create("prn_test");
 
             assert!(ctx.execution_id.starts_with("exec-"));
@@ -187,9 +185,25 @@ mod tests {
         });
     }
 
+    #[tokio::test]
+    async fn create_picks_up_tracing_context_across_awaits() {
+        let ctx = TracingContext::new("async-corr", Some("evt_cause".into()))
+            .scope(async {
+                tokio::task::yield_now().await;
+                ExecutionContext::create("prn_async")
+            })
+            .await;
+        assert_eq!(ctx.correlation_id, "async-corr");
+        assert_eq!(ctx.causation_id.as_deref(), Some("evt_cause"));
+
+        // Outside the scope a fresh correlation id is generated again.
+        let fresh = ExecutionContext::create("prn_async");
+        assert_eq!(fresh.correlation_id, fresh.execution_id);
+    }
+
     #[test]
     fn create_picks_up_tracing_context_without_causation() {
-        TracingContext::run_with_context("corr-only", None, || {
+        TracingContext::new("corr-only", None).sync_scope(|| {
             let ctx = ExecutionContext::create("prn");
             assert_eq!(ctx.correlation_id, "corr-only");
             assert!(ctx.causation_id.is_none());
@@ -208,7 +222,7 @@ mod tests {
 
     #[test]
     fn from_tracing_context() {
-        let tc = TracingContext::new("tc-corr".into(), Some("tc-cause".into()));
+        let tc = TracingContext::new("tc-corr", Some("tc-cause".into()));
         let ctx = ExecutionContext::from_tracing_context(&tc, "prn_tc");
 
         assert!(ctx.execution_id.starts_with("exec-"));
@@ -255,18 +269,19 @@ mod tests {
         }
         crate::impl_domain_event!(FakeEvent);
 
-        let parent_meta = EventMetadata::new(
-            "evt_parent_123".into(),
-            "shop:order:created",
-            "1.0",
-            "shop",
-            "orders.order.1".into(),
-            "orders:order:1".into(),
-            "exec-parent".into(),
-            "corr-chain".into(),
-            None,
-            "prn_orig".into(),
-        );
+        let parent_meta = EventMetadata {
+            event_id: "evt_parent_123".into(),
+            event_type: "shop:order:created".into(),
+            spec_version: "1.0".into(),
+            source: "shop".into(),
+            subject: "orders.order.1".into(),
+            time: chrono::Utc::now(),
+            execution_id: "exec-parent".into(),
+            correlation_id: "corr-chain".into(),
+            causation_id: None,
+            principal_id: "prn_orig".into(),
+            message_group: "orders:order:1".into(),
+        };
         let parent_event = FakeEvent {
             metadata: parent_meta,
         };
@@ -282,7 +297,6 @@ mod tests {
 
     #[test]
     fn unique_execution_ids() {
-        TracingContext::clear_current();
         let a = ExecutionContext::create("prn");
         let b = ExecutionContext::create("prn");
         assert_ne!(a.execution_id, b.execution_id);

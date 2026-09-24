@@ -68,28 +68,28 @@ pub async fn write_dispatch_job(
 /// Write an event to the outbox outside of the UnitOfWork pattern.
 ///
 /// Use this for standalone event emission when you don't have an entity to persist.
-pub async fn write_event<E: DomainEvent + Serialize>(
+pub async fn write_event<E: DomainEvent>(
     txn: &mut Transaction<'_, Postgres>,
     table: &str,
     event: &E,
     client_id: Option<&str>,
 ) -> Result<(), OutboxError> {
     let id = TsidGenerator::generate_untyped();
-    let data_json: serde_json::Value =
-        serde_json::from_str(&event.to_data_json()).unwrap_or(serde_json::json!({}));
+    let data_json = serde_json::to_value(event)?;
+    let m = event.metadata();
 
     let payload = serde_json::json!({
-        "event_type": event.event_type(),
-        "spec_version": event.spec_version(),
-        "source": event.source(),
-        "subject": event.subject(),
+        "event_type": m.event_type,
+        "spec_version": m.spec_version,
+        "source": m.source,
+        "subject": m.subject,
         "data": data_json,
-        "correlation_id": event.correlation_id(),
-        "causation_id": event.causation_id(),
-        "deduplication_id": format!("{}-{}", event.event_type(), event.event_id()),
-        "message_group": event.message_group(),
+        "correlation_id": m.correlation_id,
+        "causation_id": m.causation_id,
+        "deduplication_id": format!("{}-{}", m.event_type, m.event_id),
+        "message_group": m.message_group,
         "context_data": [
-            {"key": "principalId", "value": event.principal_id()},
+            {"key": "principalId", "value": m.principal_id},
         ],
     });
 
@@ -103,7 +103,7 @@ pub async fn write_event<E: DomainEvent + Serialize>(
 
     sqlx::query(&query)
         .bind(&id)
-        .bind(event.message_group())
+        .bind(&m.message_group)
         .bind(&payload)
         .bind(client_id)
         .bind(payload_size)
@@ -143,7 +143,7 @@ pub async fn write_audit_log(
 }
 
 /// Convenience: write an event directly to the outbox (auto-manages transaction).
-pub async fn emit_event<E: DomainEvent + Serialize>(
+pub async fn emit_event<E: DomainEvent>(
     pool: &PgPool,
     table: &str,
     event: &E,
@@ -299,7 +299,8 @@ impl AuditLogPayload {
             .unwrap_or("Unknown")
             .to_string();
 
-        let subject = event.subject();
+        let m = event.metadata();
+        let subject = &m.subject;
         let entity_type = subject
             .split('.')
             .nth(1)
@@ -318,11 +319,11 @@ impl AuditLogPayload {
             entity_id,
             operation: command_name,
             operation_json: serde_json::to_value(command).ok(),
-            principal_id: event.principal_id().to_string(),
+            principal_id: m.principal_id.clone(),
             application_id: None,
             client_id: None,
-            performed_at: event.time().to_rfc3339(),
-            message_group: Some(event.message_group().to_string()),
+            performed_at: m.time.to_rfc3339(),
+            message_group: Some(m.message_group.clone()),
         }
     }
 }
@@ -508,18 +509,19 @@ mod tests {
 
     #[test]
     fn audit_log_from_event_extracts_entity_type() {
-        let meta = EventMetadata::new(
-            "evt_1".into(),
-            "shop:orders:order:created",
-            "1.0",
-            "shop:orders",
-            "orders.order.ord_123".into(),
-            "orders:order:ord_123".into(),
-            "exec-1".into(),
-            "corr-1".into(),
-            None,
-            "prn_user".into(),
-        );
+        let meta = EventMetadata {
+            event_id: "evt_1".into(),
+            event_type: "shop:orders:order:created".into(),
+            spec_version: "1.0".into(),
+            source: "shop:orders".into(),
+            subject: "orders.order.ord_123".into(),
+            time: chrono::Utc::now(),
+            execution_id: "exec-1".into(),
+            correlation_id: "corr-1".into(),
+            causation_id: None,
+            principal_id: "prn_user".into(),
+            message_group: "orders:order:ord_123".into(),
+        };
         let event = TestEvent {
             metadata: meta,
             order_id: "ord_123".into(),
@@ -552,18 +554,19 @@ mod tests {
 
     #[test]
     fn audit_log_from_event_short_subject() {
-        let meta = EventMetadata::new(
-            "e".into(),
-            "t",
-            "1",
-            "s",
-            "single".into(), // only one segment
-            "grp".into(),
-            "exec".into(),
-            "corr".into(),
-            None,
-            "prn".into(),
-        );
+        let meta = EventMetadata {
+            event_id: "e".into(),
+            event_type: "t".into(),
+            spec_version: "1".into(),
+            source: "s".into(),
+            subject: "single".into(),
+            time: chrono::Utc::now(),
+            execution_id: "exec".into(),
+            correlation_id: "corr".into(),
+            causation_id: None,
+            principal_id: "prn".into(),
+            message_group: "grp".into(),
+        };
         let event = TestEvent {
             metadata: meta,
             order_id: "x".into(),
@@ -582,18 +585,19 @@ mod tests {
 
     #[test]
     fn audit_log_from_event_performed_at_is_rfc3339() {
-        let meta = EventMetadata::new(
-            "e".into(),
-            "t",
-            "1",
-            "s",
-            "a.b.c".into(),
-            "grp".into(),
-            "exec".into(),
-            "corr".into(),
-            None,
-            "prn".into(),
-        );
+        let meta = EventMetadata {
+            event_id: "e".into(),
+            event_type: "t".into(),
+            spec_version: "1".into(),
+            source: "s".into(),
+            subject: "a.b.c".into(),
+            time: chrono::Utc::now(),
+            execution_id: "exec".into(),
+            correlation_id: "corr".into(),
+            causation_id: None,
+            principal_id: "prn".into(),
+            message_group: "grp".into(),
+        };
         let event = TestEvent {
             metadata: meta,
             order_id: "x".into(),

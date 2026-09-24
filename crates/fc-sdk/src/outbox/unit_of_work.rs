@@ -41,14 +41,14 @@
 //!
 //!         // 3. Build domain event
 //!         let event = OrderShipped {
-//!             metadata: EventMetadata::builder()
-//!                 .from(&ctx)
-//!                 .event_type("shop:orders:order:shipped")
-//!                 .spec_version("1.0")
-//!                 .source("shop:orders")
-//!                 .subject(format!("orders.order.{}", order.id))
-//!                 .message_group(format!("orders:order:{}", order.id))
-//!                 .build(),
+//!             metadata: EventMetadata::from_ctx(
+//!                 &ctx,
+//!                 "shop:orders:order:shipped",
+//!                 "1.0",
+//!                 "shop:orders",
+//!                 format!("orders.order.{}", order.id),
+//!                 format!("orders:order:{}", order.id),
+//!             ),
 //!             order_id: order.id.clone(),
 //!             tracking_number: command.tracking_number.clone(),
 //!         };
@@ -161,7 +161,7 @@ pub trait UnitOfWork: Send + Sync {
     /// Commit an entity upsert with its domain event (and optional audit log).
     async fn commit<E, T, C>(&self, aggregate: &T, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         T: Serialize + HasId + PgPersist + Send + Sync,
         C: Serialize + Send + Sync;
 
@@ -173,14 +173,14 @@ pub trait UnitOfWork: Send + Sync {
         command: &C,
     ) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         T: Serialize + HasId + PgPersist + Send + Sync,
         C: Serialize + Send + Sync;
 
     /// Emit a domain event without an entity change (e.g., UserLoggedIn).
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         C: Serialize + Send + Sync;
 
     /// Commit multiple entity upserts with a single domain event.
@@ -191,7 +191,7 @@ pub trait UnitOfWork: Send + Sync {
         command: &C,
     ) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         C: Serialize + Send + Sync;
 }
 
@@ -284,32 +284,45 @@ impl OutboxUnitOfWork {
         subject.split('.').nth(2).unwrap_or("").to_string()
     }
 
+    /// The `payload` JSON of an EVENT outbox row.
+    ///
+    /// `data` is the event's full `Serialize` output; a serialization failure
+    /// is returned rather than replaced with `{}`.
+    fn event_outbox_payload<E: DomainEvent>(
+        event: &E,
+    ) -> Result<serde_json::Value, serde_json::Error> {
+        let data_json = serde_json::to_value(event)?;
+        let m = event.metadata();
+
+        Ok(serde_json::json!({
+            "event_type": m.event_type,
+            "spec_version": m.spec_version,
+            "source": m.source,
+            "subject": m.subject,
+            "data": data_json,
+            "correlation_id": m.correlation_id,
+            "causation_id": m.causation_id,
+            "deduplication_id": format!("{}-{}", m.event_type, m.event_id),
+            "message_group": m.message_group,
+            "context_data": [
+                {"key": "principalId", "value": m.principal_id},
+                {"key": "aggregateType", "value": Self::extract_aggregate_type(&m.subject)},
+            ],
+        }))
+    }
+
     /// Write the event outbox item into the transaction.
-    async fn write_event_outbox<E: DomainEvent + Serialize>(
+    async fn write_event_outbox<E: DomainEvent>(
         txn: &mut Transaction<'_, Postgres>,
         table: &str,
         event: &E,
         client_id: &Option<String>,
     ) -> Result<(), UseCaseError> {
         let id = TsidGenerator::generate_untyped();
-        let data_json: serde_json::Value =
-            serde_json::from_str(&event.to_data_json()).unwrap_or(serde_json::json!({}));
-
-        let payload = serde_json::json!({
-            "event_type": event.event_type(),
-            "spec_version": event.spec_version(),
-            "source": event.source(),
-            "subject": event.subject(),
-            "data": data_json,
-            "correlation_id": event.correlation_id(),
-            "causation_id": event.causation_id(),
-            "deduplication_id": format!("{}-{}", event.event_type(), event.event_id()),
-            "message_group": event.message_group(),
-            "context_data": [
-                {"key": "principalId", "value": event.principal_id()},
-                {"key": "aggregateType", "value": Self::extract_aggregate_type(event.subject())},
-            ],
-        });
+        let payload = Self::event_outbox_payload(event).map_err(|e| {
+            error!("Failed to serialize event for outbox: {}", e);
+            UseCaseError::commit(format!("Failed to serialize event: {}", e))
+        })?;
 
         let payload_str = payload.to_string();
         let payload_size = payload_str.len() as i32;
@@ -322,7 +335,7 @@ impl OutboxUnitOfWork {
 
         if let Err(e) = sqlx::query(&query)
             .bind(&id)
-            .bind(event.message_group())
+            .bind(&event.metadata().message_group)
             .bind(&payload)
             .bind(client_id.as_deref())
             .bind(payload_size)
@@ -356,14 +369,15 @@ impl OutboxUnitOfWork {
             .to_string();
 
         let operation_json = serde_json::to_value(command).ok();
+        let m = event.metadata();
 
         let payload = serde_json::json!({
-            "entity_type": Self::extract_aggregate_type(event.subject()),
-            "entity_id": Self::extract_entity_id(event.subject()),
+            "entity_type": Self::extract_aggregate_type(&m.subject),
+            "entity_id": Self::extract_entity_id(&m.subject),
             "operation": command_name,
             "operation_json": operation_json,
-            "principal_id": event.principal_id(),
-            "performed_at": event.time().to_rfc3339(),
+            "principal_id": m.principal_id,
+            "performed_at": m.time.to_rfc3339(),
         });
 
         let payload_size = payload.to_string().len() as i32;
@@ -376,7 +390,7 @@ impl OutboxUnitOfWork {
 
         if let Err(e) = sqlx::query(&query)
             .bind(&id)
-            .bind(event.message_group())
+            .bind(&m.message_group)
             .bind(&payload)
             .bind(client_id.as_deref())
             .bind(payload_size)
@@ -393,7 +407,7 @@ impl OutboxUnitOfWork {
         Ok(())
     }
 
-    async fn persist_outbox_items<E: DomainEvent + Serialize, C: Serialize>(
+    async fn persist_outbox_items<E: DomainEvent, C: Serialize>(
         txn: &mut Transaction<'_, Postgres>,
         table: &str,
         event: &E,
@@ -413,7 +427,7 @@ impl OutboxUnitOfWork {
 impl UnitOfWork for OutboxUnitOfWork {
     async fn commit<E, T, C>(&self, aggregate: &T, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         T: Serialize + HasId + PgPersist + Send + Sync,
         C: Serialize + Send + Sync,
     {
@@ -458,8 +472,8 @@ impl UnitOfWork for OutboxUnitOfWork {
         }
 
         debug!(
-            event_id = event.event_id(),
-            event_type = event.event_type(),
+            event_id = %event.metadata().event_id,
+            event_type = %event.metadata().event_type,
             "Committed entity + outbox event"
         );
 
@@ -468,7 +482,7 @@ impl UnitOfWork for OutboxUnitOfWork {
 
     async fn commit_delete<E, T, C>(&self, aggregate: &T, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         T: Serialize + HasId + PgPersist + Send + Sync,
         C: Serialize + Send + Sync,
     {
@@ -513,8 +527,8 @@ impl UnitOfWork for OutboxUnitOfWork {
         }
 
         debug!(
-            event_id = event.event_id(),
-            event_type = event.event_type(),
+            event_id = %event.metadata().event_id,
+            event_type = %event.metadata().event_type,
             "Committed delete + outbox event"
         );
 
@@ -523,7 +537,7 @@ impl UnitOfWork for OutboxUnitOfWork {
 
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         C: Serialize + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
@@ -559,8 +573,8 @@ impl UnitOfWork for OutboxUnitOfWork {
         }
 
         debug!(
-            event_id = event.event_id(),
-            event_type = event.event_type(),
+            event_id = %event.metadata().event_id,
+            event_type = %event.metadata().event_type,
             "Emitted event via outbox"
         );
 
@@ -574,7 +588,7 @@ impl UnitOfWork for OutboxUnitOfWork {
         command: &C,
     ) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         C: Serialize + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
@@ -620,8 +634,8 @@ impl UnitOfWork for OutboxUnitOfWork {
         }
 
         debug!(
-            event_id = event.event_id(),
-            event_type = event.event_type(),
+            event_id = %event.metadata().event_id,
+            event_type = %event.metadata().event_type,
             aggregate_count = aggregates.len(),
             "Committed multi-aggregate + outbox event"
         );
@@ -637,7 +651,7 @@ impl UnitOfWork for OutboxUnitOfWork {
 ///
 /// `commit()` / `commit_delete()` / `emit_event()` / `commit_all()` append
 /// their rows to the shared transaction but do NOT close it — the outer
-/// `run` does (commits on `UseCaseResult::Success`, rolls back on `Failure`).
+/// `run` does (commits on success, rolls back on failure).
 ///
 /// This is the SDK analogue of the platform's `TxScopedUnitOfWork` and exists
 /// so consumer applications can orchestrate **their own writes alongside
@@ -707,7 +721,7 @@ impl TxScopedOutboxUnitOfWork {
 impl UnitOfWork for TxScopedOutboxUnitOfWork {
     async fn commit<E, T, C>(&self, aggregate: &T, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         T: Serialize + HasId + PgPersist + Send + Sync,
         C: Serialize + Send + Sync,
     {
@@ -745,14 +759,9 @@ impl UnitOfWork for TxScopedOutboxUnitOfWork {
         UseCaseResult::success(event)
     }
 
-    async fn commit_delete<E, T, C>(
-        &self,
-        aggregate: &T,
-        event: E,
-        command: &C,
-    ) -> UseCaseResult<E>
+    async fn commit_delete<E, T, C>(&self, aggregate: &T, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         T: Serialize + HasId + PgPersist + Send + Sync,
         C: Serialize + Send + Sync,
     {
@@ -792,7 +801,7 @@ impl UnitOfWork for TxScopedOutboxUnitOfWork {
 
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         C: Serialize + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
@@ -828,7 +837,7 @@ impl UnitOfWork for TxScopedOutboxUnitOfWork {
         command: &C,
     ) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         C: Serialize + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
@@ -886,9 +895,10 @@ impl OutboxUnitOfWork {
     ///     let order_uc = ShipOrderUseCase::new(order_repo, session.clone());
     ///     let ledger_uc = DebitAccountUseCase::new(ledger_repo, session.clone());
     ///
-    ///     order_uc.run(ship_cmd, ctx.clone()).await.into_result()?;
-    ///     ledger_uc.run(debit_cmd, ctx).await.into_result()?;
-    ///     UseCaseResult::success(())
+    ///     if let Err(e) = order_uc.run(ship_cmd, ctx.clone()).await.into_result() {
+    ///         return UseCaseResult::failure(e);
+    ///     }
+    ///     ledger_uc.run(debit_cmd, ctx).await.map(|_| ())
     /// })
     /// .await
     /// ```
@@ -927,8 +937,8 @@ impl OutboxUnitOfWork {
         let tx_opt = scoped.take_tx().await;
 
         if let Some(tx) = tx_opt {
-            match &result {
-                UseCaseResult::Success(_) => {
+            match result.as_result() {
+                Ok(_) => {
                     if let Err(e) = tx.commit().await {
                         error!("Failed to commit orchestration tx: {}", e);
                         return UseCaseResult::failure(UseCaseError::commit(format!(
@@ -938,7 +948,7 @@ impl OutboxUnitOfWork {
                     }
                     debug!("Orchestration tx committed");
                 }
-                UseCaseResult::Failure(err) => {
+                Err(err) => {
                     let _ = tx.rollback().await;
                     debug!(error = %err.code(), "Orchestration tx rolled back");
                 }
@@ -1006,14 +1016,14 @@ impl Default for InMemoryUnitOfWork {
 impl UnitOfWork for InMemoryUnitOfWork {
     async fn commit<E, T, C>(&self, _aggregate: &T, event: E, _command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         T: Serialize + HasId + PgPersist + Send + Sync,
         C: Serialize + Send + Sync,
     {
         self.committed_events
             .lock()
             .unwrap()
-            .push(event.event_id().to_string());
+            .push(event.metadata().event_id.clone());
         UseCaseResult::success(event)
     }
 
@@ -1024,26 +1034,26 @@ impl UnitOfWork for InMemoryUnitOfWork {
         _command: &C,
     ) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         T: Serialize + HasId + PgPersist + Send + Sync,
         C: Serialize + Send + Sync,
     {
         self.committed_events
             .lock()
             .unwrap()
-            .push(event.event_id().to_string());
+            .push(event.metadata().event_id.clone());
         UseCaseResult::success(event)
     }
 
     async fn emit_event<E, C>(&self, event: E, _command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         C: Serialize + Send + Sync,
     {
         self.committed_events
             .lock()
             .unwrap()
-            .push(event.event_id().to_string());
+            .push(event.metadata().event_id.clone());
         UseCaseResult::success(event)
     }
 
@@ -1054,13 +1064,13 @@ impl UnitOfWork for InMemoryUnitOfWork {
         _command: &C,
     ) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + 'static,
         C: Serialize + Send + Sync,
     {
         self.committed_events
             .lock()
             .unwrap()
-            .push(event.event_id().to_string());
+            .push(event.metadata().event_id.clone());
         UseCaseResult::success(event)
     }
 }
@@ -1181,18 +1191,19 @@ mod tests {
 
     fn make_fake_event(event_id: &str) -> FakeEvent {
         FakeEvent {
-            metadata: EventMetadata::new(
-                event_id.into(),
-                "test:event",
-                "1.0",
-                "test",
-                "test.entity.1".into(),
-                "test:entity:1".into(),
-                "exec-1".into(),
-                "corr-1".into(),
-                None,
-                "prn_test".into(),
-            ),
+            metadata: EventMetadata {
+                event_id: event_id.into(),
+                event_type: "test:event".into(),
+                spec_version: "1.0".into(),
+                source: "test".into(),
+                subject: "test.entity.1".into(),
+                time: chrono::Utc::now(),
+                execution_id: "exec-1".into(),
+                correlation_id: "corr-1".into(),
+                causation_id: None,
+                principal_id: "prn_test".into(),
+                message_group: "test:entity:1".into(),
+            },
         }
     }
 
@@ -1293,9 +1304,18 @@ mod tests {
         let entity = FakeEntity { id: "e_1".into() };
         let cmd = FakeCommand { name: "t".into() };
 
-        uow.commit(&entity, make_fake_event("a"), &cmd).await;
-        uow.commit(&entity, make_fake_event("b"), &cmd).await;
-        uow.emit_event(make_fake_event("c"), &cmd).await;
+        assert!(uow
+            .commit(&entity, make_fake_event("a"), &cmd)
+            .await
+            .is_success());
+        assert!(uow
+            .commit(&entity, make_fake_event("b"), &cmd)
+            .await
+            .is_success());
+        assert!(uow
+            .emit_event(make_fake_event("c"), &cmd)
+            .await
+            .is_success());
 
         assert_eq!(uow.committed_events().len(), 3);
         assert_eq!(uow.committed_events(), vec!["a", "b", "c"]);
@@ -1307,7 +1327,10 @@ mod tests {
         let entity = FakeEntity { id: "e_1".into() };
         let cmd = FakeCommand { name: "t".into() };
 
-        uow.commit(&entity, make_fake_event("x"), &cmd).await;
+        assert!(uow
+            .commit(&entity, make_fake_event("x"), &cmd)
+            .await
+            .is_success());
         assert!(uow.has_commits());
 
         uow.clear();
@@ -1326,8 +1349,69 @@ mod tests {
             .await;
 
         let event = result.unwrap();
-        assert_eq!(event.event_id(), "evt_return");
-        assert_eq!(event.event_type(), "test:event");
+        assert_eq!(event.metadata().event_id, "evt_return");
+        assert_eq!(event.metadata().event_type, "test:event");
+    }
+
+    // ─── Event outbox payload ───────────────────────────────────────────
+
+    #[derive(Debug, Clone, Serialize)]
+    struct RichEvent {
+        metadata: EventMetadata,
+        amount: f64,
+        tags: Vec<String>,
+        nested: std::collections::BTreeMap<String, Option<i64>>,
+    }
+    crate::impl_domain_event!(RichEvent);
+
+    /// `data` used to be produced by `serde_json::to_string` + `from_str`; it
+    /// is now `serde_json::to_value`. Both must give the same JSON.
+    #[test]
+    fn event_outbox_payload_data_matches_the_old_string_round_trip() {
+        let event = RichEvent {
+            metadata: EventMetadata {
+                causation_id: Some("evt_cause".into()),
+                ..make_fake_event("evt_rich").metadata
+            },
+            amount: 0.1 + 0.2,
+            tags: vec!["a".into(), "ü".into()],
+            nested: [("x".to_string(), Some(-3)), ("y".to_string(), None)].into(),
+        };
+
+        let payload = OutboxUnitOfWork::event_outbox_payload(&event).unwrap();
+        let old_data: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
+        assert_eq!(payload["data"], old_data);
+        assert_eq!(payload["event_type"], "test:event");
+        assert_eq!(payload["causation_id"], "evt_cause");
+        assert_eq!(payload["deduplication_id"], "test:event-evt_rich");
+        assert_eq!(payload["message_group"], "test:entity:1");
+        assert_eq!(
+            payload["context_data"],
+            serde_json::json!([
+                {"key": "principalId", "value": "prn_test"},
+                {"key": "aggregateType", "value": "Entity"},
+            ])
+        );
+    }
+
+    #[test]
+    fn event_outbox_payload_reports_serialization_failure() {
+        #[derive(Debug)]
+        struct Broken {
+            metadata: EventMetadata,
+        }
+        impl Serialize for Broken {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("broken"))
+            }
+        }
+        crate::impl_domain_event!(Broken);
+
+        let event = Broken {
+            metadata: make_fake_event("evt_broken").metadata,
+        };
+        assert!(OutboxUnitOfWork::event_outbox_payload(&event).is_err());
     }
 
     // ─── TxScopedOutboxUnitOfWork (compile-time bounds) ─────────────────

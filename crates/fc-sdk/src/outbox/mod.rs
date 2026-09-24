@@ -22,7 +22,7 @@
 //!
 //! // 3. In your use case: validate, check business rules, commit
 //! let ctx = ExecutionContext::create("user-123");
-//! let event = OrderCreated { metadata: EventMetadata::builder().from(&ctx)..., ... };
+//! let event = OrderCreated { metadata: EventMetadata::from_ctx(&ctx, ...), ... };
 //! let result = uow.commit(&order, event, &create_cmd).await;
 //! ```
 //!
@@ -42,9 +42,10 @@
 //!     let order_uc = ShipOrderUseCase::new(order_repo, session.clone());
 //!     let ledger_uc = DebitAccountUseCase::new(ledger_repo, session.clone());
 //!
-//!     order_uc.run(ship_cmd, ctx.clone()).await.into_result()?;
-//!     ledger_uc.run(debit_cmd, ctx).await.into_result()?;
-//!     UseCaseResult::success(())
+//!     if let Err(e) = order_uc.run(ship_cmd, ctx.clone()).await.into_result() {
+//!         return UseCaseResult::failure(e);
+//!     }
+//!     ledger_uc.run(debit_cmd, ctx).await.map(|_| ())
 //! })
 //! .await
 //! ```

@@ -45,14 +45,14 @@
 //!         order.tracking_number = Some(command.tracking_number.clone());
 //!
 //!         let event = OrderShipped {
-//!             metadata: EventMetadata::builder()
-//!                 .from(&ctx)
-//!                 .event_type("shop:orders:order:shipped")
-//!                 .spec_version("1.0")
-//!                 .source("shop:orders")
-//!                 .subject(format!("orders.order.{}", order.id))
-//!                 .message_group(format!("orders:order:{}", order.id))
-//!                 .build(),
+//!             metadata: EventMetadata::from_ctx(
+//!                 &ctx,
+//!                 "shop:orders:order:shipped",
+//!                 "1.0",
+//!                 "shop:orders",
+//!                 format!("orders.order.{}", order.id),
+//!                 format!("orders:order:{}", order.id),
+//!             ),
 //!             order_id: order.id.clone(),
 //!             tracking_number: command.tracking_number.clone(),
 //!         };
@@ -98,7 +98,7 @@ pub trait UseCase: Send + Sync {
     type Command: Serialize + Send + Sync;
 
     /// The domain event emitted on success.
-    type Event: DomainEvent + Serialize + Send + 'static;
+    type Event: DomainEvent + 'static;
 
     /// Validate the command inputs.
     ///
