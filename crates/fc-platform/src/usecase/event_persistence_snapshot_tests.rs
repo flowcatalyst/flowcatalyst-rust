@@ -726,6 +726,12 @@ fn identity_provider_update_persists_no_plaintext_secret() {
 fn identity_provider_secret_without_key_is_refused() {
     let err = seal_client_secret(Some(IDP_SECRET.to_string()), None).unwrap_err();
     assert!(err.to_string().contains("FLOWCATALYST_APP_KEY"));
+    // A 400 with Java's code, not a 500.
+    assert!(matches!(
+        &err,
+        crate::shared::error::PlatformError::Coded { status, code, .. }
+            if *status == axum::http::StatusCode::BAD_REQUEST && code == "ENCRYPTION_NOT_CONFIGURED"
+    ));
     // Blank means "not provided", which needs no key.
     assert_eq!(
         seal_client_secret(Some("  ".to_string()), None).unwrap(),

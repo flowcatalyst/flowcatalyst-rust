@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 
 use super::entity::IdentityProvider;
 use super::repository::IdentityProviderRepository;
-use crate::shared::encryption_service::{require_configured, EncryptionService};
+use crate::shared::encryption_service::EncryptionService;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -116,14 +116,24 @@ pub struct IdentityProvidersState {
 /// `encrypted:` form. This happens before the command is built, so the
 /// plaintext never reaches the command (which the unit of work writes to the
 /// audit log). A blank value means "not provided". Without a key the request
-/// fails; the secret is never stored in plaintext.
+/// is a 400 `ENCRYPTION_NOT_CONFIGURED`, as in Java
+/// (identityprovider/api/ClientSecretEncryption.java:71-72); the secret is
+/// never stored in plaintext.
 pub(crate) fn seal_client_secret(
     secret: Option<String>,
     enc: Option<&EncryptionService>,
 ) -> Result<Option<String>, PlatformError> {
     secret
         .filter(|s| !s.trim().is_empty())
-        .map(|s| Ok(require_configured(enc)?.encrypt_ref(&s)?))
+        .map(|s| {
+            let enc = enc.ok_or_else(|| {
+                PlatformError::bad_request_code(
+                    "ENCRYPTION_NOT_CONFIGURED",
+                    "cannot store OIDC client secret: FLOWCATALYST_APP_KEY is not configured",
+                )
+            })?;
+            Ok(enc.encrypt_ref(&s)?)
+        })
         .transpose()
 }
 
