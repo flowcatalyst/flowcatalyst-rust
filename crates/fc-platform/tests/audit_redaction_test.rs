@@ -217,3 +217,211 @@ async fn ingested_audit_logs_are_redacted_before_they_are_stored() {
             .expect("inner JSON");
     assert_eq!(inner, json!({ "apiKey": "***", "name": "kept" }));
 }
+
+// ── Temporary: the dashboard's redact-existing sweep ────────────────────────
+//
+// Owner spec "Temporary: redact existing rows from the dashboard". Remove
+// with POST /bff/audit-logs/redact-existing.
+
+async fn seed_audit_row(app: &TestApp, id: &str, operation: &str, json: serde_json::Value) {
+    sqlx::query(
+        "INSERT INTO aud_logs (id, entity_type, entity_id, operation, operation_json) \
+         VALUES ($1, 'Seeded', $1, $2, $3)",
+    )
+    .bind(id)
+    .bind(operation)
+    .bind(json)
+    .execute(&app.pool)
+    .await
+    .expect("seed aud_logs");
+}
+
+/// `(operation_json::text, xmin)`: the stored document, and the row version
+/// (xmin changes on any UPDATE, even one writing the same value).
+async fn stored_row(app: &TestApp, id: &str) -> (String, String) {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT operation_json::text, xmin::text FROM aud_logs WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&app.pool)
+    .await
+    .expect("read seeded row")
+}
+
+async fn redact_existing(app: &TestApp, token: &str) -> (StatusCode, serde_json::Value) {
+    support::read_json(
+        app.post("/bff/audit-logs/redact-existing", token, json!({}))
+            .await,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_sweep_redacts_existing_rows_once_and_touches_nothing_else() {
+    let app = setup().await;
+    let token = stored_admin_token(&app).await;
+    sqlx::query("DELETE FROM aud_logs")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+
+    // Rewritten.
+    seed_audit_row(
+        &app,
+        "seed_webhook",
+        "CreateServiceAccountCommand",
+        json!({"code": "sa-1", "webhookCredentials": {"authType": "HMAC_SIGNATURE", "token": "tok-1", "signingSecret": "whsec-1"}}),
+    )
+    .await;
+    seed_audit_row(
+        &app,
+        "seed_secret_cfg",
+        "SetPlatformConfigPropertyCommand",
+        json!({"property": "smtpPassword", "value": "cfg-secret-1", "valueType": "SECRET"}),
+    )
+    .await;
+    seed_audit_row(
+        &app,
+        "seed_go_cfg",
+        "SetPropertyCommand",
+        json!({"property": "apiKey", "value": "cfg-secret-2"}),
+    )
+    .await;
+    seed_audit_row(
+        &app,
+        "seed_user",
+        "CreateUserCommand",
+        json!({"email": "a@b.c", "password": "hunter2"}),
+    )
+    .await;
+    seed_audit_row(
+        &app,
+        "seed_sdk_string",
+        "CREATE",
+        json!("{\"email\":\"a@b.c\",\"newPassword\":\"sdk-secret\"}"),
+    )
+    .await;
+    // Candidates the exact rule keeps.
+    let plain = json!({"property": "smtpHost", "value": "smtp.example.com", "valueType": "PLAIN"});
+    seed_audit_row(
+        &app,
+        "seed_plain_cfg",
+        "SetPlatformConfigPropertyCommand",
+        plain,
+    )
+    .await;
+    seed_audit_row(
+        &app,
+        "seed_lookalike",
+        "IssueTokenCommand",
+        json!({"tokenType": "Bearer", "secretKeys": ["A", "B"], "enforcePasswordComplexity": true}),
+    )
+    .await;
+    // Not a candidate at all.
+    seed_audit_row(
+        &app,
+        "seed_unrelated",
+        "UpdateClientCommand",
+        json!({"name": "Acme", "nested": {"n": 1.5, "list": [1, "two"]}}),
+    )
+    .await;
+    // More than one batch of 500 secret rows.
+    sqlx::query(
+        "INSERT INTO aud_logs (id, entity_type, entity_id, operation, operation_json) \
+         SELECT 'bulk_' || lpad(i::text, 5, '0'), 'Seeded', 'bulk', 'ResetPasswordCommand', \
+                jsonb_build_object('principalId', 'prn_' || i, 'newPassword', 'bulk-secret-' || i) \
+         FROM generate_series(1, 1100) AS i",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let untouched = ["seed_plain_cfg", "seed_lookalike", "seed_unrelated"];
+    let mut before = Vec::new();
+    for id in untouched {
+        before.push(stored_row(&app, id).await);
+    }
+
+    let (status, body) = redact_existing(&app, &token).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // Candidates: 5 rewritten + plain config + look-alike + 1100 bulk.
+    assert_eq!(body, json!({"scanned": 1107, "redacted": 1105}));
+
+    for (id, row) in untouched.iter().zip(&before) {
+        assert_eq!(&stored_row(&app, id).await, row, "{id} was rewritten");
+    }
+    let rows = all_audit_json(&app).await;
+    for secret in [
+        "tok-1",
+        "whsec-1",
+        "cfg-secret-1",
+        "cfg-secret-2",
+        "hunter2",
+        "sdk-secret",
+        "bulk-secret-",
+    ] {
+        assert_absent(&rows, secret);
+    }
+    let webhook: serde_json::Value =
+        serde_json::from_str(&stored_row(&app, "seed_webhook").await.0).unwrap();
+    assert_eq!(
+        webhook,
+        json!({"code": "sa-1", "webhookCredentials": {"authType": "HMAC_SIGNATURE", "token": "***", "signingSecret": "***"}})
+    );
+    let go_cfg: serde_json::Value =
+        serde_json::from_str(&stored_row(&app, "seed_go_cfg").await.0).unwrap();
+    assert_eq!(go_cfg, json!({"property": "apiKey", "value": "***"}));
+
+    // Idempotent: nothing left to rewrite.
+    let (status, body) = redact_existing(&app, &token).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"scanned": 1107, "redacted": 0}));
+
+    // Each run audits itself once, through the unit of work.
+    let runs = sqlx::query_as::<_, (serde_json::Value,)>(
+        "SELECT operation_json FROM aud_logs WHERE operation = 'RedactExistingAuditLogs' ORDER BY id",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        runs.into_iter().map(|r| r.0).collect::<Vec<_>>(),
+        vec![
+            json!({"scanned": 1107, "redacted": 1105}),
+            json!({"scanned": 1107, "redacted": 0})
+        ]
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_sweep_is_anchor_only_and_needs_audit_log_read() {
+    let app = setup().await;
+    seed_audit_row(
+        &app,
+        "seed_user",
+        "CreateUserCommand",
+        json!({"password": "hunter2"}),
+    )
+    .await;
+
+    // A partner holding every permission, including audit-log read.
+    app.anchor_admin_token().await; // seeds the admin role
+    let mut partner = Principal::new_user("partner-admin@flowcatalyst.test", UserScope::Partner);
+    partner.roles = vec![RoleAssignment::new("platform:test-admin")];
+    let partner_admin = app.auth_service.generate_access_token(&partner).unwrap();
+
+    // Anchor without the audit-log read permission; the partner admin;
+    // a plain partner; a client user.
+    for token in [
+        app.anchor_token(),
+        partner_admin,
+        app.partner_token(),
+        app.client_user_token("clt_1"),
+    ] {
+        let (status, _) = redact_existing(&app, &token).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    assert!(stored_row(&app, "seed_user").await.0.contains("hunter2"));
+}

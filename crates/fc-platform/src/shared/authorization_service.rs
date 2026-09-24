@@ -422,6 +422,15 @@ pub mod checks {
         }
     }
 
+    /// Check read access to audit logs
+    pub fn can_read_audit_logs(context: &AuthContext) -> Result<()> {
+        if context.has_permission(permissions::admin::AUDIT_LOG_READ) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot read audit logs"))
+        }
+    }
+
     /// Check raw read access to events (includes payload)
     pub fn can_read_events_raw(context: &AuthContext) -> Result<()> {
         if context.has_permission(permissions::admin::EVENT_VIEW_RAW) {

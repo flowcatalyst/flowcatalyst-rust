@@ -964,6 +964,15 @@ pub fn build_platform_routes(
             repos.role_repo.clone(),
         )),
     };
+    // Temporary (docs/spec/audit-redaction.md, Java repo).
+    let bff_audit_logs_state = crate::shared::bff_audit_logs_api::BffAuditLogsState {
+        redact_existing_use_case: Arc::new(
+            crate::audit::operations::RedactExistingAuditLogsUseCase::new(
+                repos.audit_log_repo.clone(),
+                unit_of_work.clone(),
+            ),
+        ),
+    };
     let bff_scheduled_jobs_state = crate::shared::bff_scheduled_jobs_api::BffScheduledJobsState {
         repo: repos.scheduled_job_repo.clone(),
         instance_repo: repos.scheduled_job_instance_repo.clone(),
@@ -1027,6 +1036,7 @@ pub fn build_platform_routes(
         monitoring: monitoring_state,
         auth: embedded_auth_state,
         bff_roles: bff_roles_state,
+        bff_audit_logs: bff_audit_logs_state,
         bff_event_types: bff_event_types_state,
         bff_scheduled_jobs: bff_scheduled_jobs_state,
         bff_dashboard: bff_dashboard_state,

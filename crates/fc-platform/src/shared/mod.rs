@@ -16,6 +16,7 @@ pub mod batch_api;
 pub mod bff_dashboard_api;
 pub mod bff_developer_api;
 pub mod bff_event_types_api;
+pub mod bff_audit_logs_api;
 pub mod bff_roles_api;
 pub mod bff_scheduled_jobs_api;
 pub mod client_selection_api;

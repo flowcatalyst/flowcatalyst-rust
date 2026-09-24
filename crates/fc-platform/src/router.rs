@@ -144,6 +144,8 @@ pub const PATH_BFF_EVENTS: &str = "/bff/events";
 pub const PATH_BFF_DISPATCH_JOBS: &str = "/bff/dispatch-jobs";
 pub const PATH_BFF_FILTER_OPTIONS: &str = "/bff/filter-options";
 pub const PATH_BFF_ROLES: &str = "/bff/roles";
+/// Temporary (docs/spec/audit-redaction.md, Java repo): the redact-existing sweep.
+pub const PATH_BFF_AUDIT_LOGS: &str = "/bff/audit-logs";
 pub const PATH_BFF_EVENT_TYPES: &str = "/bff/event-types";
 pub const PATH_BFF_SCHEDULED_JOBS: &str = "/bff/scheduled-jobs";
 pub const PATH_BFF_DASHBOARD: &str = "/bff/dashboard";
@@ -246,6 +248,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
 
     // -- Plain Router routes (NOT in Swagger) --
     pub bff_roles: BffRolesState,
+    /// Temporary (docs/spec/audit-redaction.md, Java repo).
+    pub bff_audit_logs: crate::shared::bff_audit_logs_api::BffAuditLogsState,
     pub bff_event_types: BffEventTypesState,
     pub bff_scheduled_jobs: BffScheduledJobsState,
     pub bff_dashboard: BffDashboardState,
@@ -513,6 +517,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_BFF_DEVELOPER, bff_developer_router(bff_developer_state))
             // BFF
             .nest(PATH_BFF_ROLES, bff_roles_router(self.bff_roles).into())
+            // Temporary (docs/spec/audit-redaction.md, Java repo).
+            .nest(
+                PATH_BFF_AUDIT_LOGS,
+                crate::shared::bff_audit_logs_api::bff_audit_logs_router(self.bff_audit_logs)
+                    .into(),
+            )
             .nest(
                 PATH_BFF_EVENT_TYPES,
                 bff_event_types_router(self.bff_event_types).into(),

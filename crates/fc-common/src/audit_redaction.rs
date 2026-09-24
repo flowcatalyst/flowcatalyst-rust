@@ -24,7 +24,7 @@ use serde_json::{Map, Value};
 pub const MASK: &str = "***";
 
 /// A normalised key ending with one of these is secret.
-const SECRET_SUFFIXES: &[&str] = &[
+pub const SECRET_SUFFIXES: &[&str] = &[
     "password",
     "passwordhash",
     "secret",
@@ -34,7 +34,7 @@ const SECRET_SUFFIXES: &[&str] = &[
 ];
 
 /// A normalised key equal to one of these is secret.
-const SECRET_EXACT: &[&str] = &["apikey", "privatekey", "authorization", "cookie"];
+pub const SECRET_EXACT: &[&str] = &["apikey", "privatekey", "authorization", "cookie"];
 
 /// A command's declared masked fields: top-level field names (as they appear
 /// in the serialised JSON) that [`redact`] masks even though the name rule

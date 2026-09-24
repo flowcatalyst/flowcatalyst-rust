@@ -4,6 +4,7 @@
 
 pub mod api;
 pub mod entity;
+pub mod operations;
 pub mod repository;
 pub mod service;
 
