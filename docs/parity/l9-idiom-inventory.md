@@ -16,7 +16,7 @@ Scope (owner, 2026-09-24): track C plus the enum and secret bugs (A1–A3, A5–
 | Platform P1 | A5 seal, A6, C7 dead code, small idioms | done |
 | Platform P2 | C1 errors (`?` in use cases, `UseCaseError` struct, typed errors) | done |
 | Platform P3 | C2 events (`from_ctx`, `DomainEvent::metadata`, snapshot tests) | done |
-| Platform P6 | C4 null injection and sentinels, C5 constructors, drop `too_many_arguments` allow | in progress |
+| Platform P6 | C4 null injection and sentinels, C5 constructors, drop `too_many_arguments` allow | done |
 | Platform P4 | C3 + A1–A3 enums under X-06/X-01 | waiting on DB access |
 | Platform P5 | A13 secrets at rest + backfill | waiting on DB access |
 | Platform P7 | fc-platform `tsid::` migration, remove `TsidGenerator`, drop `should_implement_trait` allow | `tsid::` migration + `TsidGenerator` removal done; `should_implement_trait` allow still pending |
