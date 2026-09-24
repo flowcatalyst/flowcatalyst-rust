@@ -40,6 +40,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use utoipa::ToSchema;
 
+pub mod audit_redaction;
 pub mod config;
 pub mod logging;
 pub mod tsid;
