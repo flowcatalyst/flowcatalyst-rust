@@ -1,0 +1,10 @@
+# F0 density spike (docs/function-runner-plan.md §5 F0). Throwaway measurement code.
+# Its own Cargo workspace: NOT a member of the root flowcatalyst-rust workspace.
+[workspace]
+resolver = "2"
+members = ["host", "v8"]
+exclude = ["guests"]
+
+[profile.release]
+debug = false
+codegen-units = 16

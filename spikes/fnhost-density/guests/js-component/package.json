@@ -1,0 +1,9 @@
+{
+  "name": "fc-js-component",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@bytecodealliance/componentize-js": "*",
+    "@bytecodealliance/jco": "*"
+  }
+}

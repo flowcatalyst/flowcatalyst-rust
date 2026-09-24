@@ -1,0 +1,11 @@
+[package]
+name = "fnhost-v8"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# (e) baseline: V8 isolates through deno_core (the Supabase edge-runtime model).
+[dependencies]
+deno_core = "=0.412.0"
+anyhow = "1"
+libc = "0.2"

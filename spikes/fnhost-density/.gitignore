@@ -1,0 +1,6 @@
+target/
+guests/*/target/
+guests/js-component/node_modules/
+guests/js-component/package-lock.json
+# Built guest artifacts (rebuild with scripts/build-guests.sh)
+guests/**/*.wasm

@@ -1,0 +1,65 @@
+$ ./target/release/fnhost-density egress extism
+egress engine=extism case="allowed loopback, repeated headers" ms=8 result={"body":"hello","status":200,"xUpstream":"a, b"}
+egress engine=extism case="redirect not followed" ms=0 result={"body":"","status":302,"xUpstream":null}
+egress engine=extism case="http to non-loopback denied" ms=0 result={"body":"{\"error\":\"scheme 'http' is not permitted (https only, except loopback)\"}","status":0,"xUpstream":null}
+egress engine=extism case="host not on allowlist denied" ms=0 result={"body":"{\"error\":\"evil.example.org: not on this function's httpAllow list\"}","status":0,"xUpstream":null}
+egress engine=extism case="deadline caps the call (1 s call, 2 s upstream)" ms=1002 result={"body":"{\"error\":\"outbound call timed out\"}","status":0,"xUpstream":null}
+egress engine=extism case="kalloc 64 MiB under a 16 MiB cap" result=TRAP/ERROR: oom
+egress engine=extism case="alloc 32 MiB under a 16 MiB cap" result=TRAP/ERROR: oom
+egress engine=extism case="next call after cap failure" result={"allocatedMb":1,"sum":1792}
+egress engine=extism case="log" result={"logged":"hi"} captured=["INFO guest info: hi", "WARN guest warn: hi"]
+egress engine=extism case="config declared" result={"key":"greeting","value":"hello"}
+egress engine=extism case="secret declared" result={"key":"token","value":"s3cret"}
+egress engine=extism case="secret missing" result={"key":"nope","value":""}
+$ ./target/release/fnhost-density egress kernel
+egress engine=kernel case="allowed loopback, repeated headers" ms=2 result={"body":"hello","status":200,"xUpstream":"a, b"}
+egress engine=kernel case="redirect not followed" ms=0 result={"body":"","status":302,"xUpstream":null}
+egress engine=kernel case="http to non-loopback denied" ms=0 result={"body":"{\"error\":\"scheme 'http' is not permitted (https only, except loopback)\"}","status":0,"xUpstream":null}
+egress engine=kernel case="host not on allowlist denied" ms=0 result={"body":"{\"error\":\"evil.example.org: not on this function's httpAllow list\"}","status":0,"xUpstream":null}
+egress engine=kernel case="deadline caps the call (1 s call, 2 s upstream)" ms=1002 result={"body":"{\"error\":\"outbound call timed out\"}","status":0,"xUpstream":null}
+egress engine=kernel case="kalloc 64 MiB under a 16 MiB cap" result={"grantedMb":15,"requestedMb":64}
+egress engine=kernel case="alloc 32 MiB under a 16 MiB cap" result=TRAP/ERROR: error while executing at wasm backtrace:     0:  0x20f70 - <unknown>!<wasm function 457>     1:  0x216d4 - <unknown>!<wasm function 475>     2:   0xea6c - <unknown>!<wasm function 158>     3:   0x2344 - <unknown>!<wasm function 37>     4:   0x5231 - <unknown>!<wasm function 91>     5:    0x989 - <unknown>!<wasm function 25>     6:   0x61ad - <unknown>!<wasm function 111>: wasm trap: wasm `unreachable` instruction executed
+egress engine=kernel case="next call after cap failure" result={"allocatedMb":1,"sum":1792}
+egress engine=kernel case="log" result={"logged":"hi"} captured=["INFO guest info: hi", "WARN guest warn: hi", "INFO guest stdout: hi", "WARN guest stderr: hi"]
+egress engine=kernel case="config declared" result={"key":"greeting","value":"hello"}
+egress engine=kernel case="secret declared" result={"key":"token","value":"s3cret"}
+egress engine=kernel case="secret missing" result={"key":"nope","value":""}
+$ ./target/release/fnhost-density egress native
+egress engine=native case="allowed loopback, repeated headers" ms=1 result={"body":"hello","status":200,"xUpstream":"a, b"}
+egress engine=native case="redirect not followed" ms=0 result={"body":"","status":302,"xUpstream":null}
+egress engine=native case="http to non-loopback denied" ms=0 result={"body":"{\"error\":\"scheme 'http' is not permitted (https only, except loopback)\"}","status":0,"xUpstream":null}
+egress engine=native case="host not on allowlist denied" ms=0 result={"body":"{\"error\":\"evil.example.org: not on this function's httpAllow list\"}","status":0,"xUpstream":null}
+egress engine=native case="deadline caps the call (1 s call, 2 s upstream)" ms=1002 result={"body":"{\"error\":\"outbound call timed out\"}","status":0,"xUpstream":null}
+egress engine=native case="kalloc 64 MiB under a 16 MiB cap" result={"grantedMb":15,"requestedMb":64}
+egress engine=native case="alloc 32 MiB under a 16 MiB cap" result=TRAP/ERROR: error while executing at wasm backtrace:     0:  0x20f70 - <unknown>!<wasm function 457>     1:  0x216d4 - <unknown>!<wasm function 475>     2:   0xea6c - <unknown>!<wasm function 158>     3:   0x2344 - <unknown>!<wasm function 37>     4:   0x5231 - <unknown>!<wasm function 91>     5:    0x989 - <unknown>!<wasm function 25>     6:   0x61ad - <unknown>!<wasm function 111>: wasm trap: wasm `unreachable` instruction executed
+egress engine=native case="next call after cap failure" result={"allocatedMb":1,"sum":1792}
+egress engine=native case="log" result={"logged":"hi"} captured=["INFO guest info: hi", "WARN guest warn: hi", "INFO guest stdout: hi", "WARN guest stderr: hi"]
+egress engine=native case="config declared" result={"key":"greeting","value":"hello"}
+egress engine=native case="secret declared" result={"key":"token","value":"s3cret"}
+egress engine=native case="secret missing" result={"key":"nope","value":""}
+$ ./target/release/fnhost-density egress component
+egress engine=component case="allowed loopback, repeated headers" ms=3 result=200 {"body":"hello","status":200,"xUpstream":"a, b"}
+egress engine=component case="redirect not followed" ms=0 result=200 {"body":"","status":302,"xUpstream":null}
+egress engine=component case="http to non-loopback denied" ms=0 result=200 {"error":"ErrorCode::HttpRequestDenied"}
+egress engine=component case="host not on allowlist denied" ms=0 result=200 {"error":"ErrorCode::HttpRequestDenied"}
+egress engine=component case="deadline caps the call (1 s call, 2 s upstream)" ms=1001 result=ERROR: deadline
+egress engine=component case="alloc 96 MiB under the 64 MiB cap" result=ERROR: error while executing at wasm backtrace:     0:  0x17efd - <unknown>!<wasm function 490>     1:  0x11770 - <unknown>!<wasm function 349>     2:  0x10b46 - <unknown>!<wasm function 331>     3:   0xfe8b - <unknown>!<wasm function 319>     4:   0xfe50 - <unknown>!<wasm function 318>     5:  0x10cfc - <unknown>!<wasm function 338>     6:  0x10ccc - <unknown>!<wasm function 337>     7:   0x2d33 - <unknown>!<wasm function 75>     8:   0x28d7 - <unknown>!<wasm function 69>     9:   0x3b48 - <unknown>!<wasm function 114>    10:   0x692c - <unknown>!<wasm function 131>  Caused by:     wasm trap: wasm `unreachable` instruction executed 
+egress engine=component case="next call after cap failure" result=200 {"allocatedMb":1,"sum":1792}
+egress engine=component case="spin stopped at a 200 ms deadline" result=ERROR: deadline ms=201
+egress engine=component case="next call after deadline" result=200 {"spun":false}
+egress engine=component case="log" result=200 {"logged":"hi"} captured=["INFO guest info: hi", "WARN guest warn: hi", "INFO guest stdout: hi", "WARN guest stderr: hi"]
+egress engine=component case="config declared (typed import)" result=200 {"key":"greeting","value":"hello"}
+egress engine=component case="config undeclared" result=200 {"key":"nope","value":null}
+$ ./target/release/fnhost-density egress extism --mode reserve
+egress engine=extism case="allowed loopback, repeated headers" ms=1 result={"body":"hello","status":200,"xUpstream":"a, b"}
+egress engine=extism case="redirect not followed" ms=0 result={"body":"","status":302,"xUpstream":null}
+egress engine=extism case="http to non-loopback denied" ms=0 result={"body":"{\"error\":\"scheme 'http' is not permitted (https only, except loopback)\"}","status":0,"xUpstream":null}
+egress engine=extism case="host not on allowlist denied" ms=0 result={"body":"{\"error\":\"evil.example.org: not on this function's httpAllow list\"}","status":0,"xUpstream":null}
+egress engine=extism case="deadline caps the call (1 s call, 2 s upstream)" ms=1002 result={"body":"{\"error\":\"outbound call timed out\"}","status":0,"xUpstream":null}
+egress engine=extism case="kalloc 64 MiB under a 16 MiB cap" result={"grantedMb":15,"requestedMb":64}
+egress engine=extism case="alloc 32 MiB under a 16 MiB cap" result=TRAP/ERROR: error while executing at wasm backtrace:     0:  0x20f70 - <unknown>!<wasm function 457>     1:  0x216d4 - <unknown>!<wasm function 475>     2:   0xea6c - <unknown>!<wasm function 158>     3:   0x2344 - <unknown>!<wasm function 37>     4:   0x5231 - <unknown>!<wasm function 91>     5:    0x989 - <unknown>!<wasm function 25>     6:   0x61ad - <unknown>!<wasm function 111>: wasm trap: wasm `unreachable` instruction executed
+egress engine=extism case="next call after cap failure" result={"allocatedMb":1,"sum":1792}
+egress engine=extism case="log" result={"logged":"hi"} captured=["INFO guest info: hi", "WARN guest warn: hi"]
+egress engine=extism case="config declared" result={"key":"greeting","value":"hello"}
+egress engine=extism case="secret declared" result={"key":"token","value":"s3cret"}
+egress engine=extism case="secret missing" result={"key":"nope","value":""}
