@@ -80,10 +80,10 @@ async fn sdk_batch_create_dispatch_jobs(
             _ => RetryStrategy::ExponentialBackoff,
         };
 
-        let source = job_req.source.as_deref().unwrap_or("");
+        let source = job_req.source.as_deref();
         let mut job = if kind == DispatchKind::Event {
             DispatchJob::for_event(
-                job_req.event_id.as_deref().unwrap_or(""),
+                job_req.event_id.as_deref(),
                 &job_req.code,
                 source,
                 &job_req.target_url,

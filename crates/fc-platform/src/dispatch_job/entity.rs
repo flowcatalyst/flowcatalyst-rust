@@ -391,9 +391,9 @@ fn default_max_retries() -> u32 {
 impl DispatchJob {
     /// Create a new dispatch job for an event
     pub fn for_event(
-        event_id: impl Into<String>,
+        event_id: Option<&str>,
         event_type: impl Into<String>,
-        source: impl Into<String>,
+        source: Option<&str>,
         target_url: impl Into<String>,
         payload: impl Into<String>,
     ) -> Self {
@@ -403,14 +403,14 @@ impl DispatchJob {
             external_id: None,
             kind: DispatchKind::Event,
             code: event_type.into(),
-            source: Some(source.into()),
+            source: source.map(String::from),
             subject: None,
             target_url: target_url.into(),
             protocol: DispatchProtocol::HttpWebhook,
             payload: Some(payload.into()),
             payload_content_type: default_content_type(),
             data_only: false,
-            event_id: Some(event_id.into()),
+            event_id: event_id.map(String::from),
             correlation_id: None,
             client_id: None,
             subscription_id: None,
@@ -442,14 +442,14 @@ impl DispatchJob {
     /// Create a new dispatch job for a task
     pub fn for_task(
         code: impl Into<String>,
-        source: impl Into<String>,
+        source: Option<&str>,
         target_url: impl Into<String>,
         payload: impl Into<String>,
     ) -> Self {
-        let mut job = Self::for_event("", code, source, target_url, payload);
-        job.kind = DispatchKind::Task;
-        job.event_id = None;
-        job
+        Self {
+            kind: DispatchKind::Task,
+            ..Self::for_event(None, code, source, target_url, payload)
+        }
     }
 
     /// Parse the code field into (application, subdomain, aggregate) parts.
@@ -596,9 +596,9 @@ mod tests {
     #[test]
     fn test_dispatch_job_for_event() {
         let job = DispatchJob::for_event(
-            "evt123",
+            Some("evt123"),
             "orders:fulfillment:shipment:shipped",
-            "my-app",
+            Some("my-app"),
             "https://example.com/webhook",
             r#"{"orderId":"123"}"#,
         );
@@ -638,7 +638,7 @@ mod tests {
     fn test_dispatch_job_for_task() {
         let job = DispatchJob::for_task(
             "process-order",
-            "task-runner",
+            Some("task-runner"),
             "https://example.com/tasks",
             r#"{"taskId":"t1"}"#,
         );
@@ -651,8 +651,8 @@ mod tests {
 
     #[test]
     fn test_dispatch_job_unique_ids() {
-        let j1 = DispatchJob::for_event("e1", "t1", "s", "u", "p");
-        let j2 = DispatchJob::for_event("e2", "t2", "s", "u", "p");
+        let j1 = DispatchJob::for_event(Some("e1"), "t1", Some("s"), "u", "p");
+        let j2 = DispatchJob::for_event(Some("e2"), "t2", Some("s"), "u", "p");
         assert_ne!(j1.id, j2.id);
     }
 
@@ -850,7 +850,7 @@ mod tests {
 
     #[test]
     fn test_mark_queued() {
-        let mut job = DispatchJob::for_event("e1", "t", "s", "u", "p");
+        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
         job.mark_queued();
         assert_eq!(job.status, DispatchStatus::Queued);
         assert!(job.scheduled_for.is_some());
@@ -858,14 +858,14 @@ mod tests {
 
     #[test]
     fn test_mark_in_progress() {
-        let mut job = DispatchJob::for_event("e1", "t", "s", "u", "p");
+        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
         job.mark_in_progress();
         assert_eq!(job.status, DispatchStatus::Processing);
     }
 
     #[test]
     fn test_complete_success() {
-        let mut job = DispatchJob::for_event("e1", "t", "s", "u", "p");
+        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
         job.mark_in_progress();
         job.complete_success(200, Some("OK".to_string()));
 
@@ -881,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_record_failure_with_retry() {
-        let mut job = DispatchJob::for_event("e1", "t", "s", "u", "p");
+        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
         // max_retries = 3, so first failure should schedule retry
         job.record_failure("Connection timeout".to_string(), ErrorType::Timeout, None);
 
@@ -898,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_record_failure_exhausted_retries() {
-        let mut job = DispatchJob::for_event("e1", "t", "s", "u", "p");
+        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
         // Exhaust all retries (max_retries = 3)
         job.record_failure("err".to_string(), ErrorType::HttpError, Some(500));
         job.record_failure("err".to_string(), ErrorType::HttpError, Some(500));
@@ -912,7 +912,7 @@ mod tests {
 
     #[test]
     fn test_can_retry() {
-        let mut job = DispatchJob::for_event("e1", "t", "s", "u", "p");
+        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
         assert!(job.can_retry());
 
         job.complete_success(200, None);
@@ -923,7 +923,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_job_builder_methods() {
-        let job = DispatchJob::for_event("e1", "t", "s", "u", "p")
+        let job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p")
             .with_client_id("client-1")
             .with_subscription_id("sub-1")
             .with_service_account_id("sa-1")
@@ -947,8 +947,13 @@ mod tests {
 
     #[test]
     fn test_parse_code_parts() {
-        let job =
-            DispatchJob::for_event("e1", "orders:fulfillment:shipment:shipped", "s", "u", "p");
+        let job = DispatchJob::for_event(
+            Some("e1"),
+            "orders:fulfillment:shipment:shipped",
+            Some("s"),
+            "u",
+            "p",
+        );
         let (app, sub, agg) = job.parse_code_parts();
         assert_eq!(app, Some("orders".to_string()));
         assert_eq!(sub, Some("fulfillment".to_string()));
@@ -957,7 +962,7 @@ mod tests {
 
     #[test]
     fn test_parse_code_parts_single() {
-        let job = DispatchJob::for_event("e1", "simple", "s", "u", "p");
+        let job = DispatchJob::for_event(Some("e1"), "simple", Some("s"), "u", "p");
         let (app, sub, agg) = job.parse_code_parts();
         assert_eq!(app, Some("simple".to_string()));
         assert!(sub.is_none());
@@ -1005,9 +1010,9 @@ mod tests {
     #[test]
     fn test_dispatch_job_read_from_job() {
         let job = DispatchJob::for_event(
-            "e1",
+            Some("e1"),
             "orders:billing:invoice:created",
-            "app",
+            Some("app"),
             "https://x.com",
             "{}",
         )
@@ -1026,7 +1031,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_job_read_completed_flags() {
-        let mut job = DispatchJob::for_event("e1", "t", "s", "u", "p");
+        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
         job.complete_success(200, None);
         let read = DispatchJobRead::from(&job);
 
@@ -1038,7 +1043,7 @@ mod tests {
 
     #[test]
     fn test_add_metadata() {
-        let mut job = DispatchJob::for_event("e1", "t", "s", "u", "p");
+        let mut job = DispatchJob::for_event(Some("e1"), "t", Some("s"), "u", "p");
         job.add_metadata("key1", "value1");
         job.add_metadata("key2", "value2");
 
@@ -1052,7 +1057,8 @@ mod tests {
     // after record_failure.
 
     fn make_retryable_job(strategy: RetryStrategy, max_retries: u32) -> DispatchJob {
-        let mut job = DispatchJob::for_event("e1", "a:b:c:d", "src", "https://x.com", "{}");
+        let mut job =
+            DispatchJob::for_event(Some("e1"), "a:b:c:d", Some("src"), "https://x.com", "{}");
         job.retry_strategy = strategy;
         job.max_retries = max_retries;
         job

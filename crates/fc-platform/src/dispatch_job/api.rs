@@ -606,10 +606,10 @@ pub async fn create_dispatch_job(
 
     // Create the dispatch job
     let _now = chrono::Utc::now();
-    let source = req.source.as_deref().unwrap_or("");
+    let source = req.source.as_deref();
     let mut job = if kind == DispatchKind::Event {
         DispatchJob::for_event(
-            req.event_id.as_deref().unwrap_or(""),
+            req.event_id.as_deref(),
             &req.code,
             source,
             &req.target_url,
@@ -741,10 +741,10 @@ pub async fn batch_create_dispatch_jobs(
         };
 
         // Create the dispatch job
-        let source = job_req.source.as_deref().unwrap_or("");
+        let source = job_req.source.as_deref();
         let mut job = if kind == DispatchKind::Event {
             DispatchJob::for_event(
-                job_req.event_id.as_deref().unwrap_or(""),
+                job_req.event_id.as_deref(),
                 &job_req.code,
                 source,
                 &job_req.target_url,

@@ -700,9 +700,9 @@ async fn test_dispatch_job_lifecycle() {
 
     // Create
     let job = DispatchJob::for_event(
-        "evt-123",
+        Some("evt-123"),
         "order:created",
-        "platform",
+        Some("platform"),
         "https://example.com/webhook",
         "{}",
     );
@@ -753,9 +753,9 @@ async fn test_dispatch_job_batch_insert() {
     let jobs: Vec<DispatchJob> = (0..5)
         .map(|i| {
             DispatchJob::for_event(
-                format!("evt-{}", i),
+                Some(format!("evt-{}", i).as_str()),
                 "order:created",
-                "platform",
+                Some("platform"),
                 "https://example.com/webhook",
                 "{}",
             )

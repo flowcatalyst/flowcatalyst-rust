@@ -117,9 +117,9 @@ async fn test_dispatch_job_batch_insert_throughput() {
     let jobs: Vec<DispatchJob> = (0..100)
         .map(|i| {
             DispatchJob::for_event(
-                format!("evt-{}", i),
+                Some(format!("evt-{}", i).as_str()),
                 "load:test:event",
-                "load-test",
+                Some("load-test"),
                 "https://example.com/webhook",
                 format!("{{\"index\":{}}}", i),
             )
@@ -148,9 +148,9 @@ async fn test_dispatch_job_batch_insert_throughput() {
         let jobs: Vec<DispatchJob> = (0..100)
             .map(|i| {
                 DispatchJob::for_event(
-                    format!("evt-b{}-{}", batch, i),
+                    Some(format!("evt-b{}-{}", batch, i).as_str()),
                     "load:test:event",
-                    "load-test",
+                    Some("load-test"),
                     "https://example.com/webhook",
                     "{}",
                 )
@@ -276,9 +276,9 @@ async fn test_dispatch_job_query_performance() {
         let jobs: Vec<DispatchJob> = (0..100)
             .map(|i| {
                 let mut job = DispatchJob::for_event(
-                    format!("evt-q{}-{}", batch, i),
+                    Some(format!("evt-q{}-{}", batch, i).as_str()),
                     "load:query:event",
-                    "load-test",
+                    Some("load-test"),
                     "https://example.com/webhook",
                     "{}",
                 );
