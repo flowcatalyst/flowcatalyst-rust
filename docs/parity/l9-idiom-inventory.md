@@ -5,6 +5,22 @@ Status: findings from a read-only review on 2026-09-24. This is the input for la
 Method: six parallel reviews covered about 150k lines. Each item marked **✔** was checked by hand against
 the code. The other items come from the reviews and should be confirmed by whichever lane picks them up.
 
+## Progress (branch `refactor/l9-idioms`)
+
+Scope (owner, 2026-09-24): track C plus the enum and secret bugs (A1–A3, A5–A7, A9, A13). C6 and C8 are deferred.
+
+| Phase | Covers | State |
+|---|---|---|
+| Router stream | C1/C3/C4/C5/C7 in fc-router, fc-queue, fc-stream | done, merged |
+| SDK stream | A5/A6/A7/A9, C1/C2/C3/C7 in fc-sdk, fc-outbox, fc-common; fc-config and fc-secrets deleted | done, merged |
+| Platform P1 | A5 seal, A6, C7 dead code, small idioms | done |
+| Platform P2 | C1 errors (`?` in use cases, `UseCaseError` struct, typed errors) | done |
+| Platform P3 | C2 events (`from_ctx`, `DomainEvent::metadata`, snapshot tests) | done |
+| Platform P6 | C4 null injection and sentinels, C5 constructors, drop `too_many_arguments` allow | in progress |
+| Platform P4 | C3 + A1–A3 enums under X-06/X-01 | waiting on DB access |
+| Platform P5 | A13 secrets at rest + backfill | waiting on DB access |
+| Platform P7 | fc-platform `tsid::` migration, remove `TsidGenerator`, drop `should_implement_trait` allow | after P4 |
+
 ## Summary
 
 The Java shows in five concentrated patterns, not everywhere. The reviews found **none** of the following:
@@ -50,11 +66,15 @@ contract fixes / L4, not L9.
 | A6 ✔ | `TracingContext` is a `thread_local!` (Java's ThreadLocal/MDC). `run_with_context_async` sets it and then `.await`s, so the context can leak between tokio tasks. | `fc-platform/src/usecase/tracing_context.rs:9,147`, `fc-sdk/src/usecase/tracing_context.rs:8` | Delete it from fc-platform, where only tests use it. In fc-sdk, use `tokio::task_local!`. **This breaks the SDK API.** |
 | A7 ✔ | `fc-secrets` returns `format!("encrypted:{}", plaintext)`, which stores the plaintext under an "encrypted" label. No crate depends on it. The live `encrypted:` scheme is fc-platform's `EncryptionService` (see A13). | `fc-secrets/src/service.rs:358` | Delete the crate. |
 | A13 ✔ | **Secrets stored in plaintext.** Owner ruling: every stored secret is `encrypted:`-prefixed ciphertext produced by `shared/encryption_service.rs`. Places that don't comply: **(a)** the IDP `oidc_client_secret_ref` is stored exactly as the frontend's "Client Secret" field sends it, and the login read path falls back to the raw value when decryption fails or no key is set. **(b)** Service-account webhook `signing_secret`/`token` are generated and stored unencrypted in `wh_*_ref` columns (nothing reads them yet). **(c)** Platform-config `SECRET` values are plaintext and only masked on output; lowercase `"secret"` silently becomes `PLAIN` and is returned unmasked. **(d)** `decrypt` accepts values with no prefix. | (a) `identity_provider/operations/create.rs:114`, `update.rs:107`, `auth/oidc_login_api.rs:918-927`; (b) `service_account/operations/create.rs:182`, `regenerate_secret.rs:140`, `regenerate_token.rs`, `repository.rs:99-100`; (c) `platform_config/entity.rs:42-46,90`; (d) `shared/encryption_service.rs:123`. The correct sites are `oauth_clients_api.rs:254,613`, `application/api.rs:969`, `service_account/api.rs:401` and `fc-dev/init.rs:313`. | Encrypt on write in those use cases. Make reads refuse the request when decryption fails (as `oauth_api.rs:701,1450` already do). Require the prefix in `decrypt`. Add a one-off Rust backfill that encrypts non-prefixed values; it needs the app key, so it can't be a SQL migration. Remove the dead auth-config `oidc_client_secret_ref` request field and the `secret://` validator stub. |
+| A14 ✔ | **Fixed (`0e1cc3fc`).** SDK application-roles endpoints (`POST/GET /api/applications/{appCode}/roles`, `DELETE …/roles/{roleName}`) had no permission check. Any bearer token could create a role with arbitrary permissions in any app. The permission convention test missed it because these handlers sat in a stale `FN_SKIPLIST` block. | `shared/application_roles_sdk_api.rs` | Added `can_read_roles`/`can_create_roles`/`can_delete_roles`. **Open (owner decision):** remove the stale `FN_SKIPLIST` entries at `tests/permission_convention_test.rs` ~102-114 (the auto-mode classifier blocked the agent). |
+| A15 | **No own-application scope on SDK routes.** The sync and role endpoints never check that the calling service account belongs to `{appCode}`, so app A's service account can sync into app B. The application-service role says "scoped to own application", but nothing enforces it. Go enforces it (the owner rulings return 404 for out-of-scope targets). | `shared/sdk_sync_api.rs` (all `sync_*`), `shared/application_roles_sdk_api.rs` | An application-scope check on every `/api/applications/{appCode}/…` SDK route. Owner decision needed; it's a cross-cutting change. |
+| A16 | Uniqueness pre-checks written `if let Ok(Some(_)) = repo.find_by_x(..)` silently pass when the DB read fails, which lets duplicates in (or leaves the unique constraint to produce a 500). Found during P2. | `application/operations/create.rs:98`, `connection/…/create.rs:140`, `client/…/create.rs:105`, `auth/operations/create_{idp_role_mapping:68,auth_config:79,anchor_domain:64}`, `auth/operations/update_anchor_domain.rs:99`, `principal/…/create.rs`, `webauthn/…/register_passkey.rs`, `process/…/create.rs`, `event_type/…/create.rs`, `role/…/create.rs` | `repo.find_by_x(..).await?` with `if let Some(_)`. |
+| A17 | `subscription/sync` silently drops the dispatch pool when the pool code is unknown or the lookup fails. | `subscription/operations/sync.rs` | Reject unknown pool codes; propagate lookup errors. |
 | A8 | Monitoring endpoints always return defaults. `LeaderState`, `CircuitBreakerRegistry` and `InFlightTracker` are built but never written. `HealthChecker` has 0 impls and `checks` is never filled. | `shared/monitoring_api.rs:140-193`, `platform_routes.rs:961`, `shared/health_api.rs:78,130` | Wire them up or delete the endpoints. |
 | A9 | Serialisation failures silently become `{}`. | `fc-sdk/src/outbox/dto.rs:133,238,479`, `usecase/domain_event.rs:358`, `unit_of_work.rs:188` | Return the error. |
 | A10 | Token rows decode missing fields to `""`. A corrupt row gives a token with an empty principal. | `auth/authorization_code_repository.rs:47-61`, `refresh_token_repository.rs:98-107` | Use a `#[derive(Deserialize)]` payload struct. Round-trip test against the oidc-provider format. |
 | A11 | Router consistency windows. Linked maps sit under separate locks (`add_consumer` inserts into two maps under two locks, and `reconcile` takes three locks in sequence). In the outbox, `skip_blocking_message` reads state, locks the queue, then locks state again. | `fc-router/src/manager/mod.rs:710`, `manager/reconcile.rs:302`, `fc-outbox/src/message_group_processor.rs:226` | See C6. |
-| A12 | N+1 queries, which `CLAUDE.md` bans; found in passing. | `event/api.rs:513`, `principal/api.rs:1711,1810,1901`, `application/api.rs:1194`, `fc-outbox/src/repository.rs:232` | Batch with `ANY($1)`. |
+| A12 | N+1 queries, which `CLAUDE.md` bans; found in passing. | `event/api.rs:513`, `principal/api.rs:1711,1810,1901`, `application/api.rs:1194`, `principal/operations/sync.rs`, `event_type/operations/sync.rs`, `update_client_applications`, the scheduled-job dispatcher (`fc-outbox/src/repository.rs:232` was deleted with `OutboxRepositoryExt`) | Batch with `ANY($1)`. |
 
 ---
 
