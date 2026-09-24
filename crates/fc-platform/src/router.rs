@@ -236,6 +236,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub processes: ProcessesState,
     pub dispatch_jobs: DispatchJobsState,
     pub scheduled_jobs: ScheduledJobsState,
+    /// `/api/functions*`, `/api/function-{pools,policies,domains,routes}`.
+    pub functions: crate::function::api::FunctionsState,
     pub filter_options: FilterOptionsState,
     pub clients: ClientsState,
     pub principals: PrincipalsState,
@@ -395,6 +397,8 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             // SDK-facing app-scoped sync routes — exposed in the OpenAPI spec
             // so the SDK code generators produce typed bindings for them.
             .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
+            // The function API: full paths under five prefixes, so merged.
+            .merge(crate::function::api::functions_router(self.functions))
             .nest(PATH_AUTH, auth_router(self.auth).layer(auth_layer.clone()))
             .nest(
                 PATH_AUTH,
