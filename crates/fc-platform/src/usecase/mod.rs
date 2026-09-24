@@ -15,7 +15,7 @@ pub mod unit_of_work;
 pub mod use_case;
 
 pub use domain_event::{DomainEvent, EventMetadata, EventMetadataBuilder};
-pub use error::UseCaseError;
+pub use error::{OrNotFound, UseCaseError};
 pub use execution_context::ExecutionContext;
 pub use result::UseCaseResult;
 pub use unit_of_work::{DbTx, HasId, Persist, PgUnitOfWork, UnitOfWork};

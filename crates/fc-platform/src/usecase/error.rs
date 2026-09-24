@@ -24,6 +24,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::shared::error::PlatformError;
+
 /// Macro for creating error detail maps.
 ///
 /// # Example
@@ -192,6 +194,17 @@ impl UseCaseError {
         }
     }
 
+    /// Create an internal (infrastructure) error: a failed read, a
+    /// serialization failure, anything that is not the caller's fault and
+    /// not a failed commit. Maps to HTTP 500.
+    pub fn internal(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::CommitError {
+            code: code.into(),
+            message: message.into(),
+            details: HashMap::new(),
+        }
+    }
+
     /// Get the error code.
     pub fn code(&self) -> &str {
         match self {
@@ -234,6 +247,67 @@ impl std::fmt::Display for UseCaseError {
 
 impl std::error::Error for UseCaseError {}
 
+/// Lets use-case code apply `?` to repository calls.
+///
+/// The mapping is chosen so that the HTTP response after the
+/// `From<UseCaseError> for PlatformError` round trip keeps the status code
+/// of the original `PlatformError`, and for `NotFound`, `BusinessRule`,
+/// `Concurrency` and `Duplicate` the whole body. `UseCaseError` has no
+/// authentication kinds (those belong to handlers), so `Unauthorized`,
+/// `Forbidden` and the token errors become internal errors: a use case
+/// never receives them from a repository.
+impl From<PlatformError> for UseCaseError {
+    fn from(err: PlatformError) -> Self {
+        match err {
+            PlatformError::NotFound { entity_type, id } => Self::not_found(entity_type, id),
+            PlatformError::BusinessRule { code, message } => Self::business_rule(code, message),
+            PlatformError::Concurrency { code, message } => Self::concurrency(code, message),
+            e @ PlatformError::Duplicate { .. } => Self::business_rule("DUPLICATE", e.to_string()),
+            PlatformError::Validation { message } => Self::validation("VALIDATION_ERROR", message),
+            e @ (PlatformError::EventTypeNotFound { .. }
+            | PlatformError::SubscriptionNotFound { .. }
+            | PlatformError::ClientNotFound { .. }
+            | PlatformError::PrincipalNotFound { .. }
+            | PlatformError::ServiceAccountNotFound { .. }) => {
+                Self::not_found("NOT_FOUND", e.to_string())
+            }
+            PlatformError::Sqlx(e) => Self::internal("DATABASE_ERROR", e.to_string()),
+            PlatformError::Internal { message } => Self::internal("INTERNAL_ERROR", message),
+            other => Self::internal("INTERNAL_ERROR", other.to_string()),
+        }
+    }
+}
+
+/// `?`-friendly load-or-404 for repository lookups returning
+/// `Result<Option<T>, _>`.
+///
+/// ```ignore
+/// let role = self.role_repo.find_by_id(&id).await
+///     .or_not_found("ROLE_NOT_FOUND", format!("Role with ID '{}' not found", id))?;
+/// ```
+///
+/// `Ok(None)` becomes [`UseCaseError::not_found`] with the given code and
+/// message; `Err(e)` is converted with `From` (a repository error becomes
+/// an internal error, not a `COMMIT_FAILED`).
+pub trait OrNotFound<T> {
+    fn or_not_found(
+        self,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<T, UseCaseError>;
+}
+
+impl<T, E: Into<UseCaseError>> OrNotFound<T> for Result<Option<T>, E> {
+    fn or_not_found(
+        self,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Result<T, UseCaseError> {
+        self.map_err(Into::into)?
+            .ok_or_else(|| UseCaseError::not_found(code, message))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +342,82 @@ mod tests {
         } else {
             panic!("Expected BusinessRuleViolation");
         }
+    }
+
+    /// HTTP status + JSON body of a `PlatformError` response.
+    async fn render(err: PlatformError) -> (u16, serde_json::Value) {
+        use axum::response::IntoResponse;
+        let resp = err.into_response();
+        let status = resp.status().as_u16();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    /// Converting a `PlatformError` into a `UseCaseError` and back must
+    /// keep the HTTP response of the original.
+    #[tokio::test]
+    async fn test_platform_error_round_trip_keeps_response() {
+        let cases = || {
+            vec![
+                PlatformError::not_found("Role", "r1"),
+                PlatformError::business_rule("ROLE_IN_USE", "in use"),
+                PlatformError::Concurrency {
+                    code: "STALE".into(),
+                    message: "stale".into(),
+                },
+                PlatformError::duplicate("Client", "identifier", "acme"),
+                PlatformError::conflict("already there"),
+            ]
+        };
+        for (direct, via) in cases().into_iter().zip(cases()) {
+            let round_trip: PlatformError = UseCaseError::from(via).into();
+            assert_eq!(render(direct).await, render(round_trip).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_platform_error_round_trip_keeps_status() {
+        let cases = || {
+            vec![
+                PlatformError::validation("bad"),
+                PlatformError::Sqlx(sqlx::Error::RowNotFound),
+                PlatformError::internal("boom"),
+                PlatformError::EventTypeNotFound {
+                    code: "a:b:c".into(),
+                },
+            ]
+        };
+        for (direct, via) in cases().into_iter().zip(cases()) {
+            let round_trip: PlatformError = UseCaseError::from(via).into();
+            assert_eq!(render(direct).await.0, render(round_trip).await.0);
+        }
+    }
+
+    #[test]
+    fn test_database_error_is_internal_not_commit() {
+        let err = UseCaseError::from(PlatformError::Sqlx(sqlx::Error::RowNotFound));
+        assert_eq!(err.code(), "DATABASE_ERROR");
+        assert_eq!(err.http_status_code(), 500);
+    }
+
+    #[test]
+    fn test_or_not_found() {
+        let found: Result<Option<u32>, PlatformError> = Ok(Some(7));
+        assert_eq!(found.or_not_found("X_NOT_FOUND", "gone").unwrap(), 7);
+
+        let missing: Result<Option<u32>, PlatformError> = Ok(None);
+        let err = missing.or_not_found("X_NOT_FOUND", "gone").unwrap_err();
+        assert_eq!(err.code(), "X_NOT_FOUND");
+        assert_eq!(err.message(), "gone");
+        assert_eq!(err.http_status_code(), 404);
+
+        let failed: Result<Option<u32>, PlatformError> =
+            Err(PlatformError::Sqlx(sqlx::Error::PoolTimedOut));
+        let err = failed.or_not_found("X_NOT_FOUND", "gone").unwrap_err();
+        assert_eq!(err.code(), "DATABASE_ERROR");
+        assert_eq!(err.http_status_code(), 500);
     }
 
     #[test]

@@ -26,6 +26,25 @@ use super::error::UseCaseError;
 /// unit_of_work.commit(aggregate, event, command).await
 /// ```
 ///
+/// # Using `?` in a use case
+///
+/// `UseCaseResult` does not implement `Try`, so `execute` cannot use `?`
+/// directly. Put the loading and rule checks in an inherent
+/// `async fn prepare(..) -> Result<_, UseCaseError>`, where `?` works
+/// (repository errors convert via `From<PlatformError>`, and
+/// [`OrNotFound::or_not_found`](super::OrNotFound) turns `Ok(None)` into a
+/// 404), and keep only the hand-off to the UnitOfWork in `execute`:
+///
+/// ```ignore
+/// async fn execute(&self, command: Cmd, ctx: ExecutionContext) -> UseCaseResult<Evt> {
+///     let (role, event) = match self.prepare(&command, &ctx).await {
+///         Ok(v) => v,
+///         Err(e) => return UseCaseResult::failure(e),
+///     };
+///     self.unit_of_work.commit(&role, &*self.role_repo, event, &command).await
+/// }
+/// ```
+///
 /// # The seal
 ///
 /// Code outside the `usecase` module cannot fabricate a success, either
