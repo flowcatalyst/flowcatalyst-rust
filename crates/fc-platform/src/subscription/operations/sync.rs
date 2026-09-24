@@ -32,6 +32,7 @@ pub struct SyncSubscriptionInput {
     pub event_types: Vec<EventTypeBindingInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dispatch_pool_code: Option<String>,
+    /// Accepted for wire compatibility and not applied, as in Go.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -254,11 +255,11 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                     if let Some(timeout) = input.timeout_seconds {
                         sub.timeout_seconds = timeout as i32;
                     }
-                    // Ruling X-01: absent means NEXT_ON_ERROR, unknown means
-                    // NEXT_ON_ERROR with a warning. An existing subscription's
-                    // mode is left alone on update, as before.
-                    sub.mode =
-                        crate::dispatch_job::entity::parse_dispatch_mode(input.mode.as_deref());
+                    // The payload's `mode` is not applied, as in Go
+                    // (subscription/operations/sync.go:26-30): a synced
+                    // subscription takes the entity default, NEXT_ON_ERROR
+                    // (ruling X-01, `Subscription::new`). An existing
+                    // subscription's mode is left alone on update.
                     if let Some(pool) = requested_pool_code(input).and_then(|c| pools.get(c)) {
                         sub.dispatch_pool_id = Some(pool.id.clone());
                         sub.dispatch_pool_code = Some(pool.code.clone());
