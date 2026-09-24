@@ -2411,6 +2411,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fc-function-signing"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "der",
+ "hex",
+ "p256",
+ "p384",
+ "rand_core 0.6.4",
+ "serde_json",
+ "sha2",
+ "x509-cert",
+]
+
+[[package]]
 name = "fc-mcp"
 version = "0.1.0"
 dependencies = [
