@@ -19,7 +19,9 @@
 
 use chrono::{Duration, Utc};
 use std::env;
+use tracing::warn;
 
+use crate::login_attempt::entity::{AttemptType, LoginAttempt, LoginOutcome};
 use crate::login_attempt::repository::LoginAttemptRepository;
 use crate::shared::error::{PlatformError, Result};
 
@@ -113,7 +115,7 @@ pub async fn check(
     repo: &LoginAttemptRepository,
     policy: &BackoffPolicy,
     identifier: &str,
-    ip: &str,
+    ip: Option<&str>,
 ) -> Result<BackoffDecision> {
     let now = Utc::now();
     // Window 1: failures since last success (used by the per-pair backoff).
@@ -123,7 +125,7 @@ pub async fn check(
         .unwrap_or_else(|| now - Duration::days(30));
 
     // Per-pair backoff. Skip when no IP is known (local dev / pre-LB setup).
-    if !ip.is_empty() {
+    if let Some(ip) = ip {
         let (count, last_failure_at) = repo
             .failure_stats_by_identifier_ip_since(identifier, ip, last_success_cutoff)
             .await?;
@@ -156,6 +158,28 @@ pub async fn check(
     }
 
     Ok(BackoffDecision::Allow)
+}
+
+/// Record a user-login attempt (password or passkey). Fire-and-forget:
+/// errors are logged but never affect the login flow.
+pub async fn record_user_login_attempt(
+    repo: &LoginAttemptRepository,
+    identifier: Option<&str>,
+    principal_id: Option<&str>,
+    ip: Option<&str>,
+    outcome: LoginOutcome,
+    failure_reason: Option<&str>,
+) {
+    let attempt = LoginAttempt {
+        identifier: identifier.map(String::from),
+        principal_id: principal_id.map(String::from),
+        ip_address: ip.map(String::from),
+        failure_reason: failure_reason.map(String::from),
+        ..LoginAttempt::new(AttemptType::UserLogin, outcome)
+    };
+    if let Err(e) = repo.create(&attempt).await {
+        warn!(error = %e, "Failed to record login attempt (non-blocking)");
+    }
 }
 
 /// Convert a `Reject` decision into the standard rejection error. Handlers

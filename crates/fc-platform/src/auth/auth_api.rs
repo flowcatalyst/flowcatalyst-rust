@@ -15,18 +15,17 @@ use axum::{
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::warn;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::auth::login_backoff::{self, BackoffDecision, BackoffPolicy};
+use crate::auth::login_backoff::{self, record_user_login_attempt, BackoffDecision, BackoffPolicy};
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::{Authenticated, ClientIp};
 use crate::AuthService;
+use crate::LoginOutcome;
 use crate::PasswordService;
 use crate::RefreshToken;
-use crate::{AttemptType, LoginAttempt, LoginOutcome};
 use crate::{EmailDomainMappingRepository, IdentityProviderRepository, LoginAttemptRepository};
 use crate::{PrincipalRepository, RefreshTokenRepository};
 
@@ -221,7 +220,7 @@ pub async fn login(
     jar: CookieJar,
     Json(req): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, PlatformError> {
-    let ip = client_ip.unwrap_or_default();
+    let ip = client_ip.as_deref();
 
     // Run the layered backoff check BEFORE lookup so the response timing /
     // shape doesn't leak whether the email exists.
@@ -229,7 +228,7 @@ pub async fn login(
         &state.login_attempt_repo,
         &state.backoff_policy,
         &req.email,
-        &ip,
+        ip,
     )
     .await?
     {
@@ -246,11 +245,11 @@ pub async fn login(
         Some(p) => p,
         None => {
             // Record failed attempt (fire-and-forget)
-            record_login_attempt(
-                &state,
-                &req.email,
+            record_user_login_attempt(
+                &state.login_attempt_repo,
+                Some(&req.email),
                 None,
-                &ip,
+                ip,
                 LoginOutcome::Failure,
                 Some("INVALID_CREDENTIALS"),
             )
@@ -275,11 +274,11 @@ pub async fn login(
         .unwrap_or(false);
 
     if !password_valid {
-        record_login_attempt(
-            &state,
-            &req.email,
+        record_user_login_attempt(
+            &state.login_attempt_repo,
+            Some(&req.email),
             Some(&principal.id),
-            &ip,
+            ip,
             LoginOutcome::Failure,
             Some("INVALID_CREDENTIALS"),
         )
@@ -291,11 +290,11 @@ pub async fn login(
 
     // Check if user is active
     if !principal.active {
-        record_login_attempt(
-            &state,
-            &req.email,
+        record_user_login_attempt(
+            &state.login_attempt_repo,
+            Some(&req.email),
             Some(&principal.id),
-            &ip,
+            ip,
             LoginOutcome::Failure,
             Some("ACCOUNT_INACTIVE"),
         )
@@ -326,11 +325,11 @@ pub async fn login(
     let jar = jar.add(cookie);
 
     // Record successful login attempt (fire-and-forget)
-    record_login_attempt(
-        &state,
-        &req.email,
+    record_user_login_attempt(
+        &state.login_attempt_repo,
+        Some(&req.email),
         Some(&principal.id),
-        &ip,
+        ip,
         LoginOutcome::Success,
         None,
     )
@@ -347,28 +346,6 @@ pub async fn login(
 
     // Return both the cookie jar and JSON response
     Ok((jar, Json(response)))
-}
-
-/// Record a login attempt (fire-and-forget — errors are logged but don't affect the login flow)
-async fn record_login_attempt(
-    state: &AuthState,
-    email: &str,
-    principal_id: Option<&str>,
-    ip: &str,
-    outcome: LoginOutcome,
-    failure_reason: Option<&str>,
-) {
-    let mut attempt = LoginAttempt::new(AttemptType::UserLogin, outcome);
-    attempt.identifier = Some(email.to_string());
-    attempt.principal_id = principal_id.map(|s| s.to_string());
-    attempt.failure_reason = failure_reason.map(|s| s.to_string());
-    if !ip.is_empty() {
-        attempt.ip_address = Some(ip.to_string());
-    }
-
-    if let Err(e) = state.login_attempt_repo.create(&attempt).await {
-        warn!(error = %e, "Failed to record login attempt (non-blocking)");
-    }
 }
 
 /// Logout / revoke token

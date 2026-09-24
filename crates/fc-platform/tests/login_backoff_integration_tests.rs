@@ -66,9 +66,14 @@ async fn record_success(repo: &LoginAttemptRepository, email: &str, ip: &str, ag
 async fn allow_when_no_history() {
     let (pool, _c) = setup_test_db().await;
     let repo = LoginAttemptRepository::new(&pool);
-    let decision = check(&repo, &permissive_policy(), "fresh@example.com", "1.2.3.4")
-        .await
-        .expect("check");
+    let decision = check(
+        &repo,
+        &permissive_policy(),
+        "fresh@example.com",
+        Some("1.2.3.4"),
+    )
+    .await
+    .expect("check");
     assert!(matches!(decision, BackoffDecision::Allow));
 }
 
@@ -85,7 +90,7 @@ async fn first_three_failures_from_same_ip_are_free() {
         record_failure(&repo, email, ip, Duration::seconds(i)).await;
     }
 
-    let decision = check(&repo, &policy, email, ip).await.expect("check");
+    let decision = check(&repo, &policy, email, Some(ip)).await.expect("check");
     assert!(matches!(decision, BackoffDecision::Allow));
 }
 
@@ -103,7 +108,7 @@ async fn fourth_failure_triggers_pair_backoff() {
         record_failure(&repo, email, ip, Duration::milliseconds(100)).await;
     }
 
-    let decision = check(&repo, &policy, email, ip).await.expect("check");
+    let decision = check(&repo, &policy, email, Some(ip)).await.expect("check");
     match decision {
         BackoffDecision::Reject {
             retry_after_secs,
@@ -135,7 +140,7 @@ async fn legitimate_user_on_different_ip_is_not_blocked_by_attacker() {
     }
 
     // Legitimate user from a different IP should still be allowed.
-    let decision = check(&repo, &policy, email, "192.168.1.50")
+    let decision = check(&repo, &policy, email, Some("192.168.1.50"))
         .await
         .expect("check");
     assert!(
@@ -162,7 +167,7 @@ async fn distributed_attack_trips_global_ceiling() {
     }
 
     // Even from a fresh IP, the global ceiling rejects.
-    let decision = check(&repo, &policy, email, "203.0.113.99")
+    let decision = check(&repo, &policy, email, Some("203.0.113.99"))
         .await
         .expect("check");
     match decision {
@@ -194,7 +199,7 @@ async fn successful_login_resets_pair_backoff_window() {
 
     // The success cuts the failure-counting window — the next attempt
     // starts fresh.
-    let decision = check(&repo, &policy, email, ip).await.expect("check");
+    let decision = check(&repo, &policy, email, Some(ip)).await.expect("check");
     assert!(
         matches!(decision, BackoffDecision::Allow),
         "success should clear backoff state: {:?}",
@@ -217,7 +222,7 @@ async fn empty_ip_skips_pair_check_but_still_applies_global_ceiling() {
     }
 
     // Per-pair check is skipped (empty IP), but global ceiling still trips.
-    let decision = check(&repo, &policy, email, "").await.expect("check");
+    let decision = check(&repo, &policy, email, None).await.expect("check");
     assert!(
         matches!(
             decision,
@@ -251,7 +256,7 @@ async fn stale_failures_outside_window_dont_count() {
     // The pair check still sees them (its window is "since last success",
     // unbounded if there's no success). So expect a Reject with PairBackoff,
     // not GlobalCeiling.
-    let decision = check(&repo, &policy, email, ip).await.expect("check");
+    let decision = check(&repo, &policy, email, Some(ip)).await.expect("check");
     match decision {
         BackoffDecision::Reject { reason, .. } => {
             // Old failures will trigger the pair backoff but are well-past

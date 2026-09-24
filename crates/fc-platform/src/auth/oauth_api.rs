@@ -1449,10 +1449,11 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
 
     if !verified {
         warn!(client_id = %client_id, "Client secret verification failed");
-        let mut attempt =
-            LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure);
-        attempt.identifier = Some(client_id.clone());
-        attempt.failure_reason = Some("Invalid client secret".to_string());
+        let attempt = LoginAttempt {
+            identifier: Some(client_id.clone()),
+            failure_reason: Some("Invalid client secret".to_string()),
+            ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
+        };
         if let Err(e) = state.login_attempt_repo.create(&attempt).await {
             warn!(error = %e, "Failed to log service account login attempt");
         }
@@ -1535,9 +1536,11 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     };
 
     // Log successful service account login attempt
-    let mut attempt = LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Success);
-    attempt.identifier = Some(client_id.clone());
-    attempt.principal_id = Some(principal.id.clone());
+    let attempt = LoginAttempt {
+        identifier: Some(client_id.clone()),
+        principal_id: Some(principal.id.clone()),
+        ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Success)
+    };
     if let Err(e) = state.login_attempt_repo.create(&attempt).await {
         warn!(error = %e, "Failed to log service account login attempt");
     }

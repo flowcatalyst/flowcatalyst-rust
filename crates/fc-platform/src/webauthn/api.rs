@@ -19,7 +19,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
 
-use crate::auth::login_backoff::{self, BackoffDecision, BackoffPolicy};
+use crate::auth::login_backoff::{self, record_user_login_attempt, BackoffDecision, BackoffPolicy};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::{Authenticated, ClientIp};
 use crate::usecase::ExecutionContext;
@@ -33,8 +33,8 @@ use crate::webauthn::operations::{
 use crate::webauthn::repository::WebauthnCredentialRepository;
 use crate::webauthn::webauthn_service::WebauthnService;
 use crate::{
-    AttemptType, AuthService, EmailDomainMappingRepository, LoginAttempt, LoginAttemptRepository,
-    LoginOutcome, PrincipalRepository,
+    AuthService, EmailDomainMappingRepository, LoginAttemptRepository, LoginOutcome,
+    PrincipalRepository,
 };
 
 #[derive(Clone)]
@@ -52,27 +52,6 @@ pub struct WebauthnApiState {
     pub session_cookie_secure: bool,
     pub session_cookie_same_site: String,
     pub session_token_expiry_secs: i64,
-}
-
-async fn record_login_attempt(
-    repo: &LoginAttemptRepository,
-    identifier: Option<&str>,
-    principal_id: Option<&str>,
-    ip: &str,
-    outcome: LoginOutcome,
-    failure_reason: Option<&str>,
-) {
-    let mut attempt = LoginAttempt::new(AttemptType::UserLogin, outcome);
-    attempt.identifier = identifier.map(String::from);
-    attempt.principal_id = principal_id.map(String::from);
-    attempt.failure_reason = failure_reason.map(String::from);
-    if !ip.is_empty() {
-        attempt.ip_address = Some(ip.to_string());
-    }
-
-    if let Err(e) = repo.create(&attempt).await {
-        warn!(error = %e, "Failed to record passkey login attempt (non-blocking)");
-    }
 }
 
 // ── Request/response shapes ──────────────────────────────────────────────────
@@ -415,7 +394,7 @@ pub async fn authenticate_complete(
     jar: CookieJar,
     Json(req): Json<AuthenticateCompleteRequest>,
 ) -> Response {
-    let ip = client_ip.unwrap_or_default();
+    let ip = client_ip.as_deref();
 
     let consumed = match state
         .ceremony_repo
@@ -424,11 +403,11 @@ pub async fn authenticate_complete(
     {
         Ok(Some(c)) => c,
         _ => {
-            record_login_attempt(
+            record_user_login_attempt(
                 &state.login_attempt_repo,
                 None,
                 None,
-                &ip,
+                ip,
                 LoginOutcome::Failure,
                 Some("STATE_NOT_FOUND"),
             )
@@ -468,11 +447,11 @@ pub async fn authenticate_complete(
             } else {
                 "INVALID_CREDENTIALS"
             };
-            record_login_attempt(
+            record_user_login_attempt(
                 &state.login_attempt_repo,
                 None,
                 None,
-                &ip,
+                ip,
                 LoginOutcome::Failure,
                 Some(reason),
             )
@@ -484,11 +463,11 @@ pub async fn authenticate_complete(
     let principal = match state.principal_repo.find_by_id(&event.principal_id).await {
         Ok(Some(p)) => p,
         _ => {
-            record_login_attempt(
+            record_user_login_attempt(
                 &state.login_attempt_repo,
                 None,
                 Some(&event.principal_id),
-                &ip,
+                ip,
                 LoginOutcome::Failure,
                 Some("PRINCIPAL_NOT_FOUND"),
             )
@@ -502,18 +481,18 @@ pub async fn authenticate_complete(
     // determined attacker could chase fallback flows; locking out the same
     // email across both /auth/login and the passkey path closes that gap.
     if let Some(email) = principal.email() {
-        match login_backoff::check(&state.login_attempt_repo, &state.backoff_policy, email, &ip)
+        match login_backoff::check(&state.login_attempt_repo, &state.backoff_policy, email, ip)
             .await
         {
             Ok(BackoffDecision::Allow) => {}
             Ok(BackoffDecision::Reject {
                 retry_after_secs, ..
             }) => {
-                record_login_attempt(
+                record_user_login_attempt(
                     &state.login_attempt_repo,
                     Some(email),
                     Some(&principal.id),
-                    &ip,
+                    ip,
                     LoginOutcome::Failure,
                     Some("RATE_LIMITED"),
                 )
@@ -530,11 +509,11 @@ pub async fn authenticate_complete(
         Ok(t) => t,
         Err(e) => {
             warn!(error = %e, "failed to generate session token after passkey login");
-            record_login_attempt(
+            record_user_login_attempt(
                 &state.login_attempt_repo,
                 principal.email(),
                 Some(&principal.id),
-                &ip,
+                ip,
                 LoginOutcome::Failure,
                 Some("SESSION_TOKEN_FAILED"),
             )
@@ -546,11 +525,11 @@ pub async fn authenticate_complete(
     let cookie = build_session_cookie(&state, token);
     let jar = jar.add(cookie);
 
-    record_login_attempt(
+    record_user_login_attempt(
         &state.login_attempt_repo,
         principal.email(),
         Some(&principal.id),
-        &ip,
+        ip,
         LoginOutcome::Success,
         None,
     )

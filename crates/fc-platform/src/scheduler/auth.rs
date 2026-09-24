@@ -28,13 +28,17 @@ pub enum AuthError {
 /// Dispatch authentication service for generating and validating HMAC tokens
 #[derive(Clone)]
 pub struct DispatchAuthService {
+    /// Never `Some("")`: an empty key is normalised to `None` in `new`.
     app_key: Option<String>,
 }
 
 impl DispatchAuthService {
-    /// Create a new dispatch auth service with the given app key
+    /// Create a new dispatch auth service with the given app key. An empty
+    /// key is treated as not configured.
     pub fn new(app_key: Option<String>) -> Self {
-        Self { app_key }
+        Self {
+            app_key: app_key.filter(|k| !k.is_empty()),
+        }
     }
 
     /// Generate an HMAC-SHA256 auth token for a dispatch job ID
@@ -44,11 +48,6 @@ impl DispatchAuthService {
             .app_key
             .as_ref()
             .ok_or(AuthError::AppKeyNotConfigured)?;
-
-        if key.is_empty() {
-            return Err(AuthError::AppKeyNotConfigured);
-        }
-
         Ok(self.hmac_sha256_hex(dispatch_job_id, key))
     }
 
@@ -70,10 +69,7 @@ impl DispatchAuthService {
 
     /// Check if the app key is configured
     pub fn is_configured(&self) -> bool {
-        self.app_key
-            .as_ref()
-            .map(|k| !k.is_empty())
-            .unwrap_or(false)
+        self.app_key.is_some()
     }
 
     /// Compute HMAC-SHA256 and return hex-encoded result (lowercase)
