@@ -1,11 +1,11 @@
 //! Application scope on the `/api/applications/{appCode}/…` SDK routes.
 //!
-//! A service account bound to an application may act on that application
-//! and on any application it holds an explicit access grant for. An unbound
-//! principal may act on every application only when its `all_applications`
-//! flag is set (users, by default); a new service account has it off and
-//! reaches only what it is granted. Everything else answers the same 404 as
-//! an application that doesn't exist. Requires Docker.
+//! As in Go's `CanAccessApplication`: a principal may act on every
+//! application when its `all_applications` flag is set (users, by default),
+//! otherwise only on the applications it holds an explicit access grant for.
+//! A provisioned service account has the flag off and one grant for its
+//! application; a new one has neither. Everything else answers the same 404
+//! as an application that doesn't exist. Requires Docker.
 
 #[path = "support/mod.rs"]
 mod support;
@@ -100,11 +100,12 @@ async fn service_account_is_confined_to_its_applications() {
     let app_b = create_app(&app, "scope-b").await;
     let app_c = create_app(&app, "scope-c").await;
 
-    // An application's own service account (as provisioning creates it).
+    // An application's own service account, as provisioning creates it: no
+    // all-applications flag and one access grant for its application.
     let sa_a = token_for(
         &app,
         Principal::new_service("sa_a", "SA A", UserScope::Anchor).with_application_id(&app_a.id),
-        &[],
+        &[&app_a],
     )
     .await;
 
@@ -140,12 +141,12 @@ async fn service_account_is_confined_to_its_applications() {
         .expect("find role")
         .is_none());
 
-    // A service account bound to A with a grant for C reaches both, not B.
+    // A service account granted A and C reaches both, not B.
     let sa_many = token_for(
         &app,
         Principal::new_service("sa_many", "SA Many", UserScope::Anchor)
             .with_application_id(&app_a.id),
-        &[&app_c],
+        &[&app_a, &app_c],
     )
     .await;
     assert_eq!(
@@ -209,17 +210,33 @@ async fn service_account_is_confined_to_its_applications() {
         StatusCode::NOT_FOUND
     );
 
-    // The flag doesn't widen an account bound to an application.
+    // As in Go, the flag reaches every application even for an account made
+    // for one application.
     let mut bound_all = Principal::new_service("sa_bound_all", "SA Bound All", UserScope::Anchor)
         .with_application_id(&app_a.id);
     bound_all.all_applications = true;
     let sa_bound_all = token_for(&app, bound_all, &[]).await;
+    for code in ["scope-a", "scope-b", "scope-c"] {
+        assert_eq!(
+            sync_roles(&app, &sa_bound_all, code).await.0,
+            StatusCode::OK
+        );
+    }
+
+    // Being the application's attached service account grants nothing by
+    // itself (Go has no such pass).
+    let attached = Principal::new_service("sa_attached", "SA Attached", UserScope::Anchor);
+    let attached_id = attached.id.clone();
+    let sa_attached = token_for(&app, attached, &[]).await;
+    let mut app_d = Application::new("scope-d", "SCOPE-D");
+    app_d.service_account_id = Some(attached_id);
+    app.repos
+        .application_repo
+        .insert(&app_d)
+        .await
+        .expect("insert application");
     assert_eq!(
-        sync_roles(&app, &sa_bound_all, "scope-a").await.0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        sync_roles(&app, &sa_bound_all, "scope-b").await.0,
+        sync_roles(&app, &sa_attached, "scope-d").await.0,
         StatusCode::NOT_FOUND
     );
 
@@ -237,7 +254,7 @@ async fn service_account_is_confined_to_its_applications() {
     let sa_b = token_for(
         &app,
         Principal::new_service("sa_b", "SA B", UserScope::Anchor).with_application_id(&app_b.id),
-        &[],
+        &[&app_b],
     )
     .await;
     assert_eq!(sync_roles(&app, &sa_b, "scope-b").await.0, StatusCode::OK);
@@ -349,7 +366,7 @@ async fn platform_config_is_confined_to_the_callers_applications() {
         &app,
         Principal::new_service("sa_cfg_a", "SA Cfg A", UserScope::Anchor)
             .with_application_id(&app_a.id),
-        &[],
+        &[&app_a],
     )
     .await;
     let body = json!({ "value": "x" });
@@ -569,7 +586,8 @@ async fn all_applications_toggle() {
         StatusCode::NOT_FOUND
     );
 
-    // Not on an account bound to an application.
+    // An account made for one application may be given every application
+    // too, as in Go: the flag is the whole rule.
     let bound = Principal::new_service("sa_tog_bound", "SA Bound", UserScope::Anchor)
         .with_application_id(&app_a.id);
     let bound_id = bound.id.clone();
@@ -581,7 +599,7 @@ async fn all_applications_toggle() {
             json!({ "applicationIds": [], "allApplications": true }),
         )
         .await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 fn token(app: &TestApp, principal: &Principal) -> String {

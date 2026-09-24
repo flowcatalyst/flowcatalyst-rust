@@ -241,23 +241,15 @@ impl AuthorizationService {
 /// axis, orthogonal to the client tier: an ANCHOR service account can still
 /// be confined to one application.
 ///
-/// Mirrors Go's `CanAccessApplication` (a principal reaches an application
-/// iff `all_applications` is true or it holds an
-/// `iam_principal_application_access` grant for it), with one Rust rule kept
-/// from before the flag existed:
-/// - a principal bound to an application (`iam_principals.application_id`,
-///   set for an application's service account) reaches that application
-///   plus its grants, and never every application, whatever its flag says.
-///   The column defaults to true, so without this every service account
-///   provisioned before the flag (and every one Rust provisioned against a
-///   Go-migrated database) would widen from its own application to all of
-///   them;
-/// - an unbound principal reaches every application when `all_applications`
-///   is true, otherwise only its grants. A new service account starts with
-///   the flag off and no grants, so it reaches none until granted.
-///
-/// The application's own attached service account is let through separately
-/// (see [`checks::require_application_access`]).
+/// Exactly Go's `CanAccessApplication`
+/// (flowcatalyst-go internal/platform/shared/auth/auth.go:259-267): a
+/// principal reaches every application when `all_applications` is true,
+/// otherwise only the applications it holds an
+/// `iam_principal_application_access` grant for. The application a service
+/// account was provisioned for is one of those grants; nothing else (the
+/// principal's `application_id`, the application's attached service
+/// account) widens or narrows the scope. A new service account starts with
+/// the flag off and no grants, so it reaches none until granted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplicationScope {
     /// Every application, present and future.
@@ -267,25 +259,19 @@ pub enum ApplicationScope {
 }
 
 impl ApplicationScope {
-    /// Build the scope from a principal's binding. `None` (no such principal)
-    /// grants nothing.
+    /// Build the scope from a principal's flag and grants. `None` (no such
+    /// principal) grants nothing.
     pub fn from_binding(binding: Option<PrincipalApplicationBinding>) -> Self {
         match binding {
             None => Self::Only(HashSet::new()),
             Some(PrincipalApplicationBinding {
                 all_applications: true,
-                application_id: None,
                 ..
             }) => Self::All,
             Some(PrincipalApplicationBinding {
-                application_id,
                 granted_application_ids,
                 ..
-            }) => {
-                let mut ids: HashSet<String> = granted_application_ids.into_iter().collect();
-                ids.extend(application_id);
-                Self::Only(ids)
-            }
+            }) => Self::Only(granted_application_ids.into_iter().collect()),
         }
     }
 
@@ -365,7 +351,7 @@ impl ApplicationAccessService {
             self.application_repo.find_by_code(app_code),
             self.scope_for(&context.principal_id),
         )?;
-        checks::require_application_access(context, &scope, app_code, application)
+        checks::require_application_access(&scope, app_code, application)
     }
 }
 
@@ -909,22 +895,16 @@ pub mod checks {
 
     /// Resource scope for `/{appCode}` routes. `application` is what
     /// `app_code` resolved to (`None` if nothing). The caller may act on it
-    /// when its scope covers it or it is the application's own service
-    /// account. Otherwise the answer is the same 404 as a missing
-    /// application, so the route can't be used to probe which codes exist.
+    /// when its scope covers it. Otherwise the answer is the same 404 as a
+    /// missing application (owner ruling; Go answers 403), so the route
+    /// can't be used to probe which codes exist.
     pub fn require_application_access(
-        context: &AuthContext,
         scope: &ApplicationScope,
         app_code: &str,
         application: Option<Application>,
     ) -> Result<Application> {
         match application {
-            Some(app)
-                if scope.allows(&app.id)
-                    || app.service_account_id.as_deref() == Some(&context.principal_id) =>
-            {
-                Ok(app)
-            }
+            Some(app) if scope.allows(&app.id) => Ok(app),
             _ => Err(PlatformError::not_found("Application", app_code)),
         }
     }
@@ -1260,54 +1240,31 @@ mod tests {
 
     // ── Application scope ─────────────────────────────────────────────
 
-    fn binding_with(
-        all_applications: bool,
-        own: Option<&str>,
-        granted: &[&str],
-    ) -> Option<PrincipalApplicationBinding> {
+    fn binding(all_applications: bool, granted: &[&str]) -> Option<PrincipalApplicationBinding> {
         Some(PrincipalApplicationBinding {
             all_applications,
-            application_id: own.map(String::from),
             granted_application_ids: granted.iter().map(|s| s.to_string()).collect(),
         })
     }
 
-    /// A principal with the flag at its column default (true).
-    fn binding(own: Option<&str>, granted: &[&str]) -> Option<PrincipalApplicationBinding> {
-        binding_with(true, own, granted)
-    }
-
     #[test]
     fn test_application_scope_from_binding() {
-        // Unbound principal with all-applications: every application.
-        let all = ApplicationScope::from_binding(binding(None, &[]));
+        // all_applications: every application; grants don't narrow it. This
+        // holds for an application's own service account too, as in Go.
+        let all = ApplicationScope::from_binding(binding(true, &[]));
         assert_eq!(all, ApplicationScope::All);
         assert!(all.allows("app_any"));
-        // Grants don't narrow it.
-        assert!(ApplicationScope::from_binding(binding(None, &["app_1"])).allows("app_2"));
+        assert!(ApplicationScope::from_binding(binding(true, &["app_1"])).allows("app_2"));
 
-        // Unbound without all-applications (a new service account): nothing
-        // until granted, then only the grants.
-        let none = ApplicationScope::from_binding(binding_with(false, None, &[]));
+        // Without it (a new or provisioned service account): nothing until
+        // granted, then only the grants.
+        let none = ApplicationScope::from_binding(binding(false, &[]));
         assert_eq!(none, ApplicationScope::Only(HashSet::new()));
         assert!(!none.allows("app_any"));
-        let granted = ApplicationScope::from_binding(binding_with(false, None, &["app_1"]));
+        let granted = ApplicationScope::from_binding(binding(false, &["app_1", "app_2"]));
         assert!(granted.allows("app_1"));
-        assert!(!granted.allows("app_2"));
-
-        // Bound principal: its own application, whatever the flag says.
-        for flag in [true, false] {
-            let own = ApplicationScope::from_binding(binding_with(flag, Some("app_own"), &[]));
-            assert!(own.allows("app_own"));
-            assert!(!own.allows("app_other"), "flag {flag}");
-        }
-
-        // Bound principal with grants: own plus each grant, nothing else.
-        let many = ApplicationScope::from_binding(binding(Some("app_own"), &["app_1", "app_2"]));
-        assert!(many.allows("app_own"));
-        assert!(many.allows("app_1"));
-        assert!(many.allows("app_2"));
-        assert!(!many.allows("app_3"));
+        assert!(granted.allows("app_2"));
+        assert!(!granted.allows("app_3"));
 
         // No such principal: nothing.
         assert!(!ApplicationScope::from_binding(None).allows("app_own"));
@@ -1322,41 +1279,30 @@ mod tests {
 
     #[test]
     fn test_require_application_access() {
-        // Anchor scope and the ADMIN_ALL wildcard don't widen a bound scope.
-        let ctx = create_test_context(vec!["platform:*:*:*"], "ANCHOR", vec!["*"]);
-        let own = ApplicationScope::from_binding(binding(Some("app_a"), &[]));
+        let own = ApplicationScope::from_binding(binding(false, &["app_a"]));
 
-        let ok = checks::require_application_access(&ctx, &own, "a", Some(app("app_a", "a", None)));
-        assert_eq!(ok.expect("own application").id, "app_a");
+        let ok = checks::require_application_access(&own, "a", Some(app("app_a", "a", None)));
+        assert_eq!(ok.expect("granted application").id, "app_a");
 
         let out_of_scope =
-            checks::require_application_access(&ctx, &own, "b", Some(app("app_b", "b", None)))
+            checks::require_application_access(&own, "b", Some(app("app_b", "b", None)))
                 .unwrap_err();
-        let missing = checks::require_application_access(&ctx, &own, "b", None).unwrap_err();
+        let missing = checks::require_application_access(&own, "b", None).unwrap_err();
         assert!(matches!(out_of_scope, PlatformError::NotFound { .. }));
         assert_eq!(format!("{:?}", out_of_scope), format!("{:?}", missing));
 
-        // An unbound caller still gets 404 for a missing application.
+        // An all-applications caller still gets 404 for a missing application.
         let missing_all =
-            checks::require_application_access(&ctx, &ApplicationScope::All, "b", None)
-                .unwrap_err();
+            checks::require_application_access(&ApplicationScope::All, "b", None).unwrap_err();
         assert_eq!(format!("{:?}", missing_all), format!("{:?}", missing));
     }
 
     #[test]
-    fn test_require_application_access_own_service_account() {
-        // The application's attached service account passes even when its
-        // principal row carries no binding.
-        let ctx = create_test_context(vec![], "ANCHOR", vec![]);
-        let nothing = ApplicationScope::from_binding(None);
-        let attached = app("app_a", "a", Some(&ctx.principal_id));
-        assert!(checks::require_application_access(&ctx, &nothing, "a", Some(attached)).is_ok());
-        assert!(checks::require_application_access(
-            &ctx,
-            &nothing,
-            "a",
-            Some(app("app_a", "a", None))
-        )
-        .is_err());
+    fn test_attached_service_account_gets_no_implicit_pass() {
+        // Go has no "the application's own service account passes" rule: the
+        // account reaches its application through its access grant.
+        let nothing = ApplicationScope::from_binding(binding(false, &[]));
+        let attached = app("app_a", "a", Some("sa_principal"));
+        assert!(checks::require_application_access(&nothing, "a", Some(attached)).is_err());
     }
 }
