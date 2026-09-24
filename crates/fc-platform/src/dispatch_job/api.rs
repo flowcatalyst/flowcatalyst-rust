@@ -11,12 +11,14 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use crate::dispatch_job::entity::{parse_dispatch_mode, parse_dispatch_status};
+use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::DispatchJobRepository;
 use crate::{
-    DispatchAttempt, DispatchJob, DispatchJobRead, DispatchKind, DispatchMetadata, DispatchMode,
-    DispatchStatus, RetryStrategy,
+    DispatchAttempt, DispatchJob, DispatchJobRead, DispatchKind, DispatchMetadata, DispatchStatus,
+    RetryStrategy,
 };
 
 /// Dispatch job response DTO
@@ -468,18 +470,11 @@ pub async fn list_dispatch_jobs(
         }
     }
 
-    for status_str in &statuses {
-        match status_str.to_uppercase().as_str() {
-            "PENDING" | "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED"
-            | "EXPIRED" => {}
-            _ => {
-                return Err(PlatformError::validation(format!(
-                    "Invalid status: {}",
-                    status_str
-                )))
-            }
-        }
-    }
+    // Unknown (or miscased) statuses are a 400, not an empty result.
+    let statuses = statuses
+        .iter()
+        .map(|s| Ok(parse_dispatch_status(s)?.as_str().to_string()))
+        .collect::<Result<Vec<_>, PlatformError>>()?;
 
     let size = query.size.unwrap_or(50).clamp(1, 1000) as i64;
 
@@ -585,24 +580,16 @@ pub async fn create_dispatch_job(
     }
 
     // Determine kind
-    let kind = match req.kind.as_deref() {
-        Some("TASK") => DispatchKind::Task,
-        _ => DispatchKind::Event,
-    };
+    // Absent/empty means EVENT; anything else must be an exact kind (400).
+    let kind: DispatchKind = parse_opt(non_empty(req.kind.as_deref()))?.unwrap_or_default();
 
     // Determine mode
-    let mode = match req.mode.as_deref() {
-        Some("NEXT_ON_ERROR") => DispatchMode::NextOnError,
-        Some("BLOCK_ON_ERROR") => DispatchMode::BlockOnError,
-        _ => DispatchMode::Immediate,
-    };
+    let mode = parse_dispatch_mode(req.mode.as_deref());
 
     // Determine retry strategy
-    let retry_strategy = match req.retry_strategy.as_deref() {
-        Some("IMMEDIATE") => RetryStrategy::Immediate,
-        Some("FIXED_DELAY") => RetryStrategy::FixedDelay,
-        _ => RetryStrategy::ExponentialBackoff,
-    };
+    // Absent/empty means exponential; anything else must be a known strategy (400).
+    let retry_strategy: RetryStrategy =
+        parse_opt(non_empty(req.retry_strategy.as_deref()))?.unwrap_or_default();
 
     // Create the dispatch job
     let _now = chrono::Utc::now();
@@ -728,17 +715,11 @@ pub async fn batch_create_dispatch_jobs(
         }
 
         // Determine kind
-        let kind = match job_req.kind.as_deref() {
-            Some("TASK") => DispatchKind::Task,
-            _ => DispatchKind::Event,
-        };
+        // Absent/empty means EVENT; anything else must be an exact kind (400).
+        let kind: DispatchKind = parse_opt(non_empty(job_req.kind.as_deref()))?.unwrap_or_default();
 
         // Determine mode
-        let mode = match job_req.mode.as_deref() {
-            Some("NEXT_ON_ERROR") => DispatchMode::NextOnError,
-            Some("BLOCK_ON_ERROR") => DispatchMode::BlockOnError,
-            _ => DispatchMode::Immediate,
-        };
+        let mode = parse_dispatch_mode(job_req.mode.as_deref());
 
         // Create the dispatch job
         let source = job_req.source.as_deref();

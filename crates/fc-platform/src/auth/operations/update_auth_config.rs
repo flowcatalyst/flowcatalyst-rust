@@ -18,7 +18,7 @@ pub struct UpdateAuthConfigCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_provider: Option<String>,
+    pub auth_provider: Option<AuthProvider>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_issuer_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -34,7 +34,7 @@ pub struct UpdateAuthConfigCommand {
     pub additional_client_ids: Option<Vec<String>>,
     /// `ANCHOR` / `PARTNER` / `CLIENT`. Used by the /config-type endpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub config_type: Option<String>,
+    pub config_type: Option<AuthConfigType>,
 }
 
 pub struct UpdateAuthConfigUseCase<U: UnitOfWork> {
@@ -108,8 +108,8 @@ impl<U: UnitOfWork> UpdateAuthConfigUseCase<U> {
         if let Some(ref client_id) = command.primary_client_id {
             config.primary_client_id = Some(client_id.clone());
         }
-        if let Some(ref provider) = command.auth_provider {
-            config.auth_provider = AuthProvider::from_str(provider);
+        if let Some(provider) = command.auth_provider {
+            config.auth_provider = provider;
         }
         if let Some(ref url) = command.oidc_issuer_url {
             config.oidc_issuer_url = Some(url.clone());
@@ -129,8 +129,8 @@ impl<U: UnitOfWork> UpdateAuthConfigUseCase<U> {
         if let Some(ref ids) = command.additional_client_ids {
             config.additional_client_ids = ids.clone();
         }
-        if let Some(ref ct) = command.config_type {
-            config.config_type = AuthConfigType::from_str(ct);
+        if let Some(ct) = command.config_type {
+            config.config_type = ct;
         }
 
         config.updated_at = chrono::Utc::now();

@@ -141,16 +141,8 @@ pub async fn list_roles(
 
     // Filter by source if specified
     if let Some(ref source_filter) = query.source {
-        let source = match source_filter.to_uppercase().as_str() {
-            "CODE" => Some(RoleSource::Code),
-            "DATABASE" => Some(RoleSource::Database),
-            "SDK" => Some(RoleSource::Sdk),
-            _ => None,
-        };
-
-        if let Some(s) = source {
-            roles.retain(|r| r.source == s);
-        }
+        let source: RoleSource = source_filter.parse()?;
+        roles.retain(|r| r.source == source);
     }
 
     let total = roles.len();

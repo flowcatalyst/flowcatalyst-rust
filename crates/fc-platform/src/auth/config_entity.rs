@@ -13,12 +13,6 @@ pub enum AuthProvider {
 }
 
 impl AuthProvider {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Internal => "INTERNAL",
-            Self::Oidc => "OIDC",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "OIDC" => Self::Oidc,
@@ -26,6 +20,11 @@ impl AuthProvider {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(AuthProvider, "auth provider", {
+    Internal => "INTERNAL",
+    Oidc => "OIDC",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -38,13 +37,6 @@ pub enum AuthConfigType {
 }
 
 impl AuthConfigType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Anchor => "ANCHOR",
-            Self::Partner => "PARTNER",
-            Self::Client => "CLIENT",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "ANCHOR" => Self::Anchor,
@@ -53,6 +45,12 @@ impl AuthConfigType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(AuthConfigType, "auth config type", {
+    Anchor => "ANCHOR",
+    Partner => "PARTNER",
+    Client => "CLIENT",
+});
 
 /// AnchorDomain — matches TypeScript AnchorDomain interface
 #[derive(Debug, Clone, Serialize, Deserialize)]

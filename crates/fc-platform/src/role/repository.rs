@@ -178,7 +178,7 @@ impl RoleRepository {
     pub async fn find_with_filters(
         &self,
         application_code: Option<&str>,
-        source: Option<&str>,
+        source: Option<RoleSource>,
         client_managed: Option<bool>,
     ) -> Result<Vec<AuthRole>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM iam_roles");
@@ -194,7 +194,7 @@ impl RoleRepository {
         }
         if let Some(s) = source {
             push_where(&mut qb, &mut has_where);
-            qb.push("source = ").push_bind(s.to_string());
+            qb.push("source = ").push_bind(s.as_str());
         }
         if let Some(cm) = client_managed {
             push_where(&mut qb, &mut has_where);

@@ -20,13 +20,6 @@ pub enum PrincipalType {
 }
 
 impl PrincipalType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::User => "USER",
-            Self::Service => "SERVICE",
-        }
-    }
-
     // Lenient: unknown input maps to User by design (legacy DB rows).
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
@@ -36,6 +29,11 @@ impl PrincipalType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(PrincipalType, "principal type", {
+    User => "USER",
+    Service => "SERVICE",
+});
 
 /// User scope determines client access level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,14 +50,6 @@ pub enum UserScope {
 }
 
 impl UserScope {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Anchor => "ANCHOR",
-            Self::Partner => "PARTNER",
-            Self::Client => "CLIENT",
-        }
-    }
-
     // Lenient: unknown input maps to Client (most restrictive scope).
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
@@ -89,6 +79,12 @@ impl UserScope {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(UserScope, "user scope", {
+    Anchor => "ANCHOR",
+    Partner => "PARTNER",
+    Client => "CLIENT",
+});
 
 /// User identity for human users
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::process::entity::Process;
+use crate::process::entity::{Process, ProcessStatus};
 use crate::process::operations::{
     ArchiveProcessCommand, ArchiveProcessUseCase, CreateProcessCommand, CreateProcessUseCase,
     DeleteProcessCommand, DeleteProcessUseCase, UpdateProcessCommand, UpdateProcessUseCase,
@@ -231,14 +231,16 @@ pub async fn list_processes(
     crate::shared::authorization_service::checks::can_read_processes(&auth.0)?;
 
     // Default to CURRENT when no filters specified, matching event types.
+    let status: Option<ProcessStatus> =
+        crate::shared::enum_str::parse_opt(query.status.as_deref())?;
     let default_status = if query.application.is_none()
         && query.subdomain.is_none()
-        && query.status.is_none()
+        && status.is_none()
         && query.search.is_none()
     {
-        Some("CURRENT".to_string())
+        Some(ProcessStatus::Current)
     } else {
-        query.status.clone()
+        status
     };
 
     let processes = state
@@ -246,7 +248,7 @@ pub async fn list_processes(
         .find_with_filters(
             query.application.as_deref(),
             query.subdomain.as_deref(),
-            default_status.as_deref(),
+            default_status,
             query.search.as_deref(),
         )
         .await?;

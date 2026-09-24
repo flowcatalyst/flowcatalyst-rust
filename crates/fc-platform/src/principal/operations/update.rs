@@ -36,7 +36,7 @@ pub struct UpdateUserCommand {
     /// `ANCHOR` / `PARTNER` / `CLIENT`. Requires caller be anchor — the
     /// handler checks this before building the command.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
+    pub scope: Option<UserScope>,
 
     /// Home client ID. Required when scope becomes `CLIENT`; ignored for
     /// other scopes (the principal's `client_id` is nulled out).
@@ -83,21 +83,6 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
                 "NO_UPDATES",
                 "At least one field must be provided for update",
             ));
-        }
-
-        if let Some(ref scope) = command.scope {
-            match scope.to_uppercase().as_str() {
-                "ANCHOR" | "PARTNER" | "CLIENT" => {}
-                other => {
-                    return Err(UseCaseError::validation(
-                        "INVALID_SCOPE",
-                        format!(
-                            "Invalid scope '{}'. Must be ANCHOR, PARTNER, or CLIENT.",
-                            other
-                        ),
-                    ));
-                }
-            }
         }
 
         Ok(())
@@ -168,13 +153,7 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
         }
 
         // Scope change (+ consequent client_id rules).
-        let new_scope = match command.scope.as_deref().map(str::to_uppercase) {
-            Some(s) if s == "ANCHOR" => Some(UserScope::Anchor),
-            Some(s) if s == "PARTNER" => Some(UserScope::Partner),
-            Some(s) if s == "CLIENT" => Some(UserScope::Client),
-            Some(_) => unreachable!("validate() rejects invalid scope"),
-            None => None,
-        };
+        let new_scope = command.scope;
 
         if let Some(scope) = new_scope {
             if scope != principal.scope {

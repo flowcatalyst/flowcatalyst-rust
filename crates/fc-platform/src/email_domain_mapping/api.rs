@@ -146,7 +146,7 @@ pub async fn create_email_domain_mapping(
     let cmd = CreateEmailDomainMappingCommand {
         email_domain: req.email_domain,
         identity_provider_id: req.identity_provider_id,
-        scope_type: req.scope_type,
+        scope_type: req.scope_type.parse()?,
         primary_client_id: req.primary_client_id,
         additional_client_ids: req.additional_client_ids.unwrap_or_default(),
         granted_client_ids: req.granted_client_ids.unwrap_or_default(),
@@ -306,7 +306,7 @@ pub async fn update_email_domain_mapping(
     let cmd = UpdateEmailDomainMappingCommand {
         mapping_id: id,
         identity_provider_id: req.identity_provider_id,
-        scope_type: req.scope_type,
+        scope_type: crate::shared::enum_str::parse_opt(req.scope_type.as_deref())?,
         primary_client_id: req.primary_client_id,
         sync_roles_from_idp: req.sync_roles_from_idp,
         additional_client_ids: req.additional_client_ids,

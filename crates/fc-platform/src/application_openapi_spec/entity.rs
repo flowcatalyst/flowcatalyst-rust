@@ -15,13 +15,6 @@ pub enum OpenApiSpecStatus {
 }
 
 impl OpenApiSpecStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Current => "CURRENT",
-            Self::Archived => "ARCHIVED",
-        }
-    }
-
     pub fn from_str(s: &str) -> Self {
         match s {
             "ARCHIVED" => Self::Archived,
@@ -29,6 +22,11 @@ impl OpenApiSpecStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(OpenApiSpecStatus, "open api spec status", {
+    Current => "CURRENT",
+    Archived => "ARCHIVED",
+});
 
 /// Structured diff between two OpenAPI documents. Persisted as JSONB so the UI
 /// can render rich diffs; `OpenApiSpec::change_notes_text` is the pre-rendered

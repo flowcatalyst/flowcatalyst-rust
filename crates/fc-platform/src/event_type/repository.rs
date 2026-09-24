@@ -261,7 +261,7 @@ impl EventTypeRepository {
         &self,
         application: Option<&str>,
         client_id: Option<&str>,
-        status: Option<&str>,
+        status: Option<EventTypeStatus>,
         subdomain: Option<&str>,
         aggregate: Option<&str>,
     ) -> Result<Vec<EventType>> {
@@ -282,7 +282,7 @@ impl EventTypeRepository {
         }
         if let Some(s) = status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(s.to_string());
+            qb.push("status = ").push_bind(s.as_str());
         }
         if let Some(sd) = subdomain {
             push_where(&mut qb, &mut has_where);

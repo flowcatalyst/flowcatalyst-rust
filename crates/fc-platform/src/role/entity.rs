@@ -21,14 +21,6 @@ pub enum RoleSource {
 }
 
 impl RoleSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Code => "CODE",
-            Self::Database => "DATABASE",
-            Self::Sdk => "SDK",
-        }
-    }
-
     // Lenient: unknown input maps to Database by design (DB rows).
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
@@ -39,6 +31,12 @@ impl RoleSource {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(RoleSource, "role source", {
+    Code => "CODE",
+    Database => "DATABASE",
+    Sdk => "SDK",
+});
 
 /// Permission definition
 #[derive(Debug, Clone, Serialize, Deserialize)]

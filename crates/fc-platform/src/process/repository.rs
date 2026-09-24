@@ -134,11 +134,9 @@ impl ProcessRepository {
     }
 
     pub async fn find_all(&self) -> Result<Vec<Process>> {
-        let rows = sqlx::query_as::<_, ProcessRow>(
-            "SELECT * FROM msg_processes ORDER BY code ASC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query_as::<_, ProcessRow>("SELECT * FROM msg_processes ORDER BY code ASC")
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows.into_iter().map(Process::from).collect())
     }
 
@@ -156,7 +154,7 @@ impl ProcessRepository {
         &self,
         application: Option<&str>,
         subdomain: Option<&str>,
-        status: Option<&str>,
+        status: Option<ProcessStatus>,
         search: Option<&str>,
     ) -> Result<Vec<Process>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM msg_processes");
@@ -176,7 +174,7 @@ impl ProcessRepository {
         }
         if let Some(s) = status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(s.to_string());
+            qb.push("status = ").push_bind(s.as_str());
         }
         if let Some(term) = search {
             push_where(&mut qb, &mut has_where);

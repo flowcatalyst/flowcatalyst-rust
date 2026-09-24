@@ -24,16 +24,6 @@ pub enum WebhookAuthType {
 }
 
 impl WebhookAuthType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::None => "NONE",
-            Self::BearerToken => "BEARER_TOKEN",
-            Self::BasicAuth => "BASIC_AUTH",
-            Self::ApiKey => "API_KEY",
-            Self::HmacSignature => "HMAC_SIGNATURE",
-        }
-    }
-
     pub fn from_str(s: &str) -> Self {
         match s {
             "BEARER_TOKEN" => Self::BearerToken,
@@ -44,6 +34,14 @@ impl WebhookAuthType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(WebhookAuthType, "webhook auth type", {
+    None => "NONE",
+    BearerToken => "BEARER_TOKEN",
+    BasicAuth => "BASIC_AUTH",
+    ApiKey => "API_KEY",
+    HmacSignature => "HMAC_SIGNATURE",
+});
 
 /// HMAC algorithm for webhook signatures (`iam_service_accounts.wh_signing_algorithm`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

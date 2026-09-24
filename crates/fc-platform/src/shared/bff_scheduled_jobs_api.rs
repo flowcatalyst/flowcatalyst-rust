@@ -178,7 +178,8 @@ async fn list_jobs(
         Some(c) => Some(Some(c)),
         None => None,
     };
-    let status_filter = q.status.as_deref().map(ScheduledJobStatus::from_str);
+    let status_filter =
+        crate::shared::enum_str::parse_opt::<ScheduledJobStatus>(q.status.as_deref())?;
 
     let jobs = state
         .repo
@@ -334,8 +335,8 @@ async fn list_instances(
         return Err(PlatformError::forbidden("Anchor only"));
     }
 
-    let status = q.status.as_deref().map(InstanceStatus::from_str);
-    let trigger = q.trigger_kind.as_deref().map(TriggerKind::from_str);
+    let status = crate::shared::enum_str::parse_opt::<InstanceStatus>(q.status.as_deref())?;
+    let trigger = crate::shared::enum_str::parse_opt::<TriggerKind>(q.trigger_kind.as_deref())?;
     let filters = InstanceListFilters {
         scheduled_job_id: Some(&id),
         client_id: None,

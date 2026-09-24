@@ -11,12 +11,6 @@ pub enum ConfigScope {
 }
 
 impl ConfigScope {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Global => "GLOBAL",
-            Self::Client => "CLIENT",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "CLIENT" => Self::Client,
@@ -24,6 +18,11 @@ impl ConfigScope {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ConfigScope, "config scope", {
+    Global => "GLOBAL",
+    Client => "CLIENT",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -33,12 +32,6 @@ pub enum ConfigValueType {
 }
 
 impl ConfigValueType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Plain => "PLAIN",
-            Self::Secret => "SECRET",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "SECRET" => Self::Secret,
@@ -46,6 +39,11 @@ impl ConfigValueType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ConfigValueType, "config value type", {
+    Plain => "PLAIN",
+    Secret => "SECRET",
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -16,11 +16,11 @@ pub struct SetPlatformConfigPropertyCommand {
     pub section: String,
     pub property: String,
     pub value: String,
-    pub scope: String,
+    pub scope: ConfigScope,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub value_type: Option<String>,
+    pub value_type: Option<ConfigValueType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
@@ -106,7 +106,7 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
                 &command.application_code,
                 &command.section,
                 &command.property,
-                &command.scope,
+                command.scope.as_str(),
                 command.client_id.as_deref(),
             )
             .await?;
@@ -127,11 +127,11 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
         // Apply the patch. On create, also set scope/client_id/value_type.
         config.value = command.value.clone();
         if was_created {
-            config.scope = ConfigScope::from_str(&command.scope);
+            config.scope = command.scope;
             config.client_id = command.client_id.clone();
         }
-        if let Some(ref vt) = command.value_type {
-            config.value_type = ConfigValueType::from_str(vt);
+        if let Some(vt) = command.value_type {
+            config.value_type = vt;
         }
         if let Some(ref desc) = command.description {
             config.description = Some(desc.clone());

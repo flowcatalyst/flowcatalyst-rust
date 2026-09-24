@@ -10,8 +10,9 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::entity::PlatformConfig;
+use super::entity::{ConfigScope, PlatformConfig};
 use super::repository::PlatformConfigRepository;
+use crate::shared::enum_str::parse_opt;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -20,6 +21,18 @@ use crate::shared::middleware::Authenticated;
 pub struct ConfigQuery {
     pub scope: Option<String>,
     pub client_id: Option<String>,
+}
+
+impl ConfigQuery {
+    /// The requested scope, if any; a value that isn't an exact scope is a 400.
+    fn scope_filter(&self) -> Result<Option<ConfigScope>, PlatformError> {
+        parse_opt(self.scope.as_deref())
+    }
+
+    /// The requested scope, defaulting to GLOBAL.
+    fn scope_or_global(&self) -> Result<ConfigScope, PlatformError> {
+        Ok(self.scope_filter()?.unwrap_or(ConfigScope::Global))
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -125,7 +138,7 @@ pub async fn list_configs(
         .config_repo
         .find_by_application(
             &app_code,
-            query.scope.as_deref(),
+            query.scope_filter()?.map(|s| s.as_str()),
             query.client_id.as_deref(),
         )
         .await?;
@@ -157,7 +170,7 @@ pub async fn get_section(
     Path((app_code, section)): Path<(String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigSectionResponse>, PlatformError> {
-    let scope_str = query.scope.as_deref().unwrap_or("GLOBAL");
+    let scope_str = query.scope_or_global()?.as_str();
     let items = state
         .config_repo
         .find_by_section(
@@ -205,7 +218,7 @@ pub async fn get_property(
     Path((app_code, section, property)): Path<(String, String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigValueResponse>, PlatformError> {
-    let scope_str = query.scope.as_deref().unwrap_or("GLOBAL");
+    let scope_str = query.scope_or_global()?.as_str();
     let config = state
         .config_repo
         .find_by_key(
@@ -265,16 +278,16 @@ pub async fn set_property(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
-    let scope_str = query.scope.as_deref().unwrap_or("GLOBAL").to_string();
+    let scope = query.scope_or_global()?;
 
     let cmd = SetPlatformConfigPropertyCommand {
         application_code: app_code.clone(),
         section: section.clone(),
         property: property.clone(),
         value: req.value,
-        scope: scope_str.clone(),
+        scope,
         client_id: query.client_id.clone(),
-        value_type: req.value_type,
+        value_type: parse_opt(req.value_type.as_deref())?,
         description: req.description,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -290,7 +303,7 @@ pub async fn set_property(
             &app_code,
             &section,
             &property,
-            &scope_str,
+            scope.as_str(),
             query.client_id.as_deref(),
         )
         .await?
@@ -330,7 +343,7 @@ pub async fn delete_property(
     Query(query): Query<ConfigQuery>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
-    let scope_str = query.scope.as_deref().unwrap_or("GLOBAL");
+    let scope_str = query.scope_or_global()?.as_str();
     let deleted = state
         .config_repo
         .delete_by_key(

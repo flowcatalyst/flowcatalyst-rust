@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
-use crate::auth::config_entity::{AnchorDomain, ClientAuthConfig, IdpRoleMapping};
+use crate::auth::config_entity::{AnchorDomain, AuthProvider, ClientAuthConfig, IdpRoleMapping};
 use crate::shared::api_common::CreatedResponse;
+use crate::shared::enum_str::parse_opt;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::{AnchorDomainRepository, ClientAuthConfigRepository, IdpRoleMappingRepository};
@@ -616,12 +617,9 @@ pub async fn create_client_auth_config(
     let email_domain = req.email_domain.to_lowercase();
     let cmd = CreateAuthConfigCommand {
         email_domain: email_domain.clone(),
-        config_type: req
-            .config_type
-            .clone()
-            .unwrap_or_else(|| "CLIENT".to_string()),
+        config_type: parse_opt(req.config_type.as_deref())?.unwrap_or_default(),
         primary_client_id: req.primary_client_id.clone(),
-        auth_provider: req.auth_provider.clone(),
+        auth_provider: parse_opt(req.auth_provider.as_deref())?,
         oidc_issuer_url: req.oidc_issuer_url.clone(),
         oidc_client_id: req.oidc_client_id.clone(),
         oidc_multi_tenant: false,
@@ -730,7 +728,7 @@ pub async fn update_client_auth_config(
     let cmd = UpdateAuthConfigCommand {
         auth_config_id: id,
         primary_client_id: req.primary_client_id.clone(),
-        auth_provider: req.auth_provider.clone(),
+        auth_provider: parse_opt(req.auth_provider.as_deref())?,
         oidc_issuer_url: req.oidc_issuer_url.clone(),
         oidc_client_id: req.oidc_client_id.clone(),
         oidc_multi_tenant: None,
@@ -828,7 +826,7 @@ pub async fn update_config_type(
         oidc_issuer_pattern: None,
         oidc_client_secret_ref: None,
         additional_client_ids: None,
-        config_type: Some(req.config_type),
+        config_type: Some(req.config_type.parse()?),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state
@@ -897,9 +895,9 @@ pub async fn create_internal_auth_config(
     let email_domain = req.email_domain.to_lowercase();
     let cmd = CreateAuthConfigCommand {
         email_domain: email_domain.clone(),
-        config_type: req.config_type.clone(),
+        config_type: req.config_type.parse()?,
         primary_client_id: req.primary_client_id.clone(),
-        auth_provider: Some("INTERNAL".to_string()),
+        auth_provider: Some(AuthProvider::Internal),
         oidc_issuer_url: None,
         oidc_client_id: None,
         oidc_multi_tenant: false,
@@ -948,9 +946,9 @@ pub async fn create_oidc_auth_config(
     let email_domain = req.email_domain.to_lowercase();
     let cmd = CreateAuthConfigCommand {
         email_domain: email_domain.clone(),
-        config_type: req.config_type.clone(),
+        config_type: req.config_type.parse()?,
         primary_client_id: req.primary_client_id.clone(),
-        auth_provider: Some("OIDC".to_string()),
+        auth_provider: Some(AuthProvider::Oidc),
         oidc_issuer_url: Some(req.oidc_issuer_url.clone()),
         oidc_client_id: Some(req.oidc_client_id.clone()),
         oidc_multi_tenant: false,
@@ -1002,7 +1000,7 @@ pub async fn update_oidc_config(
     let cmd = UpdateAuthConfigCommand {
         auth_config_id: id,
         primary_client_id: None,
-        auth_provider: Some("OIDC".to_string()),
+        auth_provider: Some(AuthProvider::Oidc),
         oidc_issuer_url: req.oidc_issuer_url.clone(),
         oidc_client_id: req.oidc_client_id.clone(),
         oidc_multi_tenant: None,

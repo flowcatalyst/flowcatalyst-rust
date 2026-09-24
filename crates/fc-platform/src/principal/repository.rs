@@ -313,8 +313,8 @@ impl PrincipalRepository {
     pub async fn find_with_filters(
         &self,
         client_id: Option<&str>,
-        scope: Option<&str>,
-        principal_type: Option<&str>,
+        scope: Option<UserScope>,
+        principal_type: Option<PrincipalType>,
         active: Option<bool>,
         search: Option<&str>,
         email: Option<&str>,
@@ -344,11 +344,11 @@ impl PrincipalRepository {
         }
         if let Some(s) = scope {
             push_where(&mut qb, &mut has_where);
-            qb.push("p.scope = ").push_bind(s.to_uppercase());
+            qb.push("p.scope = ").push_bind(s.as_str());
         }
         if let Some(pt) = principal_type {
             push_where(&mut qb, &mut has_where);
-            qb.push("p.type = ").push_bind(pt.to_uppercase());
+            qb.push("p.type = ").push_bind(pt.as_str());
         }
         if let Some(a) = active {
             push_where(&mut qb, &mut has_where);

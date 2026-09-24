@@ -15,7 +15,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 // SHA-256 removed — secrets now use encrypted: format via EncryptionService
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
-use crate::auth::oauth_entity::{OAuthClient, OAuthClientType};
+use crate::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
 use crate::shared::api_common::{PaginationParams, SuccessResponse};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -189,11 +189,12 @@ pub struct OAuthClientsState {
         Arc<crate::auth::operations::RotateOAuthClientSecretUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
-fn parse_client_type(s: &str) -> OAuthClientType {
-    match s.to_uppercase().as_str() {
-        "CONFIDENTIAL" => OAuthClientType::Confidential,
-        _ => OAuthClientType::Public,
-    }
+/// Parses request grant types; an unknown one is a 400.
+fn parse_grant_types(grant_types: &[String]) -> Result<Vec<GrantType>, PlatformError> {
+    grant_types
+        .iter()
+        .map(|g| g.parse().map_err(PlatformError::from))
+        .collect()
 }
 
 /// Create a new OAuth client
@@ -224,18 +225,14 @@ pub async fn create_oauth_client(
     let client_id = req
         .client_id
         .unwrap_or_else(|| crate::shared::tsid::generate(crate::EntityType::OAuthClient));
-    let client_type = req
-        .client_type
-        .clone()
-        .unwrap_or_else(|| "PUBLIC".to_string());
-    let parsed_client_type = parse_client_type(&client_type);
+    // Absent means PUBLIC; anything present must be an exact client type.
+    let client_type: OAuthClientType =
+        crate::shared::enum_str::parse_opt(req.client_type.as_deref())?.unwrap_or_default();
 
     // For CONFIDENTIAL clients, generate a secret at the edge. The plaintext
     // is returned once; the encrypted ref is passed into the use case which
     // persists it atomically with the domain event.
-    let (client_secret_ref, generated_secret) = if parsed_client_type
-        == OAuthClientType::Confidential
-    {
+    let (client_secret_ref, generated_secret) = if client_type == OAuthClientType::Confidential {
         use base64::Engine;
 
         let mut secret_bytes = [0u8; 32];
@@ -259,9 +256,9 @@ pub async fn create_oauth_client(
     // Default grant_types = ["authorization_code"] when not specified, matching the
     // OAuthClient::new default.
     let grant_types = if req.grant_types.is_empty() {
-        vec!["authorization_code".to_string()]
+        vec![GrantType::AuthorizationCode]
     } else {
-        req.grant_types
+        parse_grant_types(&req.grant_types)?
     };
 
     let oauth_client_id = crate::shared::tsid::generate(crate::EntityType::OAuthClient);
@@ -278,7 +275,7 @@ pub async fn create_oauth_client(
         default_scopes: vec![],
         pkce_required: req
             .pkce_required
-            .unwrap_or(parsed_client_type == OAuthClientType::Public),
+            .unwrap_or(client_type == OAuthClientType::Public),
         application_ids: req.application_ids,
         allowed_origins: vec![],
         service_account_principal_id: None,
@@ -398,7 +395,11 @@ pub async fn update_oauth_client(
         client_name: req.client_name,
         redirect_uris: req.redirect_uris,
         post_logout_redirect_uris: req.post_logout_redirect_uris,
-        grant_types: req.grant_types,
+        grant_types: req
+            .grant_types
+            .as_deref()
+            .map(parse_grant_types)
+            .transpose()?,
         pkce_required: req.pkce_required,
         application_ids: req.application_ids,
         allowed_origins: req.allowed_origins,

@@ -13,12 +13,6 @@ pub enum ConnectionStatus {
 }
 
 impl ConnectionStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Active => "ACTIVE",
-            Self::Paused => "PAUSED",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "PAUSED" => Self::Paused,
@@ -26,6 +20,11 @@ impl ConnectionStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ConnectionStatus, "connection status", {
+    Active => "ACTIVE",
+    Paused => "PAUSED",
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

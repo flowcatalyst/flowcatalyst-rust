@@ -3,10 +3,65 @@
 //! Represents async delivery of an event/task to a target endpoint.
 //! Tracks full lifecycle with attempt history.
 
+use crate::shared::enum_str::UnknownEnumValue;
 use chrono::{DateTime, Utc};
 pub use fc_common::DispatchMode;
 pub use fc_common::DispatchStatus;
 use serde::{Deserialize, Serialize};
+
+/// Strict parse of a dispatch job status (X-06): anything but a known
+/// spelling is an error. `fc_common::DispatchStatus::from_str` maps unknown
+/// input to PENDING, so fc-platform parses through this instead.
+/// `IN_PROGRESS` and `ERROR` are legacy stored spellings of PROCESSING and
+/// FAILED.
+pub fn parse_dispatch_status(s: &str) -> Result<DispatchStatus, UnknownEnumValue> {
+    Ok(match s {
+        "PENDING" => DispatchStatus::Pending,
+        "QUEUED" => DispatchStatus::Queued,
+        "PROCESSING" | "IN_PROGRESS" => DispatchStatus::Processing,
+        "COMPLETED" => DispatchStatus::Completed,
+        "FAILED" | "ERROR" => DispatchStatus::Failed,
+        "CANCELLED" => DispatchStatus::Cancelled,
+        "EXPIRED" => DispatchStatus::Expired,
+        _ => {
+            return Err(UnknownEnumValue::new(
+                "dispatch job status",
+                s,
+                &[
+                    "PENDING",
+                    "QUEUED",
+                    "PROCESSING",
+                    "COMPLETED",
+                    "FAILED",
+                    "CANCELLED",
+                    "EXPIRED",
+                ],
+            ))
+        }
+    })
+}
+
+/// Dispatch mode, leniently (ruling X-01, the one exemption from X-06).
+/// Absent or empty means unspecified and takes the default, NEXT_ON_ERROR;
+/// an unrecognised value also takes the default but logs a warning, because
+/// silently reading a typo as some mode is how a producer loses ordering
+/// without noticing. Matches Go's `common.ParseDispatchMode`.
+pub fn parse_dispatch_mode(s: Option<&str>) -> DispatchMode {
+    match s {
+        Some("IMMEDIATE") => DispatchMode::Immediate,
+        Some("NEXT_ON_ERROR") => DispatchMode::NextOnError,
+        Some("BLOCK_ON_ERROR") => DispatchMode::BlockOnError,
+        None | Some("") => DispatchMode::default(),
+        Some(other) => {
+            tracing::warn!(
+                value = other,
+                default = DispatchMode::default().as_str(),
+                "unrecognised dispatch mode; using the default"
+            );
+            DispatchMode::default()
+        }
+    }
+}
 
 /// Dispatch job kind
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,12 +76,6 @@ pub enum DispatchKind {
 }
 
 impl DispatchKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Event => "EVENT",
-            Self::Task => "TASK",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "TASK" => Self::Task,
@@ -34,6 +83,11 @@ impl DispatchKind {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(DispatchKind, "dispatch kind", {
+    Event => "EVENT",
+    Task => "TASK",
+});
 
 /// Target protocol for dispatch
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,10 +98,11 @@ pub enum DispatchProtocol {
     HttpWebhook,
 }
 
+crate::shared::enum_str::str_enum!(DispatchProtocol, "dispatch protocol", {
+    HttpWebhook => "HTTP_WEBHOOK",
+});
+
 impl DispatchProtocol {
-    pub fn as_str(&self) -> &'static str {
-        "HTTP_WEBHOOK"
-    }
     pub fn from_str(_s: &str) -> Self {
         Self::HttpWebhook
     }
@@ -73,13 +128,6 @@ pub enum RetryStrategy {
 }
 
 impl RetryStrategy {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Immediate => "immediate",
-            Self::FixedDelay => "fixed",
-            Self::ExponentialBackoff => "exponential",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "immediate" | "IMMEDIATE" => Self::Immediate,
@@ -89,6 +137,12 @@ impl RetryStrategy {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(RetryStrategy, "retry strategy", {
+    Immediate => "immediate" | "IMMEDIATE",
+    FixedDelay => "fixed" | "FIXED_DELAY",
+    ExponentialBackoff => "exponential" | "EXPONENTIAL_BACKOFF",
+});
 
 /// Error type classification — matches TS DispatchErrorType
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,16 +161,6 @@ pub enum ErrorType {
 }
 
 impl ErrorType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Connection => "CONNECTION",
-            Self::Timeout => "TIMEOUT",
-            Self::HttpError => "HTTP_ERROR",
-            Self::Validation => "VALIDATION",
-            Self::Unknown => "UNKNOWN",
-        }
-    }
-
     pub fn from_str(s: &str) -> Self {
         match s {
             "CONNECTION" => Self::Connection,
@@ -127,6 +171,14 @@ impl ErrorType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ErrorType, "error type", {
+    Connection => "CONNECTION",
+    Timeout => "TIMEOUT",
+    HttpError => "HTTP_ERROR",
+    Validation => "VALIDATION",
+    Unknown => "UNKNOWN",
+});
 
 /// Outcome of one delivery attempt, as stored in
 /// `msg_dispatch_job_attempts.status`.
@@ -872,6 +924,54 @@ mod tests {
                 v
             );
         }
+    }
+
+    #[test]
+    fn dispatch_mode_is_lenient_and_defaults_to_next_on_error() {
+        assert_eq!(
+            parse_dispatch_mode(Some("IMMEDIATE")),
+            DispatchMode::Immediate
+        );
+        assert_eq!(
+            parse_dispatch_mode(Some("NEXT_ON_ERROR")),
+            DispatchMode::NextOnError
+        );
+        assert_eq!(
+            parse_dispatch_mode(Some("BLOCK_ON_ERROR")),
+            DispatchMode::BlockOnError
+        );
+        // X-01: absent, empty and unknown all mean NEXT_ON_ERROR, never IMMEDIATE.
+        for v in [
+            None,
+            Some(""),
+            Some("immediate"),
+            Some("BLOCKONERROR"),
+            Some("junk"),
+        ] {
+            assert_eq!(parse_dispatch_mode(v), DispatchMode::NextOnError, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn dispatch_status_parse_is_strict() {
+        for s in [
+            "PENDING",
+            "QUEUED",
+            "PROCESSING",
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+            "EXPIRED",
+        ] {
+            assert_eq!(parse_dispatch_status(s).unwrap().as_str(), s);
+        }
+        assert_eq!(
+            parse_dispatch_status("IN_PROGRESS"),
+            Ok(DispatchStatus::Processing)
+        );
+        assert_eq!(parse_dispatch_status("ERROR"), Ok(DispatchStatus::Failed));
+        assert!(parse_dispatch_status("pending").is_err());
+        assert!(parse_dispatch_status("").is_err());
     }
 
     #[test]

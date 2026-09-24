@@ -20,14 +20,6 @@ pub enum ClientStatus {
 }
 
 impl ClientStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Active => "ACTIVE",
-            Self::Inactive => "INACTIVE",
-            Self::Suspended => "SUSPENDED",
-        }
-    }
-
     // Lenient: unknown input maps to Active by design (legacy DB rows).
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
@@ -39,6 +31,12 @@ impl ClientStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ClientStatus, "client status", {
+    Active => "ACTIVE",
+    Inactive => "INACTIVE",
+    Suspended => "SUSPENDED",
+});
 
 /// Client note for audit trail (stored as JSONB in PostgreSQL)
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -15,10 +15,12 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::application::client_config_repository::ApplicationClientConfigRepository;
 use crate::application::entity::Application;
 use crate::application::repository::ApplicationRepository;
+use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::{Principal, UserIdentity, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::service_account::entity::RoleAssignment;
 use crate::shared::api_common::PaginationParams;
+use crate::shared::enum_str::parse_opt;
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
 use crate::AuditService;
@@ -512,9 +514,8 @@ pub async fn create_user(
             .identity_provider_repo
             .find_by_id(&m.identity_provider_id)
             .await?
-            .map(|idp| idp.r#type.as_str().to_string())
-            .unwrap_or_else(|| "INTERNAL".to_string()),
-        None => "INTERNAL".to_string(),
+            .map_or(IdentityProviderType::Internal, |idp| idp.r#type),
+        None => IdentityProviderType::Internal,
     };
 
     // Resolve scope + client association from email domain.
@@ -592,7 +593,7 @@ pub async fn create_user(
         granted_client_ids,
         password: req.password.clone(),
         enforce_password_complexity: req.enforce_password_complexity,
-        idp_type: Some(idp_type.clone()),
+        idp_type: Some(idp_type),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     let event = state
@@ -616,7 +617,7 @@ pub async fn create_user(
     // SDK / automation callers that DO send a password (e.g. bulk migration)
     // skip this step — they've taken responsibility for credential delivery.
     let should_send_magic_link = req.password.is_none()
-        && idp_type == "INTERNAL"
+        && idp_type == IdentityProviderType::Internal
         && created
             .user_identity
             .as_ref()
@@ -726,8 +727,8 @@ pub async fn list_principals(
         .principal_repo
         .find_with_filters(
             query.client_id.as_deref(),
-            query.scope.as_deref(),
-            query.principal_type.as_deref(),
+            parse_opt(query.scope.as_deref())?,
+            parse_opt(query.principal_type.as_deref())?,
             query.active,
             query.q.as_deref(),
             query.email.as_deref(),
@@ -855,7 +856,7 @@ pub async fn update_principal(
         first_name: req.first_name,
         last_name: req.last_name,
         active: req.active,
-        scope: req.scope,
+        scope: parse_opt(req.scope.as_deref())?,
         client_id: req.client_id,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);

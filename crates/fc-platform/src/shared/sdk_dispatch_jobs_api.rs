@@ -12,12 +12,12 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use crate::dispatch_job::api::CreateDispatchJobRequest;
+use crate::dispatch_job::entity::parse_dispatch_mode;
 use crate::shared::batch_api::{BatchResponse, BatchResultItem};
+use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
-use crate::{
-    DispatchJob, DispatchJobRepository, DispatchKind, DispatchMetadata, DispatchMode, RetryStrategy,
-};
+use crate::{DispatchJob, DispatchJobRepository, DispatchKind, DispatchMetadata, RetryStrategy};
 
 #[derive(Clone)]
 pub struct SdkDispatchJobsState {
@@ -63,22 +63,14 @@ async fn sdk_batch_create_dispatch_jobs(
             }
         }
 
-        let kind = match job_req.kind.as_deref() {
-            Some("TASK") => DispatchKind::Task,
-            _ => DispatchKind::Event,
-        };
+        // Absent/empty means EVENT; anything else must be an exact kind (400).
+        let kind: DispatchKind = parse_opt(non_empty(job_req.kind.as_deref()))?.unwrap_or_default();
 
-        let mode = match job_req.mode.as_deref() {
-            Some("NEXT_ON_ERROR") => DispatchMode::NextOnError,
-            Some("BLOCK_ON_ERROR") => DispatchMode::BlockOnError,
-            _ => DispatchMode::Immediate,
-        };
+        let mode = parse_dispatch_mode(job_req.mode.as_deref());
 
-        let retry_strategy = match job_req.retry_strategy.as_deref() {
-            Some("IMMEDIATE") => RetryStrategy::Immediate,
-            Some("FIXED_DELAY") => RetryStrategy::FixedDelay,
-            _ => RetryStrategy::ExponentialBackoff,
-        };
+        // Absent/empty means exponential; anything else must be a known strategy (400).
+        let retry_strategy: RetryStrategy =
+            parse_opt(non_empty(job_req.retry_strategy.as_deref()))?.unwrap_or_default();
 
         let source = job_req.source.as_deref();
         let mut job = if kind == DispatchKind::Event {

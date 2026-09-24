@@ -314,7 +314,7 @@ pub async fn create_application<U: UnitOfWork>(
         code: req.code,
         name: req.name,
         description: req.description,
-        application_type: req.application_type,
+        application_type: crate::shared::enum_str::parse_opt(req.application_type.as_deref())?,
         default_base_url: req.default_base_url,
         icon_url: req.icon_url,
     };
@@ -840,11 +840,11 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 oauth_client_id: oauth_row_id_for_cmd,
                 client_id: oauth_public_client_id_for_cmd,
                 client_name: oauth_client_name,
-                client_type: OAuthClientType::Confidential.as_str().to_string(),
+                client_type: OAuthClientType::Confidential,
                 client_secret_ref: Some(format!("encrypted:{}", client_secret_ref)),
                 redirect_uris: Vec::new(),
                 post_logout_redirect_uris: Vec::new(),
-                grant_types: vec![GrantType::ClientCredentials.as_str().to_string()],
+                grant_types: vec![GrantType::ClientCredentials],
                 default_scopes: Vec::new(),
                 pkce_required: false,
                 application_ids: vec![app_id],
@@ -933,10 +933,9 @@ pub async fn provision_login_client<U: UnitOfWork>(
         ));
     }
 
-    let client_type = match req.client_type.as_deref() {
-        Some("CONFIDENTIAL") => OAuthClientType::Confidential,
-        _ => OAuthClientType::Public,
-    };
+    // Absent means PUBLIC; anything present must be an exact client type.
+    let client_type: OAuthClientType =
+        crate::shared::enum_str::parse_opt(req.client_type.as_deref())?.unwrap_or_default();
 
     // Pre-validate: app must exist; reject if a login client already exists
     // (one per app — rotate or delete the existing one if you need fresh
@@ -970,11 +969,11 @@ pub async fn provision_login_client<U: UnitOfWork>(
         oauth_client_id: oauth_row_id.clone(),
         client_id: oauth_public_client_id.clone(),
         client_name,
-        client_type: client_type.as_str().to_string(),
+        client_type,
         client_secret_ref,
         redirect_uris: req.redirect_uris.clone(),
         post_logout_redirect_uris: Vec::new(),
-        grant_types: vec![GrantType::AuthorizationCode.as_str().to_string()],
+        grant_types: vec![GrantType::AuthorizationCode],
         default_scopes: vec![
             "openid".to_string(),
             "profile".to_string(),

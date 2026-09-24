@@ -14,13 +14,6 @@ pub enum DispatchPoolStatus {
 }
 
 impl DispatchPoolStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Active => "ACTIVE",
-            Self::Suspended => "SUSPENDED",
-            Self::Archived => "ARCHIVED",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "SUSPENDED" => Self::Suspended,
@@ -29,6 +22,12 @@ impl DispatchPoolStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(DispatchPoolStatus, "dispatch pool status", {
+    Active => "ACTIVE",
+    Suspended => "SUSPENDED",
+    Archived => "ARCHIVED",
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

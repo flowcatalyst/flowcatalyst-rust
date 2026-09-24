@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ConnectionUpdated;
+use crate::connection::entity::ConnectionStatus;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
@@ -22,7 +23,7 @@ pub struct UpdateConnectionCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
+    pub status: Option<ConnectionStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_account_id: Option<String>,
 }
@@ -108,17 +109,10 @@ impl<U: UnitOfWork> UpdateConnectionUseCase<U> {
         if let Some(ref sa_id) = command.service_account_id {
             connection.service_account_id = sa_id.clone();
         }
-        if let Some(ref status) = command.status {
-            match status.to_uppercase().as_str() {
-                "ACTIVE" => connection.activate(),
-                "PAUSED" => connection.pause(),
-                _ => {
-                    return Err(UseCaseError::validation(
-                        "INVALID_STATUS",
-                        "Status must be ACTIVE or PAUSED",
-                    ));
-                }
-            }
+        match command.status {
+            Some(ConnectionStatus::Active) => connection.activate(),
+            Some(ConnectionStatus::Paused) => connection.pause(),
+            None => {}
         }
         connection.updated_at = chrono::Utc::now();
 
@@ -127,7 +121,7 @@ impl<U: UnitOfWork> UpdateConnectionUseCase<U> {
             &connection.id,
             &connection.code,
             command.name.as_deref(),
-            command.status.as_deref(),
+            command.status.map(|s| s.as_str()),
         );
         Ok((connection, event))
     }

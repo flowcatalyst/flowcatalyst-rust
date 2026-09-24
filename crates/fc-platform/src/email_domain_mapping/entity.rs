@@ -12,13 +12,6 @@ pub enum ScopeType {
 }
 
 impl ScopeType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Anchor => "ANCHOR",
-            Self::Partner => "PARTNER",
-            Self::Client => "CLIENT",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "PARTNER" => Self::Partner,
@@ -27,6 +20,12 @@ impl ScopeType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ScopeType, "scope type", {
+    Anchor => "ANCHOR",
+    Partner => "PARTNER",
+    Client => "CLIENT",
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

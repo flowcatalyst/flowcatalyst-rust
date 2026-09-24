@@ -397,13 +397,13 @@ pub async fn create_service_account<U: UnitOfWork>(
                 oauth_client_id: oauth_client_id.clone(),
                 client_id: oauth_client_id.clone(),
                 client_name: account.name.clone(),
-                client_type: "CONFIDENTIAL".to_string(),
+                client_type: crate::auth::oauth_entity::OAuthClientType::Confidential,
                 client_secret_ref: Some(format!("encrypted:{}", encrypted)),
                 redirect_uris: vec![],
                 post_logout_redirect_uris: vec![],
                 grant_types: vec![
-                    "client_credentials".to_string(),
-                    "authorization_code".to_string(),
+                    crate::auth::oauth_entity::GrantType::ClientCredentials,
+                    crate::auth::oauth_entity::GrantType::AuthorizationCode,
                 ],
                 default_scopes: vec![
                     "openid".to_string(),

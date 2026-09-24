@@ -19,14 +19,6 @@ pub enum ScheduledJobStatus {
 }
 
 impl ScheduledJobStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Active => "ACTIVE",
-            Self::Paused => "PAUSED",
-            Self::Archived => "ARCHIVED",
-        }
-    }
-
     pub fn from_str(s: &str) -> Self {
         match s {
             "PAUSED" => Self::Paused,
@@ -35,6 +27,12 @@ impl ScheduledJobStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ScheduledJobStatus, "scheduled job status", {
+    Active => "ACTIVE",
+    Paused => "PAUSED",
+    Archived => "ARCHIVED",
+});
 
 /// ScheduledJob aggregate. Pure data + behaviour. No sqlx imports here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,12 +203,6 @@ pub enum TriggerKind {
 }
 
 impl TriggerKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Cron => "CRON",
-            Self::Manual => "MANUAL",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "MANUAL" => Self::Manual,
@@ -218,6 +210,11 @@ impl TriggerKind {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(TriggerKind, "trigger kind", {
+    Cron => "CRON",
+    Manual => "MANUAL",
+});
 
 /// Lifecycle status of a single firing.
 ///
@@ -235,16 +232,6 @@ pub enum InstanceStatus {
 }
 
 impl InstanceStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Queued => "QUEUED",
-            Self::InFlight => "IN_FLIGHT",
-            Self::Delivered => "DELIVERED",
-            Self::Completed => "COMPLETED",
-            Self::Failed => "FAILED",
-            Self::DeliveryFailed => "DELIVERY_FAILED",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "IN_FLIGHT" => Self::InFlight,
@@ -263,6 +250,15 @@ impl InstanceStatus {
     }
 }
 
+crate::shared::enum_str::str_enum!(InstanceStatus, "instance status", {
+    Queued => "QUEUED",
+    InFlight => "IN_FLIGHT",
+    Delivered => "DELIVERED",
+    Completed => "COMPLETED",
+    Failed => "FAILED",
+    DeliveryFailed => "DELIVERY_FAILED",
+});
+
 /// SDK-reported completion outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -272,12 +268,6 @@ pub enum CompletionStatus {
 }
 
 impl CompletionStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Success => "SUCCESS",
-            Self::Failure => "FAILURE",
-        }
-    }
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "SUCCESS" => Some(Self::Success),
@@ -286,6 +276,11 @@ impl CompletionStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(CompletionStatus, "completion status", {
+    Success => "SUCCESS",
+    Failure => "FAILURE",
+});
 
 /// Log severity for `logForScheduledJobInstance` writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,14 +295,6 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Debug => "DEBUG",
-            Self::Info => "INFO",
-            Self::Warn => "WARN",
-            Self::Error => "ERROR",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "DEBUG" => Self::Debug,
@@ -317,6 +304,13 @@ impl LogLevel {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(LogLevel, "log level", {
+    Debug => "DEBUG",
+    Info => "INFO",
+    Warn => "WARN",
+    Error => "ERROR",
+});
 
 /// Per-firing history row. Not an aggregate — written directly by the
 /// scheduler/dispatcher via the platform-infrastructure exemption.

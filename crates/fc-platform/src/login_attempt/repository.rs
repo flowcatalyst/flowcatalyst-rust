@@ -39,8 +39,8 @@ impl From<LoginAttemptRow> for LoginAttempt {
 /// Dates are RFC 3339 strings.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LoginAttemptFilter<'a> {
-    pub attempt_type: Option<&'a str>,
-    pub outcome: Option<&'a str>,
+    pub attempt_type: Option<AttemptType>,
+    pub outcome: Option<LoginOutcome>,
     pub identifier: Option<&'a str>,
     pub principal_id: Option<&'a str>,
     pub date_from: Option<&'a str>,
@@ -105,11 +105,11 @@ impl LoginAttemptRepository {
 
         if let Some(at) = filter.attempt_type {
             push_where(&mut qb, &mut has_where);
-            qb.push("attempt_type = ").push_bind(at.to_string());
+            qb.push("attempt_type = ").push_bind(at.as_str());
         }
         if let Some(o) = filter.outcome {
             push_where(&mut qb, &mut has_where);
-            qb.push("outcome = ").push_bind(o.to_string());
+            qb.push("outcome = ").push_bind(o.as_str());
         }
         if let Some(ident) = filter.identifier {
             push_where(&mut qb, &mut has_where);

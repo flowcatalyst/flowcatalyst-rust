@@ -32,7 +32,7 @@ pub struct AddSchemaCommand {
 
     /// Schema type
     #[serde(default)]
-    pub schema_type: Option<String>,
+    pub schema_type: Option<SchemaType>,
 }
 
 fn default_mime_type() -> String {
@@ -151,8 +151,8 @@ impl<U: UnitOfWork> AddSchemaUseCase<U> {
         let mut spec_version =
             SpecVersion::new(&event_type.id, version, command.schema_content.clone());
         spec_version.mime_type = command.mime_type.clone();
-        if let Some(ref st) = command.schema_type {
-            spec_version.schema_type = SchemaType::from_str(st);
+        if let Some(st) = command.schema_type {
+            spec_version.schema_type = st;
         }
 
         // Add to event type
@@ -164,7 +164,7 @@ impl<U: UnitOfWork> AddSchemaUseCase<U> {
             &event_type.id,
             version,
             &command.mime_type,
-            command.schema_type.as_deref().unwrap_or("JSON_SCHEMA"),
+            command.schema_type.unwrap_or_default().as_str(),
         );
         Ok((event_type, event))
     }

@@ -15,7 +15,6 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::shared::api_common::PaginationParams;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
-use crate::subscription::entity::DispatchMode;
 use crate::SubscriptionRepository;
 use crate::{EventTypeBinding, Subscription};
 
@@ -253,17 +252,6 @@ pub struct SubscriptionsState {
     >,
 }
 
-fn parse_mode(s: &str) -> Result<DispatchMode, PlatformError> {
-    match s.to_uppercase().as_str() {
-        "IMMEDIATE" => Ok(DispatchMode::Immediate),
-        "BLOCK_ON_ERROR" => Ok(DispatchMode::BlockOnError),
-        _ => Err(PlatformError::validation(format!(
-            "Invalid mode: {}. Valid options: IMMEDIATE, BLOCK_ON_ERROR",
-            s
-        ))),
-    }
-}
-
 /// Create a new subscription
 #[utoipa::path(
     post,
@@ -301,10 +289,11 @@ pub async fn create_subscription(
         ));
     }
 
-    let mode = match req.mode {
-        Some(ref m) => Some(parse_mode(m)?),
-        None => None,
-    };
+    // Ruling X-01: absent or unrecognised means NEXT_ON_ERROR (with a warning
+    // for the unrecognised case), never a rejection.
+    let mode = Some(crate::dispatch_job::entity::parse_dispatch_mode(
+        req.mode.as_deref(),
+    ));
 
     let cmd = CreateSubscriptionCommand {
         code: req.code,
@@ -395,6 +384,8 @@ pub async fn list_subscriptions(
     Query(query): Query<SubscriptionsQuery>,
 ) -> Result<Json<SubscriptionListResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_subscriptions(&auth.0)?;
+    let status: Option<crate::subscription::entity::SubscriptionStatus> =
+        crate::shared::enum_str::parse_opt(query.status.as_deref())?;
 
     let subscriptions = if let Some(ref client_id) = query.client_id {
         if !auth.0.can_access_client(client_id) {
@@ -411,9 +402,10 @@ pub async fn list_subscriptions(
         state.subscription_repo.find_active().await?
     };
 
-    // Filter by client access
+    // Filter by status and client access
     let filtered: Vec<SubscriptionResponse> = subscriptions
         .into_iter()
+        .filter(|s| status.is_none_or(|st| s.status == st))
         .filter(|s| match &s.client_id {
             Some(cid) => auth.0.can_access_client(cid),
             None => auth.0.is_anchor(),

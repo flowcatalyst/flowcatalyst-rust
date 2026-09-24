@@ -9,7 +9,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::entity::Connection;
+use super::entity::{Connection, ConnectionStatus};
 use super::repository::ConnectionRepository;
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
@@ -167,7 +167,7 @@ pub async fn list_connections(
         .connection_repo
         .find_with_filters(
             query.client_id.as_deref(),
-            query.status.as_deref(),
+            crate::shared::enum_str::parse_opt(query.status.as_deref())?,
             query.service_account_id.as_deref(),
         )
         .await?;
@@ -238,7 +238,7 @@ pub async fn update_connection(
         name: req.name,
         description: req.description,
         external_id: req.external_id,
-        status: req.status,
+        status: crate::shared::enum_str::parse_opt(req.status.as_deref())?,
         service_account_id: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -307,7 +307,7 @@ pub async fn pause_connection(
         name: None,
         description: None,
         external_id: None,
-        status: Some("PAUSED".to_string()),
+        status: Some(ConnectionStatus::Paused),
         service_account_id: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -350,7 +350,7 @@ pub async fn activate_connection(
         name: None,
         description: None,
         external_id: None,
-        status: Some("ACTIVE".to_string()),
+        status: Some(ConnectionStatus::Active),
         service_account_id: None,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);

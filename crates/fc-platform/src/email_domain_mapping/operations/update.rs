@@ -19,7 +19,7 @@ pub struct UpdateEmailDomainMappingCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity_provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope_type: Option<String>,
+    pub scope_type: Option<ScopeType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,12 +110,8 @@ impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
         if let Some(ref idp_id) = command.identity_provider_id {
             mapping.identity_provider_id = idp_id.clone();
         }
-        if let Some(ref scope_type_str) = command.scope_type {
-            mapping.scope_type = match scope_type_str.to_uppercase().as_str() {
-                "ANCHOR" => ScopeType::Anchor,
-                "PARTNER" => ScopeType::Partner,
-                _ => ScopeType::Client,
-            };
+        if let Some(scope_type) = command.scope_type {
+            mapping.scope_type = scope_type;
         }
         if let Some(ref primary_client_id) = command.primary_client_id {
             mapping.primary_client_id = Some(primary_client_id.clone());
@@ -161,7 +157,7 @@ mod tests {
     fn test_command_serialization() {
         let cmd = UpdateEmailDomainMappingCommand {
             mapping_id: "edm-123".to_string(),
-            scope_type: Some("PARTNER".to_string()),
+            scope_type: Some(ScopeType::Partner),
             primary_client_id: Some("client-456".to_string()),
             sync_roles_from_idp: Some(true),
             additional_client_ids: Some(vec!["c1".to_string(), "c2".to_string()]),
@@ -182,7 +178,7 @@ mod tests {
 
         let deserialized: UpdateEmailDomainMappingCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.mapping_id, "edm-123");
-        assert_eq!(deserialized.scope_type, Some("PARTNER".to_string()));
+        assert_eq!(deserialized.scope_type, Some(ScopeType::Partner));
         assert_eq!(deserialized.sync_roles_from_idp, Some(true));
     }
 

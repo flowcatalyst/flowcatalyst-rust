@@ -13,13 +13,6 @@ pub enum ApplicationType {
 }
 
 impl ApplicationType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Application => "APPLICATION",
-            Self::Integration => "INTEGRATION",
-        }
-    }
-
     pub fn from_str(s: &str) -> Self {
         match s {
             "INTEGRATION" => Self::Integration,
@@ -27,6 +20,11 @@ impl ApplicationType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ApplicationType, "application type", {
+    Application => "APPLICATION",
+    Integration => "INTEGRATION",
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

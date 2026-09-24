@@ -136,7 +136,7 @@ async fn create_identity_provider(
     let cmd = CreateIdentityProviderCommand {
         code: req.code,
         name: req.name,
-        idp_type: req.r#type,
+        idp_type: req.r#type.parse()?,
         oidc_issuer_url: req.oidc_issuer_url,
         oidc_client_id: req.oidc_client_id,
         oidc_client_secret_ref: req.oidc_client_secret_ref,

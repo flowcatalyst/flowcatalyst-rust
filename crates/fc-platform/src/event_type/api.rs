@@ -12,6 +12,7 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use crate::event_type::entity::EventTypeStatus;
 use crate::shared::api_common::PaginationParams;
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
@@ -320,15 +321,17 @@ pub async fn list_event_types(
     crate::shared::authorization_service::checks::can_read_event_types(&auth.0)?;
 
     // Default to CURRENT status when no filters are provided (matches find_active behavior)
+    let status: Option<EventTypeStatus> =
+        crate::shared::enum_str::parse_opt(query.status.as_deref())?;
     let default_status = if query.application.is_none()
         && query.client_id.is_none()
-        && query.status.is_none()
+        && status.is_none()
         && query.subdomain.is_none()
         && query.aggregate.is_none()
     {
-        Some("CURRENT".to_string())
+        Some(EventTypeStatus::Current)
     } else {
-        query.status.clone()
+        status
     };
 
     let event_types = state
@@ -336,7 +339,7 @@ pub async fn list_event_types(
         .find_with_filters(
             query.application.as_deref(),
             query.client_id.as_deref(),
-            default_status.as_deref(),
+            default_status,
             query.subdomain.as_deref(),
             query.aggregate.as_deref(),
         )

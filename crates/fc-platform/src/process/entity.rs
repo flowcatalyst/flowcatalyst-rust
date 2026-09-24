@@ -12,12 +12,6 @@ pub enum ProcessStatus {
 }
 
 impl ProcessStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Current => "CURRENT",
-            Self::Archived => "ARCHIVED",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "ARCHIVED" => Self::Archived,
@@ -25,6 +19,11 @@ impl ProcessStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ProcessStatus, "process status", {
+    Current => "CURRENT",
+    Archived => "ARCHIVED",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -36,13 +35,6 @@ pub enum ProcessSource {
 }
 
 impl ProcessSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Code => "CODE",
-            Self::Api => "API",
-            Self::Ui => "UI",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "CODE" => Self::Code,
@@ -51,6 +43,12 @@ impl ProcessSource {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(ProcessSource, "process source", {
+    Code => "CODE",
+    Api => "API",
+    Ui => "UI",
+});
 
 /// Process domain entity. The `body` field holds free-form diagram source
 /// (typically Mermaid); the platform stores it verbatim and renders it

@@ -13,12 +13,6 @@ pub enum EventTypeStatus {
 }
 
 impl EventTypeStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Current => "CURRENT",
-            Self::Archived => "ARCHIVED",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "ARCHIVED" => Self::Archived,
@@ -26,6 +20,11 @@ impl EventTypeStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(EventTypeStatus, "event type status", {
+    Current => "CURRENT",
+    Archived => "ARCHIVED",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -38,13 +37,6 @@ pub enum EventTypeSource {
 }
 
 impl EventTypeSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Code => "CODE",
-            Self::Api => "API",
-            Self::Ui => "UI",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "CODE" => Self::Code,
@@ -53,6 +45,12 @@ impl EventTypeSource {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(EventTypeSource, "event type source", {
+    Code => "CODE",
+    Api => "API",
+    Ui => "UI",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -65,13 +63,6 @@ pub enum SpecVersionStatus {
 }
 
 impl SpecVersionStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Finalising => "FINALISING",
-            Self::Current => "CURRENT",
-            Self::Deprecated => "DEPRECATED",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "CURRENT" => Self::Current,
@@ -80,6 +71,12 @@ impl SpecVersionStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(SpecVersionStatus, "spec version status", {
+    Finalising => "FINALISING",
+    Current => "CURRENT",
+    Deprecated => "DEPRECATED",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SchemaType {
@@ -93,13 +90,6 @@ pub enum SchemaType {
 }
 
 impl SchemaType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::JsonSchema => "JSON_SCHEMA",
-            Self::Xsd => "XSD",
-            Self::Proto => "PROTO",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "XSD" | "XML_SCHEMA" => Self::Xsd,
@@ -108,6 +98,12 @@ impl SchemaType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(SchemaType, "schema type", {
+    JsonSchema => "JSON_SCHEMA",
+    Xsd => "XSD" | "XML_SCHEMA",
+    Proto => "PROTO" | "PROTOBUF",
+});
 
 /// Schema version stored in msg_event_type_spec_versions
 #[derive(Debug, Clone, Serialize, Deserialize)]

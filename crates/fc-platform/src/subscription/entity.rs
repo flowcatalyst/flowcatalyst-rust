@@ -14,12 +14,6 @@ pub enum SubscriptionStatus {
 }
 
 impl SubscriptionStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Active => "ACTIVE",
-            Self::Paused => "PAUSED",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "PAUSED" => Self::Paused,
@@ -27,6 +21,11 @@ impl SubscriptionStatus {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(SubscriptionStatus, "subscription status", {
+    Active => "ACTIVE",
+    Paused => "PAUSED",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -39,13 +38,6 @@ pub enum SubscriptionSource {
 }
 
 impl SubscriptionSource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Code => "CODE",
-            Self::Api => "API",
-            Self::Ui => "UI",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "CODE" => Self::Code,
@@ -54,6 +46,12 @@ impl SubscriptionSource {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(SubscriptionSource, "subscription source", {
+    Code => "CODE",
+    Api => "API",
+    Ui => "UI",
+});
 
 /// Event type binding stored in msg_subscription_event_types
 #[derive(Debug, Clone, Serialize, Deserialize)]

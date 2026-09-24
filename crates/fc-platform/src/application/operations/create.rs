@@ -26,7 +26,7 @@ pub struct CreateApplicationCommand {
     /// Application type: APPLICATION or INTEGRATION
     #[serde(rename = "type")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_type: Option<String>,
+    pub application_type: Option<ApplicationType>,
 
     /// Default base URL
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,7 +103,7 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         }
 
         // Create the application entity
-        let mut application = if command.application_type.as_deref() == Some("INTEGRATION") {
+        let mut application = if command.application_type == Some(ApplicationType::Integration) {
             Application::integration(code, name)
         } else {
             Application::new(code, name)
@@ -122,10 +122,7 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         }
 
         // Create domain event
-        let app_type = match application.application_type {
-            ApplicationType::Integration => "INTEGRATION",
-            ApplicationType::Application => "APPLICATION",
-        };
+        let app_type = application.application_type.as_str();
 
         let event = ApplicationCreated::new(
             &ctx,
@@ -153,7 +150,7 @@ mod tests {
             code: "orders".to_string(),
             name: "Orders Application".to_string(),
             description: Some("Handles order processing".to_string()),
-            application_type: Some("APPLICATION".to_string()),
+            application_type: Some(ApplicationType::Application),
             default_base_url: Some("https://orders.example.com".to_string()),
             icon_url: None,
         };

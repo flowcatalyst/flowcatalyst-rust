@@ -170,15 +170,6 @@ pub struct BffRolesState {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-fn parse_source(s: &str) -> Result<RoleSource, PlatformError> {
-    match s.to_uppercase().as_str() {
-        "CODE" => Ok(RoleSource::Code),
-        "DATABASE" => Ok(RoleSource::Database),
-        "SDK" => Ok(RoleSource::Sdk),
-        _ => Err(PlatformError::validation(format!("Invalid source: {}", s))),
-    }
-}
-
 // ── Handlers ──────────────────────────────────────────────────────────────
 
 /// List roles with optional filters
@@ -201,7 +192,7 @@ pub async fn list_roles(
     let roles = match (&query.application, &query.source) {
         (Some(app), _) => state.role_repo.find_by_application(app).await?,
         (_, Some(source)) => {
-            let s = parse_source(source)?;
+            let s: RoleSource = source.parse()?;
             state.role_repo.find_by_source(s).await?
         }
         _ => state.role_repo.find_all().await?,

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use super::events::UserCreated;
 use crate::auth::password_service::PasswordService;
 use crate::details;
+use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
@@ -61,7 +62,7 @@ pub struct CreateUserCommand {
     /// no password is supplied, one is generated server-side so the record
     /// is never created with a null hash.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub idp_type: Option<String>,
+    pub idp_type: Option<IdentityProviderType>,
 }
 
 /// Use case for creating a new user.
@@ -172,11 +173,7 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         //     supplied, a random strong one) hashed and stored. The record
         //     is never persisted with a null hash — the user completes
         //     first-login by going through the password-reset flow.
-        let is_oidc = command
-            .idp_type
-            .as_deref()
-            .map(|t| t.eq_ignore_ascii_case("OIDC"))
-            .unwrap_or(false);
+        let is_oidc = command.idp_type == Some(IdentityProviderType::Oidc);
 
         if !is_oidc {
             let enforce = command.enforce_password_complexity.unwrap_or(true);
@@ -203,9 +200,9 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
 
         // Tag the identity with its IdP type regardless so downstream code
         // (login flow, audit queries) doesn't have to re-resolve the mapping.
-        if let Some(idp) = command.idp_type.as_deref() {
+        if let Some(idp) = command.idp_type {
             if let Some(identity) = principal.user_identity.as_mut() {
-                identity.provider = Some(idp.to_uppercase());
+                identity.provider = Some(idp.as_str().to_string());
             }
         }
 

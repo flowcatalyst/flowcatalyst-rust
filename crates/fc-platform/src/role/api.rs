@@ -182,15 +182,6 @@ pub struct PermissionListResponse {
     pub total: usize,
 }
 
-fn parse_source(s: &str) -> Result<RoleSource, PlatformError> {
-    match s.to_uppercase().as_str() {
-        "CODE" => Ok(RoleSource::Code),
-        "DATABASE" => Ok(RoleSource::Database),
-        "SDK" => Ok(RoleSource::Sdk),
-        _ => Err(PlatformError::validation(format!("Invalid source: {}", s))),
-    }
-}
-
 /// Create a new role
 #[utoipa::path(
     post,
@@ -316,16 +307,13 @@ pub async fn list_roles(
     _auth: Authenticated,
     Query(query): Query<RolesQuery>,
 ) -> Result<Json<RoleListResponse>, PlatformError> {
-    // Validate source filter if provided
-    if let Some(ref source) = query.source {
-        let _ = parse_source(source)?;
-    }
+    let source: Option<RoleSource> = crate::shared::enum_str::parse_opt(query.source.as_deref())?;
 
     let roles = state
         .role_repo
         .find_with_filters(
             query.application_code.as_deref(),
-            query.source.as_deref(),
+            source,
             query.client_managed,
         )
         .await?;
@@ -623,7 +611,7 @@ pub async fn get_roles_by_source(
     _auth: Authenticated,
     Path(source): Path<String>,
 ) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
-    let source = parse_source(&source)?;
+    let source: RoleSource = source.parse()?;
     let roles = state.role_repo.find_by_source(source).await?;
     let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
     Ok(Json(response))

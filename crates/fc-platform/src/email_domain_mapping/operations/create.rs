@@ -18,7 +18,7 @@ use crate::IdentityProviderRepository;
 pub struct CreateEmailDomainMappingCommand {
     pub email_domain: String,
     pub identity_provider_id: String,
-    pub scope_type: String,
+    pub scope_type: ScopeType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
     #[serde(default)]
@@ -140,12 +140,7 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
             ));
         }
 
-        // Parse scope type
-        let scope_type = match command.scope_type.to_uppercase().as_str() {
-            "ANCHOR" => ScopeType::Anchor,
-            "PARTNER" => ScopeType::Partner,
-            _ => ScopeType::Client,
-        };
+        let scope_type = command.scope_type;
 
         let mut mapping =
             EmailDomainMapping::new(&email_domain, &command.identity_provider_id, scope_type);
@@ -184,7 +179,7 @@ mod tests {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "example.com".to_string(),
             identity_provider_id: "idp-123".to_string(),
-            scope_type: "ANCHOR".to_string(),
+            scope_type: ScopeType::Anchor,
             primary_client_id: Some("client-456".to_string()),
             sync_roles_from_idp: true,
             additional_client_ids: vec![],
@@ -205,7 +200,7 @@ mod tests {
         let deserialized: CreateEmailDomainMappingCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.email_domain, "example.com");
         assert_eq!(deserialized.identity_provider_id, "idp-123");
-        assert_eq!(deserialized.scope_type, "ANCHOR");
+        assert_eq!(deserialized.scope_type, ScopeType::Anchor);
         assert_eq!(
             deserialized.primary_client_id,
             Some("client-456".to_string())
@@ -218,7 +213,7 @@ mod tests {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "test.org".to_string(),
             identity_provider_id: "idp-1".to_string(),
-            scope_type: "CLIENT".to_string(),
+            scope_type: ScopeType::Client,
             primary_client_id: None,
             sync_roles_from_idp: false,
             additional_client_ids: vec![],
@@ -238,7 +233,7 @@ mod tests {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "   ".to_string(),
             identity_provider_id: "idp-1".to_string(),
-            scope_type: "ANCHOR".to_string(),
+            scope_type: ScopeType::Anchor,
             primary_client_id: None,
             sync_roles_from_idp: false,
             additional_client_ids: vec![],
@@ -258,7 +253,7 @@ mod tests {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "example.com".to_string(),
             identity_provider_id: "  ".to_string(),
-            scope_type: "ANCHOR".to_string(),
+            scope_type: ScopeType::Anchor,
             primary_client_id: None,
             sync_roles_from_idp: false,
             additional_client_ids: vec![],
@@ -277,7 +272,7 @@ mod tests {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "example.com".to_string(),
             identity_provider_id: "idp-123".to_string(),
-            scope_type: "ANCHOR".to_string(),
+            scope_type: ScopeType::Anchor,
             primary_client_id: None,
             sync_roles_from_idp: false,
             additional_client_ids: vec![],
@@ -295,7 +290,7 @@ mod tests {
         let cmd = CreateEmailDomainMappingCommand {
             email_domain: "  EXAMPLE.COM  ".to_string(),
             identity_provider_id: "idp-1".to_string(),
-            scope_type: "CLIENT".to_string(),
+            scope_type: ScopeType::Client,
             primary_client_id: None,
             sync_roles_from_idp: false,
             additional_client_ids: vec![],

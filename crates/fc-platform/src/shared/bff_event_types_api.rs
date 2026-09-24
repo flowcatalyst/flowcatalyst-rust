@@ -263,7 +263,7 @@ pub async fn list_event_types(
 
     // Start with status-based or full list
     let event_types = if let Some(ref status) = query.status {
-        let s = EventTypeStatus::from_str(status);
+        let s: EventTypeStatus = status.parse()?;
         state.event_type_repo.find_by_status(s).await?
     } else if let Some(ref app) = query.application {
         state.event_type_repo.find_by_application(app).await?
@@ -625,7 +625,7 @@ pub async fn add_schema(
         version: next_version,
         mime_type: req.mime_type,
         schema_content: Some(req.schema),
-        schema_type: req.schema_type,
+        schema_type: crate::shared::enum_str::parse_opt(req.schema_type.as_deref())?,
     };
 
     let use_case = AddSchemaUseCase::new(state.event_type_repo.clone(), state.unit_of_work.clone());

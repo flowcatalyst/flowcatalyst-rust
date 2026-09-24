@@ -11,12 +11,6 @@ pub enum AttemptType {
 }
 
 impl AttemptType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::UserLogin => "USER_LOGIN",
-            Self::ServiceAccountToken => "SERVICE_ACCOUNT_TOKEN",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "SERVICE_ACCOUNT_TOKEN" => Self::ServiceAccountToken,
@@ -24,6 +18,11 @@ impl AttemptType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(AttemptType, "attempt type", {
+    UserLogin => "USER_LOGIN",
+    ServiceAccountToken => "SERVICE_ACCOUNT_TOKEN",
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -33,12 +32,6 @@ pub enum LoginOutcome {
 }
 
 impl LoginOutcome {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Success => "SUCCESS",
-            Self::Failure => "FAILURE",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "FAILURE" => Self::Failure,
@@ -46,6 +39,11 @@ impl LoginOutcome {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(LoginOutcome, "login outcome", {
+    Success => "SUCCESS",
+    Failure => "FAILURE",
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

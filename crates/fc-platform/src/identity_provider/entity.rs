@@ -11,12 +11,6 @@ pub enum IdentityProviderType {
 }
 
 impl IdentityProviderType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Internal => "INTERNAL",
-            Self::Oidc => "OIDC",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "OIDC" => Self::Oidc,
@@ -24,6 +18,11 @@ impl IdentityProviderType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(IdentityProviderType, "identity provider type", {
+    Internal => "INTERNAL",
+    Oidc => "OIDC",
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

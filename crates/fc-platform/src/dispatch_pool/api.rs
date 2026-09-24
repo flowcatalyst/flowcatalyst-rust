@@ -130,14 +130,6 @@ pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
     pub delete_use_case: Arc<DeleteDispatchPoolUseCase<U>>,
 }
 
-fn parse_status(s: &str) -> Option<DispatchPoolStatus> {
-    match s.to_uppercase().as_str() {
-        "ACTIVE" => Some(DispatchPoolStatus::Active),
-        "ARCHIVED" => Some(DispatchPoolStatus::Archived),
-        _ => None,
-    }
-}
-
 /// Create a new dispatch pool
 #[utoipa::path(
     post,
@@ -262,7 +254,8 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
     };
 
     // Filter by status if specified
-    let status_filter = query.status.as_deref().and_then(parse_status);
+    let status_filter: Option<DispatchPoolStatus> =
+        crate::shared::enum_str::parse_opt(query.status.as_deref())?;
 
     // Filter by access for non-anchor users and by status
     let filtered: Vec<DispatchPoolResponse> = pools

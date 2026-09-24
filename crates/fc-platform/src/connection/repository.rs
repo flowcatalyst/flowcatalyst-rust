@@ -116,7 +116,7 @@ impl ConnectionRepository {
     pub async fn find_with_filters(
         &self,
         client_id: Option<&str>,
-        status: Option<&str>,
+        status: Option<ConnectionStatus>,
         service_account_id: Option<&str>,
     ) -> Result<Vec<Connection>> {
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("SELECT * FROM msg_connections");
@@ -132,7 +132,7 @@ impl ConnectionRepository {
         }
         if let Some(v) = status {
             push_where(&mut qb, &mut has_where);
-            qb.push("status = ").push_bind(v.to_string());
+            qb.push("status = ").push_bind(v.as_str());
         }
         if let Some(v) = service_account_id {
             push_where(&mut qb, &mut has_where);

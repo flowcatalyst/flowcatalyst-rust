@@ -15,7 +15,7 @@ use crate::IdentityProviderRepository;
 pub struct CreateIdentityProviderCommand {
     pub code: String,
     pub name: String,
-    pub idp_type: String,
+    pub idp_type: IdentityProviderType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_issuer_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -108,7 +108,7 @@ impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
         }
 
         // Parse the type
-        let idp_type = IdentityProviderType::from_str(&command.idp_type);
+        let idp_type = command.idp_type;
 
         // Create entity
         let mut idp = crate::IdentityProvider::new(&command.code, &command.name, idp_type);
@@ -147,7 +147,7 @@ mod tests {
         let cmd = CreateIdentityProviderCommand {
             code: "google-oidc".to_string(),
             name: "Google OIDC".to_string(),
-            idp_type: "OIDC".to_string(),
+            idp_type: IdentityProviderType::Oidc,
             oidc_issuer_url: Some("https://accounts.google.com".to_string()),
             oidc_client_id: Some("client-123".to_string()),
             oidc_client_secret_ref: None,

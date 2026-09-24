@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 
 use super::entity::LoginAttempt;
 use super::repository::{LoginAttemptFilter, LoginAttemptRepository};
+use crate::shared::enum_str::parse_opt;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -115,8 +116,8 @@ async fn list_login_attempts(
         .login_attempt_repo
         .find_with_cursor(
             &LoginAttemptFilter {
-                attempt_type: query.attempt_type.as_deref(),
-                outcome: query.outcome.as_deref(),
+                attempt_type: parse_opt(query.attempt_type.as_deref())?,
+                outcome: parse_opt(query.outcome.as_deref())?,
                 identifier: query.identifier.as_deref(),
                 principal_id: query.principal_id.as_deref(),
                 date_from: query.date_from.as_deref(),

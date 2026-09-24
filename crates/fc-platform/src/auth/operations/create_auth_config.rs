@@ -13,11 +13,11 @@ use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCas
 #[serde(rename_all = "camelCase")]
 pub struct CreateAuthConfigCommand {
     pub email_domain: String,
-    pub config_type: String,
+    pub config_type: AuthConfigType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_provider: Option<String>,
+    pub auth_provider: Option<AuthProvider>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oidc_issuer_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,13 +90,13 @@ impl<U: UnitOfWork> UseCase for CreateAuthConfigUseCase<U> {
             ));
         }
 
-        let config_type = AuthConfigType::from_str(&command.config_type);
+        let config_type = command.config_type;
         let mut config = ClientAuthConfig::new_internal(&email_domain, config_type);
 
         config.primary_client_id = command.primary_client_id.clone();
 
-        if let Some(ref provider) = command.auth_provider {
-            config.auth_provider = AuthProvider::from_str(provider);
+        if let Some(provider) = command.auth_provider {
+            config.auth_provider = provider;
         }
         config.oidc_issuer_url = command.oidc_issuer_url.clone();
         config.oidc_client_id = command.oidc_client_id.clone();

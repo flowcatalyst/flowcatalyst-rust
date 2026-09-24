@@ -18,12 +18,6 @@ pub enum OAuthClientType {
 }
 
 impl OAuthClientType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Public => "PUBLIC",
-            Self::Confidential => "CONFIDENTIAL",
-        }
-    }
     pub fn from_str(s: &str) -> Self {
         match s {
             "CONFIDENTIAL" => Self::Confidential,
@@ -31,6 +25,11 @@ impl OAuthClientType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(OAuthClientType, "OAuth client type", {
+    Public => "PUBLIC",
+    Confidential => "CONFIDENTIAL",
+});
 
 /// OAuth grant type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,14 +42,6 @@ pub enum GrantType {
 }
 
 impl GrantType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::AuthorizationCode => "authorization_code",
-            Self::ClientCredentials => "client_credentials",
-            Self::RefreshToken => "refresh_token",
-            Self::Password => "password",
-        }
-    }
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "authorization_code" => Some(Self::AuthorizationCode),
@@ -61,6 +52,13 @@ impl GrantType {
         }
     }
 }
+
+crate::shared::enum_str::str_enum!(GrantType, "grant type", {
+    AuthorizationCode => "authorization_code",
+    ClientCredentials => "client_credentials",
+    RefreshToken => "refresh_token",
+    Password => "password",
+});
 
 /// OAuth client entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
