@@ -277,17 +277,15 @@ pub async fn run(args: InitArgs) -> Result<()> {
     let sa_name = format!("{} Service Account", name);
     let sa_description = format!("Service account for application: {}", name);
 
-    let mut sa = ServiceAccount::new(&sa_code, &sa_name);
+    // An application's service account is ANCHOR with no client links, as
+    // Go's fcdev init and application provisioning make it.
+    let mut sa = ServiceAccount::new(&sa_code, &sa_name, UserScope::Anchor);
     sa.description = Some(sa_description.clone());
     sa.application_id = Some(app_id.clone());
 
     // ServiceAccount.id is the principal id (CLAUDE.md note); insert a
     // matching Principal::new_service row first so the SA's FK is valid.
-    let mut sa_principal = Principal::new_service(sa.id.clone(), sa_name.clone());
-    // For an application SA, the auth scope is anchor (it can call any
-    // anchor-only endpoint as a service). Tighten by removing roles
-    // later via the admin UI if your app needs less.
-    sa_principal.scope = UserScope::Anchor;
+    let sa_principal = Principal::new_service(sa.id.clone(), sa_name.clone(), UserScope::Anchor);
     principal_repo
         .insert(&sa_principal)
         .await

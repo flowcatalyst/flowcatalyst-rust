@@ -98,8 +98,9 @@ pub async fn run(repos: &Repositories) -> Result<()> {
     // keep `CLIENT_ID` (the human-readable OAuth public identifier) only
     // on the OAuthClient row.
     let service_account_id = tsid::generate(EntityType::ServiceAccount);
-    let mut principal = Principal::new_service(service_account_id, PRINCIPAL_NAME);
-    principal.scope = UserScope::Anchor; // matches the role's reach
+    // Anchor matches the super-admin role's reach (Go's fcdev does the same).
+    let mut principal =
+        Principal::new_service(service_account_id, PRINCIPAL_NAME, UserScope::Anchor);
     principal.roles = vec![RoleAssignment::new(SUPER_ADMIN_ROLE)];
 
     // The `{:?}` formatter on the source error shows the full sqlx error

@@ -189,7 +189,7 @@ async fn test_principal_service_account() {
     let (pool, _container) = setup_test_db().await;
     let repo = PrincipalRepository::new(&pool);
 
-    let principal = Principal::new_service("svc-abc", "My Service");
+    let principal = Principal::new_service("svc-abc", "My Service", UserScope::Client);
     repo.insert(&principal)
         .await
         .expect("Failed to insert service principal");
@@ -574,7 +574,7 @@ async fn test_service_account_crud() {
     let repo = ServiceAccountRepository::new(&pool);
 
     // Create
-    let svc = ServiceAccount::new("test-svc", "Test Service");
+    let svc = ServiceAccount::new("test-svc", "Test Service", UserScope::Anchor);
     repo.insert(&svc)
         .await
         .expect("Failed to insert service account");
@@ -601,7 +601,11 @@ async fn test_connection_crud() {
     let conn_repo = ConnectionRepository::new(&pool);
 
     // Create a service account first (needed for FK)
-    let svc = ServiceAccount::new("conn-test-svc", "Connection Test Service");
+    let svc = ServiceAccount::new(
+        "conn-test-svc",
+        "Connection Test Service",
+        UserScope::Anchor,
+    );
     svc_repo
         .insert(&svc)
         .await
@@ -839,7 +843,7 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
         .await
         .unwrap();
 
-    let mut sa = ServiceAccount::new("legacy-svc", "Legacy");
+    let mut sa = ServiceAccount::new("legacy-svc", "Legacy", UserScope::Anchor);
     sa.webhook_credentials = WebhookCredentials::bearer_token("fc_plaintoken");
     sa.webhook_credentials.signing_secret = Some("plain-signing".to_string());
     ServiceAccountRepository::new(&pool)

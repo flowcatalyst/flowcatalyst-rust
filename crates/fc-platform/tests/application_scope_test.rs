@@ -101,7 +101,7 @@ async fn service_account_is_confined_to_its_applications() {
     // An application's own service account (as provisioning creates it).
     let sa_a = token_for(
         &app,
-        Principal::new_service("sa_a", "SA A").with_application_id(&app_a.id),
+        Principal::new_service("sa_a", "SA A", UserScope::Anchor).with_application_id(&app_a.id),
         &[],
     )
     .await;
@@ -141,7 +141,8 @@ async fn service_account_is_confined_to_its_applications() {
     // A service account bound to A with a grant for C reaches both, not B.
     let sa_many = token_for(
         &app,
-        Principal::new_service("sa_many", "SA Many").with_application_id(&app_a.id),
+        Principal::new_service("sa_many", "SA Many", UserScope::Anchor)
+            .with_application_id(&app_a.id),
         &[&app_c],
     )
     .await;
@@ -159,7 +160,12 @@ async fn service_account_is_confined_to_its_applications() {
     );
 
     // An unbound service account has access to every application.
-    let sa_all = token_for(&app, Principal::new_service("sa_all", "SA All"), &[]).await;
+    let sa_all = token_for(
+        &app,
+        Principal::new_service("sa_all", "SA All", UserScope::Anchor),
+        &[],
+    )
+    .await;
     for code in ["scope-a", "scope-b", "scope-c"] {
         assert_eq!(sync_roles(&app, &sa_all, code).await.0, StatusCode::OK);
     }
@@ -182,7 +188,7 @@ async fn service_account_is_confined_to_its_applications() {
     // B's service account reaches B.
     let sa_b = token_for(
         &app,
-        Principal::new_service("sa_b", "SA B").with_application_id(&app_b.id),
+        Principal::new_service("sa_b", "SA B", UserScope::Anchor).with_application_id(&app_b.id),
         &[],
     )
     .await;
@@ -200,7 +206,7 @@ async fn service_account_is_confined_to_its_applications() {
 async fn permission_is_checked_before_the_application() {
     let app = TestApp::setup().await;
     create_app(&app, "scope-p").await;
-    let principal = Principal::new_service("sa_none", "SA None");
+    let principal = Principal::new_service("sa_none", "SA None", UserScope::Anchor);
     app.repos
         .principal_repo
         .insert(&principal)
@@ -282,7 +288,8 @@ async fn platform_config_is_confined_to_the_callers_applications() {
     create_app(&app, "cfg-b").await;
     let sa_a = token_for(
         &app,
-        Principal::new_service("sa_cfg_a", "SA Cfg A").with_application_id(&app_a.id),
+        Principal::new_service("sa_cfg_a", "SA Cfg A", UserScope::Anchor)
+            .with_application_id(&app_a.id),
         &[],
     )
     .await;

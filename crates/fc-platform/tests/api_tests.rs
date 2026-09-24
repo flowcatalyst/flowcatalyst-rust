@@ -26,7 +26,7 @@ mod domain_tests {
 
     #[test]
     fn test_principal_service_creation() {
-        let principal = Principal::new_service("client123", "Test Service");
+        let principal = Principal::new_service("client123", "Test Service", UserScope::Client);
         assert!(!principal.is_user());
         assert!(principal.active);
     }

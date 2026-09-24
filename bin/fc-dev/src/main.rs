@@ -652,8 +652,13 @@ async fn main() -> Result<()> {
     let outbox_handle: Option<tokio::task::JoinHandle<()>> = if let Some(pool) = outbox_pool {
         use fc_platform::principal::entity::Principal;
 
-        let internal_principal =
-            Principal::new_service("outbox-processor", "Outbox Processor (internal)");
+        // Anchor: the outbox forwards every client's messages. Go's fcdev
+        // gives its internal router principal the same scope.
+        let internal_principal = Principal::new_service(
+            "outbox-processor",
+            "Outbox Processor (internal)",
+            fc_platform::principal::entity::UserScope::Anchor,
+        );
         let token = auth_services
             .auth
             .generate_access_token(&internal_principal)

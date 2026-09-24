@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
+use crate::principal::entity::UserScope;
 use crate::service_account::entity::{RoleAssignment, WebhookAuthType, WebhookCredentials};
 use crate::shared::enum_str::decode_opt;
 use crate::shared::error::{PlatformError, Result};
@@ -23,7 +24,6 @@ struct PrincipalRow {
     #[allow(dead_code)]
     principal_type: String,
     scope: Option<String>,
-    #[allow(dead_code)]
     client_id: Option<String>,
     application_id: Option<String>,
     name: String,
@@ -54,6 +54,13 @@ struct ServiceAccountRow {
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
     updated_at: DateTime<Utc>,
+}
+
+/// Row mapping for iam_client_access_grants (a PARTNER account's clients)
+#[derive(sqlx::FromRow)]
+struct ClientGrantRow {
+    principal_id: String,
+    client_id: String,
 }
 
 /// Row mapping for iam_principal_roles junction table
@@ -287,8 +294,11 @@ impl ServiceAccountRepository {
         } else {
             None
         };
-        let roles = self.load_roles(&principal.id).await?;
-        Self::build_service_account_sync(principal, sa_row.as_ref(), roles)
+        let (roles, granted) = tokio::try_join!(
+            self.load_roles(&principal.id),
+            self.load_granted_clients(&principal.id),
+        )?;
+        Self::build_service_account_sync(principal, sa_row.as_ref(), roles, granted)
     }
 
     /// Hydrate when we already have both rows.
@@ -297,8 +307,11 @@ impl ServiceAccountRepository {
         principal: PrincipalRow,
         sa_row: ServiceAccountRow,
     ) -> Result<ServiceAccount> {
-        let roles = self.load_roles(&principal.id).await?;
-        Self::build_service_account_sync(principal, Some(&sa_row), roles)
+        let (roles, granted) = tokio::try_join!(
+            self.load_roles(&principal.id),
+            self.load_granted_clients(&principal.id),
+        )?;
+        Self::build_service_account_sync(principal, Some(&sa_row), roles, granted)
     }
 
     /// Hydrate multiple principals into ServiceAccounts (batch).
@@ -350,6 +363,23 @@ impl ServiceAccountRepository {
                 .push(RoleAssignment::try_from(r)?);
         }
 
+        // Batch-load client grants
+        let all_grants = sqlx::query_as::<_, ClientGrantRow>(
+            "SELECT principal_id, client_id FROM iam_client_access_grants \
+             WHERE principal_id = ANY($1) ORDER BY granted_at, client_id",
+        )
+        .bind(&principal_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut grant_map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for g in all_grants {
+            grant_map
+                .entry(g.principal_id)
+                .or_default()
+                .push(g.client_id);
+        }
+
         // Build ServiceAccount entities
         principals
             .into_iter()
@@ -360,8 +390,9 @@ impl ServiceAccountRepository {
                     .as_ref()
                     .and_then(|sa_id| sa_rows.get(sa_id));
                 let roles = role_map.remove(&id).unwrap_or_default();
+                let granted = grant_map.remove(&id).unwrap_or_default();
 
-                Self::build_service_account_sync(p, sa_row, roles)
+                Self::build_service_account_sync(p, sa_row, roles, granted)
             })
             .collect()
     }
@@ -371,7 +402,27 @@ impl ServiceAccountRepository {
         principal: PrincipalRow,
         sa_row: Option<&ServiceAccountRow>,
         roles: Vec<RoleAssignment>,
+        granted_clients: Vec<String>,
     ) -> Result<ServiceAccount> {
+        // Read exactly as the principal repository (and Go) read the column:
+        // NULL is an unscoped row, read as CLIENT, the narrowest; anything
+        // unrecognised is a loud error (X-06).
+        let scope = decode_opt(
+            principal.scope.as_deref(),
+            "iam_principals",
+            "scope",
+            &principal.id,
+        )?
+        .unwrap_or(UserScope::Client);
+        // The clients the principal actually reaches at that scope. A stale
+        // `client_id` on an ANCHOR row reaches nothing extra, so it isn't
+        // reported.
+        let client_ids = match scope {
+            UserScope::Anchor => vec![],
+            UserScope::Client => principal.client_id.clone().into_iter().collect(),
+            UserScope::Partner => granted_clients,
+        };
+
         let webhook_credentials = match sa_row {
             Some(sa) => {
                 let signing_algorithm = decode_opt(
@@ -413,9 +464,9 @@ impl ServiceAccountRepository {
             name: principal.name,
             description: sa_row.and_then(|sa| sa.description.clone()),
             active: principal.active,
-            client_ids: vec![], // Loaded via iam_client_access_grants if needed
+            client_ids,
             application_id: principal.application_id,
-            scope: principal.scope,
+            scope,
             webhook_credentials,
             roles,
             service_account_table_id: principal.service_account_id,
@@ -437,6 +488,18 @@ impl ServiceAccountRepository {
 
         rows.into_iter().map(RoleAssignment::try_from).collect()
     }
+
+    /// Clients granted to a principal (a PARTNER account's clients).
+    async fn load_granted_clients(&self, principal_id: &str) -> Result<Vec<String>> {
+        let rows = sqlx::query_as::<_, ClientGrantRow>(
+            "SELECT principal_id, client_id FROM iam_client_access_grants \
+             WHERE principal_id = $1 ORDER BY granted_at, client_id",
+        )
+        .bind(principal_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|g| g.client_id).collect())
+    }
 }
 
 // ── Persist<ServiceAccount> ──────────────────────────────────────────────────
@@ -451,7 +514,17 @@ impl HasId for ServiceAccount {
 impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
     async fn persist(&self, sa: &ServiceAccount, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
         let now = Utc::now();
-        let scope = sa.scope.clone().unwrap_or_else(|| "ANCHOR".to_string());
+        // The account's reach, as the principal carries it: a CLIENT account's
+        // one client is its home client; a PARTNER account's clients are
+        // grants; an ANCHOR account has neither.
+        let home_client_id = match sa.scope {
+            UserScope::Client => sa.client_ids.first(),
+            UserScope::Anchor | UserScope::Partner => None,
+        };
+        let granted_client_ids: &[String] = match sa.scope {
+            UserScope::Partner => &sa.client_ids,
+            UserScope::Anchor | UserScope::Client => &[],
+        };
         let sa_table_id = sa
             .service_account_table_id
             .clone()
@@ -463,6 +536,7 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
             "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at)
              VALUES ($1, 'SERVICE', $2, $3, $4, $5, $6, NULL, NULL, NULL, NULL, NULL, NULL, $7, $8, $9)
              ON CONFLICT (id) DO UPDATE SET
+                scope = EXCLUDED.scope,
                 name = EXCLUDED.name,
                 active = EXCLUDED.active,
                 client_id = EXCLUDED.client_id,
@@ -470,8 +544,8 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
                 updated_at = EXCLUDED.updated_at"
         )
         .bind(&sa.id)
-        .bind(&scope)
-        .bind(sa.client_ids.first())
+        .bind(sa.scope.as_str())
+        .bind(home_client_id)
         .bind(&sa.application_id)
         .bind(&sa.name)
         .bind(sa.active)
@@ -513,7 +587,31 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(now)
         .execute(&mut **tx.inner).await?;
 
-        // 3. Sync roles to iam_principal_roles using the principal ID
+        // 3. Sync client grants: exactly the PARTNER account's clients.
+        sqlx::query("DELETE FROM iam_client_access_grants WHERE principal_id = $1")
+            .bind(&sa.id)
+            .execute(&mut **tx.inner)
+            .await?;
+        if !granted_client_ids.is_empty() {
+            let grant_ids: Vec<String> = granted_client_ids
+                .iter()
+                .map(|_| crate::shared::tsid::generate(crate::EntityType::ClientAccessGrant))
+                .collect();
+            sqlx::query(
+                "INSERT INTO iam_client_access_grants
+                    (id, principal_id, client_id, granted_by, granted_at, created_at, updated_at)
+                 SELECT g.id, $1, g.client_id, $1, $4, $4, $4
+                 FROM UNNEST($2::text[], $3::text[]) AS g(id, client_id)",
+            )
+            .bind(&sa.id)
+            .bind(&grant_ids)
+            .bind(granted_client_ids)
+            .bind(now)
+            .execute(&mut **tx.inner)
+            .await?;
+        }
+
+        // 4. Sync roles to iam_principal_roles using the principal ID
         sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
             .bind(&sa.id)
             .execute(&mut **tx.inner)
@@ -616,6 +714,7 @@ mod tests {
             principal_row(),
             Some(&row),
             vec![],
+            vec![],
         )
         .unwrap_err()
         .to_string();
@@ -632,6 +731,7 @@ mod tests {
                 principal_row(),
                 Some(&row),
                 vec![],
+                vec![],
             )
             .unwrap();
             assert_eq!(
@@ -642,6 +742,56 @@ mod tests {
                 sa.webhook_credentials.signing_algorithm,
                 Some(crate::SigningAlgorithm::HmacSha256)
             );
+        }
+    }
+
+    fn build(principal: PrincipalRow, granted: &[&str]) -> Result<ServiceAccount> {
+        ServiceAccountRepository::build_service_account_sync(
+            principal,
+            Some(&sa_row(Some("BEARER_TOKEN"), None)),
+            vec![],
+            granted.iter().map(|s| s.to_string()).collect(),
+        )
+    }
+
+    fn scoped(scope: Option<&str>, client_id: Option<&str>) -> PrincipalRow {
+        PrincipalRow {
+            scope: scope.map(str::to_string),
+            client_id: client_id.map(str::to_string),
+            ..principal_row()
+        }
+    }
+
+    #[test]
+    fn scope_reads_from_the_principal_row_with_the_links_it_reaches() {
+        let anchor = build(scoped(Some("ANCHOR"), Some("clt_stale")), &["clt_g"]).unwrap();
+        assert_eq!(anchor.scope, UserScope::Anchor);
+        assert!(anchor.client_ids.is_empty());
+
+        let client = build(scoped(Some("CLIENT"), Some("clt_home")), &["clt_g"]).unwrap();
+        assert_eq!(client.scope, UserScope::Client);
+        assert_eq!(client.client_ids, vec!["clt_home"]);
+
+        let partner = build(scoped(Some("PARTNER"), None), &["clt_1", "clt_2"]).unwrap();
+        assert_eq!(partner.scope, UserScope::Partner);
+        assert_eq!(partner.client_ids, vec!["clt_1", "clt_2"]);
+    }
+
+    #[test]
+    fn null_scope_reads_as_client_never_anchor() {
+        // Same reading as the principal repository and Go's principal read.
+        let sa = build(scoped(None, None), &[]).unwrap();
+        assert_eq!(sa.scope, UserScope::Client);
+        assert!(sa.client_ids.is_empty());
+    }
+
+    #[test]
+    fn unknown_or_miscased_stored_scope_is_a_read_error() {
+        for bad in ["anchor", "ROOT"] {
+            let err = build(scoped(Some(bad), None), &[]).unwrap_err().to_string();
+            for part in ["iam_principals.scope", "prn_1", bad] {
+                assert!(err.contains(part), "{err} should mention {part}");
+            }
         }
     }
 }

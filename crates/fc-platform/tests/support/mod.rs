@@ -222,8 +222,8 @@ impl TestApp {
 
     /// Token for a service account principal (used by SDKs).
     pub fn service_account_token(&self, client_id: &str) -> String {
-        let principal =
-            Principal::new_service("svc-test", "Test Service").with_client_id(client_id);
+        let principal = Principal::new_service("svc-test", "Test Service", UserScope::Client)
+            .with_client_id(client_id);
         self.auth_service
             .generate_access_token(&principal)
             .expect("svc token")

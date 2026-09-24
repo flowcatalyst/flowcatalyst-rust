@@ -20,6 +20,7 @@ use crate::service_account::operations::{
     RegenerateAuthTokenCommand, RegenerateAuthTokenUseCase, RegenerateSigningSecretCommand,
     RegenerateSigningSecretUseCase, UpdateServiceAccountCommand, UpdateServiceAccountUseCase,
 };
+use crate::shared::enum_str::parse_opt;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase};
@@ -44,6 +45,13 @@ pub struct CreateServiceAccountRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
+    /// Client tier: `ANCHOR` (every client, `clientIds` empty), `CLIENT`
+    /// (exactly one client) or `PARTNER` (one or more clients). Omitted, it
+    /// follows `clientIds`: none → ANCHOR, one → CLIENT, several → PARTNER.
+    /// Anything else is a 400.
+    #[serde(default)]
+    pub scope: Option<String>,
+
     /// Client IDs this account can access
     #[serde(default)]
     pub client_ids: Vec<String>,
@@ -65,7 +73,12 @@ pub struct UpdateServiceAccountRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Updated client IDs
+    /// Updated client tier (`ANCHOR`, `PARTNER`, `CLIENT`); must agree with
+    /// the client links, as on create. Anything else is a 400.
+    #[serde(default)]
+    pub scope: Option<String>,
+
+    /// Updated client IDs. Without `scope`, the scope follows the new links.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_ids: Option<Vec<String>>,
 }
@@ -108,7 +121,8 @@ pub struct ServiceAccountResponse {
     pub code: String,
     pub name: String,
     pub description: Option<String>,
-    pub scope: Option<String>,
+    /// Client tier of the linked principal (what its tokens carry).
+    pub scope: String,
     pub client_ids: Vec<String>,
     pub application_id: Option<String>,
     pub active: bool,
@@ -126,7 +140,7 @@ impl From<ServiceAccount> for ServiceAccountResponse {
             code: sa.code,
             name: sa.name,
             description: sa.description,
-            scope: sa.scope,
+            scope: sa.scope.as_str().to_string(),
             client_ids: sa.client_ids,
             application_id: sa.application_id,
             active: sa.active,
@@ -357,6 +371,7 @@ pub async fn create_service_account<U: UnitOfWork>(
         code: req.code,
         name: req.name,
         description: req.description,
+        scope: parse_opt(req.scope.as_deref())?,
         client_ids: req.client_ids,
         application_id: req.application_id,
     };
@@ -463,6 +478,7 @@ pub async fn update_service_account<U: UnitOfWork>(
         id: id.clone(),
         name: req.name,
         description: req.description,
+        scope: parse_opt(req.scope.as_deref())?,
         client_ids: req.client_ids,
     };
 

@@ -4,6 +4,7 @@
 //! with guaranteed event emission and audit logging through UnitOfWork.
 
 pub mod assign_roles;
+pub mod client_reach;
 pub mod create;
 pub mod deactivate;
 pub mod delete;

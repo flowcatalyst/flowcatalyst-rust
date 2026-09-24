@@ -85,7 +85,7 @@ fn test_validate_expired_token() {
 #[test]
 fn test_token_claims_for_service_principal() {
     let auth_service = test_auth_service();
-    let principal = Principal::new_service("svc-123", "Test Service");
+    let principal = Principal::new_service("svc-123", "Test Service", UserScope::Anchor);
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();

@@ -600,11 +600,13 @@ pub fn build_platform_routes(
     // ── Service Account use cases ─────────────────────────────────────────
     let create_sa_use_case = Arc::new(CreateServiceAccountUseCase::new(
         repos.service_account_repo.clone(),
+        repos.client_repo.clone(),
         unit_of_work.clone(),
         encryption_service.clone(),
     ));
     let update_sa_use_case = Arc::new(UpdateServiceAccountUseCase::new(
         repos.service_account_repo.clone(),
+        repos.client_repo.clone(),
         unit_of_work.clone(),
     ));
     let delete_sa_use_case = Arc::new(DeleteServiceAccountUseCase::new(

@@ -718,6 +718,7 @@ fn service_account_commands_persist_no_generated_credentials() {
         code: "orders-bot".to_string(),
         name: "Orders bot".to_string(),
         description: None,
+        scope: Some(UserScope::Client),
         client_ids: s(&["clt_1"]),
         application_id: Some("app_1".to_string()),
     };

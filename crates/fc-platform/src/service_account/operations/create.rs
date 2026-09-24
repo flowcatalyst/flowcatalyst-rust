@@ -5,10 +5,12 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use super::client_reach::{dedupe_client_ids, require_clients_exist, resolve_client_reach};
 use super::events::ServiceAccountCreated;
+use crate::principal::entity::UserScope;
 use crate::shared::encryption_service::{require_configured, EncryptionService};
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
-use crate::ServiceAccountRepository;
+use crate::{ClientRepository, ServiceAccountRepository};
 use crate::{ServiceAccount, WebhookCredentials};
 
 /// Generate a bearer token with fc_ prefix
@@ -46,6 +48,11 @@ pub struct CreateServiceAccountCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
+    /// Client tier. Absent, it follows `client_ids` (none → ANCHOR, one →
+    /// CLIENT, several → PARTNER), as in Go; present, `client_ids` must agree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<UserScope>,
+
     /// Client IDs this account can access
     #[serde(default)]
     pub client_ids: Vec<String>,
@@ -73,6 +80,7 @@ crate::impl_domain_event!(CreateServiceAccountResult => event);
 /// Use case for creating a new service account.
 pub struct CreateServiceAccountUseCase<U: UnitOfWork> {
     service_account_repo: Arc<ServiceAccountRepository>,
+    client_repo: Arc<ClientRepository>,
     unit_of_work: Arc<U>,
     /// Encrypts the generated credential before it is stored. `None` when no
     /// key is configured; the use case then fails rather than store plaintext.
@@ -82,11 +90,13 @@ pub struct CreateServiceAccountUseCase<U: UnitOfWork> {
 impl<U: UnitOfWork> CreateServiceAccountUseCase<U> {
     pub fn new(
         service_account_repo: Arc<ServiceAccountRepository>,
+        client_repo: Arc<ClientRepository>,
         unit_of_work: Arc<U>,
         encryption: Option<Arc<EncryptionService>>,
     ) -> Self {
         Self {
             service_account_repo,
+            client_repo,
             unit_of_work,
             encryption,
         }
@@ -124,6 +134,11 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             }
         }
 
+        resolve_client_reach(
+            command.scope,
+            &dedupe_client_ids(command.client_ids.clone()),
+        )?;
+
         Ok(())
     }
 
@@ -155,6 +170,17 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             ));
         }
 
+        // The account's reach lands on its principal, so every token built
+        // from it carries the chosen scope, not ANCHOR.
+        let client_ids = dedupe_client_ids(command.client_ids.clone());
+        let scope = match resolve_client_reach(command.scope, &client_ids) {
+            Ok(scope) => scope,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+        if let Err(e) = require_clients_exist(&self.client_repo, &client_ids).await {
+            return UseCaseResult::failure(e);
+        }
+
         // Generate credentials. The caller gets the plaintext once in the
         // result; only the `encrypted:` form is stored.
         let auth_token = generate_auth_token();
@@ -171,9 +197,9 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         };
 
         // Create the service account entity
-        let mut service_account = ServiceAccount::new(code, name);
+        let mut service_account = ServiceAccount::new(code, name, scope);
         service_account.description = command.description.clone();
-        service_account.client_ids = command.client_ids.clone();
+        service_account.client_ids = client_ids;
         service_account.application_id = command.application_id.clone();
         service_account.webhook_credentials = WebhookCredentials::bearer_token(&auth_token_ref);
         service_account.webhook_credentials.signing_secret = Some(signing_secret_ref);
@@ -222,6 +248,7 @@ mod tests {
             code: "my-service".to_string(),
             name: "My Service Account".to_string(),
             description: Some("Handles order processing".to_string()),
+            scope: Some(UserScope::Client),
             client_ids: vec!["client-123".to_string()],
             application_id: None,
         };
@@ -229,11 +256,12 @@ mod tests {
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("my-service"));
         assert!(json.contains("My Service Account"));
+        assert!(json.contains(r#""scope":"CLIENT""#));
     }
 
     #[test]
     fn test_service_account_has_id() {
-        let sa = ServiceAccount::new("test", "Test");
+        let sa = ServiceAccount::new("test", "Test", UserScope::Client);
         assert!(!sa.id().is_empty());
     }
 

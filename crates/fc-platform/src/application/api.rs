@@ -787,6 +787,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
     let app_id = app.id.clone();
     let principal_id = auth.0.principal_id.clone();
     let sa_repo = state.service_account_repo.clone();
+    let client_repo = state.client_repo.clone();
     let app_repo = state.application_repo.clone();
     let oauth_client_repo = state.oauth_client_repo.clone();
     // The SA's webhook credentials are encrypted before storage.
@@ -803,7 +804,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
         .pg_unit_of_work
         .run(|session| async move {
             let create_sa_uc =
-                CreateServiceAccountUseCase::new(sa_repo, session.clone(), encryption);
+                CreateServiceAccountUseCase::new(sa_repo, client_repo, session.clone(), encryption);
             let attach_uc =
                 AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
             let create_oauth_uc = CreateOAuthClientUseCase::new(oauth_client_repo, session);
@@ -816,6 +817,11 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 code: sa_code.clone(),
                 name: sa_name,
                 description: Some(sa_description),
+                // ANCHOR with no client links, as Go provisions it
+                // (provision_service_account.go: NewService's default, and
+                // client_reach.go "also every application-provisioned
+                // account"). Its reach is confined by application instead.
+                scope: Some(crate::principal::entity::UserScope::Anchor),
                 client_ids: Vec::new(),
                 application_id: Some(app_id.clone()),
             };

@@ -250,13 +250,18 @@ impl Principal {
         }
     }
 
-    /// Create a new service principal
-    pub fn new_service(service_account_id: impl Into<String>, name: impl Into<String>) -> Self {
+    /// Create a new service principal. The scope is the caller's choice:
+    /// a service account is not anchor unless something decides it is.
+    pub fn new_service(
+        service_account_id: impl Into<String>,
+        name: impl Into<String>,
+        scope: UserScope,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: crate::shared::tsid::generate(crate::EntityType::Principal),
             principal_type: PrincipalType::Service,
-            scope: UserScope::Anchor,
+            scope,
             client_id: None,
             application_id: None,
             name: name.into(),
@@ -503,10 +508,13 @@ mod tests {
     }
 
     #[test]
-    fn new_service_sets_service_type_and_anchor_scope() {
-        let p = Principal::new_service("svc_123", "Outbox Processor");
+    fn new_service_sets_service_type_and_the_given_scope() {
+        let p = Principal::new_service("svc_123", "Outbox Processor", UserScope::Client);
         assert_eq!(p.principal_type, PrincipalType::Service);
-        assert_eq!(p.scope, UserScope::Anchor);
+        assert_eq!(p.scope, UserScope::Client);
+        for scope in [UserScope::Anchor, UserScope::Partner] {
+            assert_eq!(Principal::new_service("svc_123", "x", scope).scope, scope);
+        }
         assert!(p.user_identity.is_none());
         assert_eq!(p.service_account_id, Some("svc_123".to_string()));
         assert_eq!(p.name, "Outbox Processor");

@@ -5,6 +5,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::principal::entity::UserScope;
+
 /// Webhook authentication type — matches TypeScript WebhookAuthType
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -255,14 +257,16 @@ pub struct ServiceAccount {
     #[serde(default = "default_active")]
     pub active: bool,
 
-    /// Client IDs this service account can access
-    /// Note: In PostgreSQL, this is stored via iam_client_access_grants on the principal
+    /// The clients this account reaches, per its scope: none for ANCHOR
+    /// (it reaches every client), the home client for CLIENT
+    /// (`iam_principals.client_id`), the granted clients for PARTNER
+    /// (`iam_client_access_grants`).
     #[serde(default)]
     pub client_ids: Vec<String>,
 
-    /// Scope (ANCHOR, PARTNER, CLIENT)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
+    /// Client tier of the linked principal (`iam_principals.scope`). This is
+    /// what tokens carry and what `require_anchor` checks.
+    pub scope: UserScope,
 
     /// Application ID (if created for an application)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -294,7 +298,7 @@ fn default_active() -> bool {
 }
 
 impl ServiceAccount {
-    pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn new(code: impl Into<String>, name: impl Into<String>, scope: UserScope) -> Self {
         let now = Utc::now();
         Self {
             id: crate::shared::tsid::generate(crate::EntityType::ServiceAccount),
@@ -303,7 +307,7 @@ impl ServiceAccount {
             description: None,
             active: true,
             client_ids: vec![],
-            scope: None,
+            scope,
             application_id: None,
             webhook_credentials: WebhookCredentials::none(),
             service_account_table_id: None,
@@ -352,8 +356,10 @@ impl ServiceAccount {
         self.roles.iter().any(|r| r.role == role)
     }
 
+    /// Whether the account reaches `client_id`: every client at ANCHOR,
+    /// otherwise only its linked clients.
     pub fn has_client_access(&self, client_id: &str) -> bool {
-        self.client_ids.is_empty() || self.client_ids.iter().any(|c| c == client_id)
+        self.scope.is_anchor() || self.client_ids.iter().any(|c| c == client_id)
     }
 
     pub fn deactivate(&mut self) {
@@ -378,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_new_service_account() {
-        let sa = ServiceAccount::new("app:my-app", "My App Service Account");
+        let sa = ServiceAccount::new("app:my-app", "My App Service Account", UserScope::Client);
 
         assert!(!sa.id.is_empty());
         assert!(
@@ -397,7 +403,7 @@ mod tests {
         assert!(sa.description.is_none());
         assert!(sa.active);
         assert!(sa.client_ids.is_empty());
-        assert!(sa.scope.is_none());
+        assert_eq!(sa.scope, UserScope::Client);
         assert!(sa.application_id.is_none());
         assert_eq!(sa.webhook_credentials.auth_type, WebhookAuthType::None);
         assert!(sa.roles.is_empty());
@@ -407,14 +413,14 @@ mod tests {
 
     #[test]
     fn test_service_account_unique_ids() {
-        let sa1 = ServiceAccount::new("a", "A");
-        let sa2 = ServiceAccount::new("b", "B");
+        let sa1 = ServiceAccount::new("a", "A", UserScope::Anchor);
+        let sa2 = ServiceAccount::new("b", "B", UserScope::Anchor);
         assert_ne!(sa1.id, sa2.id);
     }
 
     #[test]
     fn test_service_account_builder_methods() {
-        let sa = ServiceAccount::new("sa", "SA")
+        let sa = ServiceAccount::new("sa", "SA", UserScope::Anchor)
             .with_description("A test service account")
             .with_client_id("client-1")
             .with_application_id("app-1")
@@ -432,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_service_account_activate_deactivate() {
-        let mut sa = ServiceAccount::new("sa", "SA");
+        let mut sa = ServiceAccount::new("sa", "SA", UserScope::Anchor);
         assert!(sa.active);
 
         sa.deactivate();
@@ -444,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_service_account_assign_role() {
-        let mut sa = ServiceAccount::new("sa", "SA");
+        let mut sa = ServiceAccount::new("sa", "SA", UserScope::Anchor);
         assert!(sa.roles.is_empty());
 
         sa.assign_role("admin");
@@ -454,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_service_account_assign_role_for_client() {
-        let mut sa = ServiceAccount::new("sa", "SA");
+        let mut sa = ServiceAccount::new("sa", "SA", UserScope::Anchor);
         sa.assign_role_for_client("viewer", "client-1");
 
         assert_eq!(sa.roles.len(), 1);
@@ -464,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_service_account_has_role() {
-        let mut sa = ServiceAccount::new("sa", "SA");
+        let mut sa = ServiceAccount::new("sa", "SA", UserScope::Anchor);
         sa.assign_role("admin");
         sa.assign_role("viewer");
 
@@ -475,18 +481,22 @@ mod tests {
 
     #[test]
     fn test_service_account_has_client_access() {
-        let sa_no_clients = ServiceAccount::new("sa", "SA");
-        // Empty client_ids means access to all
-        assert!(sa_no_clients.has_client_access("any-client"));
+        let anchor = ServiceAccount::new("sa", "SA", UserScope::Anchor);
+        assert!(anchor.has_client_access("any-client"));
 
-        let sa_with_clients = ServiceAccount::new("sa", "SA").with_client_id("client-1");
+        // No links below ANCHOR reaches nothing, never everything.
+        let unlinked = ServiceAccount::new("sa", "SA", UserScope::Client);
+        assert!(!unlinked.has_client_access("any-client"));
+
+        let sa_with_clients =
+            ServiceAccount::new("sa", "SA", UserScope::Client).with_client_id("client-1");
         assert!(sa_with_clients.has_client_access("client-1"));
         assert!(!sa_with_clients.has_client_access("client-2"));
     }
 
     #[test]
     fn test_service_account_record_usage() {
-        let mut sa = ServiceAccount::new("sa", "SA");
+        let mut sa = ServiceAccount::new("sa", "SA", UserScope::Anchor);
         assert!(sa.last_used_at.is_none());
 
         sa.record_usage();
