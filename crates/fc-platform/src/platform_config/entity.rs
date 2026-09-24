@@ -43,6 +43,9 @@ pub struct PlatformConfig {
     pub updated_at: DateTime<Utc>,
 }
 
+/// What a SECRET value is shown as in API responses and the audit log.
+pub const SECRET_MASK: &str = "***";
+
 impl PlatformConfig {
     pub fn new(
         application_code: impl Into<String>,
@@ -68,7 +71,7 @@ impl PlatformConfig {
 
     pub fn masked_value(&self) -> &str {
         if self.value_type == ConfigValueType::Secret {
-            "***"
+            SECRET_MASK
         } else {
             &self.value
         }

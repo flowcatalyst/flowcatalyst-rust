@@ -777,6 +777,7 @@ pub fn build_platform_routes(
         crate::platform_config::operations::SetPlatformConfigPropertyUseCase::new(
             repos.platform_config_repo.clone(),
             unit_of_work.clone(),
+            encryption_service.clone(),
         ),
     );
     let grant_platform_config_access_use_case = Arc::new(

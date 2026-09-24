@@ -29,9 +29,11 @@ use crate::identity_provider::operations::events::{
 use crate::identity_provider::operations::{
     CreateIdentityProviderCommand, UpdateIdentityProviderCommand,
 };
+use crate::platform_config::entity::{ConfigScope, ConfigValueType};
 use crate::platform_config::operations::events::{
     PlatformConfigAccessGranted, PlatformConfigPropertySet,
 };
+use crate::platform_config::operations::SetPlatformConfigPropertyCommand;
 use crate::principal::entity::UserScope;
 use crate::principal::operations::events::{
     FederatedClaims, FlowcatalystClaims, PrincipalsSynced, RolesAssigned, UserCreated, UserLoggedIn,
@@ -738,6 +740,49 @@ fn service_account_commands_persist_no_generated_credentials() {
         signing_secret: SIGNING.to_string(),
     };
     assert_no_plaintext(&persisted(&result, &regen_secret), SIGNING);
+}
+
+/// Setting a SECRET property: the audit row records the command with the
+/// value masked, and the operation name is unchanged. A PLAIN value is
+/// recorded as sent.
+#[test]
+fn platform_config_secret_persists_no_plaintext_value() {
+    const SECRET: &str = "smtp-plaintext-password";
+    let cmd = SetPlatformConfigPropertyCommand {
+        application_code: "orders".to_string(),
+        section: "email".to_string(),
+        property: "smtp_password".to_string(),
+        value: SECRET.to_string(),
+        scope: ConfigScope::Global,
+        client_id: None,
+        // Omitted on an update of an existing SECRET: the stored type
+        // decides, not the command.
+        value_type: None,
+        description: None,
+    };
+    let e = fixed!(PlatformConfigPropertySet {
+        metadata: PlatformConfigPropertySet::metadata_for(&ctx(), "pcf_1"),
+        config_id: "pcf_1".to_string(),
+        application_code: "orders".to_string(),
+        section: "email".to_string(),
+        property: "smtp_password".to_string(),
+        scope: "GLOBAL".to_string(),
+        client_id: None,
+        value_type: "SECRET".to_string(),
+        was_created: false,
+    });
+
+    let rows = persisted(&e, &cmd.audit_view(ConfigValueType::Secret));
+    assert_no_plaintext(&rows, SECRET);
+    let json: serde_json::Value = serde_json::from_str(&rows).unwrap();
+    assert_eq!(
+        json["aud_logs"]["operation"],
+        "SetPlatformConfigPropertyCommand"
+    );
+    assert_eq!(json["aud_logs"]["operation_json"]["value"], "***");
+
+    let rows = persisted(&e, &cmd.audit_view(ConfigValueType::Plain));
+    assert!(rows.contains(SECRET), "a PLAIN value is audited as sent");
 }
 
 // ── expected rows ───────────────────────────────────────────────────────────

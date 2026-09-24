@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::PlatformConfigPropertySet;
-use crate::platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig};
+use crate::platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig, SECRET_MASK};
 use crate::platform_config::repository::PlatformConfigRepository;
+use crate::shared::encryption_service::{require_configured, EncryptionService};
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,16 +26,41 @@ pub struct SetPlatformConfigPropertyCommand {
     pub description: Option<String>,
 }
 
+impl SetPlatformConfigPropertyCommand {
+    /// The command as the audit log records it. When the stored property is
+    /// a SECRET, the value is masked: the unit of work serialises the command
+    /// into `aud_logs.operation_json`, and the plaintext must not land there.
+    /// It stays the same type (not a `Cow`) because the audit row's
+    /// `operation` is the command's type name.
+    pub(crate) fn audit_view(&self, stored_type: ConfigValueType) -> Self {
+        match stored_type {
+            ConfigValueType::Secret => Self {
+                value: SECRET_MASK.to_string(),
+                ..self.clone()
+            },
+            ConfigValueType::Plain => self.clone(),
+        }
+    }
+}
+
 pub struct SetPlatformConfigPropertyUseCase<U: UnitOfWork> {
     config_repo: Arc<PlatformConfigRepository>,
     unit_of_work: Arc<U>,
+    /// Encrypts SECRET values before they are stored. `None` when no key is
+    /// configured; setting a SECRET then fails rather than store plaintext.
+    encryption: Option<Arc<EncryptionService>>,
 }
 
 impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
-    pub fn new(config_repo: Arc<PlatformConfigRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        config_repo: Arc<PlatformConfigRepository>,
+        unit_of_work: Arc<U>,
+        encryption: Option<Arc<EncryptionService>>,
+    ) -> Self {
         Self {
             config_repo,
             unit_of_work,
+            encryption,
         }
     }
 }
@@ -87,8 +113,9 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
             Err(e) => return UseCaseResult::failure(e),
         };
 
+        let audited = command.audit_view(config.value_type);
         self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
+            .commit(&config, &*self.config_repo, event, &audited)
             .await
     }
 }
@@ -125,7 +152,6 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
         };
 
         // Apply the patch. On create, also set scope/client_id/value_type.
-        config.value = command.value.clone();
         if was_created {
             config.scope = command.scope;
             config.client_id = command.client_id.clone();
@@ -133,6 +159,14 @@ impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
         if let Some(vt) = command.value_type {
             config.value_type = vt;
         }
+        // The value's type is the patched one: an update that omits
+        // `value_type` keeps a SECRET a SECRET.
+        config.value = match config.value_type {
+            ConfigValueType::Secret => {
+                require_configured(self.encryption.as_deref())?.encrypt_ref(&command.value)?
+            }
+            ConfigValueType::Plain => command.value.clone(),
+        };
         if let Some(ref desc) = command.description {
             config.description = Some(desc.clone());
         }
