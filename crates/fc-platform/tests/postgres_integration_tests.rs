@@ -986,3 +986,37 @@ async fn test_oauth_client_rewrite_secret_ref_guards_on_verified_value() {
         (true, false)
     );
 }
+
+// ─── Dispatch pool batch lookup ───────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_dispatch_pool_find_anchor_by_codes() {
+    use fc_platform::{DispatchPool, DispatchPoolRepository};
+
+    let (pool, _container) = setup_test_db().await;
+    let repo = DispatchPoolRepository::new(&pool);
+
+    repo.insert(&DispatchPool::new("fast", "Fast"))
+        .await
+        .unwrap();
+    repo.insert(&DispatchPool::new("slow", "Slow"))
+        .await
+        .unwrap();
+    let mut scoped = DispatchPool::new("scoped", "Client pool");
+    scoped.client_id = Some("clt_0000000000001".to_string());
+    repo.insert(&scoped).await.unwrap();
+
+    let codes = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let mut found: Vec<String> = repo
+        .find_anchor_by_codes(&codes(&["fast", "slow", "scoped", "missing"]))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.code)
+        .collect();
+    found.sort();
+    // Client-scoped pools are not anchor pools, like find_by_code(code, None).
+    assert_eq!(found, vec!["fast", "slow"]);
+    assert!(repo.find_anchor_by_codes(&[]).await.unwrap().is_empty());
+}

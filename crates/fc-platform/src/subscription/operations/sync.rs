@@ -4,6 +4,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::create::EventTypeBindingInput;
@@ -15,7 +16,7 @@ use crate::usecase::{
 use crate::ConnectionRepository;
 use crate::DispatchPoolRepository;
 use crate::SubscriptionRepository;
-use crate::{EventTypeBinding, Subscription};
+use crate::{DispatchPool, EventTypeBinding, Subscription};
 
 /// A single subscription definition in the sync payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +159,25 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
             }
         }
 
+        // Resolve every referenced dispatch pool in one query, before any
+        // write. An unknown code is a validation error naming it, rather
+        // than a subscription silently created without its pool.
+        let pool_codes = requested_pool_codes(&command.subscriptions);
+        let pools: HashMap<String, DispatchPool> = self
+            .dispatch_pool_repo
+            .find_anchor_by_codes(&pool_codes)
+            .await?
+            .into_iter()
+            .map(|p| (p.code.clone(), p))
+            .collect();
+        let missing = missing_pool_codes(&pool_codes, &pools);
+        if !missing.is_empty() {
+            return Err(UseCaseError::validation(
+                "DISPATCH_POOL_NOT_FOUND",
+                format!("Unknown dispatch pool code(s): {}", missing.join(", ")),
+            ));
+        }
+
         // Fetch existing anchor-level subscriptions for this application
         let existing = self
             .subscription_repo
@@ -204,14 +224,10 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                         if let Some(timeout) = input.timeout_seconds {
                             updated.timeout_seconds = timeout as i32;
                         }
-                        // Resolve dispatch pool by code if provided
-                        if let Some(ref pool_code) = input.dispatch_pool_code {
-                            if let Ok(Some(pool)) =
-                                self.dispatch_pool_repo.find_by_code(pool_code, None).await
-                            {
-                                updated.dispatch_pool_id = Some(pool.id);
-                                updated.dispatch_pool_code = Some(pool.code);
-                            }
+                        // Pool codes were all resolved above.
+                        if let Some(pool) = requested_pool_code(input).and_then(|c| pools.get(c)) {
+                            updated.dispatch_pool_id = Some(pool.id.clone());
+                            updated.dispatch_pool_code = Some(pool.code.clone());
                         }
                         updated.updated_at = chrono::Utc::now();
                         if let Err(e) = self.subscription_repo.update(&updated).await {
@@ -243,13 +259,9 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                     // mode is left alone on update, as before.
                     sub.mode =
                         crate::dispatch_job::entity::parse_dispatch_mode(input.mode.as_deref());
-                    if let Some(ref pool_code) = input.dispatch_pool_code {
-                        if let Ok(Some(pool)) =
-                            self.dispatch_pool_repo.find_by_code(pool_code, None).await
-                        {
-                            sub.dispatch_pool_id = Some(pool.id);
-                            sub.dispatch_pool_code = Some(pool.code);
-                        }
+                    if let Some(pool) = requested_pool_code(input).and_then(|c| pools.get(c)) {
+                        sub.dispatch_pool_id = Some(pool.id.clone());
+                        sub.dispatch_pool_code = Some(pool.code.clone());
                     }
                     if let Err(e) = self.subscription_repo.insert(&sub).await {
                         return Err(UseCaseError::commit(format!(
@@ -291,9 +303,81 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
     }
 }
 
+/// The dispatch pool code an input asks for. Blank means none, as in Go.
+fn requested_pool_code(input: &SyncSubscriptionInput) -> Option<&str> {
+    input
+        .dispatch_pool_code
+        .as_deref()
+        .filter(|c| !c.trim().is_empty())
+}
+
+/// Every distinct pool code the payload references, sorted.
+fn requested_pool_codes(inputs: &[SyncSubscriptionInput]) -> Vec<String> {
+    let mut codes: Vec<String> = inputs
+        .iter()
+        .filter_map(requested_pool_code)
+        .map(String::from)
+        .collect();
+    codes.sort();
+    codes.dedup();
+    codes
+}
+
+/// The requested codes with no pool, in request order.
+fn missing_pool_codes<'a>(
+    requested: &'a [String],
+    found: &HashMap<String, DispatchPool>,
+) -> Vec<&'a str> {
+    requested
+        .iter()
+        .filter(|c| !found.contains_key(*c))
+        .map(String::as_str)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn input(code: &str, pool: Option<&str>) -> SyncSubscriptionInput {
+        SyncSubscriptionInput {
+            code: code.to_string(),
+            name: code.to_string(),
+            description: None,
+            target: "https://example.com/hook".to_string(),
+            connection_id: None,
+            event_types: vec![],
+            dispatch_pool_code: pool.map(String::from),
+            mode: None,
+            max_retries: None,
+            timeout_seconds: None,
+            data_only: false,
+        }
+    }
+
+    #[test]
+    fn pool_codes_are_distinct_and_skip_blank() {
+        let inputs = vec![
+            input("a", Some("fast")),
+            input("b", None),
+            input("c", Some("  ")),
+            input("d", Some("slow")),
+            input("e", Some("fast")),
+        ];
+        assert_eq!(requested_pool_codes(&inputs), vec!["fast", "slow"]);
+    }
+
+    #[test]
+    fn unknown_pool_codes_are_reported() {
+        let requested = vec!["fast".to_string(), "nope".to_string(), "slow".to_string()];
+        let mut found = HashMap::new();
+        for code in ["fast", "slow"] {
+            found.insert(code.to_string(), DispatchPool::new(code, code));
+        }
+        assert_eq!(missing_pool_codes(&requested, &found), vec!["nope"]);
+        found.remove("slow");
+        assert_eq!(missing_pool_codes(&requested, &found), vec!["nope", "slow"]);
+    }
 
     #[test]
     fn test_command_serialization() {

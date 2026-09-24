@@ -109,6 +109,22 @@ impl DispatchPoolRepository {
         row.map(DispatchPool::try_from).transpose()
     }
 
+    /// The anchor-level (no client) pools with any of `codes`, in one
+    /// query. The batch form of `find_by_code(code, None)`; codes with no
+    /// pool are simply absent from the result.
+    pub async fn find_anchor_by_codes(&self, codes: &[String]) -> Result<Vec<DispatchPool>> {
+        if codes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_as::<_, DispatchPoolRow>(
+            "SELECT * FROM msg_dispatch_pools WHERE code = ANY($1) AND client_id IS NULL",
+        )
+        .bind(codes)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(DispatchPool::try_from).collect()
+    }
+
     pub async fn find_all(&self) -> Result<Vec<DispatchPool>> {
         let rows = sqlx::query_as::<_, DispatchPoolRow>(
             "SELECT * FROM msg_dispatch_pools ORDER BY code ASC",
