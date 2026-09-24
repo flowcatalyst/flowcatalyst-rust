@@ -21,7 +21,14 @@ use crate::cors::operations::events::CorsOriginAdded;
 use crate::dispatch_pool::operations::events::DispatchPoolsSynced;
 use crate::email_domain_mapping::operations::events::EmailDomainMappingCreated;
 use crate::event_type::operations::{EventTypeCreated, EventTypesSynced};
-use crate::identity_provider::operations::events::IdentityProviderCreated;
+use crate::identity_provider::api::seal_client_secret;
+use crate::identity_provider::entity::IdentityProviderType;
+use crate::identity_provider::operations::events::{
+    IdentityProviderCreated, IdentityProviderUpdated,
+};
+use crate::identity_provider::operations::{
+    CreateIdentityProviderCommand, UpdateIdentityProviderCommand,
+};
 use crate::platform_config::operations::events::{
     PlatformConfigAccessGranted, PlatformConfigPropertySet,
 };
@@ -38,6 +45,7 @@ use crate::service_account::operations::events::{
 use crate::service_account::operations::{
     CreateServiceAccountResult, RegenerateAuthTokenResult, RegenerateSigningSecretResult,
 };
+use crate::shared::encryption_service::EncryptionService;
 use crate::subscription::operations::events::{SubscriptionCreated, SubscriptionsSynced};
 use crate::webauthn::operations::events::PasskeyRegistered;
 
@@ -590,6 +598,88 @@ fn processes_synced() {
         synced_codes: s(&["orders:fulfillment:ship"]),
     });
     check(&e, EXPECTED_PROCESSES_SYNCED);
+}
+
+// ── secrets never reach the persisted rows ─────────────────────────────────
+//
+// These use the real commands, not `CMD`: the audit row serialises the
+// command, so a command that carries a plaintext secret leaks it into
+// `aud_logs.operation_json`.
+
+fn test_encryption() -> EncryptionService {
+    EncryptionService::new(&EncryptionService::generate_key()).unwrap()
+}
+
+#[track_caller]
+fn assert_no_plaintext(rows: &str, plaintext: &str) {
+    assert!(
+        !rows.contains(plaintext),
+        "plaintext secret reached the persisted rows:\n{rows}"
+    );
+}
+
+const IDP_SECRET: &str = "idp-plaintext-client-secret";
+
+#[test]
+fn identity_provider_create_persists_no_plaintext_secret() {
+    let enc = test_encryption();
+    let cmd = CreateIdentityProviderCommand {
+        code: "okta".to_string(),
+        name: "Okta".to_string(),
+        idp_type: IdentityProviderType::Oidc,
+        oidc_issuer_url: Some("https://okta.example.com".to_string()),
+        oidc_client_id: Some("client-1".to_string()),
+        oidc_client_secret_ref: seal_client_secret(Some(IDP_SECRET.to_string()), Some(&enc))
+            .unwrap(),
+        oidc_multi_tenant: false,
+        oidc_issuer_pattern: None,
+        allowed_email_domains: vec![],
+    };
+    let stored = cmd.oidc_client_secret_ref.as_deref().unwrap();
+    assert_eq!(enc.decrypt_ref(stored).unwrap(), IDP_SECRET);
+
+    let e = fixed!(IdentityProviderCreated::new(
+        &ctx(),
+        "idp_1",
+        "okta",
+        "Okta",
+        "OIDC"
+    ));
+    let rows = persisted(&e, &cmd);
+    assert_no_plaintext(&rows, IDP_SECRET);
+    assert!(rows.contains("encrypted:"));
+}
+
+#[test]
+fn identity_provider_update_persists_no_plaintext_secret() {
+    let enc = test_encryption();
+    let cmd = UpdateIdentityProviderCommand {
+        idp_id: "idp_1".to_string(),
+        name: None,
+        oidc_issuer_url: None,
+        oidc_client_id: None,
+        oidc_client_secret_ref: seal_client_secret(Some(IDP_SECRET.to_string()), Some(&enc))
+            .unwrap(),
+        oidc_multi_tenant: None,
+        oidc_issuer_pattern: None,
+        allowed_email_domains: None,
+    };
+    let e = fixed!(IdentityProviderUpdated::new(&ctx(), "idp_1", None));
+    let rows = persisted(&e, &cmd);
+    assert_no_plaintext(&rows, IDP_SECRET);
+    assert!(rows.contains("encrypted:"));
+}
+
+#[test]
+fn identity_provider_secret_without_key_is_refused() {
+    let err = seal_client_secret(Some(IDP_SECRET.to_string()), None).unwrap_err();
+    assert!(err.to_string().contains("FLOWCATALYST_APP_KEY"));
+    // Blank means "not provided", which needs no key.
+    assert_eq!(
+        seal_client_secret(Some("  ".to_string()), None).unwrap(),
+        None
+    );
+    assert_eq!(seal_client_secret(None, None).unwrap(), None);
 }
 
 // ── expected rows ───────────────────────────────────────────────────────────

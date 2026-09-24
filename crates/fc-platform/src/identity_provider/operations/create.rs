@@ -65,7 +65,7 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
             ));
         }
 
-        Ok(())
+        super::require_sealed_secret(command.oidc_client_secret_ref.as_deref())
     }
 
     async fn authorize(

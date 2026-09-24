@@ -841,6 +841,8 @@ enum TokenExchangeError {
     ParseResponse(#[source] reqwest::Error),
     #[error("No ID token in response")]
     MissingIdToken,
+    #[error("Cannot use the IDP client secret: {0}")]
+    ClientSecret(#[source] crate::shared::encryption_service::EncryptionError),
 }
 
 async fn exchange_code_for_tokens_from_idp(
@@ -868,23 +870,18 @@ async fn exchange_code_for_tokens_from_idp(
         ("code_verifier", code_verifier),
     ];
 
-    // Decrypt and add client secret if present
-    let client_secret = if let Some(ref encrypted_secret) = idp.oidc_client_secret_ref {
-        if let Some(enc_svc) = encryption_service {
-            match enc_svc.decrypt(encrypted_secret) {
-                Ok(decrypted) => Some(decrypted),
-                Err(e) => {
-                    warn!(error = %e, "Failed to decrypt OIDC client secret, using raw value");
-                    Some(encrypted_secret.clone())
-                }
-            }
-        } else {
-            warn!("No encryption service configured, using raw client secret value");
-            Some(encrypted_secret.clone())
-        }
-    } else {
-        None
-    };
+    // Decrypt the stored client secret. It must be an `encrypted:` reference
+    // and a key must be configured; otherwise the login fails rather than
+    // sending a stored value to the IDP as-is.
+    let client_secret = idp
+        .oidc_client_secret_ref
+        .as_deref()
+        .map(|stored| {
+            crate::shared::encryption_service::require_configured(encryption_service)
+                .and_then(|enc| enc.decrypt_ref(stored))
+        })
+        .transpose()
+        .map_err(TokenExchangeError::ClientSecret)?;
     if let Some(ref secret) = client_secret {
         params.push(("client_secret", secret));
     }

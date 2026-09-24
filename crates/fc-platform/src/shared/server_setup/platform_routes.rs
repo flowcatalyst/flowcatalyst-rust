@@ -537,7 +537,7 @@ pub fn build_platform_routes(
     };
     let encryption_service = EncryptionService::from_env().map(Arc::new);
     if encryption_service.is_none() {
-        warn!("FLOWCATALYST_APP_KEY not set — OIDC client secrets cannot be decrypted");
+        warn!("FLOWCATALYST_APP_KEY not set — stored secrets can be neither written nor read");
     }
     let oidc_login_state = OidcLoginApiState {
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
@@ -551,7 +551,7 @@ pub fn build_platform_routes(
         oauth_client_repo: repos.oauth_client_repo.clone(),
         external_base_url: config.oidc_login_external_base_url,
         session_cookie: session_cookie.clone(),
-        encryption_service,
+        encryption_service: encryption_service.clone(),
     };
 
     let backoff_policy = Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env());
@@ -739,6 +739,7 @@ pub fn build_platform_routes(
         create_use_case: create_idp_use_case,
         update_use_case: update_idp_use_case,
         delete_use_case: delete_idp_use_case,
+        encryption_service: encryption_service.clone(),
     };
     let create_edm_use_case = Arc::new(
         crate::email_domain_mapping::operations::CreateEmailDomainMappingUseCase::new(

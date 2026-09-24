@@ -51,8 +51,8 @@ impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
     type Command = UpdateIdentityProviderCommand;
     type Event = IdentityProviderUpdated;
 
-    async fn validate(&self, _command: &UpdateIdentityProviderCommand) -> Result<(), UseCaseError> {
-        Ok(())
+    async fn validate(&self, command: &UpdateIdentityProviderCommand) -> Result<(), UseCaseError> {
+        super::require_sealed_secret(command.oidc_client_secret_ref.as_deref())
     }
 
     async fn authorize(

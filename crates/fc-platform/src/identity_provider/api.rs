@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 
 use super::entity::IdentityProvider;
 use super::repository::IdentityProviderRepository;
+use crate::shared::encryption_service::{require_configured, EncryptionService};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -22,6 +23,8 @@ pub struct CreateIdentityProviderRequest {
     pub r#type: String,
     pub oidc_issuer_url: Option<String>,
     pub oidc_client_id: Option<String>,
+    /// The OIDC client secret in plaintext. It is encrypted before it is
+    /// stored and never returned (see `hasClientSecret`).
     pub oidc_client_secret_ref: Option<String>,
     pub oidc_multi_tenant: Option<bool>,
     pub oidc_issuer_pattern: Option<String>,
@@ -34,6 +37,8 @@ pub struct UpdateIdentityProviderRequest {
     pub name: Option<String>,
     pub oidc_issuer_url: Option<String>,
     pub oidc_client_id: Option<String>,
+    /// The OIDC client secret in plaintext. It is encrypted before it is
+    /// stored and never returned (see `hasClientSecret`).
     pub oidc_client_secret_ref: Option<String>,
     pub oidc_multi_tenant: Option<bool>,
     pub oidc_issuer_pattern: Option<String>,
@@ -102,6 +107,24 @@ pub struct IdentityProvidersState {
             crate::usecase::PgUnitOfWork,
         >,
     >,
+    /// Encrypts the OIDC client secret before it reaches the command. `None`
+    /// when no key is configured; a request that carries a secret then fails.
+    pub encryption_service: Option<Arc<EncryptionService>>,
+}
+
+/// Encrypt the client secret from a create/update request into its stored
+/// `encrypted:` form. This happens before the command is built, so the
+/// plaintext never reaches the command (which the unit of work writes to the
+/// audit log). A blank value means "not provided". Without a key the request
+/// fails; the secret is never stored in plaintext.
+pub(crate) fn seal_client_secret(
+    secret: Option<String>,
+    enc: Option<&EncryptionService>,
+) -> Result<Option<String>, PlatformError> {
+    secret
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| Ok(require_configured(enc)?.encrypt_ref(&s)?))
+        .transpose()
 }
 
 #[utoipa::path(
@@ -139,7 +162,10 @@ async fn create_identity_provider(
         idp_type: req.r#type.parse()?,
         oidc_issuer_url: req.oidc_issuer_url,
         oidc_client_id: req.oidc_client_id,
-        oidc_client_secret_ref: req.oidc_client_secret_ref,
+        oidc_client_secret_ref: seal_client_secret(
+            req.oidc_client_secret_ref,
+            state.encryption_service.as_deref(),
+        )?,
         oidc_multi_tenant: req.oidc_multi_tenant.unwrap_or(false),
         oidc_issuer_pattern: req.oidc_issuer_pattern,
         allowed_email_domains: req.allowed_email_domains.unwrap_or_default(),
@@ -234,7 +260,10 @@ async fn update_identity_provider(
         name: req.name,
         oidc_issuer_url: req.oidc_issuer_url,
         oidc_client_id: req.oidc_client_id,
-        oidc_client_secret_ref: req.oidc_client_secret_ref,
+        oidc_client_secret_ref: seal_client_secret(
+            req.oidc_client_secret_ref,
+            state.encryption_service.as_deref(),
+        )?,
         oidc_multi_tenant: req.oidc_multi_tenant,
         oidc_issuer_pattern: req.oidc_issuer_pattern,
         allowed_email_domains: req.allowed_email_domains,
