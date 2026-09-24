@@ -83,16 +83,12 @@ type ConsumerEntry = (String, Arc<dyn QueueConsumer>);
 /// `(queue_id, consumer, queue_config)` triple — the "just created, not yet
 /// inserted" shape `sync_queue_consumers` collects before its brief insert
 /// write-lock.
-type NewConsumerEntry = (
-    String,
-    Arc<dyn QueueConsumer>,
-    fc_common::QueueConfig,
-);
+type NewConsumerEntry = (String, Arc<dyn QueueConsumer>, fc_common::QueueConfig);
 
 /// Factory trait for creating queue consumers
 /// Implementations can create SQS, ActiveMQ, or other consumer types
 #[async_trait::async_trait]
-pub trait ConsumerFactory {
+pub trait ConsumerFactory: Send + Sync {
     /// Create a consumer for the given queue configuration
     async fn create_consumer(
         &self,
@@ -261,7 +257,7 @@ pub struct QueueManager {
 
     /// Consumer factory for creating new queue consumers during config sync
     /// If None, new queues in config will be logged but not auto-created
-    consumer_factory: Option<Arc<dyn ConsumerFactory + Send + Sync>>,
+    consumer_factory: Option<Arc<dyn ConsumerFactory>>,
 
     /// How to build a mediator for each new pool. See [`MediatorFactory`].
     mediator_factory: MediatorFactory,
@@ -351,8 +347,9 @@ pub struct QueueManager {
     /// `pool_code`, an unspecified `dispatch_mode`, or an ordered mode with
     /// no `message_group_id`, instead of silently falling back
     /// (`DEFAULT-POOL` / the A-09 dispatch-mode default / a shared ordered
-    /// group). Off by default — see [`Self::set_strict_routing`].
-    strict_routing: AtomicBool,
+    /// group). Off by default; set via
+    /// [`QueueManagerBuilder::strict_routing`].
+    strict_routing: bool,
 
     /// R-26/R-33/R-34: whether this instance currently holds leadership.
     /// Always `true` when standby is disabled (see the builder default).
@@ -450,10 +447,11 @@ pub struct QueueManagerBuilder {
     warning_service: Arc<WarningService>,
     circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
     health_service: Option<Arc<crate::health::HealthService>>,
-    consumer_factory: Option<Arc<dyn ConsumerFactory + Send + Sync>>,
+    consumer_factory: Option<Arc<dyn ConsumerFactory>>,
     max_pools: usize,
     pool_warning_threshold: usize,
     stall_config: StallConfig,
+    strict_routing: bool,
 }
 
 impl QueueManagerBuilder {
@@ -468,6 +466,7 @@ impl QueueManagerBuilder {
             max_pools: 10000,
             pool_warning_threshold: 5000,
             stall_config: StallConfig::default(),
+            strict_routing: false,
         }
     }
 
@@ -492,7 +491,7 @@ impl QueueManagerBuilder {
     }
 
     /// Consumer factory for hot-creating queues during config sync.
-    pub fn consumer_factory(mut self, factory: Arc<dyn ConsumerFactory + Send + Sync>) -> Self {
+    pub fn consumer_factory(mut self, factory: Arc<dyn ConsumerFactory>) -> Self {
         self.consumer_factory = Some(factory);
         self
     }
@@ -512,6 +511,15 @@ impl QueueManagerBuilder {
     /// Stall-detection configuration.
     pub fn stall_config(mut self, stall_config: StallConfig) -> Self {
         self.stall_config = stall_config;
+        self
+    }
+
+    /// `FC_ROUTER_STRICT_ROUTING` (R-13/R-16): when `true`, `route_batch`
+    /// ACKs a malformed message (empty `pool_code`, an unspecified
+    /// `dispatch_mode`, or an ordered mode with no `message_group_id`)
+    /// instead of routing it through a fallback. Off by default.
+    pub fn strict_routing(mut self, enabled: bool) -> Self {
+        self.strict_routing = enabled;
         self
     }
 
@@ -545,7 +553,7 @@ impl QueueManagerBuilder {
             warning_service: self.warning_service,
             circuit_breaker_registry: self.circuit_breaker_registry,
             health_service: self.health_service,
-            strict_routing: AtomicBool::new(false),
+            strict_routing: self.strict_routing,
             is_leader: AtomicBool::new(true),
             consumers_started: AtomicBool::new(false),
             polling_consumer_ids: Arc::new(DashMap::new()),
@@ -562,14 +570,15 @@ impl QueueManager {
     /// Start building a manager that creates a **fresh** `HttpMediator` per
     /// pool (production path). Prefer this builder over `new` + `set_*`.
     pub fn builder(mediator_config: HttpMediatorConfig) -> QueueManagerBuilder {
-        let factory: MediatorFactory =
-            Arc::new(move |ws: &Arc<WarningService>, breakers: &Arc<CircuitBreakerRegistry>| {
+        let factory: MediatorFactory = Arc::new(
+            move |ws: &Arc<WarningService>, breakers: &Arc<CircuitBreakerRegistry>| {
                 Arc::new(
                     HttpMediator::with_config(mediator_config.clone())
                         .with_warning_service(ws.clone())
                         .with_circuit_breakers(breakers.clone()),
                 ) as Arc<dyn Mediator + 'static>
-            });
+            },
+        );
         QueueManagerBuilder::from_factory(factory)
     }
 
@@ -594,30 +603,6 @@ impl QueueManager {
         Self::builder(mediator_config).build()
     }
 
-    pub fn with_limits(
-        mediator_config: HttpMediatorConfig,
-        max_pools: usize,
-        pool_warning_threshold: usize,
-    ) -> Self {
-        Self::builder(mediator_config)
-            .max_pools(max_pools)
-            .pool_warning_threshold(pool_warning_threshold)
-            .build()
-    }
-
-    pub fn with_config(
-        mediator_config: HttpMediatorConfig,
-        max_pools: usize,
-        pool_warning_threshold: usize,
-        stall_config: StallConfig,
-    ) -> Self {
-        Self::builder(mediator_config)
-            .max_pools(max_pools)
-            .pool_warning_threshold(pool_warning_threshold)
-            .stall_config(stall_config)
-            .build()
-    }
-
     /// Get the shared circuit breaker registry. This is the instance every
     /// pool records into; wire it into the monitoring API and lifecycle
     /// eviction so they observe/act on the real breaker state.
@@ -638,19 +623,10 @@ impl QueueManager {
         self.shutdown.child_token()
     }
 
-    /// Toggle `FC_ROUTER_STRICT_ROUTING` (R-13/R-16): when `true`,
-    /// `route_batch` ACKs a malformed message (empty `pool_code`, an
-    /// unspecified `dispatch_mode`, or an ordered mode with no
-    /// `message_group_id`) instead of routing it through a fallback. Off by
-    /// default.
-    pub fn set_strict_routing(&self, enabled: bool) {
-        self.strict_routing.store(enabled, Ordering::SeqCst);
-        info!(strict_routing = enabled, "Strict routing gate set");
-    }
-
-    /// Current value of the strict-routing gate (see [`Self::set_strict_routing`]).
+    /// Current value of the strict-routing gate (see
+    /// [`QueueManagerBuilder::strict_routing`]).
     pub fn strict_routing(&self) -> bool {
-        self.strict_routing.load(Ordering::SeqCst)
+        self.strict_routing
     }
 
     /// Whether this instance currently holds leadership (always `true` when
@@ -707,7 +683,10 @@ impl QueueManager {
     /// Add a queue consumer
     pub async fn add_consumer(&self, consumer: Arc<dyn QueueConsumer>) {
         let id = consumer.identifier().to_string();
-        self.consumers.write().await.insert(id.clone(), consumer.clone());
+        self.consumers
+            .write()
+            .await
+            .insert(id.clone(), consumer.clone());
         // G10: keep the identifier-keyed resolution index in lockstep.
         self.consumers_by_id.write().await.insert(id, consumer);
     }

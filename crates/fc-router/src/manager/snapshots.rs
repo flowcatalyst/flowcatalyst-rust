@@ -229,7 +229,7 @@ impl QueueManager {
             .iter()
             .filter(|entry| {
                 let msg = entry.value();
-                // Message ID filter: substring match, case-insensitive (matches Java)
+                // Message ID filter: substring match, case-insensitive
                 if let Some(filter) = message_id_filter {
                     if !msg
                         .message_id
@@ -239,7 +239,7 @@ impl QueueManager {
                         return false;
                     }
                 }
-                // Pool code filter: exact match, case-insensitive (matches Java)
+                // Pool code filter: exact match, case-insensitive
                 if let Some(filter) = pool_code_filter {
                     if !msg.pool_code.eq_ignore_ascii_case(filter) {
                         return false;

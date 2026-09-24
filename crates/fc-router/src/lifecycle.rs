@@ -50,7 +50,7 @@ use crate::circuit_breaker_registry::CircuitBreakerRegistry;
 use crate::config_sync::{spawn_config_sync_task, ConfigSyncService};
 use crate::health::HealthService;
 use crate::manager::QueueManager;
-use crate::standby::{spawn_leadership_monitor, StandbyProcessor};
+use crate::standby::{spawn_leadership_monitor, StandbyAwareProcessor};
 use crate::warning::WarningService;
 use fc_common::{WarningCategory, WarningSeverity};
 
@@ -97,7 +97,7 @@ impl Default for LifecycleConfig {
             in_pipeline_max_age: Duration::from_secs(900), // 15 minutes
             pending_delete_max_age: Duration::from_secs(60), // 1 minute — short so deliberate resends are reprocessed
             circuit_breaker_max_idle: Duration::from_secs(3600), // 1 hour
-            synth_pool_idle_ttl: Duration::from_secs(3600), // 1 hour, matches Go's default
+            synth_pool_idle_ttl: Duration::from_secs(3600),  // 1 hour, matches Go's default
         }
     }
 }
@@ -117,15 +117,7 @@ pub struct LifecycleManager {
     /// Optional config sync service
     config_sync: Option<Arc<ConfigSyncService>>,
     /// Optional standby processor
-    standby: Option<Arc<StandbyProcessor>>,
-    /// Optional circuit breaker registry for idle eviction
-    circuit_breaker_registry: Option<Arc<CircuitBreakerRegistry>>,
-    /// Optional OIDC session store for periodic cleanup
-    #[cfg(feature = "oidc-flow")]
-    session_store: Option<Arc<SessionStore>>,
-    /// Optional OIDC pending state store for periodic cleanup
-    #[cfg(feature = "oidc-flow")]
-    pending_oidc_states: Option<Arc<PendingOidcStateStore>>,
+    standby: Option<Arc<StandbyAwareProcessor>>,
 }
 
 impl LifecycleManager {
@@ -142,11 +134,6 @@ impl LifecycleManager {
             health_service,
             config_sync: None,
             standby: None,
-            circuit_breaker_registry: None,
-            #[cfg(feature = "oidc-flow")]
-            session_store: None,
-            #[cfg(feature = "oidc-flow")]
-            pending_oidc_states: None,
         }
     }
 
@@ -405,11 +392,6 @@ impl LifecycleManager {
             health_service,
             config_sync: None,
             standby: None,
-            circuit_breaker_registry: None,
-            #[cfg(feature = "oidc-flow")]
-            session_store: None,
-            #[cfg(feature = "oidc-flow")]
-            pending_oidc_states: None,
         }
     }
 
@@ -420,7 +402,7 @@ impl LifecycleManager {
         health_service: Arc<HealthService>,
         config: LifecycleConfig,
         config_sync: Option<Arc<ConfigSyncService>>,
-        standby: Option<Arc<StandbyProcessor>>,
+        standby: Option<Arc<StandbyAwareProcessor>>,
     ) -> Self {
         // Kept for the leadership monitor below — `Self::start` consumes
         // `manager` (moved into its own background tasks).
@@ -444,15 +426,13 @@ impl LifecycleManager {
         // loss/regain — `spawn_leadership_monitor` drives
         // `QueueManager::set_leader` every tick.
         if let Some(ref standby_proc) = standby {
-            if standby_proc.is_standby_enabled() {
-                info!("Starting leadership monitor background task");
-                let handle = spawn_leadership_monitor(
-                    standby_proc.clone(),
-                    manager_for_leadership,
-                    lifecycle.shutdown.child_token(),
-                );
-                lifecycle.tasks.push(handle);
-            }
+            info!("Starting leadership monitor background task");
+            let handle = spawn_leadership_monitor(
+                standby_proc.clone(),
+                manager_for_leadership,
+                lifecycle.shutdown.child_token(),
+            );
+            lifecycle.tasks.push(handle);
         }
 
         lifecycle.config_sync = config_sync;
@@ -477,24 +457,19 @@ impl LifecycleManager {
     }
 
     /// Get standby processor reference if available
-    pub fn standby(&self) -> Option<&Arc<StandbyProcessor>> {
+    pub fn standby(&self) -> Option<&Arc<StandbyAwareProcessor>> {
         self.standby.as_ref()
     }
 
-    /// Check if this instance should process messages (respects standby mode)
+    /// Check if this instance should process messages (respects standby
+    /// mode; without standby it always processes)
     pub fn should_process(&self) -> bool {
-        match &self.standby {
-            Some(standby) => standby.should_process(),
-            None => true, // No standby = always process
-        }
+        self.standby.as_ref().is_none_or(|s| s.should_process())
     }
 
-    /// Check if this instance is the leader
+    /// Check if this instance is the leader (always, without standby)
     pub fn is_leader(&self) -> bool {
-        match &self.standby {
-            Some(standby) => standby.is_leader(),
-            None => true, // No standby = always leader
-        }
+        self.standby.as_ref().is_none_or(|s| s.is_leader())
     }
 
     /// Signal shutdown to all lifecycle tasks, then bounded-join them.
@@ -542,15 +517,14 @@ impl LifecycleManager {
         self.shutdown.child_token()
     }
 
-    /// Set the circuit breaker registry for periodic idle eviction.
-    /// Starts a background task that evicts idle breakers on the warning cleanup interval.
-    pub fn set_circuit_breaker_registry(
+    /// Spawn a background task that evicts breakers idle for longer than
+    /// `max_idle` from `registry`, on the warning cleanup cadence. The task
+    /// is joined by [`Self::shutdown`].
+    pub fn spawn_circuit_breaker_eviction(
         &mut self,
         registry: Arc<CircuitBreakerRegistry>,
         max_idle: Duration,
     ) {
-        self.circuit_breaker_registry = Some(registry.clone());
-
         let token = self.shutdown.child_token();
         // Run at the same cadence as warning cleanup (5 min)
         let interval = Duration::from_secs(300);
@@ -577,17 +551,14 @@ impl LifecycleManager {
         self.tasks.push(handle);
     }
 
-    /// Set the OIDC stores for periodic expired-entry cleanup.
-    /// Starts a background task that cleans up expired sessions and pending states.
+    /// Spawn a background task that purges expired OIDC sessions and
+    /// pending states every 60s. The task is joined by [`Self::shutdown`].
     #[cfg(feature = "oidc-flow")]
-    pub fn set_oidc_stores(
+    pub fn spawn_oidc_store_cleanup(
         &mut self,
         session_store: Arc<SessionStore>,
         pending_states: Arc<PendingOidcStateStore>,
     ) {
-        self.session_store = Some(session_store.clone());
-        self.pending_oidc_states = Some(pending_states.clone());
-
         let token = self.shutdown.child_token();
         // Clean up every 60 seconds
         let interval = Duration::from_secs(60);
@@ -658,7 +629,7 @@ mod tests {
         let mut lifecycle =
             LifecycleManager::start(manager, warning_service, health_service, config);
 
-        lifecycle.set_circuit_breaker_registry(
+        lifecycle.spawn_circuit_breaker_eviction(
             Arc::new(CircuitBreakerRegistry::new(CircuitBreakerConfig::default())),
             long,
         );

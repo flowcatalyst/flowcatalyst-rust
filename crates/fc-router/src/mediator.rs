@@ -89,7 +89,7 @@ pub struct HttpMediatorConfig {
 impl Default for HttpMediatorConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(900), // 15 minutes — matches Java default.
+            timeout: Duration::from_secs(900), // 15 minutes
             http_version: HttpVersion::Http2,  // Production default.
             max_retries: 3,
             retry_delays: vec![
@@ -224,17 +224,6 @@ impl HttpMediator {
             warning_service,
             self.inner.breakers.clone(),
         )
-    }
-
-    /// Replace the warning service post-construction. Rebuilds the
-    /// per-host pool registry; existing slots and their open connections
-    /// are dropped, so prefer `with_warning_service` at construction time.
-    pub fn set_warning_service(&mut self, warning_service: Arc<WarningService>) {
-        *self = Self::build(
-            self.inner.config.clone(),
-            warning_service,
-            self.inner.breakers.clone(),
-        );
     }
 
     /// Attach the shared circuit breaker registry every pool's mediator

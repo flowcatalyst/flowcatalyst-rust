@@ -1,13 +1,14 @@
 //! Warning management endpoints: list/filter, acknowledge, clear.
 
 use super::AppState;
+use crate::warning::parse_severity;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-use fc_common::{Warning, WarningCategory, WarningSeverity};
+use fc_common::{Warning, WarningCategory};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use utoipa::ToSchema;
@@ -49,14 +50,7 @@ pub(crate) async fn list_warnings(
 
     // Filter by severity if specified
     if let Some(ref sev_str) = query.severity {
-        let severity = match sev_str.to_uppercase().as_str() {
-            "INFO" => Some(WarningSeverity::Info),
-            "WARN" | "WARNING" => Some(WarningSeverity::Warn),
-            "ERROR" => Some(WarningSeverity::Error),
-            "CRITICAL" => Some(WarningSeverity::Critical),
-            _ => None,
-        };
-        if let Some(sev) = severity {
+        if let Some(sev) = parse_severity(sev_str) {
             warnings.retain(|w| w.severity == sev);
         }
     }
@@ -222,15 +216,7 @@ pub(crate) async fn get_warnings_by_severity(
     State(state): State<AppState>,
     Path(severity): Path<String>,
 ) -> Json<Vec<Warning>> {
-    let severity_enum = match severity.to_uppercase().as_str() {
-        "INFO" => Some(WarningSeverity::Info),
-        "WARN" | "WARNING" => Some(WarningSeverity::Warn),
-        "ERROR" => Some(WarningSeverity::Error),
-        "CRITICAL" => Some(WarningSeverity::Critical),
-        _ => None,
-    };
-
-    let warnings = match severity_enum {
+    let warnings = match parse_severity(&severity) {
         Some(sev) => state.warning_service.get_warnings_by_severity(sev),
         None => vec![],
     };
@@ -320,6 +306,7 @@ pub(crate) async fn clear_old_warnings(
 
 #[cfg(test)]
 mod tests {
+    use super::parse_severity;
     use fc_common::WarningSeverity;
 
     #[test]
@@ -330,18 +317,12 @@ mod tests {
             ("WARNING", Some(WarningSeverity::Warn)),
             ("ERROR", Some(WarningSeverity::Error)),
             ("CRITICAL", Some(WarningSeverity::Critical)),
+            ("warning", Some(WarningSeverity::Warn)),
             ("UNKNOWN", None),
         ];
 
         for (input, expected) in cases {
-            let result = match input.to_uppercase().as_str() {
-                "INFO" => Some(WarningSeverity::Info),
-                "WARN" | "WARNING" => Some(WarningSeverity::Warn),
-                "ERROR" => Some(WarningSeverity::Error),
-                "CRITICAL" => Some(WarningSeverity::Critical),
-                _ => None,
-            };
-            assert_eq!(result, expected);
+            assert_eq!(parse_severity(input), expected);
         }
     }
 }

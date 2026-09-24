@@ -2,88 +2,61 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::PgPool;
-use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::health::StreamHealth;
 
-/// Projects events from `msg_events` into `msg_events_read`.
+/// Health-tracker name for the event projection (reported by the stream
+/// health endpoints).
+pub const HEALTH_NAME: &str = "event-projection";
+
+/// Projects events from `msg_events` into `msg_events_read` until `cancel`
+/// fires.
 ///
 /// Reads rows where `projected_at IS NULL`, inserts them into the read model
 /// with parsed application/subdomain/aggregate fields, and stamps `projected_at`.
-pub struct EventProjectionService {
+/// Cancellation is only observed between batches, so a batch in flight
+/// always completes.
+pub async fn run(
     pool: PgPool,
     batch_size: u32,
-    shutdown_tx: watch::Sender<bool>,
-    shutdown_rx: watch::Receiver<bool>,
     health: Arc<StreamHealth>,
-}
+    cancel: CancellationToken,
+) {
+    health.set_running(true);
+    info!("Event projection started (batch_size={})", batch_size);
 
-impl EventProjectionService {
-    pub fn new(pool: PgPool, batch_size: u32) -> Self {
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        Self {
-            pool,
-            batch_size,
-            shutdown_tx,
-            shutdown_rx,
-            health: Arc::new(StreamHealth::new("event-projection".to_string())),
+    loop {
+        if cancel.is_cancelled() {
+            break;
+        }
+
+        let sleep_ms = match poll_once(&pool, batch_size).await {
+            Ok(count) => {
+                if count > 0 {
+                    health.add_processed(count as u64);
+                    debug!("Projected {} events", count);
+                }
+                adaptive_sleep(count, batch_size)
+            }
+            Err(e) => {
+                error!("Event projection error: {}", e);
+                health.record_error();
+                5000
+            }
+        };
+
+        if sleep_ms > 0 {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
+                _ = cancel.cancelled() => { break; }
+            }
         }
     }
 
-    /// Returns the health tracker for this service.
-    pub fn health(&self) -> Arc<StreamHealth> {
-        self.health.clone()
-    }
-
-    /// Starts the projection loop in a background tokio task.
-    pub fn start(&self) -> tokio::task::JoinHandle<()> {
-        let pool = self.pool.clone();
-        let batch_size = self.batch_size;
-        let mut shutdown_rx = self.shutdown_rx.clone();
-        let health = self.health.clone();
-
-        tokio::spawn(async move {
-            health.set_running(true);
-            info!("Event projection started (batch_size={})", batch_size);
-
-            loop {
-                if *shutdown_rx.borrow() {
-                    break;
-                }
-
-                let sleep_ms = match poll_once(&pool, batch_size).await {
-                    Ok(count) => {
-                        if count > 0 {
-                            health.add_processed(count as u64);
-                            debug!("Projected {} events", count);
-                        }
-                        adaptive_sleep(count, batch_size)
-                    }
-                    Err(e) => {
-                        error!("Event projection error: {}", e);
-                        health.record_error();
-                        5000
-                    }
-                };
-
-                if sleep_ms > 0 {
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
-                        _ = shutdown_rx.changed() => { break; }
-                    }
-                }
-            }
-
-            health.set_running(false);
-            info!("Event projection stopped");
-        })
-    }
-
-    /// Signals the projection loop to stop.
-    pub fn stop(&self) {
-        let _ = self.shutdown_tx.send(true);
-    }
+    health.set_running(false);
+    info!("Event projection stopped");
 }
 
 async fn poll_once(pool: &PgPool, batch_size: u32) -> anyhow::Result<u32> {
@@ -190,34 +163,26 @@ mod tests {
         assert_eq!(adaptive_sleep(batch + 1, batch), 0); // just over
     }
 
-    // --- Service construction tests ---
+    // --- run() tests ---
 
-    #[tokio::test]
-    async fn service_health_has_correct_name() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/fake").unwrap();
-        let svc = EventProjectionService::new(pool, 200);
-        assert_eq!(svc.health().name(), "event-projection");
+    #[test]
+    fn health_name_is_stable() {
+        assert_eq!(HEALTH_NAME, "event-projection");
     }
 
     #[tokio::test]
-    async fn service_health_starts_not_running() {
+    async fn run_exits_without_polling_when_already_cancelled() {
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/fake").unwrap();
-        let svc = EventProjectionService::new(pool, 100);
-        assert!(!svc.health().is_running());
-        assert!(!svc.health().is_healthy());
-    }
+        let health = Arc::new(StreamHealth::new(HEALTH_NAME.to_string()));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
 
-    #[tokio::test]
-    async fn service_stop_signals_shutdown() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/fake").unwrap();
-        let svc = EventProjectionService::new(pool, 100);
-
-        // Before stop, shutdown_rx should be false
-        assert!(!*svc.shutdown_rx.borrow());
-
-        svc.stop();
-
-        // After stop, shutdown_rx should be true
-        assert!(*svc.shutdown_rx.borrow());
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            run(pool, 100, health.clone(), cancel),
+        )
+        .await
+        .expect("run should return promptly on a cancelled token");
+        assert!(!health.is_running());
     }
 }

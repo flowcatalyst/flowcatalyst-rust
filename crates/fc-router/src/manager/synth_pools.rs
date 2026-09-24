@@ -129,7 +129,7 @@ impl QueueManager {
             concurrency: 20, // Go: defaultPoolConcurrency; Java: DEFAULT_POOL_CONCURRENCY
             rate_limit_per_minute: None,
         };
-        let pool = ProcessPool::with_dependencies(pool_config.clone(), self.build_mediator())
+        let pool = ProcessPool::new(pool_config.clone(), self.build_mediator())
             .with_capacity_notify(self.capacity_notify().clone());
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;

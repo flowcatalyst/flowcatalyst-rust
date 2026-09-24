@@ -174,7 +174,7 @@ pub(crate) async fn metrics_handler(State(state): State<AppState>) -> Response {
         .into_response()
 }
 
-/// Consumer health endpoint (matches Java /monitoring/consumer-health)
+/// Consumer health endpoint (`/monitoring/consumer-health`)
 pub(crate) async fn consumer_health_handler(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
@@ -234,7 +234,7 @@ pub(crate) async fn consumer_health_handler(
 // Stream Health Endpoints
 // ============================================================================
 
-/// Stream processor health response (Java-compatible)
+/// Stream processor health response
 #[derive(Serialize, ToSchema)]
 pub(crate) struct StreamHealthResponse {
     /// Overall status: UP, DEGRADED, DOWN

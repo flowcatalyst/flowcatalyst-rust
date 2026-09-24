@@ -2,8 +2,6 @@ use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{Pool, Row, Sqlite};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use crate::{EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, Result};
@@ -20,9 +18,6 @@ pub struct SqliteQueue {
     queue_name: String,
     visibility_timeout_seconds: u32,
     running: AtomicBool,
-    // Mutex for message group ordering - ensures only one message per group is in-flight
-    #[allow(dead_code)]
-    group_locks: Arc<Mutex<std::collections::HashMap<String, bool>>>,
 }
 
 impl SqliteQueue {
@@ -32,7 +27,6 @@ impl SqliteQueue {
             queue_name,
             visibility_timeout_seconds,
             running: AtomicBool::new(true),
-            group_locks: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -750,14 +744,15 @@ mod tests {
         );
 
         // It is gone from queue_messages, so it can never re-claim forever.
-        let remaining: i64 =
-            sqlx::query("SELECT COUNT(*) as count FROM queue_messages WHERE queue_name = ? AND id = ?")
-                .bind(&queue.queue_name)
-                .bind("poison-1")
-                .fetch_one(&queue.pool)
-                .await
-                .unwrap()
-                .get("count");
+        let remaining: i64 = sqlx::query(
+            "SELECT COUNT(*) as count FROM queue_messages WHERE queue_name = ? AND id = ?",
+        )
+        .bind(&queue.queue_name)
+        .bind("poison-1")
+        .fetch_one(&queue.pool)
+        .await
+        .unwrap()
+        .get("count");
         assert_eq!(remaining, 0);
 
         // A second poll never sees the poison row again (it's not just

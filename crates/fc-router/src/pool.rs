@@ -311,7 +311,7 @@ pub fn disposition_of(
             // gap is currently invisible to it either way.
             action: BrokerAction::Release,
             group: GroupEffect::Release,
-            metric: DispositionMetric::None /* R-08 kept-as-Go + corpus: no delivery attempted, no pool metric */,
+            metric: DispositionMetric::None, /* R-08 kept-as-Go + corpus: no delivery attempted, no pool metric */
             retry_after_secs: Some(5),
         },
     }
@@ -403,7 +403,11 @@ async fn ack_if_suppressed(
 /// A no-op unless `outcome` is `Success` with `flush_group` set. Warns
 /// (rather than suppressing nothing silently) when the target asked to
 /// flush a message that has no group id — there is nothing to suppress.
-fn maybe_flush_group(flush_registry: &GroupFlushRegistry, message: &Message, outcome: &MediationOutcome) {
+fn maybe_flush_group(
+    flush_registry: &GroupFlushRegistry,
+    message: &Message,
+    outcome: &MediationOutcome,
+) {
     if outcome.result != MediationResult::Success || !outcome.flush_group {
         return;
     }
@@ -666,7 +670,7 @@ pub struct ProcessPool {
 
     /// Capacity-freed signal (G12) — notified exactly on the full→not-full
     /// crossing by every [`QueueSlotReleaser`] built from this pool. A
-    /// standalone pool (constructed via `new`/`with_dependencies` outside a
+    /// standalone pool (constructed via `new` outside a
     /// `QueueManager`) gets its own private `Notify` that nothing waits on;
     /// `QueueManager` overwrites it with its one shared gate via
     /// [`Self::with_capacity_notify`] so every pool's crossing wakes the
@@ -727,23 +731,14 @@ pub struct ProcessPool {
 }
 
 impl ProcessPool {
-    /// Construct a pool. Circuit breaker admission/recording lives entirely
-    /// in the mediator now (see `mediator.rs`'s `Mediator::mediate` impl on
-    /// `HttpMediator`) — a pool has no breaker registry of its own to wire
-    /// up, private or shared. `with_dependencies` is kept as the one
-    /// production/test constructor name (previously distinct from this
-    /// thin `new` only by the registry argument) so existing call sites
-    /// that already say `with_dependencies` don't need to change.
-    pub fn new(config: PoolConfig, mediator: Arc<dyn Mediator>) -> Self {
-        Self::with_dependencies(config, mediator)
-    }
-
-    /// Construct a fully-wired pool. `mediator` is expected to already
-    /// carry the manager's shared circuit breaker registry (via
+    /// Construct a pool. `mediator` is expected to already carry the
+    /// manager's shared circuit breaker registry (via
     /// `HttpMediator::with_circuit_breakers`, wired by `QueueManager`'s
-    /// `MediatorFactory`) — the pool itself neither checks nor records
+    /// `MediatorFactory`): breaker admission/recording lives entirely in the
+    /// mediator (see `mediator.rs`'s `Mediator::mediate` impl on
+    /// `HttpMediator`), so the pool itself neither checks nor records
     /// breaker state.
-    pub fn with_dependencies(config: PoolConfig, mediator: Arc<dyn Mediator>) -> Self {
+    pub fn new(config: PoolConfig, mediator: Arc<dyn Mediator>) -> Self {
         // Java: effectiveConcurrency() — if concurrency is 0, fall back to max(rateLimitPerMinute/60, 1)
         let concurrency_val = if config.concurrency == 0 {
             config
@@ -2092,7 +2087,10 @@ mod disposition_tests {
     #[test]
     fn breaker_effect_rate_limited_and_deferred_are_neutral() {
         assert_eq!(breaker_effect(&MediationOutcome::rate_limited(30)), None);
-        assert_eq!(breaker_effect(&MediationOutcome::deferred(200, Some(0))), None);
+        assert_eq!(
+            breaker_effect(&MediationOutcome::deferred(200, Some(0))),
+            None
+        );
     }
 
     #[test]

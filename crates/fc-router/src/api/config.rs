@@ -246,7 +246,7 @@ pub(crate) async fn get_local_config(State(state): State<AppState>) -> Json<serd
     }))
 }
 
-/// Standby status response (matches Java format)
+/// Standby status response
 #[derive(Serialize, ToSchema)]
 pub(crate) struct StandbyStatusResponse {
     #[serde(rename = "standbyEnabled")]
@@ -287,7 +287,7 @@ pub(crate) async fn get_standby_status(
     })
 }
 
-/// Traffic status response (matches Java format)
+/// Traffic status response
 #[derive(Serialize, ToSchema)]
 pub(crate) struct TrafficStatusResponse {
     enabled: bool,

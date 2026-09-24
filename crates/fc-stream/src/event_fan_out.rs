@@ -28,7 +28,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use fc_common::{tsid::EntityType, DispatchMode, DispatchStatus, TsidGenerator};
 use sqlx::{PgPool, Postgres, Transaction};
-use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::health::StreamHealth;
@@ -53,89 +53,63 @@ impl Default for EventFanOutConfig {
     }
 }
 
+/// Health-tracker name for the fan-out (reported by the stream health
+/// endpoints).
+pub const HEALTH_NAME: &str = "event-fan-out";
+
 /// Fans `msg_events` rows out to `msg_dispatch_jobs` based on active
-/// subscriptions.
-pub struct EventFanOutService {
+/// subscriptions, until `cancel` fires. Cancellation is only observed
+/// between cycles, so a cycle in flight always completes.
+pub async fn run(
     pool: PgPool,
     config: EventFanOutConfig,
-    shutdown_tx: watch::Sender<bool>,
-    shutdown_rx: watch::Receiver<bool>,
     health: Arc<StreamHealth>,
-}
+    cancel: CancellationToken,
+) {
+    health.set_running(true);
+    info!(batch_size = config.batch_size, "Event fan-out started");
 
-impl EventFanOutService {
-    pub fn new(pool: PgPool, config: EventFanOutConfig) -> Self {
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        Self {
-            pool,
-            config,
-            shutdown_tx,
-            shutdown_rx,
-            health: Arc::new(StreamHealth::new("event-fan-out".to_string())),
+    let mut subs_cache = SubscriptionCache::new(config.subscription_refresh);
+
+    loop {
+        if cancel.is_cancelled() {
+            break;
+        }
+
+        if subs_cache.needs_refresh() {
+            match load_active_subscriptions(&pool).await {
+                Ok(subs) => subs_cache.replace(subs),
+                Err(e) => {
+                    warn!(error = %e, "Failed to refresh subscriptions; using stale cache");
+                }
+            }
+        }
+
+        let sleep_ms = match poll_once(&pool, subs_cache.subs(), &config).await {
+            Ok(report) => {
+                if report.events > 0 {
+                    health.add_processed(report.events as u64);
+                    debug!(events = report.events, jobs = report.jobs, "Fan-out cycle");
+                }
+                adaptive_sleep(report.events, config.batch_size)
+            }
+            Err(e) => {
+                error!(error = %e, "Event fan-out cycle failed");
+                health.record_error();
+                5000
+            }
+        };
+
+        if sleep_ms > 0 {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
+                _ = cancel.cancelled() => { break; }
+            }
         }
     }
 
-    pub fn health(&self) -> Arc<StreamHealth> {
-        self.health.clone()
-    }
-
-    pub fn start(&self) -> tokio::task::JoinHandle<()> {
-        let pool = self.pool.clone();
-        let config = self.config.clone();
-        let mut shutdown_rx = self.shutdown_rx.clone();
-        let health = self.health.clone();
-
-        tokio::spawn(async move {
-            health.set_running(true);
-            info!(batch_size = config.batch_size, "Event fan-out started");
-
-            let mut subs_cache = SubscriptionCache::new(config.subscription_refresh);
-
-            loop {
-                if *shutdown_rx.borrow() {
-                    break;
-                }
-
-                if subs_cache.needs_refresh() {
-                    match load_active_subscriptions(&pool).await {
-                        Ok(subs) => subs_cache.replace(subs),
-                        Err(e) => {
-                            warn!(error = %e, "Failed to refresh subscriptions; using stale cache");
-                        }
-                    }
-                }
-
-                let sleep_ms = match poll_once(&pool, subs_cache.subs(), &config).await {
-                    Ok(report) => {
-                        if report.events > 0 {
-                            health.add_processed(report.events as u64);
-                            debug!(events = report.events, jobs = report.jobs, "Fan-out cycle");
-                        }
-                        adaptive_sleep(report.events, config.batch_size)
-                    }
-                    Err(e) => {
-                        error!(error = %e, "Event fan-out cycle failed");
-                        health.record_error();
-                        5000
-                    }
-                };
-
-                if sleep_ms > 0 {
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_millis(sleep_ms)) => {}
-                        _ = shutdown_rx.changed() => { break; }
-                    }
-                }
-            }
-
-            health.set_running(false);
-            info!("Event fan-out stopped");
-        })
-    }
-
-    pub fn stop(&self) {
-        let _ = self.shutdown_tx.send(true);
-    }
+    health.set_running(false);
+    info!("Event fan-out stopped");
 }
 
 struct CycleReport {

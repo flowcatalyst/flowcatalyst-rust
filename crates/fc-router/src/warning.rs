@@ -16,6 +16,22 @@ use tracing::{debug, info};
 use crate::notification::NotificationService;
 use fc_common::{Warning, WarningCategory, WarningSeverity};
 
+/// Parse a severity name as the warnings API and `FC_NOTIFY_MIN_SEVERITY`
+/// accept it: case-insensitive `INFO`, `WARN`/`WARNING`, `ERROR` or
+/// `CRITICAL`. `None` for anything else.
+///
+/// (A free function rather than `impl FromStr` because `WarningSeverity`
+/// lives in fc-common.)
+pub fn parse_severity(s: &str) -> Option<WarningSeverity> {
+    match s.to_uppercase().as_str() {
+        "INFO" => Some(WarningSeverity::Info),
+        "WARN" | "WARNING" => Some(WarningSeverity::Warn),
+        "ERROR" => Some(WarningSeverity::Error),
+        "CRITICAL" => Some(WarningSeverity::Critical),
+        _ => None,
+    }
+}
+
 /// Configuration for warning service
 #[derive(Debug, Clone)]
 pub struct WarningServiceConfig {
@@ -55,7 +71,7 @@ impl Default for WarningServiceConfig {
 pub struct WarningService {
     warnings: RwLock<HashMap<String, Warning>>,
     config: WarningServiceConfig,
-    notification_service: RwLock<Option<Arc<dyn NotificationService>>>,
+    notification_service: Option<Arc<dyn NotificationService>>,
 }
 
 impl WarningService {
@@ -63,14 +79,8 @@ impl WarningService {
         Self {
             warnings: RwLock::new(HashMap::new()),
             config,
-            notification_service: RwLock::new(None),
+            notification_service: None,
         }
-    }
-
-    /// Set the notification service for sending alerts
-    pub fn set_notification_service(&self, service: Arc<dyn NotificationService>) {
-        *self.notification_service.write() = Some(service);
-        info!("Notification service attached to WarningService");
     }
 
     /// Create a new warning service with notification support
@@ -81,7 +91,7 @@ impl WarningService {
         Self {
             warnings: RwLock::new(HashMap::new()),
             config,
-            notification_service: RwLock::new(Some(notification)),
+            notification_service: Some(notification),
         }
     }
 
@@ -120,8 +130,7 @@ impl WarningService {
         // **Joined by:** nobody — we don't block `add_warning` on
         // notification delivery, since notification failures (Teams /
         // email transient errors) must not stall warning ingestion.
-        if let Some(ref notification_service) = *self.notification_service.read() {
-            let ns = notification_service.clone();
+        if let Some(ns) = self.notification_service.clone() {
             tokio::spawn(async move {
                 ns.notify_warning(&warning).await;
             });
@@ -373,7 +382,7 @@ impl WarningService {
         Self {
             warnings: RwLock::new(HashMap::new()),
             config: WarningServiceConfig::default(),
-            notification_service: RwLock::new(None),
+            notification_service: None,
         }
     }
 }
@@ -477,8 +486,11 @@ mod tests {
         let removed = service.clear_aged_warnings();
         assert_eq!(removed, 1, "only the aged INFO warning should be swept");
 
-        let remaining_ids: Vec<String> =
-            service.get_all_warnings().into_iter().map(|w| w.id).collect();
+        let remaining_ids: Vec<String> = service
+            .get_all_warnings()
+            .into_iter()
+            .map(|w| w.id)
+            .collect();
         assert!(
             !remaining_ids.contains(&info_id),
             "aged INFO warning must be gone"

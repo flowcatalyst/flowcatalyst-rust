@@ -385,7 +385,7 @@ impl HealthService {
             issues.push(format!("{} critical warnings", critical_warnings));
         }
 
-        // Determine overall status (matches Java warning-count thresholds).
+        // Determine overall status from the warning-count thresholds.
         // R-36: pool success rate is deliberately excluded — see this
         // method's doc comment. Consumer liveness and warning volume are
         // the only readiness inputs besides critical warnings.

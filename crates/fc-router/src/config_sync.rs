@@ -46,8 +46,8 @@ impl Default for ConfigSyncConfig {
         Self {
             enabled: false,
             config_urls: Vec::new(),
-            sync_interval: Duration::from_secs(300), // 5 minutes (matches Java)
-            max_retry_attempts: 12,                  // 12 attempts (matches Java)
+            sync_interval: Duration::from_secs(300), // 5 minutes
+            max_retry_attempts: 12,                  // 12 attempts
             retry_delay: Duration::from_secs(5),     // 5 seconds between retries
             request_timeout: Duration::from_secs(30),
             fail_on_initial_sync_error: true,
@@ -86,8 +86,7 @@ impl ConfigSyncConfig {
     }
 }
 
-/// Response from the configuration service
-/// Matches the Java MessageRouterConfig structure
+/// Response from the configuration service (`MessageRouterConfig`)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageRouterConfigResponse {

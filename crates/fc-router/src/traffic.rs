@@ -6,8 +6,10 @@
 //!
 //! # Strategies
 //!
-//! - `NoopTrafficStrategy`: No-op, always considers itself registered (default)
 //! - `AwsAlbTrafficStrategy`: Manages AWS ALB target group registration (requires `alb` feature)
+//!
+//! With no strategy configured (`AppState::traffic_strategy` is `None`) the
+//! instance is treated as always registered.
 
 use async_trait::async_trait;
 #[cfg(feature = "alb")]
@@ -52,33 +54,6 @@ pub trait TrafficStrategy: Send + Sync {
     fn strategy_type(&self) -> &str;
 }
 
-/// No-op traffic strategy for when traffic management is disabled.
-///
-/// Always considers itself registered and all operations succeed immediately.
-/// This is the default strategy when no ALB integration is configured.
-pub struct NoopTrafficStrategy;
-
-#[async_trait]
-impl TrafficStrategy for NoopTrafficStrategy {
-    async fn register(&self) -> Result<(), TrafficError> {
-        debug!("NoopTrafficStrategy: register (no-op)");
-        Ok(())
-    }
-
-    async fn deregister(&self) -> Result<(), TrafficError> {
-        debug!("NoopTrafficStrategy: deregister (no-op)");
-        Ok(())
-    }
-
-    fn is_registered(&self) -> bool {
-        true
-    }
-
-    fn strategy_type(&self) -> &str {
-        "NONE"
-    }
-}
-
 // ============================================================================
 // AWS ALB Traffic Strategy (feature-gated)
 // ============================================================================
@@ -112,12 +87,8 @@ pub struct AwsAlbTrafficStrategy {
 
 #[cfg(feature = "alb")]
 impl AwsAlbTrafficStrategy {
-    /// Create a new ALB traffic strategy.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - ALB target group configuration
-    /// * `aws_config` - AWS SDK configuration (region, credentials, etc.)
+    /// Create a new ALB traffic strategy for the target group in `config`,
+    /// using `aws_config` for region and credentials.
     pub fn new(config: AlbTrafficConfig, aws_config: &aws_config::SdkConfig) -> Self {
         let client = aws_sdk_elasticloadbalancingv2::Client::new(aws_config);
         info!(
@@ -304,15 +275,6 @@ impl TrafficStrategy for AwsAlbTrafficStrategy {
 /// returns `Err`). The sender lives in `LeaderElection`, so dropping the
 /// election (e.g. graceful shutdown) closes this watcher.
 /// **Joined by:** the caller via the returned `JoinHandle`.
-///
-/// # Arguments
-///
-/// * `strategy` - The traffic strategy to manage
-/// * `status_rx` - A watch receiver for leadership status changes
-///
-/// # Returns
-///
-/// A `JoinHandle` for the spawned background task.
 pub fn spawn_traffic_watcher(
     strategy: Arc<dyn TrafficStrategy>,
     mut status_rx: tokio::sync::watch::Receiver<fc_standby::LeadershipStatus>,

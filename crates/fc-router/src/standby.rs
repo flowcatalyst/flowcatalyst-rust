@@ -161,133 +161,6 @@ impl StandbyAwareProcessor {
     }
 }
 
-/// No-op standby processor for when standby mode is disabled
-pub struct DisabledStandbyProcessor;
-
-impl Default for DisabledStandbyProcessor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl DisabledStandbyProcessor {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn is_leader(&self) -> bool {
-        true // Always leader when standby is disabled
-    }
-
-    pub fn should_process(&self) -> bool {
-        true // Always process when standby is disabled
-    }
-
-    pub fn status(&self) -> LeadershipStatus {
-        LeadershipStatus::Leader
-    }
-
-    pub fn instance_id(&self) -> &str {
-        "standalone"
-    }
-
-    pub fn check_and_log_transition(&self) {
-        // No-op
-    }
-
-    pub async fn shutdown(&self) {
-        // No-op
-    }
-}
-
-/// Enum to handle both enabled and disabled standby modes
-pub enum StandbyProcessor {
-    Enabled(StandbyAwareProcessor),
-    Disabled(DisabledStandbyProcessor),
-}
-
-impl StandbyProcessor {
-    /// Create a new standby processor based on configuration
-    pub async fn new(config: StandbyRouterConfig) -> Result<Self, StandbyError> {
-        if config.enabled {
-            let processor = StandbyAwareProcessor::new(config).await?;
-            Ok(Self::Enabled(processor))
-        } else {
-            info!("Standby mode disabled - this instance will always be active");
-            Ok(Self::Disabled(DisabledStandbyProcessor::new()))
-        }
-    }
-
-    /// Start the processor (only does something for enabled mode)
-    pub async fn start(&self) -> Result<(), StandbyError> {
-        match self {
-            Self::Enabled(processor) => processor.start().await,
-            Self::Disabled(_) => Ok(()),
-        }
-    }
-
-    /// Check if this instance is currently the leader
-    pub fn is_leader(&self) -> bool {
-        match self {
-            Self::Enabled(processor) => processor.is_leader(),
-            Self::Disabled(processor) => processor.is_leader(),
-        }
-    }
-
-    /// Check if this instance should process messages
-    pub fn should_process(&self) -> bool {
-        match self {
-            Self::Enabled(processor) => processor.should_process(),
-            Self::Disabled(processor) => processor.should_process(),
-        }
-    }
-
-    /// Get current leadership status
-    pub fn status(&self) -> LeadershipStatus {
-        match self {
-            Self::Enabled(processor) => processor.status(),
-            Self::Disabled(processor) => processor.status(),
-        }
-    }
-
-    /// Get the instance ID
-    pub fn instance_id(&self) -> &str {
-        match self {
-            Self::Enabled(processor) => processor.instance_id(),
-            Self::Disabled(processor) => processor.instance_id(),
-        }
-    }
-
-    /// Log leadership transitions
-    pub fn check_and_log_transition(&self) {
-        match self {
-            Self::Enabled(processor) => processor.check_and_log_transition(),
-            Self::Disabled(processor) => processor.check_and_log_transition(),
-        }
-    }
-
-    /// Wait for leadership (returns immediately if disabled)
-    pub async fn wait_for_leadership(&self) {
-        match self {
-            Self::Enabled(processor) => processor.wait_for_leadership().await,
-            Self::Disabled(_) => {} // Immediate return
-        }
-    }
-
-    /// Shutdown the processor
-    pub async fn shutdown(&self) {
-        match self {
-            Self::Enabled(processor) => processor.shutdown().await,
-            Self::Disabled(processor) => processor.shutdown().await,
-        }
-    }
-
-    /// Check if standby mode is enabled
-    pub fn is_standby_enabled(&self) -> bool {
-        matches!(self, Self::Enabled(_))
-    }
-}
-
 /// Spawn a task that monitors leadership status, logs transitions, and
 /// drives the [`QueueManager`](crate::manager::QueueManager)'s leadership
 /// flag (R-26/R-34).
@@ -301,7 +174,10 @@ impl StandbyProcessor {
 /// both read. Losing leadership never cancels in-flight or buffered work —
 /// see `QueueManager::set_leader`'s doc comment.
 ///
-/// **Owns:** the `Arc<StandbyProcessor>`, an `Arc<QueueManager>`, and a
+/// Only spawned when standby mode is enabled; with it disabled there is no
+/// processor and the manager stays leader.
+///
+/// **Owns:** the `Arc<StandbyAwareProcessor>`, an `Arc<QueueManager>`, and a
 /// [`CancellationToken`] (typically a child of the lifecycle manager's
 /// shutdown token).
 /// **Exits:** when `shutdown.cancelled()` resolves. `CancellationToken` is
@@ -312,8 +188,29 @@ impl StandbyProcessor {
 /// **Joined by:** the caller via the returned `JoinHandle`. Lifecycle
 /// manager awaits all such handles during graceful shutdown.
 pub fn spawn_leadership_monitor(
-    processor: Arc<StandbyProcessor>,
+    processor: Arc<StandbyAwareProcessor>,
     manager: Arc<crate::manager::QueueManager>,
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    spawn_ticker(
+        move || {
+            processor.check_and_log_transition();
+            manager.set_leader(processor.is_leader());
+            debug!(
+                instance_id = %processor.instance_id(),
+                is_leader = processor.is_leader(),
+                status = ?processor.status(),
+                "Leadership status check"
+            );
+        },
+        shutdown,
+    )
+}
+
+/// The leadership monitor's loop: run `on_tick` every 5s until `shutdown`
+/// is cancelled.
+fn spawn_ticker(
+    mut on_tick: impl FnMut() + Send + 'static,
     shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -322,19 +219,7 @@ pub fn spawn_leadership_monitor(
 
         loop {
             tokio::select! {
-                _ = ticker.tick() => {
-                    processor.check_and_log_transition();
-                    manager.set_leader(processor.is_leader());
-
-                    if let StandbyProcessor::Enabled(ref p) = *processor {
-                        debug!(
-                            instance_id = %p.instance_id(),
-                            is_leader = p.is_leader(),
-                            status = ?p.status(),
-                            "Leadership status check"
-                        );
-                    }
-                }
+                _ = ticker.tick() => on_tick(),
                 _ = shutdown.cancelled() => {
                     info!("Leadership monitor shutting down");
                     break;
@@ -356,40 +241,16 @@ mod tests {
         assert_eq!(config.lock_ttl_seconds, 30);
     }
 
-    #[test]
-    fn test_disabled_processor_is_always_leader() {
-        let processor = DisabledStandbyProcessor::new();
-        assert!(processor.is_leader());
-        assert!(processor.should_process());
-        assert_eq!(processor.status(), LeadershipStatus::Leader);
-    }
-
-    #[tokio::test]
-    async fn test_standby_processor_disabled_mode() {
-        let config = StandbyRouterConfig::default(); // enabled = false
-        let processor = StandbyProcessor::new(config).await.unwrap();
-
-        assert!(!processor.is_standby_enabled());
-        assert!(processor.is_leader());
-        assert!(processor.should_process());
-    }
-
     /// A `CancellationToken` is level-triggered: a token cancelled *before*
     /// the task subscribes to it must still cause an immediate exit. This
     /// is exactly the case a `broadcast` channel could not handle (a
     /// receiver that subscribes after `send()` never observes the signal).
     #[tokio::test]
-    async fn spawn_leadership_monitor_exits_immediately_on_already_cancelled_token() {
-        let config = StandbyRouterConfig::default(); // enabled = false
-        let processor = Arc::new(StandbyProcessor::new(config).await.unwrap());
-
+    async fn leadership_ticker_exits_immediately_on_already_cancelled_token() {
         let token = CancellationToken::new();
         token.cancel();
 
-        let manager = Arc::new(crate::manager::QueueManager::new(
-            crate::mediator::HttpMediatorConfig::dev(),
-        ));
-        let handle = spawn_leadership_monitor(processor, manager, token);
+        let handle = spawn_ticker(|| {}, token);
 
         tokio::time::timeout(Duration::from_secs(1), handle)
             .await

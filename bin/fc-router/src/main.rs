@@ -23,10 +23,11 @@ use fc_common::{PoolConfig, QueueConfig, RouterConfig, WarningSeverity};
 use fc_queue::sqs::SqsQueueConsumer;
 use fc_queue::QueueScheme;
 use fc_router::{
-    api::create_router_with_options, create_notification_service_with_scheduler,
-    ConfigSyncConfig, ConfigSyncService, ConsumerFactory, HealthService,
-    HealthServiceConfig, HttpMediatorConfig, LifecycleConfig, LifecycleManager, NotificationConfig,
-    QueueManager, StandbyProcessor, StandbyRouterConfig, WarningService, WarningServiceConfig,
+    api::{create_router_with_options, RouterDeps, RouterOptions},
+    create_notification_service_with_scheduler, ConfigSyncConfig, ConfigSyncService,
+    ConsumerFactory, HealthService, HealthServiceConfig, HttpMediatorConfig, LifecycleConfig,
+    LifecycleManager, NotificationConfig, QueueManager, StandbyAwareProcessor, StandbyRouterConfig,
+    WarningService, WarningServiceConfig,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,28 +69,38 @@ async fn main() -> Result<()> {
         aws_sdk_sqs::Client::new(&config)
     };
 
-    // 2. Initialize Warning and Health Services
-    let warning_service = Arc::new(WarningService::new(WarningServiceConfig::default()));
+    // 2. Initialize Notification Service (Teams webhooks), then the Warning
+    //    Service that feeds it, and the Health Service.
+    let notification_config = load_notification_config();
+    let notification_scheduler = create_notification_service_with_scheduler(&notification_config);
+    let warning_service = Arc::new(match notification_scheduler {
+        Some(ref ns) => {
+            info!(
+                batch_interval = notification_config.batch_interval_seconds,
+                "Notification service enabled (Teams webhook with batching)"
+            );
+            WarningService::with_notification(WarningServiceConfig::default(), ns.service.clone())
+        }
+        None => {
+            info!("Notification service disabled - no channels configured");
+            WarningService::new(WarningServiceConfig::default())
+        }
+    });
     let health_service = Arc::new(HealthService::new(
         HealthServiceConfig::default(),
         warning_service.clone(),
     ));
 
-    // 2b. Initialize Notification Service (Teams webhooks)
-    let notification_config = load_notification_config();
-    let notification_scheduler = create_notification_service_with_scheduler(&notification_config);
-    if let Some(ref ns) = notification_scheduler {
-        info!(
-            batch_interval = notification_config.batch_interval_seconds,
-            "Notification service enabled (Teams webhook with batching)"
-        );
-        // Wire up notification service to warning service
-        warning_service.set_notification_service(ns.service.clone());
-    } else {
-        info!("Notification service disabled - no channels configured");
-    }
+    // 3. R-13/R-16: FC_ROUTER_STRICT_ROUTING (default false). Operational
+    // decision, not a code change — flip on once every producer is
+    // confirmed to send poolCode/dispatchMode/messageGroupId on every
+    // message.
+    let strict_routing = std::env::var("FC_ROUTER_STRICT_ROUTING")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    info!(strict_routing, "Strict routing gate set");
 
-    // 3. Create QueueManager. Mediator *config* is passed (not a singleton);
+    // 4. Create QueueManager. Mediator *config* is passed (not a singleton);
     //    each pool gets its own HttpMediator + connection pool.
     let queue_manager = Arc::new(
         QueueManager::builder(HttpMediatorConfig::production())
@@ -98,17 +109,9 @@ async fn main() -> Result<()> {
             .consumer_factory(Arc::new(SchemeConsumerFactory {
                 sqs_client: sqs_client.clone(),
             }))
+            .strict_routing(strict_routing)
             .build(),
     );
-
-    // 4b. R-13/R-16: FC_ROUTER_STRICT_ROUTING (default false). Operational
-    // decision, not a code change — flip on once every producer is
-    // confirmed to send poolCode/dispatchMode/messageGroupId on every
-    // message.
-    let strict_routing = std::env::var("FC_ROUTER_STRICT_ROUTING")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
-    queue_manager.set_strict_routing(strict_routing);
 
     // 5. Initialize Standby Processor (Active/Passive HA)
     let standby_config = load_standby_config();
@@ -118,7 +121,7 @@ async fn main() -> Result<()> {
             lock_key = %standby_config.lock_key,
             "Initializing standby mode (Active/Passive HA)"
         );
-        match StandbyProcessor::new(standby_config).await {
+        match StandbyAwareProcessor::new(standby_config).await {
             Ok(processor) => {
                 if let Err(e) = processor.start().await {
                     error!(error = %e, "Failed to start standby processor");
@@ -229,7 +232,9 @@ async fn main() -> Result<()> {
     // all, so `initial_sync` never runs and `self.consumers` starts empty
     // — this loop is still the only thing that ever creates a consumer
     // there, so it still needs to run in full for that branch.
-    let mut first_queue_url: Option<String> = None;
+    //
+    // In production the consumers already exist (and are already polling)
+    // courtesy of initial_sync() above.
     if config_sync.is_none() {
         let scheme_factory = SchemeConsumerFactory {
             sqs_client: sqs_client.clone(),
@@ -237,22 +242,11 @@ async fn main() -> Result<()> {
         for queue_config in &router_config.queues {
             let consumer = scheme_factory.create_consumer(queue_config).await?;
             queue_manager.add_consumer(consumer).await;
-
-            // Track first queue URL for the publisher (still SQS-only —
-            // see SqsPublisher's doc comment).
-            if first_queue_url.is_none() {
-                first_queue_url = Some(queue_config.uri.clone());
-            }
         }
-    } else {
-        // Consumers already exist (and are already polling) courtesy of
-        // initial_sync() above — just find the first queue URL for the
-        // publisher.
-        first_queue_url = router_config
-            .queues
-            .first()
-            .map(|q| q.uri.clone());
     }
+    // The first queue's URL is the publisher's target (still SQS-only — see
+    // SqsPublisher's doc comment).
+    let first_queue_url = router_config.queues.first().map(|q| q.uri.clone());
 
     if router_config.queues.is_empty() {
         error!("No queues configured - cannot start router");
@@ -293,7 +287,7 @@ async fn main() -> Result<()> {
     // Wire periodic idle-eviction against the manager's shared breaker registry.
     // Without this the eviction task never runs and shared breakers (PR1) grow
     // unbounded; the registry here is the same one the pools record into.
-    lifecycle.set_circuit_breaker_registry(
+    lifecycle.spawn_circuit_breaker_eviction(
         queue_manager.circuit_breaker_registry().clone(),
         cb_max_idle,
     );
@@ -302,8 +296,7 @@ async fn main() -> Result<()> {
     // FC_API_PORT is the canonical Go-dialect name (internal/server/envcfg.go
     // EnvCfg.APIPort); API_PORT is this binary's historical name and stays a
     // fallback so nothing already deployed against it breaks.
-    let api_port: u16 =
-        fc_common::config::env_first_parse(&["FC_API_PORT", "API_PORT"], 8080u16);
+    let api_port: u16 = fc_common::config::env_first_parse(&["FC_API_PORT", "API_PORT"], 8080u16);
 
     // FC_METRICS_PORT: Go's unified fc-server can bind metrics on a separate
     // listener, but this binary always serves Prometheus metrics on the same
@@ -348,21 +341,24 @@ async fn main() -> Result<()> {
     };
 
     let app = create_router_with_options(
-        publisher,
-        queue_manager.clone(),
-        warning_service.clone(),
-        health_service.clone(),
-        circuit_breaker_registry,
-        standby.is_some(),
-        standby
-            .as_ref()
-            .map(|s| s.instance_id().to_string())
-            .unwrap_or_else(|| "default".to_string()),
-        None, // stream_health_service
-        None, // traffic_strategy
-        Some(metrics_handle),
-        auth_state,
-        router_http_prefix,
+        RouterDeps {
+            publisher,
+            queue_manager: queue_manager.clone(),
+            warning_service: warning_service.clone(),
+            health_service: health_service.clone(),
+            circuit_breaker_registry,
+        },
+        RouterOptions {
+            standby_enabled: standby.is_some(),
+            instance_id: standby
+                .as_ref()
+                .map(|s| s.instance_id().to_string())
+                .unwrap_or_else(|| "default".to_string()),
+            metrics_handle: Some(metrics_handle),
+            auth_state,
+            router_http_prefix,
+            ..RouterOptions::default()
+        },
     )
     .layer(TraceLayer::new_for_http())
     .layer(
@@ -475,7 +471,11 @@ fn load_standby_config() -> StandbyRouterConfig {
     // STANDBY_ENABLED / REDIS_URL are honoured too so every previously-working
     // name keeps working.
     let enabled = fc_common::config::env_first_bool(
-        &["FC_STANDBY_ENABLED", "FLOWCATALYST_STANDBY_ENABLED", "STANDBY_ENABLED"],
+        &[
+            "FC_STANDBY_ENABLED",
+            "FLOWCATALYST_STANDBY_ENABLED",
+            "STANDBY_ENABLED",
+        ],
         false,
     );
 
@@ -527,8 +527,10 @@ fn load_notification_config() -> NotificationConfig {
     // alone means notify — so teams_enabled is derived the same way here;
     // the legacy NOTIFICATION_TEAMS_ENABLED flag is still honoured too (it
     // can only ever widen — not narrow — whether a configured URL fires).
-    let teams_webhook_url =
-        fc_common::config::env_first_opt(&["FC_NOTIFY_WEBHOOK_URL", "NOTIFICATION_TEAMS_WEBHOOK_URL"]);
+    let teams_webhook_url = fc_common::config::env_first_opt(&[
+        "FC_NOTIFY_WEBHOOK_URL",
+        "NOTIFICATION_TEAMS_WEBHOOK_URL",
+    ]);
     let teams_enabled = teams_webhook_url.as_deref().is_some_and(|u| !u.is_empty())
         || fc_common::config::env_first_bool(&["NOTIFICATION_TEAMS_ENABLED"], false);
 
@@ -538,21 +540,14 @@ fn load_notification_config() -> NotificationConfig {
     let min_severity_raw = std::env::var("FC_NOTIFY_MIN_SEVERITY").or_else(|_| {
         let legacy = std::env::var("NOTIFICATION_MIN_SEVERITY");
         if legacy.is_ok() {
-            warn!(
-                "NOTIFICATION_MIN_SEVERITY is deprecated — set FC_NOTIFY_MIN_SEVERITY instead"
-            );
+            warn!("NOTIFICATION_MIN_SEVERITY is deprecated — set FC_NOTIFY_MIN_SEVERITY instead");
         }
         legacy
     });
 
     let min_severity = min_severity_raw
-        .map(|s| match s.to_uppercase().as_str() {
-            "INFO" => WarningSeverity::Info,
-            "WARN" | "WARNING" => WarningSeverity::Warn,
-            "ERROR" => WarningSeverity::Error,
-            "CRITICAL" => WarningSeverity::Critical,
-            _ => WarningSeverity::Warn,
-        })
+        .ok()
+        .and_then(|s| fc_router::warning::parse_severity(&s))
         .unwrap_or(WarningSeverity::Warn);
 
     let batch_interval_seconds = std::env::var("NOTIFICATION_BATCH_INTERVAL")
@@ -697,14 +692,10 @@ impl ConsumerFactory for SchemeConsumerFactory {
     async fn create_consumer(
         &self,
         config: &QueueConfig,
-    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError>
-    {
-        let scheme = fc_queue::resolve_scheme(&config.uri).map_err(|e| {
-            fc_router::RouterError::Consumer(format!(
-                "queue [{}]: {}",
-                config.name, e
-            ))
-        })?;
+    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
+        let scheme = fc_queue::resolve_scheme(&config.uri).map_err(
+            fc_router::RouterError::consumer(&config.name, "resolve queue scheme"),
+        )?;
 
         match scheme {
             QueueScheme::Sqs => {
@@ -735,12 +726,9 @@ impl ConsumerFactory for SchemeConsumerFactory {
 async fn build_nats_consumer(
     config: &QueueConfig,
 ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(|e| {
-        fc_router::RouterError::Consumer(format!(
-            "queue [{}]: invalid NATS URI: {}",
-            config.name, e
-        ))
-    })?;
+    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(
+        fc_router::RouterError::consumer(&config.name, "invalid NATS URI"),
+    )?;
     info!(
         queue_name = %config.name,
         stream = %nats_config.stream_name,
@@ -750,12 +738,10 @@ async fn build_nats_consumer(
     );
     let consumer = fc_queue::nats::NatsQueueConsumer::new(nats_config)
         .await
-        .map_err(|e| {
-            fc_router::RouterError::Consumer(format!(
-                "queue [{}]: NATS consumer setup failed: {}",
-                config.name, e
-            ))
-        })?;
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "NATS consumer setup failed",
+        ))?;
     Ok(Arc::new(consumer))
 }
 
@@ -790,12 +776,10 @@ async fn build_postgres_consumer(
         .acquire_timeout(Duration::from_secs(10))
         .connect(&config.uri)
         .await
-        .map_err(|e| {
-            fc_router::RouterError::Consumer(format!(
-                "queue [{}]: Postgres pool connect failed: {}",
-                config.name, e
-            ))
-        })?;
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "Postgres pool connect failed",
+        ))?;
 
     let visibility = if config.visibility_timeout == 0 {
         30
@@ -805,12 +789,13 @@ async fn build_postgres_consumer(
     let consumer = fc_queue::postgres::PostgresQueue::new(pool, config.name.clone(), visibility);
 
     use fc_queue::EmbeddedQueue;
-    consumer.init_schema().await.map_err(|e| {
-        fc_router::RouterError::Consumer(format!(
-            "queue [{}]: Postgres schema init failed: {}",
-            config.name, e
-        ))
-    })?;
+    consumer
+        .init_schema()
+        .await
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "Postgres schema init failed",
+        ))?;
 
     Ok(Arc::new(consumer))
 }
@@ -858,10 +843,7 @@ impl QueuePublisher for SqsPublisher {
                 .message_deduplication_id(&message_id);
         }
 
-        request
-            .send()
-            .await
-            .map_err(|e| QueueError::Sqs(e.to_string()))?;
+        request.send().await.map_err(QueueError::sqs)?;
 
         Ok(message_id)
     }

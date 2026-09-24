@@ -12,8 +12,7 @@ use tracing::{debug, error, info, warn};
 
 use dashmap::DashMap;
 use fc_common::{
-    BatchMessage, InFlightMessage, MessageCallback, QueuedMessage, WarningCategory,
-    WarningSeverity,
+    BatchMessage, InFlightMessage, MessageCallback, QueuedMessage, WarningCategory, WarningSeverity,
 };
 use fc_queue::QueueConsumer;
 
@@ -215,7 +214,7 @@ impl Drop for QueueMessageCallback {
 }
 
 /// Reports why `msg` is malformed under strict routing
-/// (`FC_ROUTER_STRICT_ROUTING`; see [`QueueManager::set_strict_routing`]),
+/// (`FC_ROUTER_STRICT_ROUTING`; see [`QueueManagerBuilder::strict_routing`](super::QueueManagerBuilder::strict_routing)),
 /// or `None` if well-formed. Checked once per message at route time, before
 /// pool resolution — every condition here is exactly what non-strict routing
 /// papers over with a fallback (`DEFAULT-POOL`, the A-09 dispatch-mode
@@ -367,7 +366,7 @@ impl QueueManager {
         // messages here were never registered in `in_pipeline` (that
         // happens later, per-group, just before `pool.submit`), so there is
         // no tracker entry to release.
-        let well_formed = if self.strict_routing.load(Ordering::SeqCst) {
+        let well_formed = if self.strict_routing {
             let mut well_formed = Vec::with_capacity(filtered.unique.len());
             let mut malformed_futs = Vec::new();
             for msg in filtered.unique {
