@@ -4,9 +4,10 @@
 //! The management interface the host consumes (desired state, heartbeat,
 //! events, artifact download, OAuth token) is Java's, unchanged, so this
 //! host runs against the Java platform's `/control/functions/*` as-is, and
-//! the listeners answer callers with Java's HTTP contract. The function
-//! runtime is not here: it plugs in through [`loader::FunctionLoader`], and
-//! the listeners reach it only through [`invoke::Invoker`].
+//! the listeners answer callers with Java's HTTP contract. A function
+//! runtime plugs in through [`loader::FunctionLoader`], and the listeners
+//! reach it only through [`invoke::Invoker`]; [`wasm`] is the one this host
+//! ships (WASI 0.2 components, where Java runs Extism modules).
 //!
 //! | Module | Java source |
 //! |---|---|
@@ -25,6 +26,7 @@
 //! | [`listener`] | `fnhost/http/*`, `fnhost/route/PublicRouteTable.java` |
 //! | [`manifest`], [`route_pattern`] | `platform/function/{Manifest,EndpointAuth,HttpMethod,RoutePattern}.java` (the stored reader) |
 //! | [`tsid`] | `sdk/tsid/Tsid.java` |
+//! | [`wasm`] | `fnhost/wasm/*`, `fnhost/load/WasmFunctionLoader.java`, `fnhost/context/*` (redesigned for WASI 0.2 components) |
 
 pub(crate) mod java;
 
@@ -51,3 +53,4 @@ pub mod route_pattern;
 pub mod signature;
 pub mod token;
 pub mod tsid;
+pub mod wasm;

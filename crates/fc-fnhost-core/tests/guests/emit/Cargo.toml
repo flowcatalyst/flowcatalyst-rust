@@ -1,0 +1,13 @@
+[package]
+name = "emit"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+common = { workspace = true }
+wasip2 = { workspace = true }
+fc = { workspace = true }

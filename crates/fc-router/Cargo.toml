@@ -72,5 +72,5 @@ http-body-util = "0.1"
 # than silently downgrading. Pinned to the exact hyper/hyper-util versions
 # axum 0.8 already resolves in this workspace (Cargo.lock) so there's no
 # second hyper version in the dependency graph.
-hyper = { version = "=1.8.1", features = ["server", "http1", "http2"] }
+hyper = { version = "=1.9.0", features = ["server", "http1", "http2"] }
 hyper-util = { version = "=0.1.20", features = ["tokio", "server", "server-auto"] }

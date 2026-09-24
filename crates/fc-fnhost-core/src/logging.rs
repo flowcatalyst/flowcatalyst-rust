@@ -33,6 +33,12 @@ use crate::env::EnvReader;
 
 const RESERVED: [&str; 7] = ["time", "level", "msg", "logger", "thread", "err", "stack"];
 
+/// An event field that names the event's `logger` in place of its `tracing`
+/// target, which must be a compile-time string. The WASM runtime logs a
+/// guest's lines with it (`fc_logger = "fn.<address>"`, Java's per-function
+/// logger); the JSON layer writes the value as `logger` and drops the field.
+pub const LOGGER_FIELD: &str = "fc_logger";
+
 /// The structured-log field names shared with the Go and Java platforms.
 pub mod keys {
     pub const CORRELATION_ID: &str = "correlation_id";
@@ -136,6 +142,8 @@ struct FieldCollector {
     message: Option<String>,
     err: Option<String>,
     stack: Option<String>,
+    /// [`LOGGER_FIELD`], when the event carries it.
+    logger: Option<String>,
     fields: Vec<(String, JsonValue)>,
 }
 
@@ -145,6 +153,7 @@ impl FieldCollector {
             "message" => self.message = Some(value.into_text()),
             "err" if self.err.is_none() => self.err = Some(value.into_text()),
             "stack" if self.stack.is_none() => self.stack = Some(value.into_text()),
+            LOGGER_FIELD if self.logger.is_none() => self.logger = Some(value.into_text()),
             name => self.fields.push((name.to_owned(), value)),
         }
     }
@@ -237,7 +246,10 @@ where
             collector.message.as_deref().unwrap_or(""),
             &mdc,
             &collector.fields,
-            event.metadata().target(),
+            collector
+                .logger
+                .as_deref()
+                .unwrap_or(event.metadata().target()),
             thread.name().unwrap_or("unnamed"),
             collector.err.as_deref(),
             collector.stack.as_deref(),
@@ -418,6 +430,17 @@ mod tests {
         assert_eq!(v["level"], "INFO");
         assert_eq!(v["msg"], "hello");
         assert_eq!(v["logger"], "x");
+    }
+
+    #[test]
+    fn the_logger_field_names_the_logger_and_is_not_written_as_a_field() {
+        let lines = capture(|| tracing::warn!(target: "fn", fc_logger = "fn.a.b.c", "hi"));
+        assert_eq!(
+            keys(&lines[0]),
+            ["time", "level", "msg", "logger", "thread"]
+        );
+        let v: Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["logger"], "fn.a.b.c");
     }
 
     #[test]

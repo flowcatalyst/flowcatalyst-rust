@@ -398,6 +398,8 @@ impl Reconciler {
                     .load(LoadRequest {
                         artifact: path,
                         entry,
+                        control_plane: &self.control_plane,
+                        host_id: &self.host_id,
                     })
                     .await
             }

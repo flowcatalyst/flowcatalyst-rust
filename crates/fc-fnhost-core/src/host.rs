@@ -273,11 +273,12 @@ impl FnHost {
 /// The process: logging, environment (exit 2 with one line naming every
 /// bad variable), start, then run until `shutdown` resolves, or exit right
 /// after start with `FC_EXIT_AFTER_START`. Returns the exit code.
-/// `listener` builds the function listener from the loaded environment.
+/// `loaders` builds the runtimes and `listener` the function listener, both
+/// from the loaded environment; a runtime that cannot start exits 1.
 pub async fn run(
     env_reader: EnvReader,
     err: &mut (dyn Write + Send),
-    loaders: Loaders,
+    loaders: impl FnOnce(&HostEnv) -> Result<Loaders, String>,
     listener: impl FnOnce(&HostEnv) -> Option<Arc<dyn Listener>>,
     shutdown: impl Future<Output = ()>,
 ) -> i32 {
@@ -290,6 +291,13 @@ pub async fn run(
         }
     };
     let exit_after_start = env.exit_after_start;
+    let loaders = match loaders(&env) {
+        Ok(loaders) => loaders,
+        Err(e) => {
+            let _ = writeln!(err, "cannot start the function runtime: {e}");
+            return 1;
+        }
+    };
     let listener = listener(&env);
     let mut host = match FnHost::new(env, loaders, listener) {
         Ok(host) => host,

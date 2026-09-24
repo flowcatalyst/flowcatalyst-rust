@@ -558,6 +558,7 @@ async fn invoke(
         original_path: Some(call.parts.uri.path().to_owned()),
         path_params: path_params.into_iter().collect::<IndexMap<_, _>>(),
         query: collect_query(call.parts.uri.query()),
+        raw_query: call.parts.uri.query().map(str::to_owned),
         headers,
         body,
         remote_address: Some(remote_override.unwrap_or_else(|| call.peer.ip().to_string())),

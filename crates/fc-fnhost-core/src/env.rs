@@ -223,6 +223,10 @@ pub struct HostEnv {
     pub port: u16,
     /// `FC_FN_MAX_CONCURRENCY` (default 512): the host-wide permit ceiling.
     pub max_concurrency: i32,
+    /// `FC_FN_MAX_EXECUTING` (default: available cores minus one, at least
+    /// 1): WASM guests executing at once, host-wide. The guest runtime's
+    /// thread count, on top of the listener's permits. Rust host only.
+    pub max_executing: usize,
     /// `FC_DRAIN_TIMEOUT_SECONDS` (default 60).
     pub drain_timeout_seconds: u64,
     /// `FC_METRICS_PORT` (default 9090): `/health`, `/ready`, `/metrics`.
@@ -251,6 +255,7 @@ impl fmt::Debug for HostEnv {
             .field("cache_dir", &self.cache_dir)
             .field("port", &self.port)
             .field("max_concurrency", &self.max_concurrency)
+            .field("max_executing", &self.max_executing)
             .field("drain_timeout_seconds", &self.drain_timeout_seconds)
             .field("metrics_port", &self.metrics_port)
             .field("exit_after_start", &self.exit_after_start)
@@ -309,6 +314,13 @@ impl HostEnv {
                 env.get("FC_FN_MAX_LOADED")
             ));
         }
+        let max_executing = env.integer("FC_FN_MAX_EXECUTING", default_max_executing() as i32);
+        if max_executing < 1 {
+            bad.push(format!(
+                "FC_FN_MAX_EXECUTING (must be at least 1: '{}')",
+                env.get("FC_FN_MAX_EXECUTING")
+            ));
+        }
         let function_port = port(env, "FC_FN_PORT", 8080, &mut bad);
         let metrics_port = port(env, "FC_METRICS_PORT", 9090, &mut bad);
         let drain_timeout = env.integer("FC_DRAIN_TIMEOUT_SECONDS", 60).max(0);
@@ -354,6 +366,7 @@ impl HostEnv {
             cache_dir,
             port: function_port,
             max_concurrency: env.integer("FC_FN_MAX_CONCURRENCY", 512),
+            max_executing: max_executing.max(1) as usize,
             drain_timeout_seconds: drain_timeout as u64,
             metrics_port,
             exit_after_start: env.bool("FC_EXIT_AFTER_START", false),
@@ -362,6 +375,15 @@ impl HostEnv {
             trusted_proxies,
         })
     }
+}
+
+/// Available cores minus one (at least 1): a spinning guest on every
+/// guest thread still leaves a core for the listener.
+pub fn default_max_executing() -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .saturating_sub(1)
+        .max(1)
 }
 
 fn required(env: &EnvReader, key: &str, bad: &mut Vec<String>) -> String {
@@ -504,6 +526,18 @@ mod tests {
             load(pairs).unwrap().signatures,
             Signatures::Required(_)
         ));
+    }
+
+    #[test]
+    fn max_executing_defaults_to_cores_minus_one_and_must_be_positive() {
+        assert_eq!(load(base()).unwrap().max_executing, default_max_executing());
+        assert!(default_max_executing() >= 1);
+        let mut pairs = base();
+        pairs.push(("FC_FN_MAX_EXECUTING", "3"));
+        assert_eq!(load(pairs).unwrap().max_executing, 3);
+        let mut pairs = base();
+        pairs.push(("FC_FN_MAX_EXECUTING", "0"));
+        assert!(load(pairs).unwrap_err().0.contains("FC_FN_MAX_EXECUTING"));
     }
 
     #[test]
