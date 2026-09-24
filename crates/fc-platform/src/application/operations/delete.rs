@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationDeleted;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationRepository;
 
 /// Command for deleting an application.
@@ -58,25 +60,31 @@ impl<U: UnitOfWork> UseCase for DeleteApplicationUseCase<U> {
         command: DeleteApplicationCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationDeleted> {
-        let application = match self
+        let (application, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit_delete(&application, &*self.application_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteApplicationUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteApplicationCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(crate::Application, ApplicationDeleted), UseCaseError> {
+        let application = self
             .application_repo
             .find_by_id(&command.application_id)
             .await
-        {
-            Ok(Some(a)) => a,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "APPLICATION_NOT_FOUND",
-                    format!("Application with ID '{}' not found", command.application_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch application: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "APPLICATION_NOT_FOUND",
+                format!("Application with ID '{}' not found", command.application_id),
+            )?;
 
         // Business rules: refuse deletion while any code-enforced reference
         // still points at this application. None of these columns have
@@ -85,38 +93,20 @@ impl<U: UnitOfWork> UseCase for DeleteApplicationUseCase<U> {
         let grants = self
             .application_repo
             .count_access_grants(&application.id)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("count access grants: {}", e)));
+            .await?;
         let configs = self
             .application_repo
             .count_client_configs(&application.id)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("count client configs: {}", e)));
+            .await?;
         let sas = self
             .application_repo
             .count_service_accounts(&application.id)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("count service accounts: {}", e)));
-        let roles = self
-            .application_repo
-            .count_roles(&application.id)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("count roles: {}", e)));
+            .await?;
+        let roles = self.application_repo.count_roles(&application.id).await?;
         let principal_refs = self
             .application_repo
             .count_principal_refs(&application.id)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("count principal refs: {}", e)));
-
-        let (grants, configs, sas, roles, principal_refs) =
-            match (grants, configs, sas, roles, principal_refs) {
-                (Ok(a), Ok(b), Ok(c), Ok(d), Ok(e)) => (a, b, c, d, e),
-                (Err(e), _, _, _, _)
-                | (_, Err(e), _, _, _)
-                | (_, _, Err(e), _, _)
-                | (_, _, _, Err(e), _)
-                | (_, _, _, _, Err(e)) => return UseCaseResult::failure(e),
-            };
+            .await?;
 
         let refs = [
             ("access grants", grants),
@@ -131,7 +121,7 @@ impl<U: UnitOfWork> UseCase for DeleteApplicationUseCase<U> {
             .map(|(label, n)| format!("{n} {label}"))
             .collect();
         if !blockers.is_empty() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "APPLICATION_HAS_REFERENCES",
                 format!(
                     "Cannot delete application '{}' — {} still reference it. \
@@ -143,11 +133,8 @@ impl<U: UnitOfWork> UseCase for DeleteApplicationUseCase<U> {
         }
 
         let event =
-            ApplicationDeleted::new(&ctx, &application.id, &application.code, &application.name);
-
-        self.unit_of_work
-            .commit_delete(&application, &*self.application_repo, event, &command)
-            .await
+            ApplicationDeleted::new(ctx, &application.id, &application.code, &application.name);
+        Ok((application, event))
     }
 }
 

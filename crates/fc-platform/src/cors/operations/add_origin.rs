@@ -77,23 +77,31 @@ impl<U: UnitOfWork> UseCase for AddCorsOriginUseCase<U> {
         command: AddCorsOriginCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<CorsOriginAdded> {
+        let (entity, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&entity, &*self.cors_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> AddCorsOriginUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &AddCorsOriginCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(CorsAllowedOrigin, CorsOriginAdded), UseCaseError> {
         let origin = command.origin.trim();
 
         // Check for duplicate origin
-        match self.cors_repo.find_by_origin(origin).await {
-            Ok(Some(_)) => {
-                return UseCaseResult::failure(UseCaseError::validation(
-                    "ORIGIN_ALREADY_EXISTS",
-                    format!("CORS origin '{}' already exists", origin),
-                ));
-            }
-            Ok(None) => {}
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to check for existing origin: {}",
-                    e
-                )));
-            }
+        if self.cors_repo.find_by_origin(origin).await?.is_some() {
+            return Err(UseCaseError::validation(
+                "ORIGIN_ALREADY_EXISTS",
+                format!("CORS origin '{}' already exists", origin),
+            ));
         }
 
         let entity = CorsAllowedOrigin::new(
@@ -102,11 +110,8 @@ impl<U: UnitOfWork> UseCase for AddCorsOriginUseCase<U> {
             Some(ctx.principal_id.clone()),
         );
 
-        let event = CorsOriginAdded::new(&ctx, &entity.id, &entity.origin);
-
-        self.unit_of_work
-            .commit(&entity, &*self.cors_repo, event, &command)
-            .await
+        let event = CorsOriginAdded::new(ctx, &entity.id, &entity.origin);
+        Ok((entity, event))
     }
 }
 

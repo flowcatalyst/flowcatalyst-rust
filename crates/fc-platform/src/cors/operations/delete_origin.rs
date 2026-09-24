@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::CorsOriginDeleted;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::CorsOriginRepository;
 
 /// Command for deleting a CORS allowed origin.
@@ -51,27 +53,34 @@ impl<U: UnitOfWork> UseCase for DeleteCorsOriginUseCase<U> {
         command: DeleteCorsOriginCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<CorsOriginDeleted> {
-        let origin = match self.cors_repo.find_by_id(&command.origin_id).await {
-            Ok(Some(o)) => o,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "NOT_FOUND",
-                    format!("CORS origin with ID '{}' not found", command.origin_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch CORS origin: {}",
-                    e
-                )));
-            }
+        let (origin, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        let event = CorsOriginDeleted::new(&ctx, &origin.id, &origin.origin);
 
         self.unit_of_work
             .commit_delete(&origin, &*self.cors_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteCorsOriginUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteCorsOriginCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(crate::CorsAllowedOrigin, CorsOriginDeleted), UseCaseError> {
+        let origin = self
+            .cors_repo
+            .find_by_id(&command.origin_id)
+            .await
+            .or_not_found(
+                "NOT_FOUND",
+                format!("CORS origin with ID '{}' not found", command.origin_id),
+            )?;
+
+        let event = CorsOriginDeleted::new(ctx, &origin.id, &origin.origin);
+        Ok((origin, event))
     }
 }
 

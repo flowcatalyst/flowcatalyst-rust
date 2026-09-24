@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationClientConfigUpdated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationClientConfig;
 use crate::ApplicationClientConfigRepository;
 use crate::ApplicationRepository;
@@ -90,73 +92,49 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
         command: UpdateApplicationClientConfigCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationClientConfigUpdated> {
+        let (config, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&config, &*self.config_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateApplicationClientConfigUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateApplicationClientConfigCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ApplicationClientConfig, ApplicationClientConfigUpdated), UseCaseError> {
         // Verify application exists
-        if self
-            .application_repo
+        self.application_repo
             .find_by_id(&command.application_id)
             .await
-            .map_err(|e| UseCaseError::commit(format!("fetch application: {}", e)))
-            .and_then(|opt| {
-                opt.ok_or_else(|| {
-                    UseCaseError::not_found(
-                        "APPLICATION_NOT_FOUND",
-                        format!("Application '{}' not found", command.application_id),
-                    )
-                })
-            })
-            .is_err()
-        {
-            // Re-run without collapsing to get the exact error back
-            return match self
-                .application_repo
-                .find_by_id(&command.application_id)
-                .await
-            {
-                Ok(Some(_)) => unreachable!(),
-                Ok(None) => UseCaseResult::failure(UseCaseError::not_found(
-                    "APPLICATION_NOT_FOUND",
-                    format!("Application '{}' not found", command.application_id),
-                )),
-                Err(e) => UseCaseResult::failure(UseCaseError::commit(format!(
-                    "fetch application: {}",
-                    e,
-                ))),
-            };
-        }
+            .or_not_found(
+                "APPLICATION_NOT_FOUND",
+                format!("Application '{}' not found", command.application_id),
+            )?;
 
         // Verify client exists
-        match self.client_repo.find_by_id(&command.client_id).await {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CLIENT_NOT_FOUND",
-                    format!("Client '{}' not found", command.client_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "fetch client: {}",
-                    e,
-                )));
-            }
-        }
+        self.client_repo
+            .find_by_id(&command.client_id)
+            .await
+            .or_not_found(
+                "CLIENT_NOT_FOUND",
+                format!("Client '{}' not found", command.client_id),
+            )?;
 
         // Load-or-create the config and apply the patch
-        let existing = self
+        let mut config = self
             .config_repo
             .find_by_application_and_client(&command.application_id, &command.client_id)
-            .await;
-
-        let mut config = match existing {
-            Ok(Some(cfg)) => cfg,
-            Ok(None) => ApplicationClientConfig::new(&command.application_id, &command.client_id),
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "fetch config: {}",
-                    e,
-                )));
-            }
-        };
+            .await?
+            .unwrap_or_else(|| {
+                ApplicationClientConfig::new(&command.application_id, &command.client_id)
+            });
 
         if let Some(enabled) = command.enabled {
             config.enabled = enabled;
@@ -175,7 +153,7 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
         config.updated_at = chrono::Utc::now();
 
         let event = ApplicationClientConfigUpdated::new(
-            &ctx,
+            ctx,
             &command.application_id,
             &command.client_id,
             &config.id,
@@ -183,9 +161,6 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationClientConfigUseCase<U> {
             command.base_url_override.clone(),
             config_changed,
         );
-
-        self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
-            .await
+        Ok((config, event))
     }
 }

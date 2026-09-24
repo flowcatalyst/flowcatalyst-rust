@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationEnabledForClient;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationClientConfig;
 use crate::ApplicationClientConfigRepository;
 use crate::ApplicationRepository;
@@ -80,78 +82,65 @@ impl<U: UnitOfWork> UseCase for EnableApplicationForClientUseCase<U> {
         command: EnableApplicationForClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationEnabledForClient> {
-        // Validate application exists
-        match self
-            .application_repo
-            .find_by_id(&command.application_id)
-            .await
-        {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "APPLICATION_NOT_FOUND",
-                    format!("Application '{}' not found", command.application_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to validate application: {}",
-                    e
-                )));
-            }
-        }
-
-        // Validate client exists
-        match self.client_repo.find_by_id(&command.client_id).await {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CLIENT_NOT_FOUND",
-                    format!("Client '{}' not found", command.client_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to validate client: {}",
-                    e
-                )));
-            }
-        }
-
-        // Check if config already exists
-        let existing = self
-            .config_repo
-            .find_by_application_and_client(&command.application_id, &command.client_id)
-            .await;
-
-        let config = match existing {
-            Ok(Some(mut cfg)) => {
-                // Idempotent: enable if disabled
-                cfg.enable();
-                cfg
-            }
-            Ok(None) => {
-                // Create new config
-                ApplicationClientConfig::new(&command.application_id, &command.client_id)
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to check existing config: {}",
-                    e
-                )));
-            }
+        let (config, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        let event = ApplicationEnabledForClient::new(
-            &ctx,
-            &command.application_id,
-            &command.client_id,
-            &config.id,
-        );
 
         self.unit_of_work
             .commit(&config, &*self.config_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> EnableApplicationForClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &EnableApplicationForClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ApplicationClientConfig, ApplicationEnabledForClient), UseCaseError> {
+        // Validate application exists
+        self.application_repo
+            .find_by_id(&command.application_id)
+            .await
+            .or_not_found(
+                "APPLICATION_NOT_FOUND",
+                format!("Application '{}' not found", command.application_id),
+            )?;
+
+        // Validate client exists
+        self.client_repo
+            .find_by_id(&command.client_id)
+            .await
+            .or_not_found(
+                "CLIENT_NOT_FOUND",
+                format!("Client '{}' not found", command.client_id),
+            )?;
+
+        // Check if config already exists
+        let config = match self
+            .config_repo
+            .find_by_application_and_client(&command.application_id, &command.client_id)
+            .await?
+        {
+            Some(mut cfg) => {
+                // Idempotent: enable if disabled
+                cfg.enable();
+                cfg
+            }
+            None => {
+                // Create new config
+                ApplicationClientConfig::new(&command.application_id, &command.client_id)
+            }
+        };
+
+        let event = ApplicationEnabledForClient::new(
+            ctx,
+            &command.application_id,
+            &command.client_id,
+            &config.id,
+        );
+        Ok((config, event))
     }
 }
 

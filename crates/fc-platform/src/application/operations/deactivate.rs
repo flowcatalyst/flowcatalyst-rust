@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationDeactivated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationRepository;
 
 /// Command for deactivating an application.
@@ -53,26 +55,37 @@ impl<U: UnitOfWork> UseCase for DeactivateApplicationUseCase<U> {
         command: DeactivateApplicationCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationDeactivated> {
-        // Find the application
-        let mut application = match self.application_repo.find_by_id(&command.id).await {
-            Ok(Some(app)) => app,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "APPLICATION_NOT_FOUND",
-                    format!("Application with ID '{}' not found", command.id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find application: {}",
-                    e
-                )));
-            }
+        let (application, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&application, &*self.application_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DeactivateApplicationUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeactivateApplicationCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(crate::Application, ApplicationDeactivated), UseCaseError> {
+        // Find the application
+        let mut application = self
+            .application_repo
+            .find_by_id(&command.id)
+            .await
+            .or_not_found(
+                "APPLICATION_NOT_FOUND",
+                format!("Application with ID '{}' not found", command.id),
+            )?;
 
         // Business rule: must be active to deactivate
         if !application.active {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "APPLICATION_ALREADY_INACTIVE",
                 "Application is already inactive",
             ));
@@ -82,12 +95,8 @@ impl<U: UnitOfWork> UseCase for DeactivateApplicationUseCase<U> {
         application.deactivate();
 
         // Create domain event
-        let event = ApplicationDeactivated::new(&ctx, &application.id, &application.code);
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&application, &*self.application_repo, event, &command)
-            .await
+        let event = ApplicationDeactivated::new(ctx, &application.id, &application.code);
+        Ok((application, event))
     }
 }
 

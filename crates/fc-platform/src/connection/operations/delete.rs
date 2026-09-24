@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ConnectionDeleted;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ConnectionRepository;
 use crate::SubscriptionRepository;
 
@@ -64,57 +66,51 @@ impl<U: UnitOfWork> UseCase for DeleteConnectionUseCase<U> {
         command: DeleteConnectionCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ConnectionDeleted> {
-        let connection = match self
-            .connection_repo
-            .find_by_id(&command.connection_id)
-            .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CONNECTION_NOT_FOUND",
-                    format!("Connection with ID '{}' not found", command.connection_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch connection: {}",
-                    e
-                )));
-            }
+        let (connection, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        // Business rule: cannot delete if subscriptions reference this connection
-        match self
-            .subscription_repo
-            .exists_by_connection_id(&connection.id)
-            .await
-        {
-            Ok(true) => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "HAS_SUBSCRIPTIONS",
-                    "Cannot delete a connection that has subscriptions. Remove all subscriptions first.",
-                ));
-            }
-            Ok(false) => {}
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to check subscriptions: {}",
-                    e
-                )));
-            }
-        }
-
-        let event = ConnectionDeleted::new(
-            &ctx,
-            &connection.id,
-            &connection.code,
-            connection.client_id.as_deref(),
-        );
 
         self.unit_of_work
             .commit_delete(&connection, &*self.connection_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteConnectionUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteConnectionCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(crate::Connection, ConnectionDeleted), UseCaseError> {
+        let connection = self
+            .connection_repo
+            .find_by_id(&command.connection_id)
+            .await
+            .or_not_found(
+                "CONNECTION_NOT_FOUND",
+                format!("Connection with ID '{}' not found", command.connection_id),
+            )?;
+
+        // Business rule: cannot delete if subscriptions reference this connection
+        if self
+            .subscription_repo
+            .exists_by_connection_id(&connection.id)
+            .await?
+        {
+            return Err(UseCaseError::business_rule(
+                "HAS_SUBSCRIPTIONS",
+                "Cannot delete a connection that has subscriptions. Remove all subscriptions first.",
+            ));
+        }
+
+        let event = ConnectionDeleted::new(
+            ctx,
+            &connection.id,
+            &connection.code,
+            connection.client_id.as_deref(),
+        );
+        Ok((connection, event))
     }
 }
 

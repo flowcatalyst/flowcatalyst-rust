@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationUpdated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationRepository;
 
 /// Command for updating an application.
@@ -80,22 +82,33 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationUseCase<U> {
         command: UpdateApplicationCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationUpdated> {
-        // Find the application
-        let mut application = match self.application_repo.find_by_id(&command.id).await {
-            Ok(Some(app)) => app,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "APPLICATION_NOT_FOUND",
-                    format!("Application with ID '{}' not found", command.id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find application: {}",
-                    e
-                )));
-            }
+        let (application, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&application, &*self.application_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateApplicationUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateApplicationCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(crate::Application, ApplicationUpdated), UseCaseError> {
+        // Find the application
+        let mut application = self
+            .application_repo
+            .find_by_id(&command.id)
+            .await
+            .or_not_found(
+                "APPLICATION_NOT_FOUND",
+                format!("Application with ID '{}' not found", command.id),
+            )?;
 
         // Track changes for event
         let mut updated_name: Option<String> = None;
@@ -137,16 +150,12 @@ impl<U: UnitOfWork> UseCase for UpdateApplicationUseCase<U> {
 
         // Create domain event
         let event = ApplicationUpdated::new(
-            &ctx,
+            ctx,
             &application.id,
             updated_name.as_deref(),
             updated_description.as_deref(),
         );
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&application, &*self.application_repo, event, &command)
-            .await
+        Ok((application, event))
     }
 }
 

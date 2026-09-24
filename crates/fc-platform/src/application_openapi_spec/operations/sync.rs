@@ -119,19 +119,25 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
         command: SyncOpenApiSpecCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationOpenApiSpecSynced> {
-        let prior = match self
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> SyncOpenApiSpecUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SyncOpenApiSpecCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<ApplicationOpenApiSpecSynced, UseCaseError> {
+        let prior = self
             .repo
             .find_current_by_application(&command.application_id)
-            .await
-        {
-            Ok(p) => p,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load current OpenAPI spec: {}",
-                    e
-                )));
-            }
-        };
+            .await?;
 
         let now = chrono::Utc::now();
         let new_hash = spec_hash(&command.spec);
@@ -140,7 +146,7 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
         if let Some(ref existing) = prior {
             if existing.spec_hash == new_hash {
                 let event = ApplicationOpenApiSpecSynced::new(
-                    &ctx,
+                    ctx,
                     &command.application_id,
                     &command.application_code,
                     &existing.id,
@@ -150,7 +156,7 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
                     false,
                     true,
                 );
-                return self.unit_of_work.emit_event(event, &command).await;
+                return Ok(event);
             }
         }
 
@@ -168,7 +174,7 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
                 .archive_current(&command.application_id, &change_notes, &change_notes_text)
                 .await
             {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
+                return Err(UseCaseError::commit(format!(
                     "Failed to archive prior OpenAPI spec: {}",
                     e
                 )));
@@ -182,34 +188,33 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
         //    synced_at timestamp, the same fallback used when `info.version` is
         //    missing.
         let version_candidate = extract_version(&command.spec, now);
-        let version = match self
+        let version = if self
             .repo
             .exists_by_application_and_version(&command.application_id, &version_candidate)
-            .await
+            .await?
         {
-            Ok(true) => format!("{}+{}", version_candidate, now.format("%Y%m%d%H%M%S")),
-            Ok(false) => version_candidate,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to check OpenAPI version uniqueness: {}",
-                    e
-                )));
-            }
+            format!("{}+{}", version_candidate, now.format("%Y%m%d%H%M%S"))
+        } else {
+            version_candidate
         };
-        let mut new_spec =
-            OpenApiSpec::new(&command.application_id, &version, command.spec.clone(), &new_hash)
-                .with_synced_by(Some(ctx.principal_id.clone()));
+        let mut new_spec = OpenApiSpec::new(
+            &command.application_id,
+            &version,
+            command.spec.clone(),
+            &new_hash,
+        )
+        .with_synced_by(Some(ctx.principal_id.clone()));
         new_spec.synced_at = now;
 
         if let Err(e) = self.repo.insert(&new_spec).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
+            return Err(UseCaseError::commit(format!(
                 "Failed to insert OpenAPI spec: {}",
                 e
             )));
         }
 
         let event = ApplicationOpenApiSpecSynced::new(
-            &ctx,
+            ctx,
             &command.application_id,
             &command.application_code,
             &new_spec.id,
@@ -219,8 +224,7 @@ impl<U: UnitOfWork> UseCase for SyncOpenApiSpecUseCase<U> {
             change_notes.has_breaking,
             false,
         );
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

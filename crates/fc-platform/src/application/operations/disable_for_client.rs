@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationDisabledForClient;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationClientConfigRepository;
 
 /// Command for disabling an application for a specific client.
@@ -68,40 +70,43 @@ impl<U: UnitOfWork> UseCase for DisableApplicationForClientUseCase<U> {
         command: DisableApplicationForClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationDisabledForClient> {
+        let (config, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&config, &*self.config_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DisableApplicationForClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DisableApplicationForClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(crate::ApplicationClientConfig, ApplicationDisabledForClient), UseCaseError> {
         // Find existing config
-        let mut config = match self
+        let mut config = self
             .config_repo
             .find_by_application_and_client(&command.application_id, &command.client_id)
             .await
-        {
-            Ok(Some(cfg)) => cfg,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CONFIG_NOT_FOUND",
-                    "Application is not configured for this client",
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch config: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "CONFIG_NOT_FOUND",
+                "Application is not configured for this client",
+            )?;
 
         // Idempotent: disable
         config.disable();
 
         let event = ApplicationDisabledForClient::new(
-            &ctx,
+            ctx,
             &command.application_id,
             &command.client_id,
             &config.id,
         );
-
-        self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
-            .await
+        Ok((config, event))
     }
 }
 

@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ConnectionUpdated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ConnectionRepository;
 
 /// Command for updating a connection.
@@ -67,25 +69,31 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
         command: UpdateConnectionCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ConnectionUpdated> {
-        let mut connection = match self
+        let (connection, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&connection, &*self.connection_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateConnectionUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateConnectionCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(crate::Connection, ConnectionUpdated), UseCaseError> {
+        let mut connection = self
             .connection_repo
             .find_by_id(&command.connection_id)
             .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CONNECTION_NOT_FOUND",
-                    format!("Connection with ID '{}' not found", command.connection_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch connection: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "CONNECTION_NOT_FOUND",
+                format!("Connection with ID '{}' not found", command.connection_id),
+            )?;
 
         // Apply selective updates
         if let Some(ref name) = command.name {
@@ -105,7 +113,7 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
                 "ACTIVE" => connection.activate(),
                 "PAUSED" => connection.pause(),
                 _ => {
-                    return UseCaseResult::failure(UseCaseError::validation(
+                    return Err(UseCaseError::validation(
                         "INVALID_STATUS",
                         "Status must be ACTIVE or PAUSED",
                     ));
@@ -115,16 +123,13 @@ impl<U: UnitOfWork> UseCase for UpdateConnectionUseCase<U> {
         connection.updated_at = chrono::Utc::now();
 
         let event = ConnectionUpdated::new(
-            &ctx,
+            ctx,
             &connection.id,
             &connection.code,
             command.name.as_deref(),
             command.status.as_deref(),
         );
-
-        self.unit_of_work
-            .commit(&connection, &*self.connection_repo, event, &command)
-            .await
+        Ok((connection, event))
     }
 }
 

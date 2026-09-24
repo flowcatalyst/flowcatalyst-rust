@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationServiceAccountProvisioned;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,29 +78,35 @@ impl<U: UnitOfWork> UseCase for AttachServiceAccountToApplicationUseCase<U> {
         command: AttachServiceAccountToApplicationCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationServiceAccountProvisioned> {
-        let mut application = match self
+        let (application, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&application, &*self.application_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> AttachServiceAccountToApplicationUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &AttachServiceAccountToApplicationCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(crate::Application, ApplicationServiceAccountProvisioned), UseCaseError> {
+        let mut application = self
             .application_repo
             .find_by_id(&command.application_id)
             .await
-        {
-            Ok(Some(a)) => a,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "APPLICATION_NOT_FOUND",
-                    format!("Application '{}' not found", command.application_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "fetch application: {}",
-                    e,
-                )));
-            }
-        };
+            .or_not_found(
+                "APPLICATION_NOT_FOUND",
+                format!("Application '{}' not found", command.application_id),
+            )?;
 
         // Business rule: can't overwrite an existing service account.
         if application.service_account_id.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "APPLICATION_HAS_SERVICE_ACCOUNT",
                 "Application already has a service account provisioned",
             ));
@@ -108,15 +116,12 @@ impl<U: UnitOfWork> UseCase for AttachServiceAccountToApplicationUseCase<U> {
         application.updated_at = chrono::Utc::now();
 
         let event = ApplicationServiceAccountProvisioned::new(
-            &ctx,
+            ctx,
             &application.id,
             &application.code,
             &command.service_account_id,
             &command.service_account_code,
         );
-
-        self.unit_of_work
-            .commit(&application, &*self.application_repo, event, &command)
-            .await
+        Ok((application, event))
     }
 }

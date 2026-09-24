@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ConnectionCreated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::Connection;
 use crate::ConnectionRepository;
 use crate::ServiceAccountRepository;
@@ -101,29 +103,34 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         command: CreateConnectionCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ConnectionCreated> {
+        let (connection, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&connection, &*self.connection_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> CreateConnectionUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &CreateConnectionCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Connection, ConnectionCreated), UseCaseError> {
         let code = command.code.trim().to_lowercase();
         let name = command.name.trim();
 
         // Validate service account exists
-        match self
-            .service_account_repo
+        self.service_account_repo
             .find_by_id(&command.service_account_id)
             .await
-        {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SERVICE_ACCOUNT_NOT_FOUND",
-                    format!("Service account '{}' not found", command.service_account_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to validate service account: {}",
-                    e
-                )));
-            }
-        }
+            .or_not_found(
+                "SERVICE_ACCOUNT_NOT_FOUND",
+                format!("Service account '{}' not found", command.service_account_id),
+            )?;
 
         // Uniqueness check (code + client_id scope)
         let existing = self
@@ -131,7 +138,7 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
             .find_by_code_and_client(&code, command.client_id.as_deref())
             .await;
         if let Ok(Some(_)) = existing {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CONNECTION_CODE_EXISTS",
                 format!(
                     "A connection with code '{}' already exists in this scope",
@@ -148,17 +155,14 @@ impl<U: UnitOfWork> UseCase for CreateConnectionUseCase<U> {
         }
 
         let event = ConnectionCreated::new(
-            &ctx,
+            ctx,
             &connection.id,
             &connection.code,
             &connection.name,
             &connection.service_account_id,
             connection.client_id.as_deref(),
         );
-
-        self.unit_of_work
-            .commit(&connection, &*self.connection_repo, event, &command)
-            .await
+        Ok((connection, event))
     }
 }
 

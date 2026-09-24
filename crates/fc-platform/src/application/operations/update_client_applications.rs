@@ -13,7 +13,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ClientApplicationsUpdated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationClientConfig;
 use crate::ApplicationClientConfigRepository;
 use crate::ApplicationRepository;
@@ -83,52 +85,49 @@ impl<U: UnitOfWork> UseCase for UpdateClientApplicationsUseCase<U> {
         command: UpdateClientApplicationsCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ClientApplicationsUpdated> {
-        // 1. Client must exist.
-        match self.client_repo.find_by_id(&command.client_id).await {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CLIENT_NOT_FOUND",
-                    format!("Client '{}' not found", command.client_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load client: {}",
-                    e
-                )));
-            }
+        let (to_persist, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        // No diff → still emit one event so the audit trail records the request.
+        if to_persist.is_empty() {
+            return self.unit_of_work.emit_event(event, &command).await;
         }
+
+        self.unit_of_work
+            .commit_all(&to_persist, &*self.config_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateClientApplicationsUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateClientApplicationsCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Vec<ApplicationClientConfig>, ClientApplicationsUpdated), UseCaseError> {
+        // 1. Client must exist.
+        self.client_repo
+            .find_by_id(&command.client_id)
+            .await
+            .or_not_found(
+                "CLIENT_NOT_FOUND",
+                format!("Client '{}' not found", command.client_id),
+            )?;
 
         // 2. Every requested application must exist (batch existence check).
         for app_id in &command.enabled_application_ids {
-            match self.application_repo.exists(app_id).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    return UseCaseResult::failure(UseCaseError::not_found(
-                        "APPLICATION_NOT_FOUND",
-                        format!("Application '{}' not found", app_id),
-                    ));
-                }
-                Err(e) => {
-                    return UseCaseResult::failure(UseCaseError::commit(format!(
-                        "Failed to validate application '{}': {}",
-                        app_id, e
-                    )));
-                }
+            if !self.application_repo.exists(app_id).await? {
+                return Err(UseCaseError::not_found(
+                    "APPLICATION_NOT_FOUND",
+                    format!("Application '{}' not found", app_id),
+                ));
             }
         }
 
         // 3. Load current configs to compute the diff.
-        let current_configs = match self.config_repo.find_by_client(&command.client_id).await {
-            Ok(list) => list,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load current configs: {}",
-                    e
-                )));
-            }
-        };
+        let current_configs = self.config_repo.find_by_client(&command.client_id).await?;
 
         let desired: HashSet<&str> = command
             .enabled_application_ids
@@ -177,21 +176,14 @@ impl<U: UnitOfWork> UseCase for UpdateClientApplicationsUseCase<U> {
         }
 
         let event = ClientApplicationsUpdated::new(
-            &ctx,
+            ctx,
             &command.client_id,
             command.enabled_application_ids.clone(),
             enabled_added,
             disabled_removed,
         );
 
-        // No diff → still emit one event so the audit trail records the request.
-        if to_persist.is_empty() {
-            return self.unit_of_work.emit_event(event, &command).await;
-        }
-
-        self.unit_of_work
-            .commit_all(&to_persist, &*self.config_repo, event, &command)
-            .await
+        Ok((to_persist, event))
     }
 }
 
