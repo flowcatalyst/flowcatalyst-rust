@@ -244,6 +244,17 @@ pub mod repository {
         pub login_attempt_repo: Arc<LoginAttemptRepository>,
         pub password_reset_repo: Arc<PasswordResetTokenRepository>,
         pub pending_auth_repo: Arc<PendingAuthRepository>,
+        // The function registry. Its settings repository needs the app key,
+        // so the route setup builds that one itself.
+        pub function_repo: Arc<crate::function::repository::FunctionRepository>,
+        pub function_version_repo:
+            Arc<crate::function::version_repository::FunctionVersionRepository>,
+        pub function_host_repo: Arc<crate::function::host_repository::FunctionHostRepository>,
+        pub function_policy_repo: Arc<crate::function::policy_repository::ClientPolicyRepository>,
+        pub function_domain_repo: Arc<crate::function::domain_repository::FunctionDomainRepository>,
+        pub function_route_repo: Arc<crate::function::route_repository::FunctionRouteRepository>,
+        pub function_trigger_object_repo:
+            Arc<crate::function::trigger_object_repository::TriggerObjectRepository>,
         /// Raw pool — exposed so callers (e.g. the BFF dashboard stats
         /// endpoint) can run ad-hoc queries that don't fit a single
         /// repository. Cloning is cheap; sqlx already Arcs internally.
@@ -287,6 +298,25 @@ pub mod repository {
                 idp_repo: Arc::new(IdentityProviderRepository::new(pool)),
                 edm_repo: Arc::new(EmailDomainMappingRepository::new(pool)),
                 pending_auth_repo: Arc::new(PendingAuthRepository::new(pool)),
+                function_repo: Arc::new(crate::function::repository::FunctionRepository::new(pool)),
+                function_version_repo: Arc::new(
+                    crate::function::version_repository::FunctionVersionRepository::new(pool),
+                ),
+                function_host_repo: Arc::new(
+                    crate::function::host_repository::FunctionHostRepository::new(pool),
+                ),
+                function_policy_repo: Arc::new(
+                    crate::function::policy_repository::ClientPolicyRepository::new(pool),
+                ),
+                function_domain_repo: Arc::new(
+                    crate::function::domain_repository::FunctionDomainRepository::new(pool),
+                ),
+                function_route_repo: Arc::new(
+                    crate::function::route_repository::FunctionRouteRepository::new(pool),
+                ),
+                function_trigger_object_repo: Arc::new(
+                    crate::function::trigger_object_repository::TriggerObjectRepository::new(pool),
+                ),
                 pool: pool.clone(),
             }
         }
