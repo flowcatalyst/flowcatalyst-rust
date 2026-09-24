@@ -1,0 +1,27 @@
+[package]
+name = "fc-fnhost"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "FlowCatalyst function host daemon (Rust drop-in for Java's fc-fnhost)"
+
+[[bin]]
+name = "fc-fnhost"
+path = "src/main.rs"
+
+[dependencies]
+fc-fnhost-core = { path = "../../crates/fc-fnhost-core" }
+tokio = { workspace = true }
+
+[dev-dependencies]
+fc-function-abi = { path = "../../crates/fc-function-abi" }
+reqwest = { workspace = true }
+axum = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+async-trait = { workspace = true }
+tempfile = { workspace = true }
+chrono = { workspace = true }

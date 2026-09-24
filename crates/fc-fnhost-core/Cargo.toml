@@ -1,0 +1,47 @@
+[package]
+name = "fc-fnhost-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "FlowCatalyst function host: environment, logging, observability, reconciler, artifact stores and Sigstore verification (a drop-in for Java's fc-fnhost)"
+
+[dependencies]
+fc-function-abi = { path = "../fc-function-abi" }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+# preserve_order: every JSON document this crate writes (heartbeat, emit) or
+# reads back byte-for-byte keeps Jackson's key order.
+serde_json = { workspace = true, features = ["preserve_order"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+rand = { workspace = true }
+url = { workspace = true }
+
+base64 = "0.22"
+prometheus-client = "0.23"
+gethostname = "1"
+# Sigstore verification is a port of Java's JDK-only SignatureVerifier on the
+# RustCrypto stack that is already in the lock file (see signature/mod.rs).
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+der = { version = "0.7", features = ["std"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+rand_core = { version = "0.6", features = ["getrandom"] }
+# Test-only: SPKI encoding for the TestSigstore port's generated keys.
+p256 = { version = "0.13", features = ["alloc"] }
