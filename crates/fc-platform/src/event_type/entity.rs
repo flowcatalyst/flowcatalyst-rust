@@ -179,21 +179,30 @@ pub struct EventType {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Why an event type code was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EventTypeCodeError {
+    #[error("Event type code must follow format: application:subdomain:aggregate:event")]
+    WrongSegmentCount,
+    #[error("Event type code segments cannot be empty")]
+    EmptySegment,
+}
+
 impl EventType {
     /// Create from a colon-separated code (application:subdomain:aggregate:event) and name.
     /// Returns Err if the code format is invalid.
-    pub fn new(code: impl Into<String>, name: impl Into<String>) -> Result<Self, String> {
+    pub fn new(
+        code: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<Self, EventTypeCodeError> {
         let code = code.into();
         let parts: Vec<&str> = code.split(':').collect();
         if parts.len() != 4 {
-            return Err(
-                "Event type code must follow format: application:subdomain:aggregate:event"
-                    .to_string(),
-            );
+            return Err(EventTypeCodeError::WrongSegmentCount);
         }
         for part in &parts {
             if part.trim().is_empty() {
-                return Err("Event type code segments cannot be empty".to_string());
+                return Err(EventTypeCodeError::EmptySegment);
             }
         }
         let application = parts[0].to_string();
@@ -263,7 +272,10 @@ mod tests {
 
     #[test]
     fn new_rejects_too_few_segments() {
-        assert!(EventType::new("orders:fulfillment:shipment", "x").is_err());
+        assert_eq!(
+            EventType::new("orders:fulfillment:shipment", "x").unwrap_err(),
+            EventTypeCodeError::WrongSegmentCount
+        );
         assert!(EventType::new("orders:fulfillment", "x").is_err());
         assert!(EventType::new("orders", "x").is_err());
         assert!(EventType::new("", "x").is_err());
@@ -276,7 +288,10 @@ mod tests {
 
     #[test]
     fn new_rejects_empty_segment() {
-        assert!(EventType::new("orders::shipment:shipped", "x").is_err());
+        assert_eq!(
+            EventType::new("orders::shipment:shipped", "x").unwrap_err(),
+            EventTypeCodeError::EmptySegment
+        );
         assert!(EventType::new(":fulfillment:shipment:shipped", "x").is_err());
         assert!(EventType::new("orders:fulfillment:shipment:", "x").is_err());
     }

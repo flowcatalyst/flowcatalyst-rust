@@ -157,7 +157,10 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
                 et
             }
             Err(e) => {
-                return UseCaseResult::failure(UseCaseError::validation("INVALID_CODE_FORMAT", e));
+                return UseCaseResult::failure(UseCaseError::validation(
+                    "INVALID_CODE_FORMAT",
+                    e.to_string(),
+                ));
             }
         };
 

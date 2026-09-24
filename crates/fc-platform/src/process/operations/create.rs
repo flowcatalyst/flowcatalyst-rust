@@ -117,7 +117,10 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
                 p
             }
             Err(e) => {
-                return UseCaseResult::failure(UseCaseError::validation("INVALID_CODE_FORMAT", e));
+                return UseCaseResult::failure(UseCaseError::validation(
+                    "INVALID_CODE_FORMAT",
+                    e.to_string(),
+                ));
             }
         };
 

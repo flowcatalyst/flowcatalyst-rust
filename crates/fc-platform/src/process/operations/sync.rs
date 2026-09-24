@@ -131,8 +131,9 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
                     }
                 }
                 None => {
-                    let mut p = Process::new(&input.code, &input.name)
-                        .map_err(|e| UseCaseError::validation("INVALID_PROCESS_CODE", e))?;
+                    let mut p = Process::new(&input.code, &input.name).map_err(|e| {
+                        UseCaseError::validation("INVALID_PROCESS_CODE", e.to_string())
+                    })?;
                     p.source = ProcessSource::Api;
                     p.description = input.description.clone();
                     p.body = input.body.clone();

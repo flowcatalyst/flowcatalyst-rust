@@ -76,19 +76,26 @@ pub struct Process {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Why a process code was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ProcessCodeError {
+    #[error("Process code must follow format: application:subdomain:process-name")]
+    WrongSegmentCount,
+    #[error("Process code segments cannot be empty")]
+    EmptySegment,
+}
+
 impl Process {
     /// Create from a colon-separated code (application:subdomain:process-name) and name.
-    pub fn new(code: impl Into<String>, name: impl Into<String>) -> Result<Self, String> {
+    pub fn new(code: impl Into<String>, name: impl Into<String>) -> Result<Self, ProcessCodeError> {
         let code = code.into();
         let parts: Vec<&str> = code.split(':').collect();
         if parts.len() != 3 {
-            return Err(
-                "Process code must follow format: application:subdomain:process-name".to_string(),
-            );
+            return Err(ProcessCodeError::WrongSegmentCount);
         }
         for part in &parts {
             if part.trim().is_empty() {
-                return Err("Process code segments cannot be empty".to_string());
+                return Err(ProcessCodeError::EmptySegment);
             }
         }
         let application = parts[0].to_string();
@@ -136,13 +143,19 @@ mod tests {
 
     #[test]
     fn new_rejects_wrong_segment_count() {
-        assert!(Process::new("a:b", "x").is_err());
+        assert_eq!(
+            Process::new("a:b", "x").unwrap_err(),
+            ProcessCodeError::WrongSegmentCount
+        );
         assert!(Process::new("a:b:c:d", "x").is_err());
     }
 
     #[test]
     fn new_rejects_empty_segment() {
-        assert!(Process::new("a::c", "x").is_err());
+        assert_eq!(
+            Process::new("a::c", "x").unwrap_err(),
+            ProcessCodeError::EmptySegment
+        );
         assert!(Process::new(":b:c", "x").is_err());
         assert!(Process::new("a:b:", "x").is_err());
         assert!(Process::new("a: :c", "x").is_err());

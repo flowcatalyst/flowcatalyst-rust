@@ -144,8 +144,9 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                 }
                 None => {
                     // Create new event type
-                    let mut et = EventType::new(&input.code, &input.name)
-                        .map_err(|e| UseCaseError::validation("INVALID_EVENT_TYPE_CODE", e))?;
+                    let mut et = EventType::new(&input.code, &input.name).map_err(|e| {
+                        UseCaseError::validation("INVALID_EVENT_TYPE_CODE", e.to_string())
+                    })?;
                     et.source = EventTypeSource::Api;
                     et.description = input.description.clone();
                     if let Err(e) = self.event_type_repo.insert(&et).await {
