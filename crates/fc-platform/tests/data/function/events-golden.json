@@ -1,0 +1,116 @@
+{
+  "events" : [ {
+    "case" : "created/platform",
+    "type" : "platform:function:function:created",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_1",
+    "messageGroup" : "platform:function:fnc_1",
+    "data" : "{\"functionId\":\"fnc_1\",\"address\":\"billing.invoices.create\",\"applicationId\":\"app_1\",\"runtime\":\"WASM\"}"
+  }, {
+    "case" : "created/client",
+    "type" : "platform:function:function:created",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\",\"applicationId\":\"app_1\",\"clientId\":\"clt_1\",\"runtime\":\"JVM\"}"
+  }, {
+    "case" : "updated/platform",
+    "type" : "platform:function:function:updated",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_1",
+    "messageGroup" : "platform:function:fnc_1",
+    "data" : "{\"functionId\":\"fnc_1\",\"address\":\"billing.invoices.create\",\"status\":\"ACTIVE\"}"
+  }, {
+    "case" : "updated/client",
+    "type" : "platform:function:function:updated",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\",\"description\":\"Creates invoices\",\"status\":\"DISABLED\"}"
+  }, {
+    "case" : "deleted/client",
+    "type" : "platform:function:function:deleted",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\"}"
+  }, {
+    "case" : "config/client",
+    "type" : "platform:function:config:updated",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\",\"keys\":[\"A\",\"B\"]}"
+  }, {
+    "case" : "config/empty",
+    "type" : "platform:function:config:updated",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\",\"keys\":[]}"
+  }, {
+    "case" : "secret-set/client",
+    "type" : "platform:function:secret:set",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\",\"key\":\"API_KEY\"}"
+  }, {
+    "case" : "secret-deleted/client",
+    "type" : "platform:function:secret:deleted",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\",\"key\":\"API_KEY\"}"
+  }, {
+    "case" : "policy/platform",
+    "type" : "platform:function:policy:updated",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function-policy.PLATFORM",
+    "messageGroup" : "platform:function-policy:PLATFORM",
+    "data" : "{\"owner\":\"platform\",\"signerCount\":2}"
+  }, {
+    "case" : "policy/client",
+    "type" : "platform:function:policy:updated",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function-policy.clt_1",
+    "messageGroup" : "platform:function-policy:clt_1",
+    "data" : "{\"owner\":\"clt_1\",\"signerCount\":0}"
+  }, {
+    "case" : "domain-claimed/platform",
+    "type" : "platform:function:domain:claimed",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function-domain.fnd_1",
+    "messageGroup" : "platform:function-domain:fnd_1",
+    "data" : "{\"domainId\":\"fnd_1\",\"hostname\":\"acme.com\",\"owner\":\"platform\"}"
+  }, {
+    "case" : "domain-claimed/client",
+    "type" : "platform:function:domain:claimed",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function-domain.fnd_2",
+    "messageGroup" : "platform:function-domain:fnd_2",
+    "data" : "{\"domainId\":\"fnd_2\",\"hostname\":\"api.example.org\",\"owner\":\"clt_1\"}"
+  }, {
+    "case" : "domain-released/client",
+    "type" : "platform:function:domain:released",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function-domain.fnd_2",
+    "messageGroup" : "platform:function-domain:fnd_2",
+    "data" : "{\"domainId\":\"fnd_2\",\"hostname\":\"api.example.org\",\"owner\":\"clt_1\"}"
+  } ],
+  "secretValue" : "\"***\""
+}

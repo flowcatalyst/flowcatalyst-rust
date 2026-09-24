@@ -1,0 +1,4536 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FlowCatalyst Function Platform API",
+    "version": "1.0.0",
+    "description": "The function-platform surface: `/api/functions…`, `/api/function-pools`, `/api/function-policies…`, `/api/function-domains…`, `/api/function-routes`, and the function-host control plane under `/control/functions/…`. Hand-authored (spec `docs/spec/function-openapi.md`) — Java-first, outside `openapi.lock.json` (there is no Go for this surface). NOT here: the invocation surface itself, `/functions/{address}[:{version}]/{path}` on a function host (a passthrough to the function's own endpoints, `docs/spec/function-invocation.md`), and the platform's main API, served at `/api/openapi.json`."
+  },
+  "tags": [
+    {
+      "name": "functions"
+    },
+    {
+      "name": "function-versions"
+    },
+    {
+      "name": "function-config"
+    },
+    {
+      "name": "function-policies"
+    },
+    {
+      "name": "function-domains"
+    },
+    {
+      "name": "function-control"
+    }
+  ],
+  "paths": {
+    "/api/functions": {
+      "get": {
+        "operationId": "listFunctions",
+        "tags": [
+          "functions"
+        ],
+        "summary": "List functions",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "query",
+            "required": false,
+            "description": "an address pattern filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientId",
+            "in": "query",
+            "required": false,
+            "description": "an owning client id, or `platform`",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "ACTIVE or DISABLED",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ACTIVE",
+                "DISABLED"
+              ]
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "description": "0-based page index",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "description": "page size",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of functions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunctionPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "STATUS_INVALID, ADDRESS_PATTERN_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "createFunction",
+        "tags": [
+          "functions"
+        ],
+        "summary": "Create a function",
+        "description": "Requires `platform:function:function:manage`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFunctionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created function",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunctionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "APPLICATION_CODE_REQUIRED, RUNTIME_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "APPLICATION_CODE_NOT_ADDRESSABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "FUNCTION_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}": {
+      "get": {
+        "operationId": "getFunction",
+        "tags": [
+          "functions"
+        ],
+        "summary": "Get a function",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The function",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FunctionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ADDRESS_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "updateFunction",
+        "tags": [
+          "functions"
+        ],
+        "summary": "Update a function's description/status",
+        "description": "Requires `platform:function:function:manage`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateFunctionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Updated"
+          },
+          "400": {
+            "description": "FUNCTION_IMMUTABLE_FIELD, STATUS_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteFunction",
+        "tags": [
+          "functions"
+        ],
+        "summary": "Delete a function",
+        "description": "Requires `platform:function:function:manage`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/status": {
+      "get": {
+        "operationId": "getFunctionStatus",
+        "tags": [
+          "functions"
+        ],
+        "summary": "Get a function's live status across hosts",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/function-pools": {
+      "get": {
+        "operationId": "listFunctionPools",
+        "tags": [
+          "functions"
+        ],
+        "summary": "List pools with a live host",
+        "description": "Requires anchor scope + `platform:function:function:view`.",
+        "responses": {
+          "200": {
+            "description": "The pools",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PoolSummaryResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ANCHOR_REQUIRED, PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/versions": {
+      "post": {
+        "operationId": "publishFunctionVersion",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "Publish a new version",
+        "description": "Requires `platform:function:version:publish`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The published version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ARTIFACT_REF_REQUIRED, ARTIFACT_REF_INVALID, DIGEST_INVALID, MANIFEST_REQUIRED, MANIFEST_UNKNOWN_FIELD, MANIFEST_INVALID, RUNTIME_INVALID, RUNTIME_MISMATCH, ENTRYPOINT_REQUIRED, ENTRYPOINT_INVALID, POOL_INVALID, LIMIT_INVALID, LIMIT_OVER_CEILING, LIMIT_NOT_APPLICABLE, ENDPOINT_INVALID, ENDPOINT_AUTH_REQUIRED, ROUTE_AMBIGUOUS, SUBSCRIPTION_INVALID, SUBSCRIPTION_DUPLICATE, SUBSCRIPTION_PATH_NOT_WEBHOOK, SCHEDULE_INVALID, SCHEDULE_DUPLICATE, SCHEDULE_PATH_NOT_WEBHOOK, PUBLIC_ROUTE_INVALID, PUBLIC_ROUTE_DUPLICATE, DB_INVALID, CONFIG_INVALID, SIGNATURE_REQUIRED, SIGNATURE_REJECTED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ARTIFACT_STORE_NOT_CONFIGURED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "listFunctionVersions",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "List a function's versions, newest first",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VersionResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/manifest/check": {
+      "post": {
+        "operationId": "checkManifest",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "Validate a manifest and preview its promote plan, without writing anything",
+        "description": "Requires `platform:function:version:publish` (the same permission and reach as publish). Writes nothing: no version number is reserved, no row is locked for update. `errors` is what publishing this manifest would reject; `plan` is the promote plan for this manifest, as the next version, to `alias` (default `live`) — computed only when `errors` is empty. A `settingsMissing` entry in `plan` does NOT by itself make `valid` false.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckManifestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Always 200 once authorised and the function is reachable — `valid` says whether the manifest is publishable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckManifestResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/versions/{version}": {
+      "get": {
+        "operationId": "getFunctionVersion",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "Get one version, including its manifest",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "description": "the version number",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VERSION_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/versions/{version}/retire": {
+      "post": {
+        "operationId": "retireFunctionVersion",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "Retire a version",
+        "description": "Requires `platform:function:version:publish`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "description": "the version number",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The retired version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VERSION_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "VERSION_IS_LIVE, VERSION_ALIASED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/aliases/{alias}": {
+      "put": {
+        "operationId": "promoteFunctionAlias",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "Promote a version to an alias (`live` or any named alias)",
+        "description": "Requires `platform:function:alias:promote`. `live` keeps its full semantics (R3 READY check, wiring materialised); any other alias name is HTTP-only — no wiring change.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "description": "the alias name — `live`, or any name matching `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The promotion result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ALIAS_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, ALIAS_UNCHANGED, SETTINGS_MISSING",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteFunctionAlias",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "Remove a named alias",
+        "description": "Requires `platform:function:alias:promote`. `live` can never be removed.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "description": "the alias name to remove",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND, Alias_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ALIAS_PROTECTED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/aliases": {
+      "get": {
+        "operationId": "listFunctionAliases",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "List a function's aliases",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The aliases",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AliasResponse"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/artifacts/{digest}": {
+      "put": {
+        "operationId": "uploadFunctionArtifact",
+        "tags": [
+          "function-versions"
+        ],
+        "summary": "Upload an artifact blob, streamed",
+        "description": "Requires `platform:function:version:publish`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "digest",
+            "in": "path",
+            "required": true,
+            "description": "the `sha256:<hex>` digest of the uploaded bytes",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadArtifactResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "DIGEST_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "ARTIFACT_TOO_LARGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "ARTIFACT_EMPTY, DIGEST_MISMATCH",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ARTIFACT_STORE_NOT_CONFIGURED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/functions/{address}/config": {
+      "get": {
+        "operationId": "getFunctionConfig",
+        "tags": [
+          "function-config"
+        ],
+        "summary": "Get a function's config values",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "description": "the version whose declared keys join the live manifest's; absent defaults to the newest non-retired version",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VERSION_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "setFunctionConfig",
+        "tags": [
+          "function-config"
+        ],
+        "summary": "Replace a function's config values",
+        "description": "Requires `platform:function:function:manage`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "description": "the version whose declared keys join the live manifest's in the response; absent defaults to the newest non-retired version",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetConfigRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "SETTING_KEY_INVALID, SETTING_TOO_LARGE, VERSION_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/secrets": {
+      "get": {
+        "operationId": "listFunctionSecrets",
+        "tags": [
+          "function-config"
+        ],
+        "summary": "List a function's secret keys (never values)",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "description": "the version whose declared keys join the live manifest's; absent defaults to the newest non-retired version",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The secret keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VERSION_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND, FunctionVersion_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ENCRYPTION_UNCONFIGURED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/functions/{address}/secrets/{key}": {
+      "put": {
+        "operationId": "setFunctionSecret",
+        "tags": [
+          "function-config"
+        ],
+        "summary": "Set one secret's value",
+        "description": "Requires `platform:function:secret:manage`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "the config/secret key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetSecretRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Set"
+          },
+          "400": {
+            "description": "SETTING_KEY_INVALID, SETTING_VALUE_REQUIRED, SETTING_TOO_LARGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ENCRYPTION_UNCONFIGURED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteFunctionSecret",
+        "tags": [
+          "function-config"
+        ],
+        "summary": "Delete one secret",
+        "description": "Requires `platform:function:secret:manage`.",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "description": "the function's `application.service.name` address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "the config/secret key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND, FunctionSecret_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ENCRYPTION_UNCONFIGURED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/function-policies": {
+      "get": {
+        "operationId": "listFunctionPolicies",
+        "tags": [
+          "function-policies"
+        ],
+        "summary": "List every stored function policy row",
+        "description": "Requires anchor scope + `platform:function:policy:manage`. Owners with no row are not listed — no paging, at most one row per client.",
+        "responses": {
+          "200": {
+            "description": "The stored policies, platform first then client ids ascending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/function-policies/{owner}": {
+      "get": {
+        "operationId": "getFunctionPolicy",
+        "tags": [
+          "function-policies"
+        ],
+        "summary": "Get an owner's effective function policy",
+        "description": "Requires anchor scope + `platform:function:policy:manage`.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "description": "a client id, or the literal `platform`",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "OWNER_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ANCHOR_REQUIRED, PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "putFunctionPolicy",
+        "tags": [
+          "function-policies"
+        ],
+        "summary": "Replace an owner's function policy",
+        "description": "Requires anchor scope + `platform:function:policy:manage`.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "description": "a client id, or the literal `platform`",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutPolicyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "SIGNER_INVALID, SIGNER_DUPLICATE, RUNTIME_INVALID, CEILING_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ANCHOR_REQUIRED, PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/function-domains": {
+      "post": {
+        "operationId": "claimFunctionDomain",
+        "tags": [
+          "function-domains"
+        ],
+        "summary": "Claim a domain (zone)",
+        "description": "Claims `hostname` and every hostname under it — a zone, not a single exact hostname. Requires `platform:function:domain:manage`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The claimed domain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "HOSTNAME_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DOMAIN_TAKEN — an existing claim (any owner) equals, covers, or is covered by this hostname",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "operationId": "listFunctionDomains",
+        "tags": [
+          "function-domains"
+        ],
+        "summary": "List domains owned by a client (or `platform`)",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "query",
+            "required": true,
+            "description": "an owning client id, or `platform`",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The domains",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DomainResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "CLIENT_ID_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/function-domains/{hostname}": {
+      "get": {
+        "operationId": "getFunctionDomain",
+        "tags": [
+          "function-domains"
+        ],
+        "summary": "Get the zone claim covering a hostname",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "hostname",
+            "in": "path",
+            "required": true,
+            "description": "any hostname covered by a claimed zone, or the zone apex itself — resolves to the zone's one claim",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The domain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "HOSTNAME_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "FunctionDomain_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "releaseFunctionDomain",
+        "tags": [
+          "function-domains"
+        ],
+        "summary": "Release (delete) a claimed zone",
+        "description": "Requires `platform:function:domain:manage`.",
+        "parameters": [
+          {
+            "name": "hostname",
+            "in": "path",
+            "required": true,
+            "description": "any hostname covered by the claimed zone, or the zone apex itself — resolves to the zone's one claim",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Released"
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "FunctionDomain_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "DOMAIN_IN_USE — a public route exists on this zone's apex or on a hostname covered by it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/function-routes": {
+      "get": {
+        "operationId": "listFunctionRoutes",
+        "tags": [
+          "function-domains"
+        ],
+        "summary": "List public routes by hostname or by function address",
+        "description": "Requires `platform:function:function:view`.",
+        "parameters": [
+          {
+            "name": "hostname",
+            "in": "query",
+            "required": false,
+            "description": "list every route for this hostname",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "address",
+            "in": "query",
+            "required": false,
+            "description": "list this one function's routes",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The routes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FunctionRouteResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "FUNCTION_ROUTE_FILTER_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Function_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/control/functions/desired-state": {
+      "get": {
+        "operationId": "getDesiredState",
+        "tags": [
+          "function-control"
+        ],
+        "summary": "The desired-state document a function host reconciles against",
+        "description": "Requires anchor scope + `platform:function:host:control`.",
+        "parameters": [
+          {
+            "name": "pool",
+            "in": "query",
+            "required": true,
+            "description": "the host's own pool",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The desired-state document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesiredStateDocument"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified — `If-None-Match` matched the current ETag"
+          },
+          "400": {
+            "description": "POOL_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ANCHOR_REQUIRED, PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/control/functions/heartbeat": {
+      "post": {
+        "operationId": "heartbeatFunctionHost",
+        "tags": [
+          "function-control"
+        ],
+        "summary": "Report a host's liveness and loaded versions",
+        "description": "Requires anchor scope + `platform:function:host:control`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeartbeatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded"
+          },
+          "400": {
+            "description": "HOST_ID_INVALID, POOL_INVALID, HOST_STATE_INVALID, LOADED_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ANCHOR_REQUIRED, PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/control/functions/events": {
+      "post": {
+        "operationId": "emitFunctionEvents",
+        "tags": [
+          "function-control"
+        ],
+        "summary": "Emit a batch of events on behalf of a served function/version",
+        "description": "Requires anchor scope + `platform:function:host:control`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmitEventsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Per-event results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BATCH_SIZE_INVALID, DEDUP_ID_REQUIRED, DEDUP_ID_DUPLICATE, EVENT_DATA_INVALID, EVENT_DATA_TOO_LARGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ANCHOR_REQUIRED, PERMISSION_REQUIRED, EVENT_TYPE_NOT_OWNED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "HOST_UNKNOWN, FUNCTION_NOT_SERVED_BY_HOST",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/control/functions/artifacts/{versionId}": {
+      "get": {
+        "operationId": "downloadFunctionArtifact",
+        "tags": [
+          "function-control"
+        ],
+        "summary": "Download a version's artifact blob, streamed",
+        "description": "Requires anchor scope + `platform:function:host:control`.",
+        "parameters": [
+          {
+            "name": "versionId",
+            "in": "path",
+            "required": true,
+            "description": "the function version's id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact bytes",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ANCHOR_REQUIRED, PERMISSION_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "FunctionVersion_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "ARTIFACT_STORE_NOT_CONFIGURED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "description": "The platform's canonical error envelope (CONVENTIONS.md §4).",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "the machine-readable error code"
+          },
+          "message": {
+            "type": "string",
+            "description": "a human-readable message"
+          },
+          "details": {
+            "type": "object",
+            "description": "optional structured detail; omitted when empty",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "CreateFunctionRequest": {
+        "type": "object",
+        "properties": {
+          "applicationCode": {
+            "type": "string"
+          },
+          "serviceName": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "jvm",
+              "wasm"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "clientId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "applicationCode",
+          "serviceName",
+          "name",
+          "runtime"
+        ],
+        "additionalProperties": false
+      },
+      "UpdateFunctionRequest": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "FunctionResponseLive": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "versionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "versionId"
+        ],
+        "additionalProperties": false
+      },
+      "FunctionResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "applicationCode": {
+            "type": "string"
+          },
+          "serviceName": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "applicationId": {
+            "type": "string"
+          },
+          "clientId": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "jvm",
+              "wasm"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED"
+            ]
+          },
+          "live": {
+            "$ref": "#/components/schemas/FunctionResponseLive"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "address",
+          "applicationCode",
+          "serviceName",
+          "name",
+          "applicationId",
+          "runtime",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "FunctionPageResponse": {
+        "type": "object",
+        "description": "The offset-paginated envelope shared by every list route (apicommon.OffsetPage).",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FunctionResponse"
+            }
+          },
+          "page": {
+            "type": "integer"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "total_pages": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "data",
+          "page",
+          "size",
+          "total",
+          "total_pages"
+        ],
+        "additionalProperties": false
+      },
+      "SignerResponse": {
+        "type": "object",
+        "description": "A recorded publish signer identity (VersionResponse.SignerResponse / DesiredState.SignerView — same wire shape).",
+        "properties": {
+          "issuer": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "issuer",
+          "subject"
+        ],
+        "additionalProperties": false
+      },
+      "PublishManifestRequest": {
+        "type": "object",
+        "description": "The publish-time manifest, as parsed by Manifest#parseStrict — only runtime/entrypoint are mandatory, everything else defaults.",
+        "properties": {
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "jvm",
+              "wasm"
+            ]
+          },
+          "entrypoint": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string"
+          },
+          "warm": {
+            "type": "boolean"
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "maxDurationMs": {
+                "type": "integer"
+              },
+              "maxConcurrency": {
+                "type": "integer"
+              },
+              "wasmMemoryMb": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "auth": {
+                  "type": "string",
+                  "enum": [
+                    "webhook",
+                    "platform",
+                    "none"
+                  ]
+                },
+                "methods": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "GET",
+                      "HEAD",
+                      "POST",
+                      "PUT",
+                      "PATCH",
+                      "DELETE",
+                      "OPTIONS"
+                    ]
+                  }
+                },
+                "cors": {
+                  "type": "object",
+                  "properties": {
+                    "origins": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "methods": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "headers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "allowCredentials": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "maxBodyBytes": {
+                  "type": "integer"
+                },
+                "timeoutMs": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "auth"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "eventType": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "IMMEDIATE",
+                    "NEXT_ON_ERROR",
+                    "BLOCK_ON_ERROR"
+                  ]
+                },
+                "maxRetries": {
+                  "type": "integer"
+                },
+                "timeoutSeconds": {
+                  "type": "integer"
+                },
+                "dataOnly": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "eventType",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "schedules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "cron": {
+                  "type": "string"
+                },
+                "timezone": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "payload": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              },
+              "required": [
+                "cron",
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "public": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "hostname": {
+                  "type": "string"
+                },
+                "pathPrefix": {
+                  "type": "string"
+                },
+                "aliasPrefixes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "opt-in alias name prefixes (each a DNS label, never 'live', no duplicates); absent/empty means exact-hostname match only"
+                }
+              },
+              "required": [
+                "hostname"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "config": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "db": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "secretRef": {
+                  "type": "string"
+                },
+                "poolSize": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "secretRef"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "httpAllow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "runtime",
+          "entrypoint"
+        ],
+        "additionalProperties": false
+      },
+      "PublishRequest": {
+        "type": "object",
+        "properties": {
+          "artifactRef": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "signatureBundle": {
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/PublishManifestRequest"
+          }
+        },
+        "required": [
+          "artifactRef",
+          "digest",
+          "manifest"
+        ],
+        "additionalProperties": false
+      },
+      "PublishResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PUBLISHED"
+            ]
+          },
+          "digest": {
+            "type": "string"
+          },
+          "signer": {
+            "$ref": "#/components/schemas/SignerResponse"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "state",
+          "digest"
+        ],
+        "additionalProperties": false
+      },
+      "UploadArtifactResponse": {
+        "type": "object",
+        "properties": {
+          "artifactRef": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifactRef",
+          "digest",
+          "bytes"
+        ],
+        "additionalProperties": false
+      },
+      "ManifestLimits": {
+        "type": "object",
+        "properties": {
+          "maxDurationMs": {
+            "type": "integer"
+          },
+          "maxConcurrency": {
+            "type": "integer"
+          },
+          "wasmMemoryMb": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxDurationMs",
+          "maxConcurrency"
+        ],
+        "additionalProperties": false
+      },
+      "ManifestCors": {
+        "type": "object",
+        "properties": {
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowCredentials": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "origins",
+          "methods",
+          "headers",
+          "allowCredentials"
+        ],
+        "additionalProperties": false
+      },
+      "ManifestEndpoint": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "auth": {
+            "type": "string",
+            "enum": [
+              "webhook",
+              "platform",
+              "none"
+            ]
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "GET",
+                "HEAD",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "OPTIONS"
+              ]
+            }
+          },
+          "cors": {
+            "$ref": "#/components/schemas/ManifestCors"
+          },
+          "maxBodyBytes": {
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "auth",
+          "maxBodyBytes",
+          "timeoutMs"
+        ],
+        "additionalProperties": false
+      },
+      "ManifestSubscription": {
+        "type": "object",
+        "properties": {
+          "eventType": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "IMMEDIATE",
+              "NEXT_ON_ERROR",
+              "BLOCK_ON_ERROR"
+            ]
+          },
+          "maxRetries": {
+            "type": "integer"
+          },
+          "timeoutSeconds": {
+            "type": "integer"
+          },
+          "dataOnly": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "eventType",
+          "path",
+          "mode",
+          "maxRetries",
+          "timeoutSeconds",
+          "dataOnly"
+        ],
+        "additionalProperties": false
+      },
+      "ManifestSchedule": {
+        "type": "object",
+        "properties": {
+          "cron": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "cron",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "ManifestPublicRoute": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "pathPrefix": {
+            "type": "string"
+          },
+          "aliasPrefixes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "opt-in alias name prefixes; [] when the route is exact-match only"
+          }
+        },
+        "required": [
+          "hostname",
+          "pathPrefix"
+        ],
+        "additionalProperties": false
+      },
+      "ManifestDbRef": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "secretRef": {
+            "type": "string"
+          },
+          "poolSize": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "secretRef",
+          "poolSize"
+        ],
+        "additionalProperties": false
+      },
+      "Manifest": {
+        "type": "object",
+        "description": "The resolved manifest as the server writes it back (Manifest#toJson) — every key always present.",
+        "properties": {
+          "runtime": {
+            "type": "string",
+            "enum": [
+              "jvm",
+              "wasm"
+            ]
+          },
+          "entrypoint": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string"
+          },
+          "warm": {
+            "type": "boolean"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ManifestLimits"
+          },
+          "endpoints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestEndpoint"
+            }
+          },
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestSubscription"
+            }
+          },
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestSchedule"
+            }
+          },
+          "public": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestPublicRoute"
+            }
+          },
+          "config": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "db": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestDbRef"
+            }
+          },
+          "httpAllow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "runtime",
+          "entrypoint",
+          "pool",
+          "warm",
+          "limits",
+          "endpoints",
+          "subscriptions",
+          "schedules",
+          "public",
+          "config",
+          "secrets",
+          "db",
+          "httpAllow"
+        ],
+        "additionalProperties": false
+      },
+      "VersionResponse": {
+        "type": "object",
+        "description": "The list shape omits `manifest`; the single-GET shape (`getFunctionVersion`) adds it.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PUBLISHED",
+              "READY",
+              "RETIRED"
+            ]
+          },
+          "digest": {
+            "type": "string"
+          },
+          "artifactRef": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string"
+          },
+          "warm": {
+            "type": "boolean"
+          },
+          "signer": {
+            "$ref": "#/components/schemas/SignerResponse"
+          },
+          "publishedBy": {
+            "type": "string"
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "readyAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "retiredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/Manifest"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "state",
+          "digest",
+          "artifactRef",
+          "pool",
+          "warm",
+          "publishedBy",
+          "publishedAt",
+          "live"
+        ],
+        "additionalProperties": false
+      },
+      "PromoteRequest": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "PromoteResponse": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "versionId": {
+            "type": "string"
+          },
+          "previousVersion": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "alias",
+          "version",
+          "versionId"
+        ],
+        "additionalProperties": false
+      },
+      "CheckManifestRequest": {
+        "type": "object",
+        "description": "Body of POST manifest/check.",
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/PublishManifestRequest"
+          },
+          "alias": {
+            "type": "string",
+            "description": "defaults to `live` when absent/blank"
+          }
+        },
+        "required": [
+          "manifest"
+        ],
+        "additionalProperties": false
+      },
+      "ManifestErrorResponse": {
+        "type": "object",
+        "description": "One entry of CheckManifestResponse#errors — the same shape a real publish rejection's error body carries. A manifest-parse problem's details carries a pointer (RFC 6901 JSON Pointer, \"\" = the document root) to where in the manifest it is; a cross-check problem (event type not found, etc.) may carry other detail keys or none.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "properties": {
+              "pointer": {
+                "type": "string",
+                "description": "RFC 6901 JSON Pointer into the manifest document where this problem is; \"\" means the document root. Present on a manifest-parse problem, absent on most cross-check problems."
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "CheckManifestResponse": {
+        "type": "object",
+        "description": "200 body of POST manifest/check. valid is errors empty; plan is present only when valid.",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManifestErrorResponse"
+            }
+          },
+          "plan": {
+            "$ref": "#/components/schemas/PromotePlanResponse"
+          }
+        },
+        "required": [
+          "valid",
+          "errors"
+        ],
+        "additionalProperties": false
+      },
+      "PoolActionResponse": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "update",
+              "unchanged"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "changedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "key",
+          "changedFields"
+        ],
+        "additionalProperties": false
+      },
+      "SubscriptionActionResponse": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "unchanged"
+            ]
+          },
+          "triggerKey": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "changedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "triggerKey",
+          "eventType",
+          "changedFields"
+        ],
+        "additionalProperties": false
+      },
+      "ScheduleActionResponse": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "unchanged"
+            ]
+          },
+          "triggerKey": {
+            "type": "string"
+          },
+          "cron": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "changedFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "triggerKey",
+          "cron",
+          "changedFields"
+        ],
+        "additionalProperties": false
+      },
+      "RouteKeyResponse": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "pathPrefix": {
+            "type": "string"
+          },
+          "aliasPrefixes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "hostname",
+          "pathPrefix",
+          "aliasPrefixes"
+        ],
+        "additionalProperties": false
+      },
+      "PublicRoutesActionResponse": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "replace",
+              "unchanged"
+            ]
+          },
+          "added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RouteKeyResponse"
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RouteKeyResponse"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "added",
+          "removed"
+        ],
+        "additionalProperties": false
+      },
+      "ConflictResponse": {
+        "type": "object",
+        "description": "What would make TriggerSync#apply of this plan fail — PUBLIC_ROUTE_TAKEN or TRIGGER_KEY_COLLISION.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      },
+      "PromotePlanResponse": {
+        "type": "object",
+        "description": "PromotePlan on the wire. httpOnly is true for a named alias (function-zones-and-aliases.md §2) — pool/subscriptions/schedules/publicRoutes are then absent.",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "fromVersion": {
+            "type": "integer",
+            "description": "the alias's version before this promote; absent when the alias is unset"
+          },
+          "toVersion": {
+            "type": "integer"
+          },
+          "settingsMissing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "httpOnly": {
+            "type": "boolean"
+          },
+          "pool": {
+            "$ref": "#/components/schemas/PoolActionResponse"
+          },
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubscriptionActionResponse"
+            }
+          },
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleActionResponse"
+            }
+          },
+          "publicRoutes": {
+            "$ref": "#/components/schemas/PublicRoutesActionResponse"
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConflictResponse"
+            }
+          }
+        },
+        "required": [
+          "alias",
+          "toVersion",
+          "settingsMissing",
+          "httpOnly",
+          "conflicts"
+        ],
+        "additionalProperties": false
+      },
+      "AliasResponse": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "versionId": {
+            "type": "string"
+          },
+          "updatedBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "alias",
+          "version",
+          "versionId",
+          "updatedBy",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "StatusResponseLive": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "StatusResponseVersionSummary": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "PUBLISHED",
+              "READY",
+              "RETIRED"
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "StatusResponseLoadedSummary": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "REGISTERED",
+              "LOADED",
+              "FAILED"
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "StatusResponseHostSummary": {
+        "type": "object",
+        "properties": {
+          "hostId": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DRAINING"
+            ]
+          },
+          "lastHeartbeat": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "loaded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusResponseLoadedSummary"
+            }
+          }
+        },
+        "required": [
+          "hostId",
+          "pool",
+          "state",
+          "lastHeartbeat",
+          "stale",
+          "loaded"
+        ],
+        "additionalProperties": false
+      },
+      "StatusResponseWiringEntry": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "POOL",
+              "SUBSCRIPTION",
+              "SCHEDULED_JOB"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "objectId": {
+            "type": "string"
+          },
+          "present": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "code",
+          "objectId",
+          "present"
+        ],
+        "additionalProperties": false
+      },
+      "StatusResponse": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED"
+            ]
+          },
+          "live": {
+            "$ref": "#/components/schemas/StatusResponseLive"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusResponseVersionSummary"
+            }
+          },
+          "hosts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusResponseHostSummary"
+            }
+          },
+          "wiring": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StatusResponseWiringEntry"
+            }
+          }
+        },
+        "required": [
+          "address",
+          "status",
+          "versions",
+          "hosts",
+          "wiring"
+        ],
+        "additionalProperties": false
+      },
+      "PoolSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "pool": {
+            "type": "string"
+          },
+          "hosts": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pool",
+          "hosts"
+        ],
+        "additionalProperties": false
+      },
+      "DeclaredByEntry": {
+        "type": "object",
+        "description": "One manifest that contributed to `declared`/`missing`: `keys` is that manifest's own full key list, not only the keys it added beyond another entry.",
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "version",
+          "keys"
+        ],
+        "additionalProperties": false
+      },
+      "ConfigResponse": {
+        "type": "object",
+        "properties": {
+          "values": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "declared": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "declaredBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeclaredByEntry"
+            }
+          }
+        },
+        "required": [
+          "values",
+          "declared",
+          "missing",
+          "declaredBy"
+        ],
+        "additionalProperties": false
+      },
+      "SetConfigRequest": {
+        "type": "object",
+        "properties": {
+          "values": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SecretKeyResponse": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedBy": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "updatedAt",
+          "updatedBy"
+        ],
+        "additionalProperties": false
+      },
+      "SecretListResponse": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecretKeyResponse"
+            }
+          },
+          "declared": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "declaredBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeclaredByEntry"
+            }
+          }
+        },
+        "required": [
+          "keys",
+          "declared",
+          "missing",
+          "declaredBy"
+        ],
+        "additionalProperties": false
+      },
+      "SetSecretRequest": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PolicySignerRequest": {
+        "type": "object",
+        "properties": {
+          "issuer": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "runtimes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "jvm",
+                "wasm"
+              ]
+            }
+          }
+        },
+        "required": [
+          "issuer",
+          "subject"
+        ],
+        "additionalProperties": false
+      },
+      "PolicyCeilingsRequest": {
+        "type": "object",
+        "properties": {
+          "maxDurationMs": {
+            "type": "integer"
+          },
+          "maxConcurrency": {
+            "type": "integer"
+          },
+          "maxWasmMemoryMb": {
+            "type": "integer"
+          },
+          "maxDbPoolSize": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PutPolicyRequest": {
+        "type": "object",
+        "properties": {
+          "signers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicySignerRequest"
+            }
+          },
+          "ceilings": {
+            "$ref": "#/components/schemas/PolicyCeilingsRequest"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PolicySignerResponse": {
+        "type": "object",
+        "properties": {
+          "issuer": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "runtimes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "jvm",
+                "wasm"
+              ]
+            }
+          }
+        },
+        "required": [
+          "issuer",
+          "subject",
+          "runtimes"
+        ],
+        "additionalProperties": false
+      },
+      "PolicyCeilingsResponse": {
+        "type": "object",
+        "properties": {
+          "maxDurationMs": {
+            "type": "integer"
+          },
+          "maxConcurrency": {
+            "type": "integer"
+          },
+          "maxWasmMemoryMb": {
+            "type": "integer"
+          },
+          "maxDbPoolSize": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxDurationMs",
+          "maxConcurrency",
+          "maxWasmMemoryMb",
+          "maxDbPoolSize"
+        ],
+        "additionalProperties": false
+      },
+      "PolicyResponse": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "signers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicySignerResponse"
+            }
+          },
+          "ceilings": {
+            "$ref": "#/components/schemas/PolicyCeilingsResponse"
+          },
+          "stored": {
+            "type": "boolean"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "absent on the effective-default shape, which has no stored row"
+          }
+        },
+        "required": [
+          "owner",
+          "signers",
+          "ceilings",
+          "stored"
+        ],
+        "additionalProperties": false
+      },
+      "PolicyListResponse": {
+        "type": "object",
+        "properties": {
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyResponse"
+            }
+          }
+        },
+        "required": [
+          "policies"
+        ],
+        "additionalProperties": false
+      },
+      "ClaimRequest": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "clientId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "hostname"
+        ],
+        "additionalProperties": false
+      },
+      "DomainResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "hostname",
+          "owner",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "FunctionRouteResponse": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "pathPrefix": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "aliasPrefixes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "hostname",
+          "pathPrefix",
+          "address",
+          "aliasPrefixes"
+        ],
+        "additionalProperties": false
+      },
+      "HeartbeatLoadedEntry": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "REGISTERED",
+              "LOADED",
+              "FAILED"
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "version",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "HeartbeatRequest": {
+        "type": "object",
+        "properties": {
+          "hostId": {
+            "type": "string"
+          },
+          "pool": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DRAINING"
+            ]
+          },
+          "loaded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeartbeatLoadedEntry"
+            }
+          }
+        },
+        "required": [
+          "hostId",
+          "pool",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "EmitEventItem": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "dedupId": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "correlationId": {
+            "type": "string"
+          },
+          "causationId": {
+            "type": "string"
+          },
+          "messageGroup": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "dedupId",
+          "data"
+        ],
+        "additionalProperties": false
+      },
+      "EmitEventsRequest": {
+        "type": "object",
+        "properties": {
+          "hostId": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmitEventItem"
+            }
+          }
+        },
+        "required": [
+          "hostId",
+          "address",
+          "events"
+        ],
+        "additionalProperties": false
+      },
+      "BatchResultItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "SUCCESS"
+            ]
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "BatchResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchResultItem"
+            }
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "additionalProperties": false
+      },
+      "DesiredStateUnloadEntry": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address",
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "DesiredStatePublicRouteEntry": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "pathPrefix": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "aliasPrefixes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "hostname",
+          "pathPrefix",
+          "address",
+          "aliasPrefixes"
+        ],
+        "additionalProperties": false
+      },
+      "DesiredStateFunctionEntry": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "functionId": {
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "live",
+              "candidate",
+              "alias"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "warm",
+              "lazy"
+            ]
+          },
+          "digest": {
+            "type": "string"
+          },
+          "artifactRef": {
+            "type": "string"
+          },
+          "signatureBundle": {
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/Manifest"
+          },
+          "signer": {
+            "$ref": "#/components/schemas/SignerResponse"
+          },
+          "webhookSigningSecret": {
+            "type": "string"
+          },
+          "applicationId": {
+            "type": "string"
+          },
+          "clientId": {
+            "type": "string"
+          },
+          "config": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "secrets": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "missingSettings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "the named (non-`live`) aliases pointing at this version, sorted; empty when none"
+          }
+        },
+        "required": [
+          "address",
+          "functionId",
+          "versionId",
+          "version",
+          "role",
+          "mode",
+          "digest",
+          "artifactRef",
+          "manifest",
+          "applicationId",
+          "config",
+          "secrets",
+          "missingSettings",
+          "aliases"
+        ],
+        "additionalProperties": false
+      },
+      "DesiredStateDocument": {
+        "type": "object",
+        "properties": {
+          "pool": {
+            "type": "string"
+          },
+          "functions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesiredStateFunctionEntry"
+            }
+          },
+          "unload": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesiredStateUnloadEntry"
+            }
+          },
+          "publicRoutes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesiredStatePublicRouteEntry"
+            }
+          }
+        },
+        "required": [
+          "pool",
+          "functions",
+          "unload",
+          "publicRoutes"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

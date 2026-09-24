@@ -980,6 +980,41 @@ pub fn build_platform_routes(
             ),
         ),
     };
+    // ── Function registry ─────────────────────────────────────────────────
+    // Java reads the FC_FN_DEFAULT_* limits once at startup and refuses to
+    // start on a non-positive one (Env.java:600-605).
+    let function_limits = crate::function::FunctionLimits::from_env()
+        .unwrap_or_else(|e| panic!("invalid function limits: {e}"));
+    let function_settings = Arc::new(
+        crate::function::settings_repository::FunctionSettingsRepository::new(
+            &repos.pool,
+            encryption_service.clone(),
+        ),
+    );
+    let functions_state = crate::function::api::FunctionsState {
+        functions: repos.function_repo.clone(),
+        versions: repos.function_version_repo.clone(),
+        hosts: repos.function_host_repo.clone(),
+        settings: function_settings.clone(),
+        policies: repos.function_policy_repo.clone(),
+        domains: repos.function_domain_repo.clone(),
+        routes: repos.function_route_repo.clone(),
+        trigger_objects: repos.function_trigger_object_repo.clone(),
+        app_access: app_access.clone(),
+        limits: function_limits,
+        ops: crate::function::operations::FunctionOperations {
+            functions: repos.function_repo.clone(),
+            applications: repos.application_repo.clone(),
+            clients: repos.client_repo.clone(),
+            settings: function_settings,
+            policies: repos.function_policy_repo.clone(),
+            domains: repos.function_domain_repo.clone(),
+            routes: repos.function_route_repo.clone(),
+            trigger_sync: crate::function::operations::TriggerSync,
+            unit_of_work: unit_of_work.clone(),
+        },
+    };
+
     let bff_scheduled_jobs_state = crate::shared::bff_scheduled_jobs_api::BffScheduledJobsState {
         repo: repos.scheduled_job_repo.clone(),
         instance_repo: repos.scheduled_job_instance_repo.clone(),
@@ -1032,6 +1067,7 @@ pub fn build_platform_routes(
         event_types: event_types_state,
         processes: processes_state,
         scheduled_jobs: scheduled_jobs_state,
+        functions: functions_state,
         dispatch_jobs: dispatch_jobs_state,
         filter_options: filter_options_state,
         clients: clients_state,

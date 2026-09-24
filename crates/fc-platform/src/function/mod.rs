@@ -6,22 +6,37 @@
 //! `FunctionAddress` itself lives in `fc-function-abi`, shared with the host
 //! and the guest PDK; [`function_address`] adds the platform's error for it.
 
+pub mod api;
 pub mod digest;
 pub mod dns_label;
+pub mod domain_api;
+pub mod domain_repository;
 pub mod endpoint_auth;
+pub mod entity;
 pub mod function_address;
 pub mod function_address_pattern;
 pub mod function_limits;
 pub mod function_owner;
+pub mod host_repository;
 pub mod hostname;
 pub mod http_method;
 pub mod json;
 pub mod manifest;
+pub mod openapi;
+pub mod operations;
+pub mod policy_api;
+pub mod policy_repository;
 pub mod pool_url_template;
+pub mod repository;
 pub mod route_pattern;
+pub mod route_repository;
 pub mod runtime;
 pub mod schema;
 pub mod setting_key;
+pub mod settings_repository;
+pub mod trigger_object_repository;
+pub mod version_repository;
+pub mod wire;
 
 pub use digest::Digest;
 pub use dns_label::DnsLabel;
