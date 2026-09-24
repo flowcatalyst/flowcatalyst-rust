@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use super::events::RolesSynced;
 use crate::role::entity::{AuthRole, RoleSource};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationRepository;
 use crate::RoleRepository;
 
@@ -95,41 +97,36 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
         command: SyncRolesCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<RolesSynced> {
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> SyncRolesUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SyncRolesCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<RolesSynced, UseCaseError> {
         // Verify the application exists
-        let application = match self
+        let application = self
             .application_repo
             .find_by_code(&command.application_code)
             .await
-        {
-            Ok(Some(app)) => app,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "APPLICATION_NOT_FOUND",
-                    format!("Application not found: {}", command.application_code),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch application: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "APPLICATION_NOT_FOUND",
+                format!("Application not found: {}", command.application_code),
+            )?;
 
         // Fetch existing roles for this application
-        let existing = match self
+        let existing = self
             .role_repo
             .find_by_application(&command.application_code)
-            .await
-        {
-            Ok(list) => list,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch existing roles: {}",
-                    e
-                )));
-            }
-        };
+            .await?;
 
         let mut created_count = 0u32;
         let mut updated_count = 0u32;
@@ -155,7 +152,7 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                         updated.client_managed = input.client_managed;
                         updated.updated_at = chrono::Utc::now();
                         if let Err(e) = self.role_repo.update(&updated).await {
-                            return UseCaseResult::failure(UseCaseError::commit(format!(
+                            return Err(UseCaseError::commit(format!(
                                 "Failed to update role '{}': {}",
                                 full_name, e
                             )));
@@ -176,7 +173,7 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                     role.permissions = input.permissions.iter().cloned().collect();
                     role.client_managed = input.client_managed;
                     if let Err(e) = self.role_repo.insert(&role).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to create role '{}': {}",
                             full_name, e
                         )));
@@ -194,17 +191,9 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
         if command.remove_unlisted {
             for role in &existing {
                 if role.source == RoleSource::Sdk && !synced_names.contains(&role.name) {
-                    let assignments = match self.role_repo.count_assignments(&role.name).await {
-                        Ok(n) => n,
-                        Err(e) => {
-                            return UseCaseResult::failure(UseCaseError::commit(format!(
-                                "Failed to count assignments for role '{}': {}",
-                                role.name, e,
-                            )));
-                        }
-                    };
+                    let assignments = self.role_repo.count_assignments(&role.name).await?;
                     if assignments > 0 {
-                        return UseCaseResult::failure(UseCaseError::business_rule(
+                        return Err(UseCaseError::business_rule(
                             "ROLE_HAS_ASSIGNMENTS",
                             format!(
                                 "Cannot remove role '{}' — {} principal(s) still hold it. \
@@ -214,7 +203,7 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
                         ));
                     }
                     if let Err(e) = self.role_repo.delete(&role.id).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to delete role '{}': {}",
                             role.name, e
                         )));
@@ -225,15 +214,14 @@ impl<U: UnitOfWork> UseCase for SyncRolesUseCase<U> {
         }
 
         let event = RolesSynced::new(
-            &ctx,
+            ctx,
             &command.application_code,
             created_count,
             updated_count,
             deleted_count,
             synced_names,
         );
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

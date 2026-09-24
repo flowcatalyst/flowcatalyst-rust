@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::RoleDeleted;
-use crate::role::entity::RoleSource;
+use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for deleting a role.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,26 +62,37 @@ impl<U: UnitOfWork> UseCase for DeleteRoleUseCase<U> {
         command: DeleteRoleCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<RoleDeleted> {
-        // Fetch existing role
-        let role = match self.role_repo.find_by_id(&command.role_id).await {
-            Ok(Some(r)) => r,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "ROLE_NOT_FOUND",
-                    format!("Role with ID '{}' not found", command.role_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch role: {}",
-                    e
-                )));
-            }
+        let (role, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit with delete
+        self.unit_of_work
+            .commit_delete(&role, &*self.role_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteRoleUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteRoleCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(AuthRole, RoleDeleted), UseCaseError> {
+        // Fetch existing role
+        let role = self
+            .role_repo
+            .find_by_id(&command.role_id)
+            .await
+            .or_not_found(
+                "ROLE_NOT_FOUND",
+                format!("Role with ID '{}' not found", command.role_id),
+            )?;
 
         // Business rule: can only delete database-defined roles
         if role.source != RoleSource::Database {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CANNOT_DELETE_ROLE",
                 "Cannot delete a code-defined or SDK-synced role",
             ));
@@ -89,17 +102,9 @@ impl<U: UnitOfWork> UseCase for DeleteRoleUseCase<U> {
         // iam_principal_roles has no DB-level FK on role_name (integrity is
         // enforced in code), so dropping the role here would orphan the
         // assignments. Force the admin to strip assignments first.
-        let assignments = match self.role_repo.count_assignments(&role.name).await {
-            Ok(n) => n,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to count assignments: {}",
-                    e,
-                )));
-            }
-        };
+        let assignments = self.role_repo.count_assignments(&role.name).await?;
         if assignments > 0 {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ROLE_HAS_ASSIGNMENTS",
                 format!(
                     "Cannot delete role '{}' — {} principal(s) still hold it. \
@@ -110,12 +115,8 @@ impl<U: UnitOfWork> UseCase for DeleteRoleUseCase<U> {
         }
 
         // Create domain event
-        let event = RoleDeleted::new(&ctx, &role.id, &role.name);
-
-        // Atomic commit with delete
-        self.unit_of_work
-            .commit_delete(&role, &*self.role_repo, event, &command)
-            .await
+        let event = RoleDeleted::new(ctx, &role.id, &role.name);
+        Ok((role, event))
     }
 }
 

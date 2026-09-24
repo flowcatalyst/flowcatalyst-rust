@@ -6,9 +6,11 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::events::RoleUpdated;
-use crate::role::entity::RoleSource;
+use crate::role::entity::{AuthRole, RoleSource};
 use crate::role::repository::RoleRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for updating an existing role.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,26 +91,37 @@ impl<U: UnitOfWork> UseCase for UpdateRoleUseCase<U> {
         command: UpdateRoleCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<RoleUpdated> {
-        // Fetch existing role
-        let mut role = match self.role_repo.find_by_id(&command.role_id).await {
-            Ok(Some(r)) => r,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "ROLE_NOT_FOUND",
-                    format!("Role with ID '{}' not found", command.role_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch role: {}",
-                    e
-                )));
-            }
+        let (role, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&role, &*self.role_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateRoleUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateRoleCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(AuthRole, RoleUpdated), UseCaseError> {
+        // Fetch existing role
+        let mut role = self
+            .role_repo
+            .find_by_id(&command.role_id)
+            .await
+            .or_not_found(
+                "ROLE_NOT_FOUND",
+                format!("Role with ID '{}' not found", command.role_id),
+            )?;
 
         // Business rule: can only update database-defined roles
         if role.source != RoleSource::Database {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CANNOT_MODIFY_ROLE",
                 "Cannot modify a code-defined or SDK-synced role",
             ));
@@ -165,7 +178,7 @@ impl<U: UnitOfWork> UseCase for UpdateRoleUseCase<U> {
             && permissions_added.is_empty()
             && permissions_removed.is_empty()
         {
-            return UseCaseResult::failure(UseCaseError::validation(
+            return Err(UseCaseError::validation(
                 "NO_CHANGES",
                 "No changes detected",
             ));
@@ -175,18 +188,14 @@ impl<U: UnitOfWork> UseCase for UpdateRoleUseCase<U> {
 
         // Create domain event
         let event = RoleUpdated::new(
-            &ctx,
+            ctx,
             &role.id,
             updated_display_name,
             updated_description,
             permissions_added,
             permissions_removed,
         );
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&role, &*self.role_repo, event, &command)
-            .await
+        Ok((role, event))
     }
 }
 
