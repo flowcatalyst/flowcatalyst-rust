@@ -12,7 +12,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use super::entity::Client;
+use super::entity::{Client, ClientStatus};
 use super::repository::ClientRepository;
 use crate::shared::api_common::PaginationParams;
 use crate::shared::error::PlatformError;
@@ -96,7 +96,8 @@ pub struct ClientsQuery {
     #[serde(flatten)]
     pub pagination: PaginationParams,
 
-    /// Filter by status
+    /// Filter by status (`ACTIVE`, `INACTIVE`, `SUSPENDED`). Absent means
+    /// `ACTIVE`; an unknown value is a 400.
     pub status: Option<String>,
 }
 
@@ -273,6 +274,16 @@ pub async fn get_client(
     Ok(Json(client.into()))
 }
 
+/// The status the client list filters on. Absent or empty means `ACTIVE`
+/// (what the list has always returned); an unknown value is a 400 (X-06),
+/// never "no filter".
+fn list_status_filter(status: Option<&str>) -> Result<ClientStatus, PlatformError> {
+    Ok(
+        crate::shared::enum_str::parse_opt(crate::shared::enum_str::non_empty(status))?
+            .unwrap_or(ClientStatus::Active),
+    )
+}
+
 /// List clients
 #[utoipa::path(
     get,
@@ -282,19 +293,21 @@ pub async fn get_client(
     params(
         ("page" = Option<u32>, Query, description = "Page number"),
         ("limit" = Option<u32>, Query, description = "Items per page"),
-        ("status" = Option<String>, Query, description = "Filter by status")
+        ("status" = Option<String>, Query, description = "Filter by status (ACTIVE, INACTIVE, SUSPENDED); defaults to ACTIVE")
     ),
     responses(
-        (status = 200, description = "List of clients", body = ClientListResponse)
+        (status = 200, description = "List of clients", body = ClientListResponse),
+        (status = 400, description = "Unknown status")
     ),
     security(("bearer_auth" = []))
 )]
 pub async fn list_clients(
     State(state): State<ClientsState>,
     auth: Authenticated,
-    Query(_query): Query<ClientsQuery>,
+    Query(query): Query<ClientsQuery>,
 ) -> Result<Json<ClientListResponse>, PlatformError> {
-    let clients = state.client_repo.find_active().await?;
+    let status = list_status_filter(query.status.as_deref())?;
+    let clients = state.client_repo.find_by_status(status).await?;
 
     // Filter by access
     let filtered: Vec<ClientResponse> = clients
@@ -1034,5 +1047,26 @@ mod tests {
         let json = serde_json::json!({ "category": "billing" });
         let result = serde_json::from_value::<AddNoteRequest>(json);
         assert!(result.is_err(), "Should fail without text");
+    }
+    #[test]
+    fn list_status_filter_is_strict() {
+        assert_eq!(list_status_filter(None).unwrap(), ClientStatus::Active);
+        assert_eq!(list_status_filter(Some("")).unwrap(), ClientStatus::Active);
+        assert_eq!(
+            list_status_filter(Some("SUSPENDED")).unwrap(),
+            ClientStatus::Suspended
+        );
+        assert_eq!(
+            list_status_filter(Some("INACTIVE")).unwrap(),
+            ClientStatus::Inactive
+        );
+        // Unknown or wrongly-cased values are a 400, not "no filter".
+        for bad in ["paused", "active", "ALL"] {
+            let err = list_status_filter(Some(bad)).unwrap_err();
+            assert_eq!(
+                axum::response::IntoResponse::into_response(err).status(),
+                axum::http::StatusCode::BAD_REQUEST
+            );
+        }
     }
 }
