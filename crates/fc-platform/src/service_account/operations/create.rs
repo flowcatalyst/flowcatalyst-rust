@@ -5,7 +5,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::client_reach::{dedupe_client_ids, require_clients_exist, resolve_client_reach};
+use super::client_reach::{dedupe_client_ids, require_clients_exist};
 use super::events::ServiceAccountCreated;
 use crate::principal::entity::UserScope;
 use crate::role::entity::roles;
@@ -50,8 +50,9 @@ pub struct CreateServiceAccountCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Client tier. Absent, it follows `client_ids` (none → ANCHOR, one →
-    /// CLIENT, several → PARTNER), as in Go; present, `client_ids` must agree.
+    /// Requested scope, stored on the account as sent. As in Go it doesn't
+    /// decide the token tier, which follows `client_ids` (none → ANCHOR, one
+    /// → CLIENT, several → PARTNER).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<UserScope>,
 
@@ -138,11 +139,6 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             }
         }
 
-        resolve_client_reach(
-            command.scope,
-            &dedupe_client_ids(command.client_ids.clone()),
-        )?;
-
         Ok(())
     }
 
@@ -174,13 +170,7 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             ));
         }
 
-        // The account's reach lands on its principal, so every token built
-        // from it carries the chosen scope, not ANCHOR.
         let client_ids = dedupe_client_ids(command.client_ids.clone());
-        let scope = match resolve_client_reach(command.scope, &client_ids) {
-            Ok(scope) => scope,
-            Err(e) => return UseCaseResult::failure(e),
-        };
         if let Err(e) = require_clients_exist(&self.client_repo, &client_ids).await {
             return UseCaseResult::failure(e);
         }
@@ -201,9 +191,17 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         };
 
         // Create the service account entity
-        let mut service_account = ServiceAccount::new(code, name, scope);
+        let mut service_account = ServiceAccount::new(code, name, UserScope::Anchor);
         service_account.description = command.description.clone();
-        service_account.client_ids = client_ids;
+        // As Go does (create_credentials.go:102, 125): the requested scope is
+        // stored as sent and the principal's tier follows the client links.
+        //
+        // Known Go behaviour, kept on purpose and flagged to the owner as a
+        // risk: a CLIENT (or PARTNER) scope requested with no clients stores
+        // that scope but yields an ANCHOR principal, which reaches every
+        // client. Only an unrecognised scope value is refused (X-06).
+        service_account.requested_scope = command.scope.map(|s| s.as_str().to_string());
+        service_account.link_clients(client_ids);
         service_account.application_id = command.application_id.clone();
         // No application access unless the account is made for one
         // application, which it then reaches alone (Go: all_applications

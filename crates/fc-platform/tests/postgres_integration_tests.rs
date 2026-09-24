@@ -635,6 +635,37 @@ async fn test_dispatch_pool_crud() {
     assert_eq!(suspended.status, DispatchPoolStatus::Suspended);
 }
 
+/// Migration 032 (the iam_service_accounts part of Go's 035) is a no-op on a
+/// database Go already migrated: re-running it changes nothing, and a tracker
+/// without the entry is backfilled by its probe.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_service_account_scope_migration_is_idempotent() {
+    let (pool, _container) = setup_test_db().await;
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/032_service_account_scope_and_client_ids.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("re-running 032 is a no-op");
+
+    sqlx::query("DELETE FROM _schema_migrations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    run_migrations(&pool, MigrationProfile::Production)
+        .await
+        .expect("migrations over existing columns");
+    let (tracked,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM _schema_migrations \
+         WHERE migration_id = '032_service_account_scope_and_client_ids')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(tracked);
+}
+
 // ─── Service Account Repository Tests ─────────────────────────────────────
 
 #[tokio::test]

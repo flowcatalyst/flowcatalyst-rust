@@ -257,16 +257,29 @@ pub struct ServiceAccount {
     #[serde(default = "default_active")]
     pub active: bool,
 
-    /// The clients this account reaches, per its scope: none for ANCHOR
-    /// (it reaches every client), the home client for CLIENT
-    /// (`iam_principals.client_id`), the granted clients for PARTNER
-    /// (`iam_client_access_grants`).
+    /// The account's client links, as stored on the service account
+    /// (`iam_service_accounts.client_ids`, as in Go). Setting them through
+    /// [`ServiceAccount::link_clients`] also moves the principal's reach.
     #[serde(default)]
     pub client_ids: Vec<String>,
 
+    /// The scope requested for the account, stored as sent
+    /// (`iam_service_accounts.scope`, as in Go). It doesn't decide the token
+    /// tier; `scope` does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_scope: Option<String>,
+
     /// Client tier of the linked principal (`iam_principals.scope`). This is
-    /// what tokens carry and what `require_anchor` checks.
+    /// what tokens carry and what `require_anchor` checks. It follows the
+    /// client links (see [`ServiceAccount::link_clients`]).
     pub scope: UserScope,
+
+    /// The clients the linked principal actually reaches at `scope`: none for
+    /// ANCHOR, the home client for CLIENT (`iam_principals.client_id`), the
+    /// grants for PARTNER (`iam_client_access_grants`). Persisted onto the
+    /// principal; it changes only when the links do.
+    #[serde(skip)]
+    pub principal_client_ids: Vec<String>,
 
     /// Application ID (if created for an application)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -317,7 +330,9 @@ impl ServiceAccount {
             description: None,
             active: true,
             client_ids: vec![],
+            requested_scope: None,
             scope,
+            principal_client_ids: vec![],
             application_id: None,
             // No application access until it is granted (owner ruling).
             all_applications: false,
@@ -337,8 +352,24 @@ impl ServiceAccount {
     }
 
     pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
-        self.client_ids.push(client_id.into());
+        let client_id = client_id.into();
+        self.client_ids.push(client_id.clone());
+        self.principal_client_ids.push(client_id);
         self
+    }
+
+    /// Set the account's client links and derive the principal's reach from
+    /// them, as Go's `applyClientReach` does
+    /// (serviceaccount/operations/client_reach.go:23-42): none → ANCHOR, one
+    /// → CLIENT, several → PARTNER. The requested scope plays no part.
+    pub fn link_clients(&mut self, client_ids: Vec<String>) {
+        self.scope = match client_ids.len() {
+            0 => UserScope::Anchor,
+            1 => UserScope::Client,
+            _ => UserScope::Partner,
+        };
+        self.principal_client_ids = client_ids.clone();
+        self.client_ids = client_ids;
     }
 
     pub fn with_application_id(mut self, application_id: impl Into<String>) -> Self {
@@ -372,7 +403,7 @@ impl ServiceAccount {
     /// Whether the account reaches `client_id`: every client at ANCHOR,
     /// otherwise only its linked clients.
     pub fn has_client_access(&self, client_id: &str) -> bool {
-        self.scope.is_anchor() || self.client_ids.iter().any(|c| c == client_id)
+        self.scope.is_anchor() || self.principal_client_ids.iter().any(|c| c == client_id)
     }
 
     pub fn deactivate(&mut self) {

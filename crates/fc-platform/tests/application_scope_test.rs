@@ -444,7 +444,7 @@ async fn created_service_account_reaches_only_granted_applications() {
         .await,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::CREATED, "{body}");
     let id = body["serviceAccount"]["id"].as_str().unwrap().to_string();
 
     // Binding an application on create isn't accepted.

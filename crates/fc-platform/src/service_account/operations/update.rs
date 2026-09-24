@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::client_reach::{dedupe_client_ids, require_clients_exist, resolve_client_reach};
+use super::client_reach::{dedupe_client_ids, require_clients_exist};
 use super::events::ServiceAccountUpdated;
 use crate::principal::entity::UserScope;
 use crate::service_account::ServiceAccount;
@@ -30,13 +30,13 @@ pub struct UpdateServiceAccountCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Updated client tier. With `client_ids` absent, the current links
-    /// must agree with it.
+    /// Updated requested scope, stored as sent. As in Go it doesn't move the
+    /// token tier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<UserScope>,
 
-    /// Updated client IDs. With `scope` absent, the scope follows the new
-    /// links (none → ANCHOR, one → CLIENT, several → PARTNER), as in Go.
+    /// Updated client IDs. The principal's tier follows the new links (none
+    /// → ANCHOR, one → CLIENT, several → PARTNER), as in Go.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_ids: Option<Vec<String>>,
 }
@@ -150,17 +150,16 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
             updated_description = Some(description.clone());
         }
 
-        // Apply a reach change (scope and/or client links). It lands on the
-        // linked principal in the same commit, so an account moved between
-        // clients cannot keep the reach it had before.
-        if command.scope.is_some() || command.client_ids.is_some() {
-            let links = dedupe_client_ids(
-                command
-                    .client_ids
-                    .clone()
-                    .unwrap_or_else(|| service_account.client_ids.clone()),
-            );
-            let scope = resolve_client_reach(command.scope, &links)?;
+        // As Go's UpdateServiceAccount (serviceaccount/operations/update.go:
+        // 70-79, 94-118): a requested scope is stored as sent; new client
+        // links re-derive the linked principal's reach in the same commit, so
+        // an account moved between clients cannot keep the reach it had
+        // before. A scope change alone leaves the principal as it is.
+        if let Some(scope) = command.scope {
+            service_account.requested_scope = Some(scope.as_str().to_string());
+        }
+        if let Some(ref client_ids) = command.client_ids {
+            let links = dedupe_client_ids(client_ids.clone());
             require_clients_exist(&self.client_repo, &links).await?;
 
             let current_set: HashSet<String> = service_account.client_ids.iter().cloned().collect();
@@ -169,8 +168,7 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
             client_ids_added = new_set.difference(&current_set).cloned().collect();
             client_ids_removed = current_set.difference(&new_set).cloned().collect();
 
-            service_account.scope = scope;
-            service_account.client_ids = links;
+            service_account.link_clients(links);
         }
 
         service_account.updated_at = Utc::now();

@@ -44,6 +44,10 @@ struct ServiceAccountRow {
     description: Option<String>,
     #[allow(dead_code)]
     application_id: Option<String>,
+    /// The requested scope, stored as sent (Go's 035).
+    scope: Option<String>,
+    /// The client links (Go's 035). NULL on rows written before the column.
+    client_ids: Option<Vec<String>>,
     #[allow(dead_code)]
     active: bool,
     wh_auth_type: Option<String>,
@@ -129,8 +133,8 @@ impl ServiceAccountRepository {
                 (id, code, name, description, application_id, active,
                  wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm,
                  wh_credentials_created_at, wh_credentials_regenerated_at,
-                 last_used_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14)",
+                 last_used_at, created_at, updated_at, scope, client_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $13, $14, $15, $16)",
         )
         .bind(sa_id)
         .bind(&account.code)
@@ -146,6 +150,8 @@ impl ServiceAccountRepository {
         .bind(account.last_used_at)
         .bind(now)
         .bind(now)
+        .bind(&account.requested_scope)
+        .bind(&account.client_ids)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -172,7 +178,7 @@ impl ServiceAccountRepository {
     pub async fn find_by_code(&self, code: &str) -> Result<Option<ServiceAccount>> {
         // Look up the service_account_id from iam_service_accounts, then find the principal
         let sa = sqlx::query_as::<_, ServiceAccountRow>(
-            "SELECT id, code, name, description, application_id, active, \
+            "SELECT id, code, name, description, application_id, scope, client_ids, active, \
              wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
              last_used_at, created_at, updated_at \
              FROM iam_service_accounts WHERE code = $1",
@@ -262,7 +268,8 @@ impl ServiceAccountRepository {
                 "UPDATE iam_service_accounts SET
                     code = $2, name = $3, description = $4, application_id = $5, active = $6,
                     wh_auth_type = $7, wh_auth_token_ref = $8, wh_signing_secret_ref = $9,
-                    wh_signing_algorithm = $10, last_used_at = $11, updated_at = $12
+                    wh_signing_algorithm = $10, last_used_at = $11, updated_at = $12,
+                    scope = $13, client_ids = $14
                  WHERE id = $1",
             )
             .bind(sa_table_id)
@@ -277,6 +284,8 @@ impl ServiceAccountRepository {
             .bind(wh.signing_algorithm.map(|a| a.as_str()))
             .bind(account.last_used_at)
             .bind(now)
+            .bind(&account.requested_scope)
+            .bind(&account.client_ids)
             .execute(&self.pool)
             .await?;
         }
@@ -299,7 +308,7 @@ impl ServiceAccountRepository {
     async fn hydrate(&self, principal: PrincipalRow) -> Result<ServiceAccount> {
         let sa_row = if let Some(ref sa_id) = principal.service_account_id {
             sqlx::query_as::<_, ServiceAccountRow>(
-                "SELECT id, code, name, description, application_id, active, \
+                "SELECT id, code, name, description, application_id, scope, client_ids, active, \
                  wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
                  last_used_at, created_at, updated_at \
                  FROM iam_service_accounts WHERE id = $1",
@@ -340,7 +349,7 @@ impl ServiceAccountRepository {
 
         let sa_rows: std::collections::HashMap<String, ServiceAccountRow> = if !sa_ids.is_empty() {
             sqlx::query_as::<_, ServiceAccountRow>(
-                "SELECT id, code, name, description, application_id, active, \
+                "SELECT id, code, name, description, application_id, scope, client_ids, active, \
                  wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, \
                  last_used_at, created_at, updated_at \
                  FROM iam_service_accounts WHERE id = ANY($1)",
@@ -388,9 +397,8 @@ impl ServiceAccountRepository {
         )?
         .unwrap_or(UserScope::Client);
         // The clients the principal actually reaches at that scope. A stale
-        // `client_id` on an ANCHOR row reaches nothing extra, so it isn't
-        // reported.
-        let client_ids = match scope {
+        // `client_id` on an ANCHOR row reaches nothing extra.
+        let principal_client_ids = match scope {
             UserScope::Anchor => vec![],
             UserScope::Client => principal.client_id.clone().into_iter().collect(),
             UserScope::Partner => grants.clients,
@@ -437,7 +445,13 @@ impl ServiceAccountRepository {
             name: principal.name,
             description: sa_row.and_then(|sa| sa.description.clone()),
             active: principal.active,
-            client_ids,
+            // The stored links and requested scope, as Go reads them; a NULL
+            // column reads as no links.
+            client_ids: sa_row
+                .and_then(|sa| sa.client_ids.clone())
+                .unwrap_or_default(),
+            requested_scope: sa_row.and_then(|sa| sa.scope.clone()),
+            principal_client_ids,
             application_id: principal.application_id,
             all_applications: principal.all_applications,
             accessible_application_ids: grants.applications,
@@ -522,11 +536,11 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
         // one client is its home client; a PARTNER account's clients are
         // grants; an ANCHOR account has neither.
         let home_client_id = match sa.scope {
-            UserScope::Client => sa.client_ids.first(),
+            UserScope::Client => sa.principal_client_ids.first(),
             UserScope::Anchor | UserScope::Partner => None,
         };
         let granted_client_ids: &[String] = match sa.scope {
-            UserScope::Partner => &sa.client_ids,
+            UserScope::Partner => &sa.principal_client_ids,
             UserScope::Anchor | UserScope::Client => &[],
         };
         let sa_table_id = sa
@@ -562,13 +576,15 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
 
         // 2. Upsert iam_service_accounts (webhook credentials)
         sqlx::query(
-            "INSERT INTO iam_service_accounts (id, code, name, description, application_id, active, wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, wh_credentials_created_at, last_used_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            "INSERT INTO iam_service_accounts (id, code, name, description, application_id, active, wh_auth_type, wh_auth_token_ref, wh_signing_secret_ref, wh_signing_algorithm, wh_credentials_created_at, last_used_at, created_at, updated_at, scope, client_ids)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
              ON CONFLICT (id) DO UPDATE SET
                 code = EXCLUDED.code,
                 name = EXCLUDED.name,
                 description = EXCLUDED.description,
                 application_id = EXCLUDED.application_id,
+                scope = EXCLUDED.scope,
+                client_ids = EXCLUDED.client_ids,
                 active = EXCLUDED.active,
                 wh_auth_type = EXCLUDED.wh_auth_type,
                 wh_auth_token_ref = EXCLUDED.wh_auth_token_ref,
@@ -591,6 +607,8 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(sa.last_used_at)
         .bind(now)
         .bind(now)
+        .bind(&sa.requested_scope)
+        .bind(&sa.client_ids)
         .execute(&mut **tx.inner).await?;
 
         // 3. Sync client grants: exactly the PARTNER account's clients.
@@ -720,6 +738,8 @@ mod tests {
             name: "svc".to_string(),
             description: None,
             application_id: None,
+            scope: None,
+            client_ids: None,
             active: true,
             wh_auth_type: auth_type.map(str::to_string),
             wh_auth_token_ref: None,
@@ -790,15 +810,15 @@ mod tests {
     fn scope_reads_from_the_principal_row_with_the_links_it_reaches() {
         let anchor = build(scoped(Some("ANCHOR"), Some("clt_stale")), &["clt_g"]).unwrap();
         assert_eq!(anchor.scope, UserScope::Anchor);
-        assert!(anchor.client_ids.is_empty());
+        assert!(anchor.principal_client_ids.is_empty());
 
         let client = build(scoped(Some("CLIENT"), Some("clt_home")), &["clt_g"]).unwrap();
         assert_eq!(client.scope, UserScope::Client);
-        assert_eq!(client.client_ids, vec!["clt_home"]);
+        assert_eq!(client.principal_client_ids, vec!["clt_home"]);
 
         let partner = build(scoped(Some("PARTNER"), None), &["clt_1", "clt_2"]).unwrap();
         assert_eq!(partner.scope, UserScope::Partner);
-        assert_eq!(partner.client_ids, vec!["clt_1", "clt_2"]);
+        assert_eq!(partner.principal_client_ids, vec!["clt_1", "clt_2"]);
     }
 
     #[test]
@@ -806,7 +826,32 @@ mod tests {
         // Same reading as the principal repository and Go's principal read.
         let sa = build(scoped(None, None), &[]).unwrap();
         assert_eq!(sa.scope, UserScope::Client);
+        assert!(sa.principal_client_ids.is_empty());
+    }
+
+    #[test]
+    fn links_and_requested_scope_read_from_the_service_account_row() {
+        // As Go reads them: the stored values, whatever the principal reaches.
+        let row = ServiceAccountRow {
+            scope: Some("PARTNER".to_string()),
+            client_ids: Some(vec!["clt_1".to_string()]),
+            ..sa_row(Some("BEARER_TOKEN"), None)
+        };
+        let sa = ServiceAccountRepository::build_service_account_sync(
+            scoped(Some("CLIENT"), Some("clt_1")),
+            Some(&row),
+            Grants::default(),
+        )
+        .unwrap();
+        assert_eq!(sa.requested_scope.as_deref(), Some("PARTNER"));
+        assert_eq!(sa.client_ids, vec!["clt_1"]);
+        assert_eq!(sa.scope, UserScope::Client);
+
+        // NULL columns (rows written before them): no links, no scope.
+        let sa = build(scoped(Some("CLIENT"), Some("clt_home")), &[]).unwrap();
         assert!(sa.client_ids.is_empty());
+        assert!(sa.requested_scope.is_none());
+        assert_eq!(sa.principal_client_ids, vec!["clt_home"]);
     }
 
     #[test]

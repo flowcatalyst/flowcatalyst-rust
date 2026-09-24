@@ -398,6 +398,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "031_principal_all_applications",
             include_str!("../../../../migrations/031_principal_all_applications.sql"),
         ),
+        // The iam_service_accounts columns of Go's 035: the requested scope
+        // and the client links, stored on the service account.
+        (
+            "032_service_account_scope_and_client_ids",
+            include_str!("../../../../migrations/032_service_account_scope_and_client_ids.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -493,6 +499,13 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' \
                AND table_name = 'iam_principals' \
                AND column_name = 'all_applications')",
+        ),
+        (
+            "032_service_account_scope_and_client_ids",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' \
+               AND table_name = 'iam_service_accounts' \
+               AND column_name = 'client_ids')",
         ),
     ];
 

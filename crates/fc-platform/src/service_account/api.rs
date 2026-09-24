@@ -45,10 +45,9 @@ pub struct CreateServiceAccountRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Client tier: `ANCHOR` (every client, `clientIds` empty), `CLIENT`
-    /// (exactly one client) or `PARTNER` (one or more clients). Omitted, it
-    /// follows `clientIds`: none → ANCHOR, one → CLIENT, several → PARTNER.
-    /// Anything else is a 400.
+    /// Requested scope: `ANCHOR`, `PARTNER` or `CLIENT`, stored as sent;
+    /// anything else is a 400 (X-06). As in Go, the token tier doesn't follow
+    /// it but `clientIds`: none → ANCHOR, one → CLIENT, several → PARTNER.
     #[serde(default)]
     pub scope: Option<String>,
 
@@ -77,12 +76,12 @@ pub struct UpdateServiceAccountRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// Updated client tier (`ANCHOR`, `PARTNER`, `CLIENT`); must agree with
-    /// the client links, as on create. Anything else is a 400.
+    /// Updated requested scope (`ANCHOR`, `PARTNER`, `CLIENT`), stored as
+    /// sent; anything else is a 400. It doesn't move the token tier.
     #[serde(default)]
     pub scope: Option<String>,
 
-    /// Updated client IDs. Without `scope`, the scope follows the new links.
+    /// Updated client IDs. The token tier follows them, as in Go.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_ids: Option<Vec<String>>,
 }
@@ -125,8 +124,10 @@ pub struct ServiceAccountResponse {
     pub code: String,
     pub name: String,
     pub description: Option<String>,
-    /// Client tier of the linked principal (what its tokens carry).
-    pub scope: String,
+    /// The requested scope as stored (Go's shape: omitted when none was
+    /// requested). The token tier follows `clientIds`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
     pub client_ids: Vec<String>,
     pub application_id: Option<String>,
     pub active: bool,
@@ -144,7 +145,7 @@ impl From<ServiceAccount> for ServiceAccountResponse {
             code: sa.code,
             name: sa.name,
             description: sa.description,
-            scope: sa.scope.as_str().to_string(),
+            scope: sa.requested_scope,
             client_ids: sa.client_ids,
             application_id: sa.application_id,
             active: sa.active,
@@ -178,6 +179,8 @@ pub struct WebhookCredentialsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CreateServiceAccountResponse {
     pub service_account: ServiceAccountResponse,
+    /// The linked SERVICE principal (Go's `principalId`).
+    pub principal_id: String,
     pub oauth: OAuthCredentials,
     pub webhook: WebhookCredentialsResponse,
 }
@@ -369,7 +372,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     State(state): State<ServiceAccountsState<U>>,
     auth: Authenticated,
     Json(req): Json<CreateServiceAccountRequest>,
-) -> Result<Json<CreateServiceAccountResponse>, PlatformError> {
+) -> Result<(StatusCode, Json<CreateServiceAccountResponse>), PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
     if req.application_id.is_some() {
         return Err(PlatformError::validation(
@@ -418,20 +421,18 @@ pub async fn create_service_account<U: UnitOfWork>(
             let oauth_cmd = crate::auth::operations::CreateOAuthClientCommand {
                 oauth_client_id: oauth_client_id.clone(),
                 client_id: oauth_client_id.clone(),
-                client_name: account.name.clone(),
+                // Go: "<name> Client" (create_credentials.go:132)
+                client_name: format!("{} Client", account.name),
                 client_type: crate::auth::oauth_entity::OAuthClientType::Confidential,
                 client_secret_ref: Some(enc.hash_secret(&plaintext_secret)),
                 redirect_uris: vec![],
                 post_logout_redirect_uris: vec![],
+                // create_credentials.go:135-136
                 grant_types: vec![
                     crate::auth::oauth_entity::GrantType::ClientCredentials,
-                    crate::auth::oauth_entity::GrantType::AuthorizationCode,
+                    crate::auth::oauth_entity::GrantType::RefreshToken,
                 ],
-                default_scopes: vec![
-                    "openid".to_string(),
-                    "profile".to_string(),
-                    "email".to_string(),
-                ],
+                default_scopes: vec!["openid".to_string()],
                 pkce_required: false,
                 application_ids: vec![],
                 allowed_origins: vec![],
@@ -445,17 +446,22 @@ pub async fn create_service_account<U: UnitOfWork>(
                 .await
                 .into_result()?;
 
-            Ok(Json(CreateServiceAccountResponse {
-                service_account: ServiceAccountResponse::from(account),
-                oauth: OAuthCredentials {
-                    client_id: oauth_client_id,
-                    client_secret: plaintext_secret,
-                },
-                webhook: WebhookCredentialsResponse {
-                    auth_token: result.auth_token,
-                    signing_secret: result.signing_secret,
-                },
-            }))
+            // 201, as Go answers (serviceaccount/api/api.go:62).
+            Ok((
+                StatusCode::CREATED,
+                Json(CreateServiceAccountResponse {
+                    principal_id: account.id.clone(),
+                    service_account: ServiceAccountResponse::from(account),
+                    oauth: OAuthCredentials {
+                        client_id: oauth_client_id,
+                        client_secret: plaintext_secret,
+                    },
+                    webhook: WebhookCredentialsResponse {
+                        auth_token: result.auth_token,
+                        signing_secret: result.signing_secret,
+                    },
+                }),
+            ))
         }
         Err(err) => Err(err.into()),
     }
