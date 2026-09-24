@@ -146,7 +146,8 @@ impl Subscription {
             dispatch_pool_code: None,
             delay_seconds: 0,
             sequence: 99,
-            mode: DispatchMode::Immediate,
+            // Ruling X-01: unspecified means NEXT_ON_ERROR, as in Go.
+            mode: DispatchMode::default(),
             timeout_seconds: 30,
             max_retries: 3,
             service_account_id: None,
@@ -257,7 +258,7 @@ mod tests {
         assert!(sub.dispatch_pool_code.is_none());
         assert_eq!(sub.delay_seconds, 0);
         assert_eq!(sub.sequence, 99);
-        assert_eq!(sub.mode, DispatchMode::Immediate);
+        assert_eq!(sub.mode, DispatchMode::NextOnError);
         assert_eq!(sub.timeout_seconds, 30);
         assert_eq!(sub.max_retries, 3);
         assert!(sub.service_account_id.is_none());

@@ -238,6 +238,11 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
                     if let Some(timeout) = input.timeout_seconds {
                         sub.timeout_seconds = timeout as i32;
                     }
+                    // Ruling X-01: absent means NEXT_ON_ERROR, unknown means
+                    // NEXT_ON_ERROR with a warning. An existing subscription's
+                    // mode is left alone on update, as before.
+                    sub.mode =
+                        crate::dispatch_job::entity::parse_dispatch_mode(input.mode.as_deref());
                     if let Some(ref pool_code) = input.dispatch_pool_code {
                         if let Ok(Some(pool)) =
                             self.dispatch_pool_repo.find_by_code(pool_code, None).await
