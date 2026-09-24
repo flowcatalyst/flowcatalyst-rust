@@ -26,7 +26,7 @@ fn main() {
         run(
             EnvReader::system(),
             &mut stderr,
-            Loaders::none(),
+            |_| Ok(Loaders::none()),
             |env| Some(Arc::new(FnListener::from_env(env)) as Arc<dyn Listener>),
             shutdown_signal(),
         )

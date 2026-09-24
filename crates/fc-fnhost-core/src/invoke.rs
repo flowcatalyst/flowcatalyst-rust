@@ -75,6 +75,11 @@ pub struct InvocationContext {
     pub path_params: IndexMap<String, String>,
     /// Query parameters: `+` decoded as a space, repeated keys kept in order.
     pub query: MultiMap,
+    /// The query string exactly as received (not decoded), without the `?`;
+    /// `None` when the request had none. A runtime that hands the guest a
+    /// raw HTTP request (`wasi:http`) uses this rather than re-encoding
+    /// [`query`](Self::query).
+    pub raw_query: Option<String>,
     /// Request headers as received, minus the ones the host consumed
     /// (`Authorization`, `X-FlowCatalyst-Signature`, `X-FlowCatalyst-Timestamp`
     /// on a `webhook` or `platform` endpoint and on a versioned call) and,
@@ -122,6 +127,7 @@ impl std::fmt::Debug for InvocationContext {
             .field("original_path", &self.original_path)
             .field("path_params", &self.path_params)
             .field("query", &self.query)
+            .field("raw_query", &self.raw_query)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field("body", &format_args!("{} bytes", self.body.len()))
             .field("remote_address", &self.remote_address)
