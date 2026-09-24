@@ -434,6 +434,16 @@ impl CreateAuditLogDto {
         self
     }
 
+    /// Operation data with `masked` top-level fields masked in addition to
+    /// the name rule every audit payload gets (see
+    /// [`crate::usecase::audit`]) — e.g. a config value whose secrecy depends
+    /// on a sibling field. The masks are applied here, so `operation_data`
+    /// holds the masked document.
+    pub fn operation_data_masked(mut self, data: serde_json::Value, masked: &[&str]) -> Self {
+        self.operation_data = Some(crate::usecase::audit::redact(&data, masked));
+        self
+    }
+
     pub fn principal_id(mut self, id: impl Into<String>) -> Self {
         self.principal_id = Some(id.into());
         self
@@ -477,7 +487,13 @@ impl CreateAuditLogDto {
 
         let obj = payload.as_object_mut().unwrap();
         if let Some(ref v) = self.operation_data {
-            obj.insert("operationData".into(), serde_json::json!(v.to_string()));
+            // Redacted before it is serialised (owner spec
+            // docs/spec/audit-redaction.md, Java repo).
+            let redacted = crate::usecase::audit::redact(v, &[]);
+            obj.insert(
+                "operationData".into(),
+                serde_json::json!(redacted.to_string()),
+            );
         }
         if let Some(ref v) = self.principal_id {
             obj.insert("principalId".into(), serde_json::json!(v));

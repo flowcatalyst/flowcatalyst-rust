@@ -121,7 +121,7 @@ pub async fn write_audit_log(
     client_id: Option<&str>,
 ) -> Result<(), OutboxError> {
     let id = tsid::generate_untyped();
-    let payload = serde_json::to_value(audit)?;
+    let payload = audit.to_outbox_payload()?;
     let payload_size = payload.to_string().len() as i32;
 
     let query = format!(
@@ -291,13 +291,20 @@ pub struct AuditLogPayload {
 }
 
 impl AuditLogPayload {
+    /// The outbox row's payload. `operation_json` is redacted here as well,
+    /// so a payload built by hand (not through [`Self::from_event`]) cannot
+    /// carry a secret into the audit log either.
+    pub fn to_outbox_payload(&self) -> Result<serde_json::Value, serde_json::Error> {
+        let mut payload = serde_json::to_value(self)?;
+        if let Some(json) = payload.get_mut("operation_json") {
+            *json = crate::usecase::audit::redact_document(json, &[]);
+        }
+        Ok(payload)
+    }
+
     /// Create from a domain event and command.
     pub fn from_event<E: DomainEvent, C: Serialize>(event: &E, command: &C) -> Self {
-        let command_name = std::any::type_name::<C>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("Unknown")
-            .to_string();
+        let command_name = crate::usecase::audit::command_name::<C>();
 
         let m = event.metadata();
         let subject = &m.subject;
@@ -318,7 +325,9 @@ impl AuditLogPayload {
             entity_type,
             entity_id,
             operation: command_name,
-            operation_json: serde_json::to_value(command).ok(),
+            // Redacted (docs/spec/audit-redaction.md, Java repo); pass
+            // `Audited(&cmd)` to apply the command's AuditMasked fields too.
+            operation_json: crate::usecase::audit::audit_operation_json(command),
             principal_id: m.principal_id.clone(),
             application_id: None,
             client_id: None,

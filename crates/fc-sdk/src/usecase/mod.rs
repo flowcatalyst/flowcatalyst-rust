@@ -13,6 +13,7 @@
 //! The [`UnitOfWork`](crate::outbox::UnitOfWork) trait and implementations
 //! are in the [`outbox`](crate::outbox) module.
 
+pub mod audit;
 pub mod domain_event;
 pub mod error;
 pub mod execution_context;
@@ -20,6 +21,7 @@ pub mod result;
 pub mod tracing_context;
 pub mod use_case;
 
+pub use audit::{AuditMasked, Audited};
 pub use domain_event::{DomainEvent, EventMetadata};
 pub use error::UseCaseError;
 pub use execution_context::ExecutionContext;

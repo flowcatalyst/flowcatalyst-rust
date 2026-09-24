@@ -352,6 +352,25 @@ impl OutboxUnitOfWork {
         Ok(())
     }
 
+    /// The audit log outbox item's payload. `operation_json` is redacted
+    /// before it reaches the outbox (owner spec docs/spec/audit-redaction.md,
+    /// Java repo): secret-named keys, plus a command's `AuditMasked` fields
+    /// when it is passed as `Audited(&cmd)`.
+    fn audit_outbox_payload<E: DomainEvent, C: Serialize>(
+        event: &E,
+        command: &C,
+    ) -> serde_json::Value {
+        let m = event.metadata();
+        serde_json::json!({
+            "entity_type": Self::extract_aggregate_type(&m.subject),
+            "entity_id": Self::extract_entity_id(&m.subject),
+            "operation": crate::usecase::audit::command_name::<C>(),
+            "operation_json": crate::usecase::audit::audit_operation_json(command),
+            "principal_id": m.principal_id,
+            "performed_at": m.time.to_rfc3339(),
+        })
+    }
+
     /// Write the audit log outbox item into the transaction.
     async fn write_audit_outbox<E: DomainEvent, C: Serialize>(
         txn: &mut Transaction<'_, Postgres>,
@@ -361,24 +380,8 @@ impl OutboxUnitOfWork {
         client_id: &Option<String>,
     ) -> Result<(), UseCaseError> {
         let id = tsid::generate_untyped();
-
-        let command_name = std::any::type_name::<C>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("Unknown")
-            .to_string();
-
-        let operation_json = serde_json::to_value(command).ok();
         let m = event.metadata();
-
-        let payload = serde_json::json!({
-            "entity_type": Self::extract_aggregate_type(&m.subject),
-            "entity_id": Self::extract_entity_id(&m.subject),
-            "operation": command_name,
-            "operation_json": operation_json,
-            "principal_id": m.principal_id,
-            "performed_at": m.time.to_rfc3339(),
-        });
+        let payload = Self::audit_outbox_payload(event, command);
 
         let payload_size = payload.to_string().len() as i32;
 
@@ -1424,5 +1427,80 @@ mod tests {
     fn tx_scoped_outbox_uow_implements_unit_of_work() {
         fn assert_uow<T: UnitOfWork>() {}
         assert_uow::<TxScopedOutboxUnitOfWork>();
+    }
+
+    // ─── audit_outbox_payload (redaction) ───────────────────────────────
+
+    #[derive(Serialize)]
+    struct AuditTestEvent {
+        metadata: EventMetadata,
+    }
+
+    crate::impl_domain_event!(AuditTestEvent);
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RotateWebhookCommand {
+        code: &'static str,
+        webhook_credentials: serde_json::Value,
+        value: &'static str,
+    }
+
+    impl crate::usecase::AuditMasked for RotateWebhookCommand {
+        fn audit_masked_fields(&self) -> &'static [&'static str] {
+            &["value"]
+        }
+    }
+
+    fn audit_event() -> AuditTestEvent {
+        AuditTestEvent {
+            metadata: EventMetadata {
+                event_id: "evt_1".into(),
+                event_type: "shop:webhooks:webhook:rotated".into(),
+                spec_version: "1.0".into(),
+                source: "shop:webhooks".into(),
+                subject: "webhooks.webhook.whk_1".into(),
+                time: chrono::Utc::now(),
+                execution_id: "exec-1".into(),
+                correlation_id: "corr-1".into(),
+                causation_id: None,
+                principal_id: "prn_user".into(),
+                message_group: "webhooks:webhook:whk_1".into(),
+            },
+        }
+    }
+
+    fn rotate() -> RotateWebhookCommand {
+        RotateWebhookCommand {
+            code: "sa-1",
+            webhook_credentials: serde_json::json!({
+                "authType": "HMAC_SIGNATURE", "token": "tok", "signingSecret": "s3"
+            }),
+            value: "v",
+        }
+    }
+
+    /// The unit of work's audit outbox row (OutboxUnitOfWork and
+    /// TxScopedOutboxUnitOfWork both write it) is redacted.
+    #[test]
+    fn audit_outbox_payload_is_redacted() {
+        let payload = OutboxUnitOfWork::audit_outbox_payload(&audit_event(), &rotate());
+        assert_eq!(payload["operation"], "RotateWebhookCommand");
+        assert_eq!(
+            payload["operation_json"],
+            serde_json::json!({
+                "code": "sa-1",
+                "webhookCredentials": {
+                    "authType": "HMAC_SIGNATURE", "token": "***", "signingSecret": "***"
+                },
+                "value": "v",
+            })
+        );
+
+        let cmd = rotate();
+        let audited = crate::usecase::Audited(&cmd);
+        let payload = OutboxUnitOfWork::audit_outbox_payload(&audit_event(), &audited);
+        assert_eq!(payload["operation"], "RotateWebhookCommand");
+        assert_eq!(payload["operation_json"]["value"], "***");
     }
 }
