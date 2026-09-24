@@ -15,4 +15,9 @@ enum SubscriptionSource: string
      * Created via user interface.
      */
     case UI = 'UI';
+
+    /**
+     * Created at function promote time.
+     */
+    case FUNCTION = 'FUNCTION';
 }

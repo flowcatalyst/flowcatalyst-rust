@@ -288,3 +288,29 @@ impl Subscriptions<'_> {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `source` is a plain `Option<String>`, not a closed enum — a
+    /// `FUNCTION`-sourced subscription (function promotion) must deserialize
+    /// the same as any other source value.
+    #[test]
+    fn deserializes_function_source() {
+        let json = r#"{
+            "id": "sub_1",
+            "code": "orders-shipped",
+            "name": "Orders Shipped",
+            "endpoint": "https://example.com/webhook",
+            "source": "FUNCTION",
+            "status": "ACTIVE",
+            "mode": "IMMEDIATE",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z"
+        }"#;
+
+        let sub: SubscriptionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(sub.source.as_deref(), Some("FUNCTION"));
+    }
+}
