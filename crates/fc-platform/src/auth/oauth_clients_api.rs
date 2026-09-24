@@ -109,10 +109,19 @@ pub struct OAuthClientResponse {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    /// When a secret-rotation overlap lapses. Absent when none is in flight
+    /// (Go's shape, auth/api/dto.go:157-166).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_secret_expires_at: Option<String>,
+    /// When the superseded secret was last accepted, while the overlap is
+    /// open. Absent means unused since the rotation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_secret_last_used_at: Option<String>,
 }
 
 impl From<OAuthClient> for OAuthClientResponse {
     fn from(c: OAuthClient) -> Self {
+        let overlap_open = c.usable_previous_secret_ref().is_some();
         Self {
             id: c.id,
             client_id: c.client_id,
@@ -134,6 +143,12 @@ impl From<OAuthClient> for OAuthClientResponse {
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
             created_by: c.created_by,
+            previous_secret_expires_at: overlap_open
+                .then(|| c.previous_secret_expires_at.map(|t| t.to_rfc3339()))
+                .flatten(),
+            previous_secret_last_used_at: overlap_open
+                .then(|| c.previous_secret_last_used_at.map(|t| t.to_rfc3339()))
+                .flatten(),
         }
     }
 }
@@ -187,6 +202,11 @@ pub struct OAuthClientsState {
         Arc<crate::auth::operations::DeactivateOAuthClientUseCase<crate::usecase::PgUnitOfWork>>,
     pub rotate_oauth_client_secret_use_case:
         Arc<crate::auth::operations::RotateOAuthClientSecretUseCase<crate::usecase::PgUnitOfWork>>,
+    pub revoke_oauth_client_previous_secret_use_case: Arc<
+        crate::auth::operations::RevokeOAuthClientPreviousSecretUseCase<
+            crate::usecase::PgUnitOfWork,
+        >,
+    >,
 }
 
 /// Parses request grant types; an unknown one is a 400.
@@ -454,8 +474,26 @@ pub async fn delete_oauth_client(
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RegenerateSecretResponse {
+    /// The public client_id (Go's shape).
+    pub client_id: String,
     /// The new plaintext client secret (shown once)
     pub client_secret: String,
+    /// When the superseded secret stops being accepted. Absent when the
+    /// rotation was an immediate cutover.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_secret_expires_at: Option<String>,
+}
+
+/// Optional body for rotate-secret / regenerate-secret. Sent body-less, the
+/// outgoing secret keeps working for the default overlap (24h).
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RotateSecretRequest {
+    /// How long the outgoing secret stays acceptable, in seconds. Omit for
+    /// the default overlap; 0 cuts over immediately (for a secret that may
+    /// be compromised).
+    #[serde(default)]
+    pub grace_seconds: Option<i64>,
 }
 
 /// Get OAuth client by client_id (public identifier)
@@ -569,7 +607,20 @@ pub async fn deactivate_oauth_client(
     )))
 }
 
+/// Parse the optional rotate body. The frontend and SDKs POST body-less,
+/// which must keep working, as in Go (auth/api/api.go:309-316).
+fn parse_rotate_body(body: &[u8]) -> Result<RotateSecretRequest, PlatformError> {
+    if body.iter().all(u8::is_ascii_whitespace) {
+        return Ok(RotateSecretRequest::default());
+    }
+    serde_json::from_slice(body)
+        .map_err(|e| PlatformError::validation(format!("Invalid request body: {}", e)))
+}
+
 /// Regenerate OAuth client secret
+///
+/// Keeps the outgoing secret acceptable for `graceSeconds` (default 24h; 0
+/// is an immediate cutover), as Go does.
 #[utoipa::path(
     post,
     path = "/{id}/regenerate-secret",
@@ -578,9 +629,11 @@ pub async fn deactivate_oauth_client(
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
+    request_body(content = Option<RotateSecretRequest>, description = "Optional overlap window"),
     responses(
         (status = 200, description = "New client secret generated", body = RegenerateSecretResponse),
-        (status = 404, description = "OAuth client not found")
+        (status = 404, description = "OAuth client not found"),
+        (status = 409, description = "Not a CONFIDENTIAL client")
     ),
     security(("bearer_auth" = []))
 )]
@@ -588,11 +641,13 @@ pub async fn regenerate_oauth_client_secret(
     State(state): State<OAuthClientsState>,
     auth: Authenticated,
     Path(id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
     use crate::auth::operations::RotateOAuthClientSecretCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    let req = parse_rotate_body(&body)?;
 
     // Generate + hash the secret at the edge; the use case gets only the
     // `hashed:v1:` ref so plaintext never crosses the domain boundary.
@@ -605,16 +660,19 @@ pub async fn regenerate_oauth_client_secret(
     let cmd = RotateOAuthClientSecretCommand {
         oauth_client_id: id,
         new_client_secret_ref: enc.hash_secret(&plaintext_secret),
+        grace_seconds: req.grace_seconds,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
+    let event = state
         .rotate_oauth_client_secret_use_case
         .run(cmd, ctx)
         .await
         .into_result()?;
 
     Ok(Json(RegenerateSecretResponse {
+        client_id: event.client_id,
         client_secret: plaintext_secret,
+        previous_secret_expires_at: event.previous_secret_expires_at.map(|t| t.to_rfc3339()),
     }))
 }
 
@@ -627,9 +685,11 @@ pub async fn regenerate_oauth_client_secret(
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
+    request_body(content = Option<RotateSecretRequest>, description = "Optional overlap window"),
     responses(
         (status = 200, description = "New client secret generated", body = RegenerateSecretResponse),
-        (status = 404, description = "OAuth client not found")
+        (status = 404, description = "OAuth client not found"),
+        (status = 409, description = "Not a CONFIDENTIAL client")
     ),
     security(("bearer_auth" = []))
 )]
@@ -637,9 +697,52 @@ pub async fn rotate_oauth_client_secret(
     state: State<OAuthClientsState>,
     auth: Authenticated,
     path: Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
-    regenerate_oauth_client_secret(state, auth, path).await
+    regenerate_oauth_client_secret(state, auth, path, body).await
+}
+
+/// End a secret-rotation overlap now
+///
+/// The superseded secret stops authenticating immediately instead of lapsing
+/// on its timer. Idempotent (Go's `revoke-previous-secret`).
+#[utoipa::path(
+    post,
+    path = "/{id}/revoke-previous-secret",
+    tag = "oauth-clients",
+    operation_id = "postApiOauthClientsRevokePreviousSecret",
+    params(
+        ("id" = String, Path, description = "OAuth client ID")
+    ),
+    responses(
+        (status = 200, description = "Previous client secret revoked", body = SuccessResponse),
+        (status = 404, description = "OAuth client not found")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn revoke_oauth_client_previous_secret(
+    State(state): State<OAuthClientsState>,
+    auth: Authenticated,
+    Path(id): Path<String>,
+) -> Result<Json<SuccessResponse>, PlatformError> {
+    use crate::auth::operations::RevokeOAuthClientPreviousSecretCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
+    crate::checks::require_anchor(&auth.0)?;
+    let cmd = RevokeOAuthClientPreviousSecretCommand {
+        oauth_client_id: id,
+    };
+    let ctx = ExecutionContext::create(&auth.0.principal_id);
+    state
+        .revoke_oauth_client_previous_secret_use_case
+        .run(cmd, ctx)
+        .await
+        .into_result()?;
+
+    Ok(Json(SuccessResponse::with_message(
+        "Previous client secret revoked",
+    )))
 }
 
 /// Create OAuth clients router
@@ -656,5 +759,6 @@ pub fn oauth_clients_router(state: OAuthClientsState) -> OpenApiRouter {
         .routes(routes!(deactivate_oauth_client))
         .routes(routes!(regenerate_oauth_client_secret))
         .routes(routes!(rotate_oauth_client_secret))
+        .routes(routes!(revoke_oauth_client_previous_secret))
         .with_state(state)
 }

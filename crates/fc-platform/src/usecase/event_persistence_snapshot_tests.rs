@@ -631,6 +631,7 @@ fn oauth_client_secret_rotation_persists_only_the_hash() {
     let cmd = crate::auth::operations::RotateOAuthClientSecretCommand {
         oauth_client_id: "oac_1".to_string(),
         new_client_secret_ref: enc.hash_secret(OAUTH_CLIENT_SECRET),
+        grace_seconds: None,
     };
     assert_eq!(
         enc.verify_secret(&cmd.new_client_secret_ref, OAUTH_CLIENT_SECRET),

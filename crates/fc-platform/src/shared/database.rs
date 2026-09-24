@@ -404,6 +404,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "032_service_account_scope_and_client_ids",
             include_str!("../../../../migrations/032_service_account_scope_and_client_ids.sql"),
         ),
+        // Go's 046 + 047: the OAuth client secret-rotation overlap.
+        (
+            "033_oauth_client_secret_grace",
+            include_str!("../../../../migrations/033_oauth_client_secret_grace.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -506,6 +511,14 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' \
                AND table_name = 'iam_service_accounts' \
                AND column_name = 'client_ids')",
+        ),
+        // Go's 047 is the later of the two, so its column means both ran.
+        (
+            "033_oauth_client_secret_grace",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' \
+               AND table_name = 'oauth_clients' \
+               AND column_name = 'previous_secret_last_used_at')",
         ),
     ];
 

@@ -1,8 +1,10 @@
 //! Rotate OAuth Client Secret Use Case.
 //!
 //! Persists a new (already-hashed) `client_secret_ref` on an existing
-//! OAuth client. Secret generation + hashing stays in the handler so
-//! the domain layer never touches plaintext secrets.
+//! OAuth client and keeps the outgoing secret acceptable for a grace window,
+//! as Go's `RotateOAuthClientSecret` does
+//! (auth/operations/oauth_client.go:344-408). Secret generation + hashing
+//! stays in the handler so the domain layer never touches plaintext secrets.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -24,7 +26,16 @@ pub struct RotateOAuthClientSecretCommand {
     /// plaintext can be returned to the caller without ever crossing the
     /// domain boundary.
     pub new_client_secret_ref: String,
+    /// How long the outgoing secret stays acceptable, in seconds. `None`
+    /// takes [`DEFAULT_SECRET_GRACE_SECONDS`]; 0 is an immediate cutover,
+    /// for a secret believed compromised.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grace_seconds: Option<i64>,
 }
+
+/// How long the outgoing secret keeps working after a rotation unless the
+/// caller says otherwise (Go's `DefaultSecretGrace`, 24h).
+pub const DEFAULT_SECRET_GRACE_SECONDS: i64 = 24 * 60 * 60;
 
 pub struct RotateOAuthClientSecretUseCase<U: UnitOfWork> {
     oauth_client_repo: Arc<OAuthClientRepository>,
@@ -56,6 +67,12 @@ impl<U: UnitOfWork> UseCase for RotateOAuthClientSecretUseCase<U> {
             return Err(UseCaseError::validation(
                 "SECRET_REF_REQUIRED",
                 "New client secret ref is required",
+            ));
+        }
+        if command.grace_seconds.is_some_and(|g| g < 0) {
+            return Err(UseCaseError::validation(
+                "GRACE_INVALID",
+                "graceSeconds must not be negative",
             ));
         }
         Ok(())
@@ -100,10 +117,23 @@ impl<U: UnitOfWork> RotateOAuthClientSecretUseCase<U> {
                 format!("OAuth client '{}' not found", command.oauth_client_id),
             )?;
 
-        client.client_secret_ref = Some(command.new_client_secret_ref.clone());
-        client.updated_at = chrono::Utc::now();
+        if !client.is_confidential() {
+            return Err(UseCaseError::business_rule(
+                "NOT_CONFIDENTIAL",
+                "Only CONFIDENTIAL clients have rotatable secrets",
+            ));
+        }
 
-        let event = OAuthClientSecretRotated::new(ctx, &client.id, &client.client_id);
+        let grace = chrono::Duration::seconds(
+            command
+                .grace_seconds
+                .unwrap_or(DEFAULT_SECRET_GRACE_SECONDS),
+        );
+        let previous_expires_at =
+            client.rotate_secret_ref(command.new_client_secret_ref.clone(), grace);
+
+        let mut event = OAuthClientSecretRotated::new(ctx, &client.id, &client.client_id);
+        event.previous_secret_expires_at = previous_expires_at;
         Ok((client, event))
     }
 }

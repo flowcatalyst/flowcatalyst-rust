@@ -405,6 +405,12 @@ async fn main() -> Result<()> {
     let rate_limit_policies =
         Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
 
+    // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
+    // purger does the same).
+    fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
+        repos.oauth_client_repo.clone(),
+    );
+
     // Hourly prune of the Postgres rate-limit table (no-op for Redis — TTLs
     // age keys out automatically). Keeps row count bounded at peak-QPS ×
     // max-policy-window.

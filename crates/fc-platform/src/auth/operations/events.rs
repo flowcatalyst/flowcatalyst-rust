@@ -327,6 +327,45 @@ oauth_client_event!(
     "platform:iam:oauth-client:deactivated"
 );
 oauth_client_event!(
-    OAuthClientSecretRotated,
-    "platform:iam:oauth-client:secret-rotated"
+    OAuthClientPreviousSecretRevoked,
+    "platform:iam:oauth-client:previous-secret-revoked"
 );
+
+/// A client's secret was rotated. `previous_secret_expires_at` is when the
+/// superseded secret stops being accepted; absent when the rotation was an
+/// immediate cutover (Go's `OAuthClientSecretRotated`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthClientSecretRotated {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub oauth_client_id: String,
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_secret_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl_domain_event!(OAuthClientSecretRotated);
+
+impl OAuthClientSecretRotated {
+    const EVENT_TYPE: &'static str = "platform:iam:oauth-client:secret-rotated";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:iam";
+
+    pub fn new(ctx: &ExecutionContext, id: &str, client_id: &str) -> Self {
+        Self {
+            metadata: EventMetadata::from_ctx(
+                ctx,
+                Self::EVENT_TYPE,
+                Self::SPEC_VERSION,
+                Self::SOURCE,
+                format!("platform.oauthclient.{}", id),
+                format!("platform:oauthclient:{}", id),
+            ),
+            oauth_client_id: id.to_string(),
+            client_id: client_id.to_string(),
+            previous_secret_expires_at: None,
+        }
+    }
+}
