@@ -132,7 +132,10 @@ final class OutboxUnitOfWork implements UnitOfWork
             entityId:   $entityId,
             operation:  $operation,
         )
-            ->withOperationData($operationData)
+            ->withOperationData(
+                $operationData,
+                $command instanceof AuditMasked ? $command->auditMaskedFields() : [],
+            )
             ->withPrincipalId($event->principalId() !== '' ? $event->principalId() : $this->fallbackPrincipalId)
             ->withCorrelationId($event->correlationId())
             ->withSource($event->source())

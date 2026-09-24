@@ -4,8 +4,15 @@ declare(strict_types=1);
 
 namespace FlowCatalyst\Outbox\DTOs;
 
+use FlowCatalyst\Outbox\AuditRedaction;
+
 /**
  * DTO for creating an audit log entry in the outbox.
+ *
+ * `operationData` is redacted (see {@see AuditRedaction}) before it is
+ * serialised into the outbox payload, so passwords, tokens and other
+ * secret-shaped fields never reach `aud_logs`. Pass `$maskedFields` to
+ * `withOperationData()` for fields the name rule alone would not catch.
  */
 class CreateAuditLogDto
 {
@@ -13,6 +20,8 @@ class CreateAuditLogDto
      * @param array<string, mixed>|null $operationData Operation payload data
      * @param array<string, string> $metadata Additional metadata
      * @param array<string, string> $headers Optional headers
+     * @param list<string> $maskedFields Top-level field names to mask in
+     *   $operationData in addition to the name rule
      */
     public function __construct(
         public readonly string $entityType,
@@ -25,6 +34,7 @@ class CreateAuditLogDto
         public readonly ?string $correlationId = null,
         public readonly array $metadata = [],
         public readonly array $headers = [],
+        public readonly array $maskedFields = [],
     ) {}
 
     /**
@@ -44,8 +54,12 @@ class CreateAuditLogDto
 
     /**
      * Add operation data.
+     *
+     * @param list<string> $maskedFields Top-level field names to mask in
+     *   addition to the name rule (see {@see AuditRedaction}), e.g. a
+     *   config value whose secrecy depends on a sibling field.
      */
-    public function withOperationData(array $operationData): self
+    public function withOperationData(array $operationData, array $maskedFields = []): self
     {
         return new self(
             entityType: $this->entityType,
@@ -58,6 +72,7 @@ class CreateAuditLogDto
             correlationId: $this->correlationId,
             metadata: $this->metadata,
             headers: $this->headers,
+            maskedFields: $maskedFields,
         );
     }
 
@@ -77,6 +92,7 @@ class CreateAuditLogDto
             correlationId: $this->correlationId,
             metadata: $this->metadata,
             headers: $this->headers,
+            maskedFields: $this->maskedFields,
         );
     }
 
@@ -96,6 +112,7 @@ class CreateAuditLogDto
             correlationId: $this->correlationId,
             metadata: $this->metadata,
             headers: $this->headers,
+            maskedFields: $this->maskedFields,
         );
     }
 
@@ -115,6 +132,7 @@ class CreateAuditLogDto
             correlationId: $this->correlationId,
             metadata: $this->metadata,
             headers: $this->headers,
+            maskedFields: $this->maskedFields,
         );
     }
 
@@ -134,6 +152,7 @@ class CreateAuditLogDto
             correlationId: $correlationId,
             metadata: $this->metadata,
             headers: $this->headers,
+            maskedFields: $this->maskedFields,
         );
     }
 
@@ -153,6 +172,7 @@ class CreateAuditLogDto
             correlationId: $this->correlationId,
             metadata: array_merge($this->metadata, $metadata),
             headers: $this->headers,
+            maskedFields: $this->maskedFields,
         );
     }
 
@@ -172,6 +192,7 @@ class CreateAuditLogDto
             correlationId: $this->correlationId,
             metadata: $this->metadata,
             headers: array_merge($this->headers, $headers),
+            maskedFields: $this->maskedFields,
         );
     }
 
@@ -184,7 +205,9 @@ class CreateAuditLogDto
             'entityType' => $this->entityType,
             'entityId' => $this->entityId,
             'operation' => $this->operation,
-            'operationData' => $this->operationData !== null ? json_encode($this->operationData) : null,
+            'operationData' => $this->operationData !== null
+                ? json_encode(AuditRedaction::redact($this->operationData, $this->maskedFields))
+                : null,
             'principalId' => $this->principalId,
             'performedAt' => ($this->performedAt ?? new \DateTimeImmutable())->format('c'),
             'source' => $this->source,
