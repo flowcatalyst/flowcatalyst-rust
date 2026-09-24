@@ -412,7 +412,6 @@ impl ClientApplicationsUpdated {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_application_created_event() {
@@ -420,7 +419,10 @@ mod tests {
         let event =
             ApplicationCreated::new(&ctx, "app-1", "orders", "Orders Application", "APPLICATION");
 
-        assert_eq!(event.event_type(), "platform:iam:application:created");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:iam:application:created"
+        );
         assert_eq!(event.application_id, "app-1");
         assert_eq!(event.code, "orders");
     }
@@ -437,7 +439,7 @@ mod tests {
         );
 
         assert_eq!(
-            event.event_type(),
+            event.metadata.event_type,
             "platform:iam:application:service-account-provisioned"
         );
         assert_eq!(event.service_account_id, "sa-1");

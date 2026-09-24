@@ -398,7 +398,6 @@ fn test_user_logged_in_event() {
     use fc_platform::principal::operations::events::{
         FederatedClaims, FlowcatalystClaims, UserLoggedIn,
     };
-    use fc_platform::usecase::domain_event::DomainEvent;
     use fc_platform::usecase::ExecutionContext;
 
     let ctx = ExecutionContext::create("principal-123");
@@ -426,9 +425,9 @@ fn test_user_logged_in_event() {
         federated,
     );
 
-    assert_eq!(event.event_type(), "platform:iam:user:logged-in");
-    assert_eq!(event.source(), "platform:iam");
-    assert!(event.subject().contains("principal-123"));
+    assert_eq!(event.metadata.event_type, "platform:iam:user:logged-in");
+    assert_eq!(event.metadata.source, "platform:iam");
+    assert!(event.metadata.subject.contains("principal-123"));
     assert_eq!(event.user_id, "principal-123");
     assert_eq!(event.email, "user@example.com");
     assert_eq!(

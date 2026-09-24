@@ -215,7 +215,6 @@ impl DispatchPoolsSynced {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_dispatch_pool_created_event() {
@@ -223,7 +222,10 @@ mod tests {
         let event =
             DispatchPoolCreated::new(&ctx, "dp-1", "main-pool", "Main Pool", Some("client-1"));
 
-        assert_eq!(event.event_type(), "platform:admin:dispatch-pool:created");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:admin:dispatch-pool:created"
+        );
         assert_eq!(event.dispatch_pool_id, "dp-1");
         assert_eq!(event.code, "main-pool");
     }
@@ -233,6 +235,9 @@ mod tests {
         let ctx = ExecutionContext::create("admin-123");
         let event = DispatchPoolArchived::new(&ctx, "dp-1", "main-pool");
 
-        assert_eq!(event.event_type(), "platform:admin:dispatch-pool:archived");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:admin:dispatch-pool:archived"
+        );
     }
 }

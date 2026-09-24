@@ -120,7 +120,6 @@ impl EmailDomainMappingDeleted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_email_domain_mapping_created_event() {
@@ -128,14 +127,14 @@ mod tests {
         let event =
             EmailDomainMappingCreated::new(&ctx, "edm-1", "example.com", "idp-456", "ANCHOR");
 
-        assert_eq!(event.event_type(), "platform:admin:edm:created");
+        assert_eq!(event.metadata.event_type, "platform:admin:edm:created");
         assert_eq!(event.mapping_id, "edm-1");
         assert_eq!(event.email_domain, "example.com");
         assert_eq!(event.identity_provider_id, "idp-456");
         assert_eq!(event.scope_type, "ANCHOR");
-        assert_eq!(event.subject(), "platform.edm.edm-1");
-        assert_eq!(event.message_group(), "platform:edm:edm-1");
-        assert_eq!(event.principal_id(), "admin-123");
+        assert_eq!(event.metadata.subject, "platform.edm.edm-1");
+        assert_eq!(event.metadata.message_group, "platform:edm:edm-1");
+        assert_eq!(event.metadata.principal_id, "admin-123");
     }
 
     #[test]
@@ -155,12 +154,12 @@ mod tests {
         let ctx = ExecutionContext::create("admin-456");
         let event = EmailDomainMappingUpdated::new(&ctx, "edm-2", "updated.com");
 
-        assert_eq!(event.event_type(), "platform:admin:edm:updated");
+        assert_eq!(event.metadata.event_type, "platform:admin:edm:updated");
         assert_eq!(event.mapping_id, "edm-2");
         assert_eq!(event.email_domain, "updated.com");
-        assert_eq!(event.subject(), "platform.edm.edm-2");
-        assert_eq!(event.message_group(), "platform:edm:edm-2");
-        assert_eq!(event.principal_id(), "admin-456");
+        assert_eq!(event.metadata.subject, "platform.edm.edm-2");
+        assert_eq!(event.metadata.message_group, "platform:edm:edm-2");
+        assert_eq!(event.metadata.principal_id, "admin-456");
     }
 
     #[test]
@@ -168,12 +167,12 @@ mod tests {
         let ctx = ExecutionContext::create("admin-789");
         let event = EmailDomainMappingDeleted::new(&ctx, "edm-3", "deleted.com");
 
-        assert_eq!(event.event_type(), "platform:admin:edm:deleted");
+        assert_eq!(event.metadata.event_type, "platform:admin:edm:deleted");
         assert_eq!(event.mapping_id, "edm-3");
         assert_eq!(event.email_domain, "deleted.com");
-        assert_eq!(event.subject(), "platform.edm.edm-3");
-        assert_eq!(event.message_group(), "platform:edm:edm-3");
-        assert_eq!(event.principal_id(), "admin-789");
+        assert_eq!(event.metadata.subject, "platform.edm.edm-3");
+        assert_eq!(event.metadata.message_group, "platform:edm:edm-3");
+        assert_eq!(event.metadata.principal_id, "admin-789");
     }
 
     #[test]

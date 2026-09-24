@@ -86,7 +86,7 @@ pub trait UnitOfWork: Send + Sync {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync;
 
     /// Commit an aggregate delete via its repository, plus the domain event
@@ -101,7 +101,7 @@ pub trait UnitOfWork: Send + Sync {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync;
 
     /// Emit a domain event and audit log without an entity change.
@@ -109,7 +109,7 @@ pub trait UnitOfWork: Send + Sync {
     /// Used for events that don't modify an entity directly (e.g., `UserLoggedIn`).
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync;
 
     /// Commit a batch of aggregate upserts of the same type via one repository,
@@ -128,7 +128,7 @@ pub trait UnitOfWork: Send + Sync {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync;
 }
 
@@ -290,27 +290,32 @@ pub(crate) struct EventRow<'a> {
 }
 
 impl<'a> EventRow<'a> {
+    /// The event's `Serialize` output is the `data` payload; a serialization
+    /// failure fails the commit rather than persisting a placeholder.
     pub(crate) fn from_event<E: DomainEvent>(event: &'a E) -> Result<Self, UseCaseError> {
-        let data: serde_json::Value =
-            serde_json::from_str(&event.to_data_json()).unwrap_or(serde_json::json!({}));
+        let data = serde_json::to_value(event).map_err(|e| {
+            error!("Failed to serialize domain event: {}", e);
+            UseCaseError::commit(format!("Failed to serialize domain event: {}", e))
+        })?;
+        let meta = event.metadata();
 
         let context_data = serde_json::json!([
-            {"key": "principalId", "value": event.principal_id()},
-            {"key": "aggregateType", "value": PgUnitOfWork::extract_aggregate_type(event.subject())},
+            {"key": "principalId", "value": meta.principal_id},
+            {"key": "aggregateType", "value": PgUnitOfWork::extract_aggregate_type(&meta.subject)},
         ]);
 
         Ok(Self {
-            id: event.event_id(),
-            spec_version: event.spec_version(),
-            event_type: event.event_type(),
-            source: event.source(),
-            subject: event.subject(),
-            time: event.time(),
+            id: &meta.event_id,
+            spec_version: &meta.spec_version,
+            event_type: &meta.event_type,
+            source: &meta.source,
+            subject: &meta.subject,
+            time: meta.time,
             data,
-            correlation_id: event.correlation_id(),
-            causation_id: event.causation_id(),
-            deduplication_id: format!("{}-{}", event.event_type(), event.event_id()),
-            message_group: event.message_group(),
+            correlation_id: &meta.correlation_id,
+            causation_id: meta.causation_id.as_deref(),
+            deduplication_id: format!("{}-{}", meta.event_type, meta.event_id),
+            message_group: &meta.message_group,
             context_data,
         })
     }
@@ -338,13 +343,14 @@ impl<'a> AuditRow<'a> {
             .unwrap_or("Unknown")
             .to_string();
 
+        let meta = event.metadata();
         Self {
-            entity_type: PgUnitOfWork::extract_aggregate_type(event.subject()),
-            entity_id: PgUnitOfWork::extract_entity_id(event.subject()),
+            entity_type: PgUnitOfWork::extract_aggregate_type(&meta.subject),
+            entity_id: PgUnitOfWork::extract_entity_id(&meta.subject),
             operation,
             operation_json: serde_json::to_value(command).ok(),
-            principal_id: event.principal_id(),
-            performed_at: event.time(),
+            principal_id: &meta.principal_id,
+            performed_at: meta.time,
         }
     }
 }
@@ -361,7 +367,7 @@ impl UnitOfWork for PgUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
@@ -403,8 +409,8 @@ impl UnitOfWork for PgUnitOfWork {
         }
 
         debug!(
-            event_id = event.event_id(),
-            event_type = event.event_type(),
+            event_id = event.metadata().event_id.as_str(),
+            event_type = event.metadata().event_type.as_str(),
             "Successfully committed transaction"
         );
 
@@ -421,7 +427,7 @@ impl UnitOfWork for PgUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
@@ -462,8 +468,8 @@ impl UnitOfWork for PgUnitOfWork {
         }
 
         debug!(
-            event_id = event.event_id(),
-            event_type = event.event_type(),
+            event_id = event.metadata().event_id.as_str(),
+            event_type = event.metadata().event_type.as_str(),
             "Successfully committed delete transaction"
         );
 
@@ -480,7 +486,7 @@ impl UnitOfWork for PgUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
@@ -523,8 +529,8 @@ impl UnitOfWork for PgUnitOfWork {
         }
 
         debug!(
-            event_id = event.event_id(),
-            event_type = event.event_type(),
+            event_id = event.metadata().event_id.as_str(),
+            event_type = event.metadata().event_type.as_str(),
             count = aggregates.len(),
             "Successfully committed batch transaction"
         );
@@ -534,7 +540,7 @@ impl UnitOfWork for PgUnitOfWork {
 
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         let mut txn = match self.pool.begin().await {
@@ -562,8 +568,8 @@ impl UnitOfWork for PgUnitOfWork {
         }
 
         debug!(
-            event_id = event.event_id(),
-            event_type = event.event_type(),
+            event_id = event.metadata().event_id.as_str(),
+            event_type = event.metadata().event_type.as_str(),
             "Successfully emitted domain event"
         );
 
@@ -615,7 +621,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
@@ -657,7 +663,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
@@ -691,7 +697,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
 
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
@@ -721,7 +727,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         let mut guard = self.tx.lock().await;
@@ -861,13 +867,13 @@ impl UnitOfWork for InMemoryUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         self.committed_events
             .lock()
             .unwrap()
-            .push(event.event_id().to_string());
+            .push(event.metadata().event_id.clone());
         UseCaseResult::success(event)
     }
 
@@ -881,25 +887,25 @@ impl UnitOfWork for InMemoryUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         self.committed_events
             .lock()
             .unwrap()
-            .push(event.event_id().to_string());
+            .push(event.metadata().event_id.clone());
         UseCaseResult::success(event)
     }
 
     async fn emit_event<E, C>(&self, event: E, _command: &C) -> UseCaseResult<E>
     where
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         self.committed_events
             .lock()
             .unwrap()
-            .push(event.event_id().to_string());
+            .push(event.metadata().event_id.clone());
         UseCaseResult::success(event)
     }
 
@@ -913,13 +919,13 @@ impl UnitOfWork for InMemoryUnitOfWork {
     where
         A: HasId + Send + Sync,
         R: Persist<A>,
-        E: DomainEvent + Serialize + Send + 'static,
+        E: DomainEvent + Send + 'static,
         C: Serialize + Send + Sync,
     {
         self.committed_events
             .lock()
             .unwrap()
-            .push(event.event_id().to_string());
+            .push(event.metadata().event_id.clone());
         UseCaseResult::success(event)
     }
 }

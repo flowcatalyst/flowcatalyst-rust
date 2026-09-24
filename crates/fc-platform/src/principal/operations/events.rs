@@ -580,7 +580,6 @@ impl PasswordResetCompleted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_user_created_event() {
@@ -594,7 +593,7 @@ mod tests {
             Some("client-1"),
         );
 
-        assert_eq!(event.event_type(), "platform:iam:user:created");
+        assert_eq!(event.metadata.event_type, "platform:iam:user:created");
         assert_eq!(event.principal_id, "user-1");
         assert_eq!(event.email, "user@example.com");
         assert_eq!(event.email_domain, "example.com");
@@ -619,8 +618,8 @@ mod tests {
         assert_eq!(event.scope, "ANCHOR");
         assert!(event.is_anchor_user);
         // Verify tracing context was copied
-        assert_eq!(event.execution_id(), ctx.execution_id);
-        assert_eq!(event.correlation_id(), ctx.correlation_id);
+        assert_eq!(event.metadata.execution_id, ctx.execution_id);
+        assert_eq!(event.metadata.correlation_id, ctx.correlation_id);
     }
 
     #[test]
@@ -639,7 +638,7 @@ mod tests {
         let ctx = ExecutionContext::create("admin-123");
         let event = UserDeactivated::new(&ctx, "user-1", Some("Policy violation"));
 
-        assert_eq!(event.event_type(), "platform:iam:user:deactivated");
+        assert_eq!(event.metadata.event_type, "platform:iam:user:deactivated");
         assert_eq!(event.reason, Some("Policy violation".to_string()));
     }
 }

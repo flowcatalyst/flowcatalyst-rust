@@ -74,8 +74,8 @@ impl ExecutionContext {
     pub fn from_parent_event<E: DomainEvent>(parent: &E, principal_id: impl Into<String>) -> Self {
         Self {
             execution_id: format!("exec-{}", TsidGenerator::generate_untyped()),
-            correlation_id: parent.correlation_id().to_string(),
-            causation_id: Some(parent.event_id().to_string()),
+            correlation_id: parent.metadata().correlation_id.clone(),
+            causation_id: Some(parent.metadata().event_id.clone()),
             principal_id: principal_id.into(),
             initiated_at: Utc::now(),
         }

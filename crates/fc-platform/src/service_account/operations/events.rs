@@ -282,7 +282,6 @@ impl ServiceAccountSecretRegenerated {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_service_account_created_event() {
@@ -296,7 +295,10 @@ mod tests {
             vec!["client-1".to_string()],
         );
 
-        assert_eq!(event.event_type(), "platform:iam:serviceaccount:created");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:iam:serviceaccount:created"
+        );
         assert_eq!(event.service_account_id, "sa-1");
         assert_eq!(event.code, "my-service");
     }
@@ -306,7 +308,10 @@ mod tests {
         let ctx = ExecutionContext::create("admin-123");
         let event = ServiceAccountDeleted::new(&ctx, "sa-1", "my-service");
 
-        assert_eq!(event.event_type(), "platform:iam:serviceaccount:deleted");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:iam:serviceaccount:deleted"
+        );
         assert_eq!(event.code, "my-service");
     }
 
@@ -321,7 +326,7 @@ mod tests {
         );
 
         assert_eq!(
-            event.event_type(),
+            event.metadata.event_type,
             "platform:iam:serviceaccount:roles-assigned"
         );
         assert_eq!(event.roles_added, vec!["ADMIN".to_string()]);

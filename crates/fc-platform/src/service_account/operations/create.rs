@@ -56,52 +56,18 @@ pub struct CreateServiceAccountCommand {
 
 /// Result returned from create service account use case.
 /// Contains the event plus one-time secrets that need to be returned to caller.
+/// The secrets are never serialized, so this serializes exactly as the event.
 #[derive(Serialize)]
 pub struct CreateServiceAccountResult {
     #[serde(flatten)]
     pub event: ServiceAccountCreated,
+    #[serde(skip_serializing)]
     pub auth_token: String,
+    #[serde(skip_serializing)]
     pub signing_secret: String,
 }
 
-impl crate::usecase::DomainEvent for CreateServiceAccountResult {
-    fn event_id(&self) -> &str {
-        self.event.event_id()
-    }
-    fn event_type(&self) -> &str {
-        self.event.event_type()
-    }
-    fn spec_version(&self) -> &str {
-        self.event.spec_version()
-    }
-    fn source(&self) -> &str {
-        self.event.source()
-    }
-    fn subject(&self) -> &str {
-        self.event.subject()
-    }
-    fn time(&self) -> chrono::DateTime<chrono::Utc> {
-        self.event.time()
-    }
-    fn execution_id(&self) -> &str {
-        self.event.execution_id()
-    }
-    fn correlation_id(&self) -> &str {
-        self.event.correlation_id()
-    }
-    fn causation_id(&self) -> Option<&str> {
-        self.event.causation_id()
-    }
-    fn principal_id(&self) -> &str {
-        self.event.principal_id()
-    }
-    fn message_group(&self) -> &str {
-        self.event.message_group()
-    }
-    fn to_data_json(&self) -> String {
-        self.event.to_data_json()
-    }
-}
+crate::impl_domain_event!(CreateServiceAccountResult => event);
 
 /// Use case for creating a new service account.
 pub struct CreateServiceAccountUseCase<U: UnitOfWork> {

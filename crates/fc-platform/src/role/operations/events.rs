@@ -185,7 +185,6 @@ impl RolesSynced {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_role_created_event() {
@@ -199,7 +198,7 @@ mod tests {
             vec!["orders:read".to_string(), "orders:write".to_string()],
         );
 
-        assert_eq!(event.event_type(), "platform:iam:role:created");
+        assert_eq!(event.metadata.event_type, "platform:iam:role:created");
         assert_eq!(event.role_id, "role-1");
         assert_eq!(event.code, "orders:admin");
     }
@@ -209,7 +208,7 @@ mod tests {
         let ctx = ExecutionContext::create("admin-123");
         let event = RoleDeleted::new(&ctx, "role-1", "orders:admin");
 
-        assert_eq!(event.event_type(), "platform:iam:role:deleted");
+        assert_eq!(event.metadata.event_type, "platform:iam:role:deleted");
         assert_eq!(event.code, "orders:admin");
     }
 }

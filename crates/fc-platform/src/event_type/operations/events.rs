@@ -322,7 +322,6 @@ impl EventTypesSynced {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_event_type_created_metadata() {
@@ -341,7 +340,10 @@ mod tests {
         let event =
             EventTypeUpdated::new(&ctx, "et-123", Some("New Name"), Some("New Description"));
 
-        assert_eq!(event.event_type(), "platform:admin:eventtype:updated");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:admin:eventtype:updated"
+        );
         assert_eq!(event.event_type_id, "et-123");
         assert_eq!(event.name, Some("New Name".to_string()));
     }
@@ -351,7 +353,10 @@ mod tests {
         let ctx = ExecutionContext::create("user-123");
         let event = EventTypeArchived::new(&ctx, "et-123", "orders:fulfillment:order:created");
 
-        assert_eq!(event.event_type(), "platform:admin:eventtype:archived");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:admin:eventtype:archived"
+        );
         assert_eq!(event.code, "orders:fulfillment:order:created");
     }
 }

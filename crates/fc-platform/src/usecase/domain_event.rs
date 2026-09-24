@@ -35,42 +35,17 @@ use super::ExecutionContext;
 /// Events in the same message group are processed in order.
 /// Format: `{domain}:{aggregate}:{id}`
 /// Example: `platform:user:0HZXEQ5Y8JY5Z`
-pub trait DomainEvent: Send + Sync {
-    /// Unique identifier for this event (TSID Crockford Base32 string).
-    fn event_id(&self) -> &str;
-
-    /// Event type code following the format: `{app}:{domain}:{aggregate}:{action}`
-    fn event_type(&self) -> &str;
-
-    /// Schema version of this event type (e.g., "1.0").
-    fn spec_version(&self) -> &str;
-
-    /// Source system that generated this event.
-    fn source(&self) -> &str;
-
-    /// Qualified aggregate identifier: `{domain}.{aggregate}.{id}`
-    fn subject(&self) -> &str;
-
-    /// When the event occurred.
-    fn time(&self) -> DateTime<Utc>;
-
-    /// Execution ID for tracking a single use case execution.
-    fn execution_id(&self) -> &str;
-
-    /// Correlation ID for distributed tracing.
-    fn correlation_id(&self) -> &str;
-
-    /// ID of the event that caused this event (if any).
-    fn causation_id(&self) -> Option<&str>;
-
-    /// Principal who initiated the action that produced this event.
-    fn principal_id(&self) -> &str;
-
-    /// Message group for ordering guarantees.
-    fn message_group(&self) -> &str;
-
-    /// Serialize the event-specific data payload to JSON.
-    fn to_data_json(&self) -> String;
+///
+/// # Shape
+///
+/// A domain event is a serializable struct carrying an [`EventMetadata`]. The
+/// envelope (id, type, subject, tracing ids, …) is read through
+/// [`metadata`](DomainEvent::metadata); the event's persisted JSON body is its
+/// `Serialize` output. Use [`impl_domain_event!`](crate::impl_domain_event) to
+/// implement it for a struct with a `metadata: EventMetadata` field.
+pub trait DomainEvent: Serialize + Send + Sync {
+    /// The CloudEvents-style envelope fields of this event.
+    fn metadata(&self) -> &EventMetadata;
 }
 
 /// Common metadata for domain events.
@@ -124,75 +99,43 @@ impl EventMetadata {
     }
 }
 
-/// Helper macro for implementing the DomainEvent trait.
-///
-/// This macro generates the trait implementation by delegating to an
-/// `EventMetadata` field named `metadata`.
+/// Implements [`DomainEvent`] for a struct with a `metadata: EventMetadata` field.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use fc_platform::usecase::{DomainEvent, EventMetadata};
+/// use fc_platform::usecase::EventMetadata;
 /// use fc_platform::impl_domain_event;
 ///
+/// #[derive(Serialize)]
 /// pub struct UserCreated {
-///     metadata: EventMetadata,
+///     #[serde(flatten)]
+///     pub metadata: EventMetadata,
 ///     pub user_id: String,
 ///     pub email: String,
 /// }
 ///
 /// impl_domain_event!(UserCreated);
 /// ```
+///
+/// `impl_domain_event!(Wrapper => field)` implements it for a use-case result
+/// that wraps an event in `field`, taking the metadata from that event. Such a
+/// wrapper's `Serialize` output must be exactly the wrapped event's (flatten
+/// the event and skip any other field), since that output is what a commit
+/// would persist.
 #[macro_export]
 macro_rules! impl_domain_event {
     ($event_type:ty) => {
         impl $crate::usecase::DomainEvent for $event_type {
-            fn event_id(&self) -> &str {
-                &self.metadata.event_id
+            fn metadata(&self) -> &$crate::usecase::EventMetadata {
+                &self.metadata
             }
-
-            fn event_type(&self) -> &str {
-                &self.metadata.event_type
-            }
-
-            fn spec_version(&self) -> &str {
-                &self.metadata.spec_version
-            }
-
-            fn source(&self) -> &str {
-                &self.metadata.source
-            }
-
-            fn subject(&self) -> &str {
-                &self.metadata.subject
-            }
-
-            fn time(&self) -> chrono::DateTime<chrono::Utc> {
-                self.metadata.time
-            }
-
-            fn execution_id(&self) -> &str {
-                &self.metadata.execution_id
-            }
-
-            fn correlation_id(&self) -> &str {
-                &self.metadata.correlation_id
-            }
-
-            fn causation_id(&self) -> Option<&str> {
-                self.metadata.causation_id.as_deref()
-            }
-
-            fn principal_id(&self) -> &str {
-                &self.metadata.principal_id
-            }
-
-            fn message_group(&self) -> &str {
-                &self.metadata.message_group
-            }
-
-            fn to_data_json(&self) -> String {
-                serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
+        }
+    };
+    ($wrapper:ty => $event:ident) => {
+        impl $crate::usecase::DomainEvent for $wrapper {
+            fn metadata(&self) -> &$crate::usecase::EventMetadata {
+                $crate::usecase::DomainEvent::metadata(&self.$event)
             }
         }
     };
@@ -262,37 +205,45 @@ mod tests {
     }
 
     #[test]
-    fn test_event_metadata() {
-        let metadata = sample_metadata();
-
+    fn impl_domain_event_exposes_metadata() {
         let event = TestEvent {
-            metadata,
+            metadata: sample_metadata(),
             test_field: "test value".to_string(),
         };
 
-        assert_eq!(event.event_id(), "evt-123");
-        assert_eq!(event.event_type(), "test:domain:entity:created");
-        assert_eq!(event.spec_version(), "1.0");
-        assert_eq!(event.source(), "test:domain");
-        assert_eq!(event.subject(), "domain.entity.123");
-        assert_eq!(event.execution_id(), "exec-456");
-        assert_eq!(event.correlation_id(), "corr-789");
-        assert!(event.causation_id().is_none());
-        assert_eq!(event.principal_id(), "principal-001");
-        assert_eq!(event.message_group(), "domain:entity:123");
+        let metadata = event.metadata();
+        assert_eq!(metadata.event_id, "evt-123");
+        assert_eq!(metadata.event_type, "test:domain:entity:created");
+        assert_eq!(metadata.subject, "domain.entity.123");
+        assert_eq!(metadata.principal_id, "principal-001");
+        assert_eq!(metadata.message_group, "domain:entity:123");
     }
 
-    #[test]
-    fn test_to_data_json() {
-        let metadata = sample_metadata();
+    #[derive(Serialize)]
+    struct TestResult {
+        #[serde(flatten)]
+        event: TestEvent,
+        #[serde(skip_serializing)]
+        #[allow(dead_code)]
+        secret: String,
+    }
 
-        let event = TestEvent {
-            metadata,
-            test_field: "test value".to_string(),
+    impl_domain_event!(TestResult => event);
+
+    #[test]
+    fn impl_domain_event_delegates_through_a_wrapper() {
+        let result = TestResult {
+            event: TestEvent {
+                metadata: sample_metadata(),
+                test_field: "test value".to_string(),
+            },
+            secret: "s3cret".to_string(),
         };
 
-        let json = event.to_data_json();
-        assert!(json.contains("test_field"));
-        assert!(json.contains("test value"));
+        assert_eq!(result.metadata().event_id, "evt-123");
+        assert_eq!(
+            serde_json::to_value(&result).unwrap(),
+            serde_json::to_value(&result.event).unwrap()
+        );
     }
 }

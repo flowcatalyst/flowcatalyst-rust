@@ -105,7 +105,6 @@ impl UserLoggedInWithPasskey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     fn ctx() -> ExecutionContext {
         ExecutionContext::create("prn_TESTPRINCIPAL")
@@ -114,10 +113,16 @@ mod tests {
     #[test]
     fn registered_event_metadata_is_well_formed() {
         let event = PasskeyRegistered::new(&ctx(), "pkc_AAA", "prn_BBB", Some("MacBook".into()));
-        assert_eq!(event.event_type(), "platform:iam:passkey:registered");
-        assert_eq!(event.spec_version(), "1.0");
-        assert_eq!(event.subject(), "platform.webauthncredential.pkc_AAA");
-        assert_eq!(event.message_group(), "platform:webauthncredential:pkc_AAA");
+        assert_eq!(event.metadata.event_type, "platform:iam:passkey:registered");
+        assert_eq!(event.metadata.spec_version, "1.0");
+        assert_eq!(
+            event.metadata.subject,
+            "platform.webauthncredential.pkc_AAA"
+        );
+        assert_eq!(
+            event.metadata.message_group,
+            "platform:webauthncredential:pkc_AAA"
+        );
         assert_eq!(event.credential_id, "pkc_AAA");
         assert_eq!(event.principal_id, "prn_BBB");
         assert_eq!(event.name.as_deref(), Some("MacBook"));
@@ -126,15 +131,18 @@ mod tests {
     #[test]
     fn revoked_event_metadata_is_well_formed() {
         let event = PasskeyRevoked::new(&ctx(), "pkc_AAA", "prn_BBB");
-        assert_eq!(event.event_type(), "platform:iam:passkey:revoked");
-        assert_eq!(event.subject(), "platform.webauthncredential.pkc_AAA");
+        assert_eq!(event.metadata.event_type, "platform:iam:passkey:revoked");
+        assert_eq!(
+            event.metadata.subject,
+            "platform.webauthncredential.pkc_AAA"
+        );
     }
 
     #[test]
     fn login_event_metadata_is_well_formed() {
         let event = UserLoggedInWithPasskey::new(&ctx(), "pkc_AAA", "prn_BBB");
         assert_eq!(
-            event.event_type(),
+            event.metadata.event_type,
             "platform:iam:user:logged-in-with-passkey"
         );
     }
@@ -144,7 +152,7 @@ mod tests {
         let r = PasskeyRegistered::new(&ctx(), "pkc_X", "prn_X", None);
         let v = PasskeyRevoked::new(&ctx(), "pkc_X", "prn_X");
         let l = UserLoggedInWithPasskey::new(&ctx(), "pkc_X", "prn_X");
-        assert_eq!(r.message_group(), v.message_group());
-        assert_eq!(v.message_group(), l.message_group());
+        assert_eq!(r.metadata.message_group, v.metadata.message_group);
+        assert_eq!(v.metadata.message_group, l.metadata.message_group);
     }
 }

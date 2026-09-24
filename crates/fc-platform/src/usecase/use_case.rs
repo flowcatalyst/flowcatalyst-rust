@@ -35,7 +35,7 @@ pub trait UseCase: Send + Sync {
     type Command: Serialize + Send + Sync;
 
     /// The domain event emitted on success.
-    type Event: DomainEvent + Serialize + Send + 'static;
+    type Event: DomainEvent + Send + 'static;
 
     /// Validate the command inputs.
     ///

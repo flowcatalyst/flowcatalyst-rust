@@ -253,7 +253,6 @@ impl SubscriptionsSynced {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_subscription_created_event() {
@@ -268,7 +267,10 @@ mod tests {
             Some("client-1"),
         );
 
-        assert_eq!(event.event_type(), "platform:admin:subscription:created");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:admin:subscription:created"
+        );
         assert_eq!(event.subscription_id, "sub-1");
         assert_eq!(event.code, "order-webhook");
         assert_eq!(event.endpoint, "https://example.com/webhook");
@@ -279,7 +281,10 @@ mod tests {
         let ctx = ExecutionContext::create("admin-123");
         let event = SubscriptionPaused::new(&ctx, "sub-1", "order-webhook");
 
-        assert_eq!(event.event_type(), "platform:admin:subscription:paused");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:admin:subscription:paused"
+        );
         assert_eq!(event.code, "order-webhook");
     }
 
@@ -288,7 +293,10 @@ mod tests {
         let ctx = ExecutionContext::create("admin-123");
         let event = SubscriptionDeleted::new(&ctx, "sub-1", "order-webhook");
 
-        assert_eq!(event.event_type(), "platform:admin:subscription:deleted");
+        assert_eq!(
+            event.metadata.event_type,
+            "platform:admin:subscription:deleted"
+        );
         assert_eq!(event.code, "order-webhook");
     }
 }

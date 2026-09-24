@@ -245,14 +245,13 @@ impl ClientNoteAdded {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::usecase::DomainEvent;
 
     #[test]
     fn test_client_created_event() {
         let ctx = ExecutionContext::create("user-123");
         let event = ClientCreated::new(&ctx, "client-1", "Acme Corp", "acme-corp", None);
 
-        assert_eq!(event.event_type(), "platform:iam:client:created");
+        assert_eq!(event.metadata.event_type, "platform:iam:client:created");
         assert_eq!(event.client_id, "client-1");
         assert_eq!(event.name, "Acme Corp");
         assert_eq!(event.identifier, "acme-corp");
@@ -263,7 +262,7 @@ mod tests {
         let ctx = ExecutionContext::create("user-123");
         let event = ClientSuspended::new(&ctx, "client-1", "Payment overdue");
 
-        assert_eq!(event.event_type(), "platform:iam:client:suspended");
+        assert_eq!(event.metadata.event_type, "platform:iam:client:suspended");
         assert_eq!(event.reason, "Payment overdue");
     }
 }
