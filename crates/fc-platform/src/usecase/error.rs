@@ -52,71 +52,76 @@ macro_rules! details {
     }};
 }
 
-/// Categorized error types for use case failures.
+/// The category of a [`UseCaseError`]; decides the HTTP status.
 ///
-/// Each variant maps to a specific HTTP status code:
-/// - `ValidationError` -> 400 Bad Request
-/// - `BusinessRuleViolation` -> 409 Conflict
-/// - `NotFoundError` -> 404 Not Found
-/// - `ConcurrencyError` -> 409 Conflict
-/// - `CommitError` -> 500 Internal Server Error
+/// The serde names are the variant names of the enum `UseCaseError` used
+/// to be, so the serialized form (`{"type": "ValidationError", ...}`) is
+/// unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ErrorKind {
+    /// Input validation failed (missing required fields, invalid format,
+    /// etc.). HTTP 400.
+    #[serde(rename = "ValidationError")]
+    Validation,
+    /// Business rule violation (entity in wrong state, constraint
+    /// violated, etc.). HTTP 409.
+    #[serde(rename = "BusinessRuleViolation")]
+    BusinessRule,
+    /// Entity not found. HTTP 404.
+    #[serde(rename = "NotFoundError")]
+    NotFound,
+    /// Optimistic locking conflict: the entity was modified by another
+    /// transaction. HTTP 409.
+    #[serde(rename = "ConcurrencyError")]
+    Concurrency,
+    /// Infrastructure failure: a failed commit ([`UseCaseError::commit`])
+    /// or read ([`UseCaseError::internal`]). HTTP 500.
+    #[serde(rename = "CommitError")]
+    Internal,
+}
+
+impl ErrorKind {
+    /// The HTTP status code for this kind of error.
+    pub fn http_status_code(self) -> u16 {
+        match self {
+            Self::Validation => 400,
+            Self::BusinessRule | Self::Concurrency => 409,
+            Self::NotFound => 404,
+            Self::Internal => 500,
+        }
+    }
+}
+
+/// A use case failure: a [`ErrorKind`] plus a machine-readable code, a
+/// human-readable message and optional structured details.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum UseCaseError {
-    /// Input validation failed (missing required fields, invalid format, etc.)
-    /// Maps to HTTP 400 Bad Request.
-    ValidationError {
-        code: String,
-        message: String,
-        #[serde(default)]
-        details: HashMap<String, serde_json::Value>,
-    },
-
-    /// Business rule violation (entity in wrong state, constraint violated, etc.)
-    /// Maps to HTTP 409 Conflict.
-    BusinessRuleViolation {
-        code: String,
-        message: String,
-        #[serde(default)]
-        details: HashMap<String, serde_json::Value>,
-    },
-
-    /// Entity not found.
-    /// Maps to HTTP 404 Not Found.
-    NotFoundError {
-        code: String,
-        message: String,
-        #[serde(default)]
-        details: HashMap<String, serde_json::Value>,
-    },
-
-    /// Optimistic locking conflict - entity was modified by another transaction.
-    /// Maps to HTTP 409 Conflict.
-    ConcurrencyError {
-        code: String,
-        message: String,
-        #[serde(default)]
-        details: HashMap<String, serde_json::Value>,
-    },
-
-    /// Transaction commit failed.
-    /// Maps to HTTP 500 Internal Server Error.
-    CommitError {
-        code: String,
-        message: String,
-        #[serde(default)]
-        details: HashMap<String, serde_json::Value>,
-    },
+pub struct UseCaseError {
+    #[serde(rename = "type")]
+    kind: ErrorKind,
+    code: String,
+    message: String,
+    #[serde(default)]
+    details: HashMap<String, serde_json::Value>,
 }
 
 impl UseCaseError {
-    /// Create a validation error with the given code and message.
-    pub fn validation(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::ValidationError {
+    fn new(
+        kind: ErrorKind,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            kind,
             code: code.into(),
             message: message.into(),
-            details: HashMap::new(),
+            details,
         }
+    }
+
+    /// Create a validation error with the given code and message.
+    pub fn validation(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Validation, code, message, HashMap::new())
     }
 
     /// Create a validation error with details.
@@ -125,20 +130,12 @@ impl UseCaseError {
         message: impl Into<String>,
         details: HashMap<String, serde_json::Value>,
     ) -> Self {
-        Self::ValidationError {
-            code: code.into(),
-            message: message.into(),
-            details,
-        }
+        Self::new(ErrorKind::Validation, code, message, details)
     }
 
     /// Create a business rule violation error.
     pub fn business_rule(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::BusinessRuleViolation {
-            code: code.into(),
-            message: message.into(),
-            details: HashMap::new(),
-        }
+        Self::new(ErrorKind::BusinessRule, code, message, HashMap::new())
     }
 
     /// Create a business rule violation with details.
@@ -147,20 +144,12 @@ impl UseCaseError {
         message: impl Into<String>,
         details: HashMap<String, serde_json::Value>,
     ) -> Self {
-        Self::BusinessRuleViolation {
-            code: code.into(),
-            message: message.into(),
-            details,
-        }
+        Self::new(ErrorKind::BusinessRule, code, message, details)
     }
 
     /// Create a not found error.
     pub fn not_found(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::NotFoundError {
-            code: code.into(),
-            message: message.into(),
-            details: HashMap::new(),
-        }
+        Self::new(ErrorKind::NotFound, code, message, HashMap::new())
     }
 
     /// Create a not found error with details.
@@ -169,73 +158,54 @@ impl UseCaseError {
         message: impl Into<String>,
         details: HashMap<String, serde_json::Value>,
     ) -> Self {
-        Self::NotFoundError {
-            code: code.into(),
-            message: message.into(),
-            details,
-        }
+        Self::new(ErrorKind::NotFound, code, message, details)
     }
 
     /// Create a concurrency error.
     pub fn concurrency(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::ConcurrencyError {
-            code: code.into(),
-            message: message.into(),
-            details: HashMap::new(),
-        }
+        Self::new(ErrorKind::Concurrency, code, message, HashMap::new())
     }
 
-    /// Create a commit error.
+    /// Create a commit error (code `COMMIT_FAILED`).
     pub fn commit(message: impl Into<String>) -> Self {
-        Self::CommitError {
-            code: "COMMIT_FAILED".to_string(),
-            message: message.into(),
-            details: HashMap::new(),
-        }
+        Self::new(
+            ErrorKind::Internal,
+            "COMMIT_FAILED",
+            message,
+            HashMap::new(),
+        )
     }
 
     /// Create an internal (infrastructure) error: a failed read, a
     /// serialization failure, anything that is not the caller's fault and
     /// not a failed commit. Maps to HTTP 500.
     pub fn internal(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::CommitError {
-            code: code.into(),
-            message: message.into(),
-            details: HashMap::new(),
-        }
+        Self::new(ErrorKind::Internal, code, message, HashMap::new())
+    }
+
+    /// The error's category.
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
     }
 
     /// Get the error code.
     pub fn code(&self) -> &str {
-        match self {
-            Self::ValidationError { code, .. } => code,
-            Self::BusinessRuleViolation { code, .. } => code,
-            Self::NotFoundError { code, .. } => code,
-            Self::ConcurrencyError { code, .. } => code,
-            Self::CommitError { code, .. } => code,
-        }
+        &self.code
     }
 
     /// Get the error message.
     pub fn message(&self) -> &str {
-        match self {
-            Self::ValidationError { message, .. } => message,
-            Self::BusinessRuleViolation { message, .. } => message,
-            Self::NotFoundError { message, .. } => message,
-            Self::ConcurrencyError { message, .. } => message,
-            Self::CommitError { message, .. } => message,
-        }
+        &self.message
+    }
+
+    /// Structured details (not part of the HTTP body today).
+    pub fn details(&self) -> &HashMap<String, serde_json::Value> {
+        &self.details
     }
 
     /// Get the suggested HTTP status code for this error.
     pub fn http_status_code(&self) -> u16 {
-        match self {
-            Self::ValidationError { .. } => 400,
-            Self::BusinessRuleViolation { .. } => 409,
-            Self::NotFoundError { .. } => 404,
-            Self::ConcurrencyError { .. } => 409,
-            Self::CommitError { .. } => 500,
-        }
+        self.kind.http_status_code()
     }
 }
 
@@ -274,6 +244,31 @@ impl From<PlatformError> for UseCaseError {
             PlatformError::Sqlx(e) => Self::internal("DATABASE_ERROR", e.to_string()),
             PlatformError::Internal { message } => Self::internal("INTERNAL_ERROR", message),
             other => Self::internal("INTERNAL_ERROR", other.to_string()),
+        }
+    }
+}
+
+impl From<UseCaseError> for PlatformError {
+    fn from(err: UseCaseError) -> Self {
+        let UseCaseError {
+            kind,
+            code,
+            message,
+            ..
+        } = err;
+        match kind {
+            ErrorKind::Validation => PlatformError::Validation {
+                message: format!("{}: {}", code, message),
+            },
+            ErrorKind::BusinessRule => PlatformError::BusinessRule { code, message },
+            ErrorKind::NotFound => PlatformError::NotFound {
+                entity_type: code,
+                id: message,
+            },
+            ErrorKind::Concurrency => PlatformError::Concurrency { code, message },
+            ErrorKind::Internal => PlatformError::Internal {
+                message: format!("{}: {}", code, message),
+            },
         }
     }
 }
@@ -337,11 +332,8 @@ mod tests {
             details,
         );
 
-        if let UseCaseError::BusinessRuleViolation { details, .. } = err {
-            assert!(details.contains_key("email"));
-        } else {
-            panic!("Expected BusinessRuleViolation");
-        }
+        assert_eq!(err.kind(), ErrorKind::BusinessRule);
+        assert!(err.details().contains_key("email"));
     }
 
     /// HTTP status + JSON body of a `PlatformError` response.
@@ -393,6 +385,63 @@ mod tests {
             let round_trip: PlatformError = UseCaseError::from(via).into();
             assert_eq!(render(direct).await.0, render(round_trip).await.0);
         }
+    }
+
+    /// The HTTP response for each kind of use-case error. Pinned so the
+    /// shape of `UseCaseError` can change without changing the wire.
+    #[tokio::test]
+    async fn test_use_case_error_http_responses() {
+        use serde_json::json;
+        let cases = vec![
+            (
+                UseCaseError::validation("NAME_REQUIRED", "Name is required"),
+                400,
+                json!({"error": "VALIDATION_ERROR", "message": "Validation error: NAME_REQUIRED: Name is required"}),
+            ),
+            (
+                UseCaseError::validation_with_details("BAD", "bad", details! { "field" => "name" }),
+                400,
+                json!({"error": "VALIDATION_ERROR", "message": "Validation error: BAD: bad"}),
+            ),
+            (
+                UseCaseError::business_rule("ROLE_IN_USE", "in use"),
+                409,
+                json!({"error": "ROLE_IN_USE", "message": "in use"}),
+            ),
+            (
+                UseCaseError::not_found("ROLE_NOT_FOUND", "Role 'r1' not found"),
+                404,
+                json!({"error": "NOT_FOUND", "message": "Entity not found: ROLE_NOT_FOUND with id Role 'r1' not found"}),
+            ),
+            (
+                UseCaseError::concurrency("STALE", "stale"),
+                409,
+                json!({"error": "STALE", "message": "stale"}),
+            ),
+            (
+                UseCaseError::commit("tx failed"),
+                500,
+                json!({"error": "INTERNAL_ERROR", "message": "Internal error: COMMIT_FAILED: tx failed"}),
+            ),
+        ];
+        for (err, status, body) in cases {
+            assert_eq!(err.http_status_code(), status);
+            assert_eq!(render(err.into()).await, (status, body));
+        }
+    }
+
+    #[test]
+    fn test_serialized_form() {
+        let err = UseCaseError::validation("CODE", "msg");
+        assert_eq!(
+            serde_json::to_string(&err).unwrap(),
+            r#"{"type":"ValidationError","code":"CODE","message":"msg","details":{}}"#
+        );
+        let back: UseCaseError =
+            serde_json::from_str(r#"{"type":"CommitError","code":"COMMIT_FAILED","message":"m"}"#)
+                .unwrap();
+        assert_eq!(back.code(), "COMMIT_FAILED");
+        assert_eq!(back.http_status_code(), 500);
     }
 
     #[test]
@@ -466,11 +515,10 @@ mod tests {
         );
 
         assert_eq!(err.code(), "EMAIL_EXISTS");
-        if let UseCaseError::BusinessRuleViolation { details, .. } = err {
-            assert_eq!(
-                details.get("email"),
-                Some(&serde_json::json!("duplicate@example.com"))
-            );
-        }
+        assert_eq!(err.kind(), ErrorKind::BusinessRule);
+        assert_eq!(
+            err.details().get("email"),
+            Some(&serde_json::json!("duplicate@example.com"))
+        );
     }
 }
