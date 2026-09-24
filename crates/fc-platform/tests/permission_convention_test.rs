@@ -101,19 +101,6 @@ const FN_SKIPLIST: &[&str] = &[
     // /auth/client/switch — part of the authenticated login flow; no extra
     // permission needed to pick a different client for your own session.
     "shared/client_selection_api.rs::switch_client",
-    // TODO: The SDK sync endpoints authenticate via service-account bearer
-    // token but don't currently call a permission helper. They effectively
-    // require the caller to be a service account attached to the application
-    // they're syncing. Add an explicit `require_permission(ctx, "SDK_SYNC")`
-    // or similar when the permission catalog has a slot for it.
-    "shared/application_roles_sdk_api.rs::create_role",
-    "shared/application_roles_sdk_api.rs::sync_roles",
-    "shared/application_roles_sdk_api.rs::delete_role",
-    "shared/sdk_sync_api.rs::sync_roles",
-    "shared/sdk_sync_api.rs::sync_event_types",
-    "shared/sdk_sync_api.rs::sync_subscriptions",
-    "shared/sdk_sync_api.rs::sync_dispatch_pools",
-    "shared/sdk_sync_api.rs::sync_principals",
 ];
 
 fn src_root() -> PathBuf {
