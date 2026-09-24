@@ -546,13 +546,8 @@ fn load_notification_config() -> NotificationConfig {
     });
 
     let min_severity = min_severity_raw
-        .map(|s| match s.to_uppercase().as_str() {
-            "INFO" => WarningSeverity::Info,
-            "WARN" | "WARNING" => WarningSeverity::Warn,
-            "ERROR" => WarningSeverity::Error,
-            "CRITICAL" => WarningSeverity::Critical,
-            _ => WarningSeverity::Warn,
-        })
+        .ok()
+        .and_then(|s| fc_router::warning::parse_severity(&s))
         .unwrap_or(WarningSeverity::Warn);
 
     let batch_interval_seconds = std::env::var("NOTIFICATION_BATCH_INTERVAL")

@@ -681,37 +681,15 @@ impl BatchingNotificationService {
 
     /// Check if severity meets minimum threshold
     fn meets_min_severity(&self, severity: &WarningSeverity) -> bool {
-        let severity_order = [
-            WarningSeverity::Info,
-            WarningSeverity::Warn,
-            WarningSeverity::Error,
-            WarningSeverity::Critical,
-        ];
-
-        let min_idx = severity_order
-            .iter()
-            .position(|s| *s == self.min_severity)
-            .unwrap_or(0);
-        let severity_idx = severity_order
-            .iter()
-            .position(|s| s == severity)
-            .unwrap_or(0);
-
-        severity_idx >= min_idx
+        *severity >= self.min_severity
     }
 
     /// Get the highest severity from a list of warnings
     fn get_highest_severity(&self, warnings: &[Warning]) -> WarningSeverity {
         warnings
             .iter()
-            .map(|w| &w.severity)
-            .max_by_key(|s| match s {
-                WarningSeverity::Info => 0,
-                WarningSeverity::Warn => 1,
-                WarningSeverity::Error => 2,
-                WarningSeverity::Critical => 3,
-            })
-            .cloned()
+            .map(|w| w.severity)
+            .max()
             .unwrap_or(WarningSeverity::Info)
     }
 

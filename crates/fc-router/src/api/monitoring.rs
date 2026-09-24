@@ -16,6 +16,17 @@ use std::collections::HashMap;
 use std::time::Duration;
 use utoipa::ToSchema;
 
+/// The upper-case wire name of a [`HealthStatus`] in monitoring responses.
+/// (`HealthStatus`'s own serde form is `Healthy`/`Warning`/`Degraded`, which
+/// `HealthReport` still uses, so this can't be a serde rename.)
+fn health_status_str(status: HealthStatus) -> &'static str {
+    match status {
+        HealthStatus::Healthy => "HEALTHY",
+        HealthStatus::Warning => "WARNING",
+        HealthStatus::Degraded => "DEGRADED",
+    }
+}
+
 /// Detailed monitoring response
 #[derive(Serialize, ToSchema)]
 pub struct MonitoringResponse {
@@ -69,11 +80,7 @@ pub(crate) async fn monitoring_handler(State(state): State<AppState>) -> Json<Mo
     let active_warnings = state.warning_service.unacknowledged_count() as u32;
     let critical_warnings = state.warning_service.critical_count() as u32;
 
-    let status = match health_report.status {
-        HealthStatus::Healthy => "HEALTHY",
-        HealthStatus::Warning => "WARNING",
-        HealthStatus::Degraded => "DEGRADED",
-    };
+    let status = health_status_str(health_report.status);
 
     Json(MonitoringResponse {
         status: status.to_string(),
@@ -173,11 +180,7 @@ pub(crate) async fn dashboard_health_handler(
     let pool_stats = state.queue_manager.get_pool_stats();
     let health_report = state.health_service.get_health_report(&pool_stats);
 
-    let status = match health_report.status {
-        HealthStatus::Healthy => "HEALTHY",
-        HealthStatus::Warning => "WARNING",
-        HealthStatus::Degraded => "DEGRADED",
-    };
+    let status = health_status_str(health_report.status);
 
     let degradation_reason = if !health_report.issues.is_empty() {
         Some(health_report.issues.join("; "))
@@ -799,10 +802,7 @@ pub(crate) async fn in_flight_message_detail_handler(
     Query(query): Query<InFlightDetailQuery>,
 ) -> Json<InFlightMessageDetail> {
     let message_id = query.message_id;
-    let Some(info) = state
-        .queue_manager
-        .lookup_in_flight_by_app_id(&message_id)
-    else {
+    let Some(info) = state.queue_manager.lookup_in_flight_by_app_id(&message_id) else {
         return Json(InFlightMessageDetail {
             message_id,
             in_pipeline: false,
