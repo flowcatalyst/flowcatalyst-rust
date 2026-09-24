@@ -93,7 +93,7 @@ impl ScheduledJobDispatcher {
         }
     }
 
-    async fn tick(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn tick(&self) -> crate::shared::error::Result<()> {
         let instances = self
             .instance_repo
             .list(&InstanceListFilters {

@@ -16,6 +16,7 @@ use std::collections::HashSet;
 use tracing::{info, warn};
 
 use crate::role::entity::roles;
+use crate::shared::error::Result;
 use crate::RoleRepository;
 use crate::{AuthRole, RoleSource};
 
@@ -42,9 +43,7 @@ impl RoleSyncService {
 
     /// Sync all code-defined roles to the database.
     /// Call this at application startup or via the BFF sync-platform endpoint.
-    pub async fn sync_code_defined_roles(
-        &self,
-    ) -> Result<RoleSyncCounts, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn sync_code_defined_roles(&self) -> Result<RoleSyncCounts> {
         info!("Syncing code-defined roles to database...");
 
         let code_roles = roles::all();
@@ -109,10 +108,7 @@ impl RoleSyncService {
     /// a referential-integrity bug (`iam_principal_roles.role_name` has no
     /// DB-level FK; integrity is enforced in code via this guard + the
     /// `RoleRepository` delete cascade).
-    async fn remove_stale_code_roles(
-        &self,
-        code_roles: &[AuthRole],
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    async fn remove_stale_code_roles(&self, code_roles: &[AuthRole]) -> Result<usize> {
         let code_role_names: HashSet<&str> = code_roles.iter().map(|r| r.name.as_str()).collect();
 
         let code_roles_in_db = self.role_repo.find_by_source(RoleSource::Code).await?;

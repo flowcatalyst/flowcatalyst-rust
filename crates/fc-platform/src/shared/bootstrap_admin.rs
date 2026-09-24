@@ -24,6 +24,7 @@ use crate::identity_provider::entity::{IdentityProvider, IdentityProviderType};
 use crate::identity_provider::repository::IdentityProviderRepository;
 use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
+use crate::shared::error::Result;
 
 const ENV_EMAIL: &str = "FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL";
 const ENV_PASSWORD: &str = "FLOWCATALYST_BOOTSTRAP_ADMIN_PASSWORD";
@@ -33,7 +34,7 @@ const ROLE_SUPER_ADMIN: &str = "platform:super-admin";
 const ROLE_SOURCE: &str = "BOOTSTRAP";
 
 /// Bootstrap an initial admin if no anchor `USER` exists. See module docs.
-pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<(), sqlx::Error> {
+pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<()> {
     // Cheap existence check: any anchor USER already present means we're
     // not on a freshly-deployed environment.
     let existing: (i64,) = sqlx::query_as(
@@ -84,12 +85,7 @@ pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<(), sqlx::Error> {
 
     // Idempotency: someone may have created this user via SQL before
     // bootstrap ran (no anchor existed yet, but the named user does).
-    if principal_repo
-        .find_by_email(&email)
-        .await
-        .map_err(map_err)?
-        .is_some()
-    {
+    if principal_repo.find_by_email(&email).await?.is_some() {
         info!(email = %email, "Bootstrap user already exists");
         return Ok(());
     }
@@ -109,9 +105,7 @@ pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<(), sqlx::Error> {
     let password_hash = match password_service.hash_password(&password) {
         Ok(h) => h,
         Err(_) => {
-            warn!(
-                "Bootstrap password does not meet complexity requirements, hashing anyway"
-            );
+            warn!("Bootstrap password does not meet complexity requirements, hashing anyway");
             match password_service.hash_password_with_complexity(&password, false) {
                 Ok(h) => h,
                 Err(e) => {
@@ -129,7 +123,7 @@ pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<(), sqlx::Error> {
     }
     principal.assign_role_with_source(ROLE_SUPER_ADMIN, ROLE_SOURCE);
 
-    principal_repo.insert(&principal).await.map_err(map_err)?;
+    principal_repo.insert(&principal).await?;
 
     info!(
         name = %name,
@@ -140,10 +134,10 @@ pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn ensure_internal_identity_provider(pool: &PgPool) -> Result<String, sqlx::Error> {
+async fn ensure_internal_identity_provider(pool: &PgPool) -> Result<String> {
     let repo = IdentityProviderRepository::new(pool);
 
-    if let Some(existing) = repo.find_by_code("internal").await.map_err(map_err)? {
+    if let Some(existing) = repo.find_by_code("internal").await? {
         return Ok(existing.id);
     }
 
@@ -152,7 +146,7 @@ async fn ensure_internal_identity_provider(pool: &PgPool) -> Result<String, sqlx
         "Internal Authentication",
         IdentityProviderType::Internal,
     );
-    repo.insert(&idp).await.map_err(map_err)?;
+    repo.insert(&idp).await?;
     info!("Created internal identity provider");
     Ok(idp.id)
 }
@@ -161,27 +155,15 @@ async fn ensure_anchor_email_domain_mapping(
     pool: &PgPool,
     email_domain: &str,
     idp_id: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<()> {
     let repo = EmailDomainMappingRepository::new(pool);
 
-    if repo
-        .find_by_email_domain(email_domain)
-        .await
-        .map_err(map_err)?
-        .is_some()
-    {
+    if repo.find_by_email_domain(email_domain).await?.is_some() {
         return Ok(());
     }
 
     let mapping = EmailDomainMapping::new(email_domain, idp_id, ScopeType::Anchor);
-    repo.insert(&mapping).await.map_err(map_err)?;
+    repo.insert(&mapping).await?;
     info!(email_domain = %email_domain, "Created anchor domain mapping");
     Ok(())
-}
-
-/// Repositories surface `PlatformError`; this seeder returns `sqlx::Error`
-/// to match the signature of the other startup seeders (`seed_builtin_roles`,
-/// `seed_platform_application`). Wrap with `sqlx::Error::Protocol`.
-fn map_err(e: crate::shared::error::PlatformError) -> sqlx::Error {
-    sqlx::Error::Protocol(e.to_string())
 }

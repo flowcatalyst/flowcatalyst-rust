@@ -26,6 +26,31 @@ use crate::scheduled_job::entity::{
 };
 use crate::scheduled_job::scheduler::config::ScheduledJobSchedulerConfig;
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
+use crate::shared::error::PlatformError;
+
+/// Why a job's cron schedule could not be evaluated.
+#[derive(Debug, thiserror::Error)]
+pub enum ScheduleError {
+    #[error("Invalid timezone '{tz}': {source}")]
+    InvalidTimezone {
+        tz: String,
+        source: chrono_tz::ParseError,
+    },
+    #[error("Invalid cron '{expr}': {source}")]
+    InvalidCron {
+        expr: String,
+        source: cron::error::Error,
+    },
+}
+
+/// Why one job could not be fired.
+#[derive(Debug, thiserror::Error)]
+enum FireError {
+    #[error(transparent)]
+    Schedule(#[from] ScheduleError),
+    #[error(transparent)]
+    Platform(#[from] PlatformError),
+}
 
 pub struct ScheduledJobPoller {
     config: ScheduledJobSchedulerConfig,
@@ -72,7 +97,7 @@ impl ScheduledJobPoller {
         }
     }
 
-    async fn tick(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn tick(&self) -> Result<(), PlatformError> {
         let now = Utc::now();
         let jobs = self.repo.find_active_for_polling().await?;
         debug!(count = jobs.len(), "Polling active scheduled jobs");
@@ -95,11 +120,7 @@ impl ScheduledJobPoller {
         Ok(())
     }
 
-    async fn process_job(
-        &self,
-        job: &ScheduledJob,
-        now: DateTime<Utc>,
-    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    async fn process_job(&self, job: &ScheduledJob, now: DateTime<Utc>) -> Result<bool, FireError> {
         let last = job.last_fired_at.unwrap_or(job.created_at);
         let Some(slot) = latest_slot_in_window(&job.crons, &job.timezone, last, now)? else {
             return Ok(false);
@@ -142,12 +163,14 @@ pub fn latest_slot_in_window(
     tz_name: &str,
     after: DateTime<Utc>,
     up_to: DateTime<Utc>,
-) -> Result<Option<DateTime<Utc>>, String> {
+) -> Result<Option<DateTime<Utc>>, ScheduleError> {
     if after >= up_to {
         return Ok(None);
     }
-    let tz: Tz =
-        Tz::from_str(tz_name).map_err(|e| format!("Invalid timezone '{}': {}", tz_name, e))?;
+    let tz: Tz = Tz::from_str(tz_name).map_err(|source| ScheduleError::InvalidTimezone {
+        tz: tz_name.to_string(),
+        source,
+    })?;
 
     let after_tz = tz.from_utc_datetime(&after.naive_utc());
     let up_to_tz = tz.from_utc_datetime(&up_to.naive_utc());
@@ -155,8 +178,10 @@ pub fn latest_slot_in_window(
     let mut best: Option<DateTime<Tz>> = None;
 
     for expr in crons {
-        let schedule =
-            Schedule::from_str(expr).map_err(|e| format!("Invalid cron '{}': {}", expr, e))?;
+        let schedule = Schedule::from_str(expr).map_err(|source| ScheduleError::InvalidCron {
+            expr: expr.clone(),
+            source,
+        })?;
         // Walk forward from `after` and pick the latest slot <= up_to.
         for slot in schedule.after(&after_tz) {
             if slot > up_to_tz {
@@ -234,7 +259,10 @@ mod tests {
         let crons = vec!["not a cron".to_string()];
         let after = Utc::now();
         let up_to = after + Duration::hours(1);
-        assert!(latest_slot_in_window(&crons, "UTC", after, up_to).is_err());
+        assert!(matches!(
+            latest_slot_in_window(&crons, "UTC", after, up_to),
+            Err(ScheduleError::InvalidCron { .. })
+        ));
     }
 
     #[test]
@@ -242,7 +270,11 @@ mod tests {
         let crons = vec!["0 0 0 * * *".to_string()];
         let after = Utc::now();
         let up_to = after + Duration::hours(1);
-        assert!(latest_slot_in_window(&crons, "Mars/Olympus", after, up_to).is_err());
+        let err = latest_slot_in_window(&crons, "Mars/Olympus", after, up_to).unwrap_err();
+        assert!(matches!(err, ScheduleError::InvalidTimezone { .. }));
+        assert!(err
+            .to_string()
+            .starts_with("Invalid timezone 'Mars/Olympus': "));
     }
 
     #[test]

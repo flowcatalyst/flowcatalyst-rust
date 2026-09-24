@@ -375,9 +375,7 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
         // drops the constraint before re-adding.
         (
             "027_oauth_clients_service_account_fk",
-            include_str!(
-                "../../../../migrations/027_oauth_clients_service_account_fk.sql"
-            ),
+            include_str!("../../../../migrations/027_oauth_clients_service_account_fk.sql"),
         ),
         // Wires the FK from app_applications.service_account_id back to
         // iam_principals (SET NULL so the application survives SA delete),
@@ -385,15 +383,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
         // provisioned.
         (
             "028_application_service_account_fk",
-            include_str!(
-                "../../../../migrations/028_application_service_account_fk.sql"
-            ),
+            include_str!("../../../../migrations/028_application_service_account_fk.sql"),
         ),
         (
             "029_oauth_client_post_logout_redirect_uris",
-            include_str!(
-                "../../../../migrations/029_oauth_client_post_logout_redirect_uris.sql"
-            ),
+            include_str!("../../../../migrations/029_oauth_client_post_logout_redirect_uris.sql"),
         ),
         (
             "030_rate_limit_events",
@@ -781,31 +775,24 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
 /// dynamic utoipa-generated OpenAPI document is stored against this row by
 /// the "Sync All" dashboard action. Idempotent — leaves any existing row
 /// alone (including the more-descriptive name the dev seeder may have set).
-pub async fn seed_platform_application(pool: &PgPool) -> Result<(), sqlx::Error> {
+pub async fn seed_platform_application(pool: &PgPool) -> crate::shared::error::Result<()> {
     use crate::application::entity::Application;
     use crate::application::repository::ApplicationRepository;
 
     let repo = ApplicationRepository::new(pool);
-    let existing = repo
-        .find_by_code("platform")
-        .await
-        .map_err(|e| sqlx::Error::Protocol(format!("find_by_code(platform): {}", e)))?;
-
-    if existing.is_some() {
+    if repo.find_by_code("platform").await?.is_some() {
         return Ok(());
     }
 
     let app = Application::new("platform", "FlowCatalyst Platform").with_description(
         "Core platform — its own OpenAPI document is published here as one of the applications",
     );
-    repo.insert(&app)
-        .await
-        .map_err(|e| sqlx::Error::Protocol(format!("insert(platform application): {}", e)))?;
+    repo.insert(&app).await?;
     info!("Seeded built-in platform application");
     Ok(())
 }
 
-pub async fn seed_builtin_roles(pool: &PgPool) -> Result<(), sqlx::Error> {
+pub async fn seed_builtin_roles(pool: &PgPool) -> crate::shared::error::Result<()> {
     use crate::role::entity::roles;
     use crate::role::repository::RoleRepository;
 
@@ -813,17 +800,10 @@ pub async fn seed_builtin_roles(pool: &PgPool) -> Result<(), sqlx::Error> {
     let mut inserted = 0;
 
     for role in roles::all() {
-        if repo
-            .find_by_name(&role.name)
-            .await
-            .map_err(|e| sqlx::Error::Protocol(format!("find_by_name({}): {}", role.name, e)))?
-            .is_some()
-        {
+        if repo.find_by_name(&role.name).await?.is_some() {
             continue;
         }
-        repo.insert(&role)
-            .await
-            .map_err(|e| sqlx::Error::Protocol(format!("insert({}): {}", role.name, e)))?;
+        repo.insert(&role).await?;
         info!(role = %role.name, "Seeded built-in role");
         inserted += 1;
     }

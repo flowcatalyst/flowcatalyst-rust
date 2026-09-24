@@ -19,6 +19,7 @@ use tracing::info;
 
 use crate::process::entity::{Process, ProcessSource};
 use crate::process::repository::ProcessRepository;
+use crate::shared::error::{PlatformError, Result};
 
 const EXAMPLE_CODE: &str = "platform:fulfilment:on-demand-flow";
 const EXAMPLE_NAME: &str = "On-Demand Fulfilment Flow";
@@ -83,19 +84,15 @@ const EXAMPLE_BODY: &str = r#"flowchart TD
 "#;
 
 /// Seed the example on-demand fulfilment Process. No-op once seeded.
-pub async fn seed_default_processes(pool: &PgPool) -> Result<(), sqlx::Error> {
+pub async fn seed_default_processes(pool: &PgPool) -> Result<()> {
     let repo = ProcessRepository::new(pool);
 
-    let exists = repo
-        .exists_by_code(EXAMPLE_CODE)
-        .await
-        .map_err(|e| sqlx::Error::Protocol(format!("exists_by_code({}): {}", EXAMPLE_CODE, e)))?;
-    if exists {
+    if repo.exists_by_code(EXAMPLE_CODE).await? {
         return Ok(());
     }
 
     let mut process = Process::new(EXAMPLE_CODE, EXAMPLE_NAME)
-        .map_err(|e| sqlx::Error::Protocol(format!("Process::new: {}", e)))?;
+        .map_err(|e| PlatformError::internal(format!("example process code: {}", e)))?;
     process.description = Some(EXAMPLE_DESCRIPTION.to_string());
     process.source = ProcessSource::Code;
     process.body = EXAMPLE_BODY.to_string();
@@ -105,9 +102,7 @@ pub async fn seed_default_processes(pool: &PgPool) -> Result<(), sqlx::Error> {
         "platform".to_string(),
     ];
 
-    repo.insert(&process)
-        .await
-        .map_err(|e| sqlx::Error::Protocol(format!("insert(example process): {}", e)))?;
+    repo.insert(&process).await?;
 
     info!(
         code = EXAMPLE_CODE,
