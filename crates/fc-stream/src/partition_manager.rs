@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use sqlx::PgPool;
-use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::health::StreamHealth;
@@ -68,96 +68,73 @@ impl Default for PartitionManagerConfig {
     }
 }
 
-pub struct PartitionManagerService {
+/// Health-tracker name for the partition manager (reported by the stream
+/// health endpoints).
+pub const HEALTH_NAME: &str = "partition-manager";
+
+/// Maintain partitions until `cancel` fires: one pass immediately, then one
+/// every `config.tick_interval`. Returns at once (health not running) if
+/// `msg_events` isn't partitioned. Cancellation is only observed between
+/// passes, so a pass in flight always completes.
+pub async fn run(
     pool: PgPool,
     config: PartitionManagerConfig,
-    shutdown_tx: watch::Sender<bool>,
-    shutdown_rx: watch::Receiver<bool>,
     health: Arc<StreamHealth>,
-}
-
-impl PartitionManagerService {
-    pub fn new(pool: PgPool, config: PartitionManagerConfig) -> Self {
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        Self {
-            pool,
-            config,
-            shutdown_tx,
-            shutdown_rx,
-            health: Arc::new(StreamHealth::new("partition-manager".to_string())),
+    cancel: CancellationToken,
+) {
+    // Sanity: if msg_events isn't partitioned, nothing to do.
+    // Shouldn't happen now that 019 is a core migration, but
+    // defensive — the manager exits cleanly rather than flapping.
+    match is_partitioned(&pool, "msg_events").await {
+        Ok(true) => {}
+        Ok(false) => {
+            info!("Partition manager: msg_events is not partitioned; manager will not run");
+            health.set_running(false);
+            return;
+        }
+        Err(e) => {
+            warn!(error = %e, "Partition manager: detection query failed; assuming not partitioned");
+            health.set_running(false);
+            return;
         }
     }
 
-    pub fn health(&self) -> Arc<StreamHealth> {
-        self.health.clone()
-    }
+    health.set_running(true);
+    info!(
+        months_forward = config.months_forward,
+        retention_days = config.retention_days,
+        "Partition manager started"
+    );
 
-    pub fn start(&self) -> tokio::task::JoinHandle<()> {
-        let pool = self.pool.clone();
-        let config = self.config.clone();
-        let mut shutdown_rx = self.shutdown_rx.clone();
-        let health = self.health.clone();
+    // Run once immediately, then on tick_interval.
+    loop {
+        if cancel.is_cancelled() {
+            break;
+        }
 
-        tokio::spawn(async move {
-            // Sanity: if msg_events isn't partitioned, nothing to do.
-            // Shouldn't happen now that 019 is a core migration, but
-            // defensive — the manager exits cleanly rather than flapping.
-            match is_partitioned(&pool, "msg_events").await {
-                Ok(true) => {}
-                Ok(false) => {
-                    info!("Partition manager: msg_events is not partitioned; manager will not run");
-                    health.set_running(false);
-                    return;
+        match tick(&pool, &config).await {
+            Ok((created, dropped)) => {
+                if created > 0 || dropped > 0 {
+                    info!(created, dropped, "Partition manager tick");
+                } else {
+                    debug!("Partition manager tick: nothing to do");
                 }
-                Err(e) => {
-                    warn!(error = %e, "Partition manager: detection query failed; assuming not partitioned");
-                    health.set_running(false);
-                    return;
-                }
+                health.add_processed((created + dropped) as u64);
             }
-
-            health.set_running(true);
-            info!(
-                months_forward = config.months_forward,
-                retention_days = config.retention_days,
-                "Partition manager started"
-            );
-
-            // Run once immediately, then on tick_interval.
-            loop {
-                if *shutdown_rx.borrow() {
-                    break;
-                }
-
-                match tick(&pool, &config).await {
-                    Ok((created, dropped)) => {
-                        if created > 0 || dropped > 0 {
-                            info!(created, dropped, "Partition manager tick");
-                        } else {
-                            debug!("Partition manager tick: nothing to do");
-                        }
-                        health.add_processed((created + dropped) as u64);
-                    }
-                    Err(e) => {
-                        error!(error = %e, "Partition manager tick failed");
-                        health.record_error();
-                    }
-                }
-
-                tokio::select! {
-                    _ = tokio::time::sleep(config.tick_interval) => {}
-                    _ = shutdown_rx.changed() => { break; }
-                }
+            Err(e) => {
+                error!(error = %e, "Partition manager tick failed");
+                health.record_error();
             }
+        }
 
-            health.set_running(false);
-            info!("Partition manager stopped");
-        })
+        tokio::select! {
+            _ = tokio::time::sleep(config.tick_interval) => {}
+            _ = cancel.cancelled() => { break; }
+        }
     }
 
-    pub fn stop(&self) {
-        let _ = self.shutdown_tx.send(true);
-    }
+    health.set_running(false);
+    info!("Partition manager stopped");
 }
 
 /// One full pass: create missing forward partitions, drop expired ones.
