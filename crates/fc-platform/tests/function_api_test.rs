@@ -1582,3 +1582,66 @@ async fn domains_and_routes() {
         "{group}"
     );
 }
+
+// ── The OpenAPI document and FUNCTION-sourced subscriptions ─────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn openapi_document_and_function_subscriptions() {
+    let app = TestApp::setup().await;
+
+    // Java's document, verbatim and without a token.
+    let resp = app.get_unauth("/api/openapi-functions.json").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        &bytes[..],
+        fc_platform::function::openapi::FUNCTIONS_OPENAPI
+    );
+
+    // The function routes are in the platform's own document too.
+    let spec = app.get_unauth("/q/openapi").await;
+    let (_, spec) = read_json(spec).await;
+    for path in [
+        "/api/functions",
+        "/api/functions/{address}/secrets/{key}",
+        "/api/function-policies/{owner}",
+        "/api/function-domains/{hostname}",
+        "/api/function-routes",
+    ] {
+        assert!(
+            spec["paths"].get(path).is_some(),
+            "{path} missing from /q/openapi"
+        );
+    }
+
+    // A subscription Java wrote for a function (source FUNCTION) reads back.
+    let mut sub = fc_platform::Subscription::new(
+        "fn-fnc-abcd1234",
+        "Function sub",
+        "https://host/functions/a.b.c/x",
+    );
+    sub.source = fc_platform::subscription::entity::SubscriptionSource::Function;
+    app.repos
+        .subscription_repo
+        .insert(&sub)
+        .await
+        .expect("insert");
+    let (stored,): (String,) = sqlx::query_as("SELECT source FROM msg_subscriptions WHERE id = $1")
+        .bind(&sub.id)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, "FUNCTION");
+    let read = app
+        .repos
+        .subscription_repo
+        .find_by_id(&sub.id)
+        .await
+        .expect("strict read")
+        .expect("row");
+    assert_eq!(
+        read.source,
+        fc_platform::subscription::entity::SubscriptionSource::Function
+    );
+}

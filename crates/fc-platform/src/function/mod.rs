@@ -22,6 +22,7 @@ pub mod hostname;
 pub mod http_method;
 pub mod json;
 pub mod manifest;
+pub mod openapi;
 pub mod operations;
 pub mod policy_api;
 pub mod policy_repository;
