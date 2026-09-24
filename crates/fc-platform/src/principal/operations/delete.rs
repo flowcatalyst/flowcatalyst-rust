@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserDeleted;
+use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for deleting a user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,38 +63,45 @@ impl<U: UnitOfWork> UseCase for DeleteUserUseCase<U> {
         command: DeleteUserCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<UserDeleted> {
+        let (principal, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        // Atomic commit with delete
+        self.unit_of_work
+            .commit_delete(&principal, &*self.principal_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteUserUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteUserCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Principal, UserDeleted), UseCaseError> {
         // Business rule: cannot delete yourself
         if command.principal_id == ctx.principal_id {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CANNOT_DELETE_SELF",
                 "Cannot delete your own account",
             ));
         }
 
         // Fetch existing principal
-        let principal = match self.principal_repo.find_by_id(&command.principal_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "USER_NOT_FOUND",
-                    format!("User with ID '{}' not found", command.principal_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch user: {}",
-                    e
-                )));
-            }
-        };
+        let principal = self
+            .principal_repo
+            .find_by_id(&command.principal_id)
+            .await
+            .or_not_found(
+                "USER_NOT_FOUND",
+                format!("User with ID '{}' not found", command.principal_id),
+            )?;
 
         // Create domain event
-        let event = UserDeleted::new(&ctx, &principal.id);
-
-        // Atomic commit with delete
-        self.unit_of_work
-            .commit_delete(&principal, &*self.principal_repo, event, &command)
-            .await
+        let event = UserDeleted::new(ctx, &principal.id);
+        Ok((principal, event))
     }
 }
 

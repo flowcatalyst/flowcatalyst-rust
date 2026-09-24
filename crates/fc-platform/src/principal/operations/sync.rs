@@ -14,7 +14,9 @@ use std::sync::Arc;
 use super::events::PrincipalsSynced;
 use crate::principal::entity::{Principal, UserScope};
 use crate::service_account::entity::RoleAssignment;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationRepository;
 use crate::PrincipalRepository;
 
@@ -104,26 +106,29 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         command: SyncPrincipalsCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<PrincipalsSynced> {
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SyncPrincipalsCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<PrincipalsSynced, UseCaseError> {
         // Verify the application exists
-        match self
-            .application_repo
+        self.application_repo
             .find_by_code(&command.application_code)
             .await
-        {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "APPLICATION_NOT_FOUND",
-                    format!("Application not found: {}", command.application_code),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch application: {}",
-                    e
-                )));
-            }
-        }
+            .or_not_found(
+                "APPLICATION_NOT_FOUND",
+                format!("Application not found: {}", command.application_code),
+            )?;
 
         let mut created_count = 0u32;
         let mut updated_count = 0u32;
@@ -141,18 +146,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                 .map(|r| RoleAssignment::with_source(r.to_lowercase(), "SDK_SYNC"))
                 .collect();
 
-            let existing = match self.principal_repo.find_by_email(&email).await {
-                Ok(Some(p)) => Some(p),
-                Ok(None) => None,
-                Err(e) => {
-                    return UseCaseResult::failure(UseCaseError::commit(format!(
-                        "Failed to look up principal by email: {}",
-                        e
-                    )));
-                }
-            };
-
-            match existing {
+            match self.principal_repo.find_by_email(&email).await? {
                 Some(mut principal) => {
                     // Merge: keep non-SDK_SYNC roles, replace SDK_SYNC roles
                     let non_sdk_roles: Vec<RoleAssignment> = principal
@@ -169,7 +163,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                     principal.updated_at = chrono::Utc::now();
 
                     if let Err(e) = self.principal_repo.update(&principal).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to update principal '{}': {}",
                             email, e
                         )));
@@ -184,7 +178,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                     principal.roles = role_assignments;
 
                     if let Err(e) = self.principal_repo.insert(&principal).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to create principal '{}': {}",
                             email, e
                         )));
@@ -196,15 +190,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
 
         // Remove SDK_SYNC roles from unlisted principals
         if command.remove_unlisted {
-            let all_principals = match self.principal_repo.find_all().await {
-                Ok(list) => list,
-                Err(e) => {
-                    return UseCaseResult::failure(UseCaseError::commit(format!(
-                        "Failed to fetch all principals: {}",
-                        e
-                    )));
-                }
-            };
+            let all_principals = self.principal_repo.find_all().await?;
 
             for principal in all_principals {
                 if !principal.is_user() {
@@ -230,7 +216,7 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
                         .retain(|r| r.assignment_source.as_deref() != Some("SDK_SYNC"));
                     updated.updated_at = chrono::Utc::now();
                     if let Err(e) = self.principal_repo.update(&updated).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to update principal '{}': {}",
                             email, e
                         )));
@@ -241,15 +227,14 @@ impl<U: UnitOfWork> UseCase for SyncPrincipalsUseCase<U> {
         }
 
         let event = PrincipalsSynced::new(
-            &ctx,
+            ctx,
             &command.application_code,
             created_count,
             updated_count,
             deactivated_count,
             synced_emails,
         );
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

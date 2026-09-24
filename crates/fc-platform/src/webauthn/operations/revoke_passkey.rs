@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::PasskeyRevoked;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::webauthn::entity::WebauthnCredential;
 use crate::webauthn::repository::WebauthnCredentialRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,37 +62,40 @@ impl<U: UnitOfWork> UseCase for RevokePasskeyUseCase<U> {
         command: RevokePasskeyCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<PasskeyRevoked> {
-        let credential = match self
+        let (credential, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit_delete(&credential, &*self.credential_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> RevokePasskeyUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &RevokePasskeyCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(WebauthnCredential, PasskeyRevoked), UseCaseError> {
+        let credential = self
             .credential_repo
             .find_by_id(&command.credential_id)
             .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CREDENTIAL_NOT_FOUND",
-                    format!("passkey '{}' not found", command.credential_id),
-                ))
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load passkey: {}",
-                    e,
-                )))
-            }
-        };
+            .or_not_found(
+                "CREDENTIAL_NOT_FOUND",
+                format!("passkey '{}' not found", command.credential_id),
+            )?;
 
         if ctx.principal_id != credential.principal_id {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "PRINCIPAL_MISMATCH",
                 "you may only revoke your own passkeys",
             ));
         }
 
-        let event = PasskeyRevoked::new(&ctx, &credential.id, &credential.principal_id);
-
-        self.unit_of_work
-            .commit_delete(&credential, &*self.credential_repo, event, &command)
-            .await
+        let event = PasskeyRevoked::new(ctx, &credential.id, &credential.principal_id);
+        Ok((credential, event))
     }
 }

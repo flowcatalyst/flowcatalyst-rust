@@ -12,8 +12,11 @@ use std::sync::Arc;
 
 use super::events::PasswordResetCompleted;
 use crate::auth::password_service::PasswordService;
+use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,25 +85,35 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
         command: ResetPasswordCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<PasswordResetCompleted> {
-        // Load the principal.
-        let mut principal = match self.principal_repo.find_by_id(&command.principal_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "PRINCIPAL_NOT_FOUND",
-                    format!("Principal with ID '{}' not found", command.principal_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch principal: {}",
-                    e
-                )));
-            }
+        let (principal, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> ResetPasswordUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &ResetPasswordCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Principal, PasswordResetCompleted), UseCaseError> {
+        // Load the principal.
+        let mut principal = self
+            .principal_repo
+            .find_by_id(&command.principal_id)
+            .await
+            .or_not_found(
+                "PRINCIPAL_NOT_FOUND",
+                format!("Principal with ID '{}' not found", command.principal_id),
+            )?;
+
         if !principal.is_user() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "NOT_A_USER",
                 "Password reset only applies to user principals",
             ));
@@ -108,7 +121,7 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
 
         // OIDC-backed users don't have a local password to reset.
         if principal.external_identity.is_some() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "OIDC_USER",
                 "Cannot reset password for OIDC-authenticated users",
             ));
@@ -116,18 +129,10 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
 
         // Hash the new password, honouring the complexity flag.
         let enforce = command.enforce_password_complexity.unwrap_or(true);
-        let hash = match self
+        let hash = self
             .password_service
             .hash_password_with_complexity(&command.new_password, enforce)
-        {
-            Ok(h) => h,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::validation(
-                    "INVALID_PASSWORD",
-                    e.to_string(),
-                ));
-            }
-        };
+            .map_err(|e| UseCaseError::validation("INVALID_PASSWORD", e.to_string()))?;
 
         // Capture the email for the event before we mutate the identity.
         let email = principal
@@ -141,11 +146,8 @@ impl<U: UnitOfWork> UseCase for ResetPasswordUseCase<U> {
         }
         principal.updated_at = chrono::Utc::now();
 
-        let event = PasswordResetCompleted::from_ctx(&ctx, &principal.id, &email);
-
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
+        let event = PasswordResetCompleted::from_ctx(ctx, &principal.id, &email);
+        Ok((principal, event))
     }
 }
 

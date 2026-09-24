@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationAccessAssigned;
-use crate::principal::entity::PrincipalType;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::principal::entity::{Principal, PrincipalType};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ApplicationRepository;
 use crate::PrincipalRepository;
 
@@ -70,26 +72,36 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
         command: AssignApplicationAccessCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ApplicationAccessAssigned> {
-        // Find the principal
-        let mut principal = match self.principal_repo.find_by_id(&command.user_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "USER_NOT_FOUND",
-                    format!("User not found: {}", command.user_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch user: {}",
-                    e
-                )));
-            }
+        let (principal, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> AssignApplicationAccessUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &AssignApplicationAccessCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Principal, ApplicationAccessAssigned), UseCaseError> {
+        // Find the principal
+        let mut principal = self
+            .principal_repo
+            .find_by_id(&command.user_id)
+            .await
+            .or_not_found(
+                "USER_NOT_FOUND",
+                format!("User not found: {}", command.user_id),
+            )?;
 
         // Must be a USER type
         if principal.principal_type != PrincipalType::User {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "NOT_A_USER",
                 "Principal is not a user",
             ));
@@ -97,26 +109,20 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
 
         // Validate all requested applications exist
         for app_id in &command.application_ids {
-            match self.application_repo.find_by_id(app_id).await {
-                Ok(Some(app)) => {
+            match self.application_repo.find_by_id(app_id).await? {
+                Some(app) => {
                     if !app.active {
-                        return UseCaseResult::failure(UseCaseError::business_rule(
+                        return Err(UseCaseError::business_rule(
                             "APPLICATION_INACTIVE",
                             format!("Application is not active: {}", app_id),
                         ));
                     }
                 }
-                Ok(None) => {
-                    return UseCaseResult::failure(UseCaseError::validation(
+                None => {
+                    return Err(UseCaseError::validation(
                         "APPLICATION_NOT_FOUND",
                         format!("Application not found: {}", app_id),
                     ));
-                }
-                Err(e) => {
-                    return UseCaseResult::failure(UseCaseError::commit(format!(
-                        "Failed to fetch application: {}",
-                        e
-                    )));
                 }
             }
         }
@@ -144,16 +150,13 @@ impl<U: UnitOfWork> UseCase for AssignApplicationAccessUseCase<U> {
         principal.updated_at = chrono::Utc::now();
 
         let event = ApplicationAccessAssigned::new(
-            &ctx,
+            ctx,
             &principal.id,
             command.application_ids.clone(),
             added,
             removed,
         );
-
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
+        Ok((principal, event))
     }
 }
 

@@ -102,34 +102,37 @@ impl<U: UnitOfWork> UseCase for RegisterPasskeyUseCase<U> {
         command: RegisterPasskeyCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<PasskeyRegistered> {
+        let (credential, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&credential, &*self.credential_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> RegisterPasskeyUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &RegisterPasskeyCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(WebauthnCredential, PasskeyRegistered), UseCaseError> {
         let RegisterPasskeyCommand {
             principal_id,
             name,
             registration_response,
             registration_state,
         } = command.clone();
-        let state = match registration_state {
-            Some(s) => s,
-            None => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "STATE_MISSING",
-                    "registration ceremony state missing",
-                ))
-            }
-        };
+        let state = registration_state.ok_or_else(|| {
+            UseCaseError::business_rule("STATE_MISSING", "registration ceremony state missing")
+        })?;
 
-        let passkey = match self
+        let passkey = self
             .webauthn_service
             .finish_registration(&registration_response, &state)
-        {
-            Ok(p) => p,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "REGISTRATION_FAILED",
-                    e.to_string(),
-                ))
-            }
-        };
+            .map_err(|e| UseCaseError::business_rule("REGISTRATION_FAILED", e.to_string()))?;
 
         // Reject if the credential is somehow already registered (rare — webauthn-rs
         // de-dupes via exclude_credentials at challenge time, but defence in depth).
@@ -138,17 +141,14 @@ impl<U: UnitOfWork> UseCase for RegisterPasskeyUseCase<U> {
             .find_by_credential_id(passkey.cred_id().as_ref())
             .await
         {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CREDENTIAL_EXISTS",
                 "this credential is already registered",
             ));
         }
 
         let credential = WebauthnCredential::new(&principal_id, passkey, name.clone());
-        let event = PasskeyRegistered::new(&ctx, &credential.id, &principal_id, name);
-
-        self.unit_of_work
-            .commit(&credential, &*self.credential_repo, event, &command)
-            .await
+        let event = PasskeyRegistered::new(ctx, &credential.id, &principal_id, name);
+        Ok((credential, event))
     }
 }

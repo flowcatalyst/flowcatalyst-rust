@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientAccessRevoked;
-use crate::principal::entity::PrincipalType;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::principal::entity::{ClientAccessGrant, PrincipalType};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ClientAccessGrantRepository;
 use crate::PrincipalRepository;
 
@@ -73,57 +75,51 @@ impl<U: UnitOfWork> UseCase for RevokeClientAccessUseCase<U> {
         command: RevokeClientAccessCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ClientAccessRevoked> {
-        // Validate user exists and is a USER type
-        let _principal = match self.principal_repo.find_by_id(&command.user_id).await {
-            Ok(Some(p)) => {
-                if p.principal_type != PrincipalType::User {
-                    return UseCaseResult::failure(UseCaseError::business_rule(
-                        "NOT_A_USER",
-                        "Client access can only be revoked from USER type principals",
-                    ));
-                }
-                p
-            }
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "USER_NOT_FOUND",
-                    format!("User with ID '{}' not found", command.user_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch user: {}",
-                    e
-                )));
-            }
+        let (grant, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        // Find existing grant
-        let grant = match self
-            .grant_repo
-            .find_by_principal_and_client(&command.user_id, &command.client_id)
-            .await
-        {
-            Ok(Some(g)) => g,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "GRANT_NOT_FOUND",
-                    "No access grant found for this user and client",
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch grant: {}",
-                    e
-                )));
-            }
-        };
-
-        let event = ClientAccessRevoked::new(&ctx, &command.user_id, &command.client_id);
 
         self.unit_of_work
             .commit_delete(&grant, &*self.grant_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> RevokeClientAccessUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &RevokeClientAccessCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ClientAccessGrant, ClientAccessRevoked), UseCaseError> {
+        // Validate user exists and is a USER type
+        let principal = self
+            .principal_repo
+            .find_by_id(&command.user_id)
+            .await
+            .or_not_found(
+                "USER_NOT_FOUND",
+                format!("User with ID '{}' not found", command.user_id),
+            )?;
+        if principal.principal_type != PrincipalType::User {
+            return Err(UseCaseError::business_rule(
+                "NOT_A_USER",
+                "Client access can only be revoked from USER type principals",
+            ));
+        }
+
+        // Find existing grant
+        let grant = self
+            .grant_repo
+            .find_by_principal_and_client(&command.user_id, &command.client_id)
+            .await
+            .or_not_found(
+                "GRANT_NOT_FOUND",
+                "No access grant found for this user and client",
+            )?;
+
+        let event = ClientAccessRevoked::new(ctx, &command.user_id, &command.client_id);
+        Ok((grant, event))
     }
 }
 

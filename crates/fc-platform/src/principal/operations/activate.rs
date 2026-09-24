@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserActivated;
+use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for activating a user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,26 +63,37 @@ impl<U: UnitOfWork> UseCase for ActivateUserUseCase<U> {
         command: ActivateUserCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<UserActivated> {
-        // Fetch existing principal
-        let mut principal = match self.principal_repo.find_by_id(&command.principal_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "USER_NOT_FOUND",
-                    format!("User with ID '{}' not found", command.principal_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch user: {}",
-                    e
-                )));
-            }
+        let (principal, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> ActivateUserUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &ActivateUserCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Principal, UserActivated), UseCaseError> {
+        // Fetch existing principal
+        let mut principal = self
+            .principal_repo
+            .find_by_id(&command.principal_id)
+            .await
+            .or_not_found(
+                "USER_NOT_FOUND",
+                format!("User with ID '{}' not found", command.principal_id),
+            )?;
 
         // Business rule: user must not already be active
         if principal.active {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ALREADY_ACTIVE",
                 "User is already active",
             ));
@@ -89,12 +103,8 @@ impl<U: UnitOfWork> UseCase for ActivateUserUseCase<U> {
         principal.activate();
 
         // Create domain event
-        let event = UserActivated::new(&ctx, &principal.id);
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
+        let event = UserActivated::new(ctx, &principal.id);
+        Ok((principal, event))
     }
 }
 

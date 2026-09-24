@@ -20,7 +20,10 @@ use webauthn_rs::prelude::{PasskeyAuthentication, PublicKeyCredential};
 use super::events::UserLoggedInWithPasskey;
 use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::webauthn::entity::WebauthnCredential;
 use crate::webauthn::repository::WebauthnCredentialRepository;
 use crate::webauthn::webauthn_service::WebauthnService;
 
@@ -92,75 +95,56 @@ impl<U: UnitOfWork> UseCase for AuthenticatePasskeyUseCase<U> {
         command: AuthenticatePasskeyCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<UserLoggedInWithPasskey> {
-        let state = match command.authentication_state.clone() {
-            Some(s) => s,
-            None => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "STATE_MISSING",
-                    "authentication ceremony state missing",
-                ))
-            }
+        let (credential, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work
+            .commit(&credential, &*self.credential_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &AuthenticatePasskeyCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(WebauthnCredential, UserLoggedInWithPasskey), UseCaseError> {
+        let state = command.authentication_state.clone().ok_or_else(|| {
+            UseCaseError::business_rule("STATE_MISSING", "authentication ceremony state missing")
+        })?;
 
         // 1. Verify the assertion. Rejects on signature mismatch, origin/RP-ID
         //    mismatch, or counter regression (CredentialPossibleCompromise).
-        let result = match self
+        let result = self
             .webauthn_service
             .finish_authentication(&command.authentication_response, &state)
-        {
-            Ok(r) => r,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "ASSERTION_FAILED",
-                    e.to_string(),
-                ))
-            }
-        };
+            .map_err(|e| UseCaseError::business_rule("ASSERTION_FAILED", e.to_string()))?;
 
         // 2. Load the credential row that was just asserted.
-        let mut credential = match self
+        let mut credential = self
             .credential_repo
             .find_by_credential_id(result.cred_id().as_ref())
             .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CREDENTIAL_NOT_FOUND",
-                    "no stored credential matches the asserted credential id",
-                ))
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load credential: {}",
-                    e,
-                )))
-            }
-        };
+            .or_not_found(
+                "CREDENTIAL_NOT_FOUND",
+                "no stored credential matches the asserted credential id",
+            )?;
 
         // 3. Load the principal.
-        let principal = match self
+        let principal = self
             .principal_repo
             .find_by_id(&credential.principal_id)
             .await
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "PRINCIPAL_NOT_FOUND",
-                    "the credential's principal no longer exists",
-                ))
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load principal: {}",
-                    e,
-                )))
-            }
-        };
+            .or_not_found(
+                "PRINCIPAL_NOT_FOUND",
+                "the credential's principal no longer exists",
+            )?;
 
         if !principal.active {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "PRINCIPAL_INACTIVE",
                 "this account is not active",
             ));
@@ -169,43 +153,30 @@ impl<U: UnitOfWork> UseCase for AuthenticatePasskeyUseCase<U> {
         // 4. Hard-cutover domain gate: if the principal's domain has been
         //    mapped to a federated IdP since the passkey was registered, the
         //    passkey is no longer usable — the IdP owns identity.
-        let email = match principal.email() {
-            Some(e) => e,
-            None => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "PRINCIPAL_NO_EMAIL",
-                    "passkey login requires a principal with an email address",
-                ))
-            }
-        };
+        let email = principal.email().ok_or_else(|| {
+            UseCaseError::business_rule(
+                "PRINCIPAL_NO_EMAIL",
+                "passkey login requires a principal with an email address",
+            )
+        })?;
         let domain = email.split('@').nth(1).unwrap_or("").to_lowercase();
-        match self
+        if self
             .email_domain_mapping_repo
             .find_by_email_domain(&domain)
-            .await
+            .await?
+            .is_some()
         {
-            Ok(Some(_)) => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "DOMAIN_FEDERATED",
-                    "this account's domain is federated; sign in via your identity provider",
-                ))
-            }
-            Ok(None) => {}
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to check email domain mapping: {}",
-                    e,
-                )))
-            }
+            return Err(UseCaseError::business_rule(
+                "DOMAIN_FEDERATED",
+                "this account's domain is federated; sign in via your identity provider",
+            ));
         }
 
         // 5. Apply counter / backup-state updates to the stored Passkey.
         credential.record_authentication(&result);
 
         // 6. Commit credential update + login event.
-        let event = UserLoggedInWithPasskey::new(&ctx, &credential.id, &credential.principal_id);
-        self.unit_of_work
-            .commit(&credential, &*self.credential_repo, event, &command)
-            .await
+        let event = UserLoggedInWithPasskey::new(ctx, &credential.id, &credential.principal_id);
+        Ok((credential, event))
     }
 }

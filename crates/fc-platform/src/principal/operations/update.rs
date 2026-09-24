@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserUpdated;
-use crate::principal::entity::UserScope;
+use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for updating an existing user / principal.
 ///
@@ -114,22 +116,32 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
         command: UpdateUserCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<UserUpdated> {
-        // Fetch existing principal
-        let mut principal = match self.principal_repo.find_by_id(&command.principal_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "USER_NOT_FOUND",
-                    format!("User with ID '{}' not found", command.principal_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch user: {}",
-                    e
-                )));
-            }
+        let (principal, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateUserUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateUserCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Principal, UserUpdated), UseCaseError> {
+        // Fetch existing principal
+        let mut principal = self
+            .principal_repo
+            .find_by_id(&command.principal_id)
+            .await
+            .or_not_found(
+                "USER_NOT_FOUND",
+                format!("User with ID '{}' not found", command.principal_id),
+            )?;
 
         // Apply updates — track whether anything actually changed.
         let mut changed = false;
@@ -183,13 +195,9 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
                                 "CLIENT_ID_REQUIRED",
                                 "client_id is required when scope is CLIENT",
                             )
-                        });
-                    let cid = match cid {
-                        Ok(v) => v,
-                        Err(e) => return UseCaseResult::failure(e),
-                    };
+                        })?;
                     if cid.trim().is_empty() {
-                        return UseCaseResult::failure(UseCaseError::validation(
+                        return Err(UseCaseError::validation(
                             "CLIENT_ID_REQUIRED",
                             "client_id cannot be empty when scope is CLIENT",
                         ));
@@ -227,7 +235,7 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
         }
 
         if !changed {
-            return UseCaseResult::failure(UseCaseError::validation(
+            return Err(UseCaseError::validation(
                 "NO_CHANGES",
                 "No changes detected",
             ));
@@ -235,11 +243,8 @@ impl<U: UnitOfWork> UseCase for UpdateUserUseCase<U> {
 
         principal.updated_at = chrono::Utc::now();
 
-        let event = UserUpdated::new(&ctx, &principal.id, new_name.as_deref(), None);
-
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
+        let event = UserUpdated::new(ctx, &principal.id, new_name.as_deref(), None);
+        Ok((principal, event))
     }
 }
 

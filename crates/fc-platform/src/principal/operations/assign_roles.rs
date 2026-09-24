@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::RolesAssigned;
-use crate::principal::entity::PrincipalType;
+use crate::principal::entity::{Principal, PrincipalType};
 use crate::service_account::entity::RoleAssignment;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::PrincipalRepository;
 use crate::RoleRepository;
 
@@ -68,25 +70,35 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
         command: AssignUserRolesCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<RolesAssigned> {
-        let mut principal = match self.principal_repo.find_by_id(&command.user_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "USER_NOT_FOUND",
-                    format!("User with ID '{}' not found", command.user_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch user: {}",
-                    e
-                )));
-            }
+        let (principal, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> AssignUserRolesUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &AssignUserRolesCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Principal, RolesAssigned), UseCaseError> {
+        let mut principal = self
+            .principal_repo
+            .find_by_id(&command.user_id)
+            .await
+            .or_not_found(
+                "USER_NOT_FOUND",
+                format!("User with ID '{}' not found", command.user_id),
+            )?;
 
         // Must be a USER type principal
         if principal.principal_type != PrincipalType::User {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "NOT_A_USER",
                 "Roles can only be assigned to USER type principals",
             ));
@@ -96,20 +108,11 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
         // (400), not a 404 — this endpoint's 404 is reserved for "principal
         // not found".
         for role_name in &command.roles {
-            match self.role_repo.exists_by_name(role_name).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    return UseCaseResult::failure(UseCaseError::validation(
-                        "ROLE_NOT_FOUND",
-                        format!("Role '{}' not found", role_name),
-                    ));
-                }
-                Err(e) => {
-                    return UseCaseResult::failure(UseCaseError::commit(format!(
-                        "Failed to validate role: {}",
-                        e
-                    )));
-                }
+            if !self.role_repo.exists_by_name(role_name).await? {
+                return Err(UseCaseError::validation(
+                    "ROLE_NOT_FOUND",
+                    format!("Role '{}' not found", role_name),
+                ));
             }
         }
 
@@ -135,11 +138,8 @@ impl<U: UnitOfWork> UseCase for AssignUserRolesUseCase<U> {
             .collect();
         principal.updated_at = chrono::Utc::now();
 
-        let event = RolesAssigned::new(&ctx, &principal.id, command.roles.clone(), added, removed);
-
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
+        let event = RolesAssigned::new(ctx, &principal.id, command.roles.clone(), added, removed);
+        Ok((principal, event))
     }
 }
 

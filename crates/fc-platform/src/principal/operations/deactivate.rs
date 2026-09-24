@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::UserDeactivated;
+use crate::principal::entity::Principal;
 use crate::principal::repository::PrincipalRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for deactivating a user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,26 +67,37 @@ impl<U: UnitOfWork> UseCase for DeactivateUserUseCase<U> {
         command: DeactivateUserCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<UserDeactivated> {
-        // Fetch existing principal
-        let mut principal = match self.principal_repo.find_by_id(&command.principal_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "USER_NOT_FOUND",
-                    format!("User with ID '{}' not found", command.principal_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch user: {}",
-                    e
-                )));
-            }
+        let (principal, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&principal, &*self.principal_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DeactivateUserUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeactivateUserCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Principal, UserDeactivated), UseCaseError> {
+        // Fetch existing principal
+        let mut principal = self
+            .principal_repo
+            .find_by_id(&command.principal_id)
+            .await
+            .or_not_found(
+                "USER_NOT_FOUND",
+                format!("User with ID '{}' not found", command.principal_id),
+            )?;
 
         // Business rule: user must not already be deactivated
         if !principal.active {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ALREADY_DEACTIVATED",
                 "User is already deactivated",
             ));
@@ -93,12 +107,8 @@ impl<U: UnitOfWork> UseCase for DeactivateUserUseCase<U> {
         principal.deactivate();
 
         // Create domain event
-        let event = UserDeactivated::new(&ctx, &principal.id, command.reason.as_deref());
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&principal, &*self.principal_repo, event, &command)
-            .await
+        let event = UserDeactivated::new(ctx, &principal.id, command.reason.as_deref());
+        Ok((principal, event))
     }
 }
 
