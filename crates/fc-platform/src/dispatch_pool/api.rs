@@ -88,7 +88,7 @@ impl From<DispatchPool> for DispatchPoolResponse {
             name: p.name,
             description: p.description,
             client_id: p.client_id,
-            status: format!("{:?}", p.status).to_uppercase(),
+            status: p.status.as_str().to_string(),
             rate_limit: p.rate_limit.map(|r| r as u32),
             concurrency: Some(p.concurrency as u32),
             created_at: p.created_at.to_rfc3339(),

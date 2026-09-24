@@ -190,13 +190,13 @@ impl From<Subscription> for SubscriptionResponse {
             queue: s.queue,
             custom_config: s.custom_config.iter().map(|c| c.into()).collect(),
             source: None, // Not tracked in Rust domain yet
-            status: format!("{:?}", s.status).to_uppercase(),
+            status: s.status.as_str().to_string(),
             max_age_seconds: s.max_age_seconds as u32,
             dispatch_pool_id: s.dispatch_pool_id,
             dispatch_pool_code: None, // Denormalized, populated by projection
             delay_seconds: s.delay_seconds as u32,
             sequence: s.sequence,
-            mode: format!("{:?}", s.mode).to_uppercase(),
+            mode: s.mode.as_str().to_string(),
             timeout_seconds: s.timeout_seconds as u32,
             max_retries: s.max_retries as u32,
             service_account_id: s.service_account_id,
@@ -256,7 +256,7 @@ pub struct SubscriptionsState {
 fn parse_mode(s: &str) -> Result<DispatchMode, PlatformError> {
     match s.to_uppercase().as_str() {
         "IMMEDIATE" => Ok(DispatchMode::Immediate),
-        "BLOCK_ON_ERROR" | "BLOCKONERROR" => Ok(DispatchMode::BlockOnError),
+        "BLOCK_ON_ERROR" => Ok(DispatchMode::BlockOnError),
         _ => Err(PlatformError::validation(format!(
             "Invalid mode: {}. Valid options: IMMEDIATE, BLOCK_ON_ERROR",
             s

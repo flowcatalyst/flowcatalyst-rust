@@ -123,7 +123,7 @@ impl ClientActivated {
                 format!("platform:client:{}", client_id),
             ),
             client_id: client_id.to_string(),
-            previous_status: format!("{:?}", previous_status).to_uppercase(),
+            previous_status: previous_status.as_str().to_string(),
         }
     }
 }

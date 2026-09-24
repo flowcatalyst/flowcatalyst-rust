@@ -353,8 +353,8 @@ impl From<Principal> for PrincipalResponse {
 
         Self {
             id: p.id,
-            principal_type: format!("{:?}", p.principal_type).to_uppercase(),
-            scope: format!("{:?}", p.scope).to_uppercase(),
+            principal_type: p.principal_type.as_str().to_string(),
+            scope: p.scope.as_str().to_string(),
             client_id: p.client_id,
             name: p.name,
             active: p.active,

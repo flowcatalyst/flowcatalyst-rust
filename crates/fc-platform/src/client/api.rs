@@ -72,7 +72,7 @@ impl From<Client> for ClientResponse {
             id: c.id,
             name: c.name,
             identifier: c.identifier,
-            status: format!("{:?}", c.status).to_uppercase(),
+            status: c.status.as_str().to_string(),
             status_reason: c.status_reason,
             status_changed_at: c.status_changed_at.map(|t| t.to_rfc3339()),
             created_at: c.created_at.to_rfc3339(),

@@ -103,7 +103,7 @@ impl From<SpecVersion> for SpecVersionResponse {
     fn from(v: SpecVersion) -> Self {
         Self {
             version: v.version,
-            status: format!("{:?}", v.status).to_uppercase(),
+            status: v.status.as_str().to_string(),
             schema: v.schema_content,
         }
     }
@@ -116,7 +116,7 @@ impl From<EventType> for EventTypeResponse {
             code: et.code,
             name: et.name,
             description: et.description,
-            status: format!("{:?}", et.status).to_uppercase(),
+            status: et.status.as_str().to_string(),
             application: et.application,
             subdomain: et.subdomain,
             aggregate: et.aggregate,

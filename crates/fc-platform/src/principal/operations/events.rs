@@ -54,7 +54,7 @@ impl UserCreated {
             email: email.to_string(),
             email_domain: extract_email_domain(email),
             name: name.to_string(),
-            scope: format!("{:?}", scope).to_uppercase(),
+            scope: scope.as_str().to_string(),
             client_id: client_id.map(String::from),
             is_anchor_user: scope == UserScope::Anchor,
         }

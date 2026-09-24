@@ -236,12 +236,12 @@ impl From<ClientAuthConfig> for ClientAuthConfigResponse {
         Self {
             id: c.id.clone(),
             email_domain: c.email_domain,
-            config_type: format!("{:?}", c.config_type).to_uppercase(),
+            config_type: c.config_type.as_str().to_string(),
             primary_client_id: c.primary_client_id.clone(),
             additional_client_ids: c.additional_client_ids.clone(),
             granted_client_ids: c.granted_client_ids,
             client_id: c.primary_client_id, // deprecated
-            auth_provider: format!("{:?}", c.auth_provider).to_uppercase(),
+            auth_provider: c.auth_provider.as_str().to_string(),
             oidc_issuer_url: c.oidc_issuer_url,
             oidc_client_id: c.oidc_client_id,
             has_client_secret: c.oidc_client_secret_ref.is_some(),

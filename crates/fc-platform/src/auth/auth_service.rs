@@ -733,8 +733,8 @@ impl AuthService {
             acr: None, // Not tracking authentication context class yet
             amr: None, // Not tracking authentication methods yet
             azp: Some(client_id.to_string()), // Always set when aud is single-valued (OIDC Core §2)
-            principal_type: format!("{:?}", principal.principal_type).to_uppercase(),
-            scope: format!("{:?}", principal.scope).to_uppercase(),
+            principal_type: principal.principal_type.as_str().to_string(),
+            scope: principal.scope.as_str().to_string(),
             client_id: principal.client_id.clone(),
             roles: role_names,
             applications,
@@ -801,8 +801,8 @@ impl AuthService {
             iat: now.timestamp(),
             nbf: now.timestamp(),
             jti: crate::shared::tsid::generate_untyped(),
-            principal_type: format!("{:?}", principal.principal_type).to_uppercase(),
-            scope: format!("{:?}", principal.scope).to_uppercase(),
+            principal_type: principal.principal_type.as_str().to_string(),
+            scope: principal.scope.as_str().to_string(),
             email: principal.email().map(String::from),
             name: principal.name.clone(),
             clients,

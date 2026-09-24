@@ -117,7 +117,7 @@ impl From<OAuthClient> for OAuthClientResponse {
             id: c.id,
             client_id: c.client_id,
             client_name: c.client_name,
-            client_type: format!("{:?}", c.client_type).to_uppercase(),
+            client_type: c.client_type.as_str().to_string(),
             redirect_uris: c.redirect_uris,
             post_logout_redirect_uris: c.post_logout_redirect_uris,
             grant_types: c

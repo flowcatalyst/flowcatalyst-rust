@@ -103,7 +103,7 @@ impl From<Application> for ApplicationResponse {
             code: a.code,
             name: a.name,
             description: a.description,
-            application_type: format!("{:?}", a.application_type).to_uppercase(),
+            application_type: a.application_type.as_str().to_string(),
             default_base_url: a.default_base_url,
             icon_url: a.icon_url,
             service_account_id: a.service_account_id,
