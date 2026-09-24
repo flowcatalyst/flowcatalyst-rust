@@ -138,8 +138,6 @@ pub struct CreateOidcAuthConfigRequest {
     pub oidc_issuer_url: String,
     /// OIDC client ID
     pub oidc_client_id: String,
-    /// OIDC client secret reference (optional)
-    pub oidc_client_secret_ref: Option<String>,
 }
 
 /// Update OIDC config request
@@ -150,8 +148,6 @@ pub struct UpdateOidcConfigRequest {
     pub oidc_issuer_url: Option<String>,
     /// OIDC client ID
     pub oidc_client_id: Option<String>,
-    /// OIDC client secret reference
-    pub oidc_client_secret_ref: Option<String>,
 }
 
 /// Update client binding request
@@ -176,24 +172,6 @@ pub struct UpdateAdditionalClientsRequest {
 pub struct UpdateGrantedClientsRequest {
     /// Granted client IDs
     pub granted_client_ids: Vec<String>,
-}
-
-/// Validate secret request
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ValidateSecretRequest {
-    /// Secret reference to validate
-    pub secret_ref: String,
-}
-
-/// Validate secret response
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct ValidateSecretResponse {
-    /// Whether the secret is valid
-    pub valid: bool,
-    /// Error message if invalid
-    pub error: Option<String>,
 }
 
 /// Client auth config response DTO
@@ -1162,39 +1140,6 @@ pub async fn update_granted_clients(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Validate secret reference
-#[utoipa::path(
-    post,
-    path = "/validate-secret",
-    tag = "auth-configs",
-    operation_id = "postApiAuthConfigsValidateSecret",
-    request_body = ValidateSecretRequest,
-    responses(
-        (status = 200, description = "Secret validation result", body = ValidateSecretResponse)
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn validate_secret(
-    State(_state): State<AuthConfigState>,
-    auth: Authenticated,
-    Json(req): Json<ValidateSecretRequest>,
-) -> Result<Json<ValidateSecretResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
-
-    // Basic validation - check if secret ref format is valid
-    // In a real implementation, this would verify the secret exists in a vault
-    let valid = !req.secret_ref.is_empty() && req.secret_ref.starts_with("secret://");
-
-    Ok(Json(ValidateSecretResponse {
-        valid,
-        error: if valid {
-            None
-        } else {
-            Some("Invalid secret reference format".to_string())
-        },
-    }))
-}
-
 // ============================================================================
 // IDP Role Mapping Handlers
 // ============================================================================
@@ -1349,7 +1294,6 @@ pub fn client_auth_configs_router(state: AuthConfigState) -> Router {
         )
         .route("/internal", post(create_internal_auth_config))
         .route("/oidc", post(create_oidc_auth_config))
-        .route("/validate-secret", post(validate_secret))
         .route("/by-domain/{domain}", get(get_by_domain))
         .route(
             "/{id}",
