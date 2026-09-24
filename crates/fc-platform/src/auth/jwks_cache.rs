@@ -11,6 +11,19 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
+/// Why the JWKS for an issuer could not be obtained.
+#[derive(Debug, thiserror::Error)]
+pub enum JwksError {
+    #[error("Failed to fetch OIDC discovery from {url}: {source}")]
+    DiscoveryFetch { url: String, source: reqwest::Error },
+    #[error("Failed to parse OIDC discovery: {0}")]
+    DiscoveryParse(#[source] reqwest::Error),
+    #[error("Failed to fetch JWKS from {url}: {source}")]
+    JwksFetch { url: String, source: reqwest::Error },
+    #[error("Failed to parse JWKS: {0}")]
+    JwksParse(#[source] reqwest::Error),
+}
+
 /// Cached JWKS entry for a single issuer
 struct CachedJwks {
     jwks: Jwks,
@@ -65,7 +78,7 @@ impl JwksCache {
     }
 
     /// Get JWKS for an issuer, fetching from the network if not cached or expired.
-    pub async fn get_jwks(&self, issuer_url: &str) -> Result<Jwks, String> {
+    pub async fn get_jwks(&self, issuer_url: &str) -> Result<Jwks, JwksError> {
         // Check cache first
         {
             let cache = self.cache.read().await;
@@ -97,7 +110,7 @@ impl JwksCache {
     }
 
     /// Fetch JWKS from the issuer's discovery endpoint
-    async fn fetch_jwks(&self, issuer_url: &str) -> Result<Jwks, String> {
+    async fn fetch_jwks(&self, issuer_url: &str) -> Result<Jwks, JwksError> {
         let base = issuer_url.trim_end_matches('/');
         let discovery_url = format!("{}/.well-known/openid-configuration", base);
 
@@ -108,15 +121,13 @@ impl JwksCache {
             .get(&discovery_url)
             .send()
             .await
-            .map_err(|e| {
-                format!(
-                    "Failed to fetch OIDC discovery from {}: {}",
-                    discovery_url, e
-                )
+            .map_err(|source| JwksError::DiscoveryFetch {
+                url: discovery_url.clone(),
+                source,
             })?
             .json()
             .await
-            .map_err(|e| format!("Failed to parse OIDC discovery: {}", e))?;
+            .map_err(JwksError::DiscoveryParse)?;
 
         debug!(jwks_uri = %discovery.jwks_uri, "Fetching JWKS");
 
@@ -125,10 +136,13 @@ impl JwksCache {
             .get(&discovery.jwks_uri)
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch JWKS from {}: {}", discovery.jwks_uri, e))?
+            .map_err(|source| JwksError::JwksFetch {
+                url: discovery.jwks_uri.clone(),
+                source,
+            })?
             .json()
             .await
-            .map_err(|e| format!("Failed to parse JWKS: {}", e))?;
+            .map_err(JwksError::JwksParse)?;
 
         if jwks.keys.is_empty() {
             warn!(issuer = %issuer_url, "JWKS contains no keys");

@@ -43,45 +43,83 @@ impl Default for PasswordPolicy {
     }
 }
 
+/// A password policy rule that a password broke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PasswordRule {
+    #[error("Password must be at least {0} characters")]
+    MinLength(usize),
+    #[error("Password must be at most {0} characters")]
+    MaxLength(usize),
+    #[error("Password must contain at least one uppercase letter")]
+    Uppercase,
+    #[error("Password must contain at least one lowercase letter")]
+    Lowercase,
+    #[error("Password must contain at least one digit")]
+    Digit,
+    #[error("Password must contain at least one special character")]
+    SpecialChar,
+}
+
+/// Every rule a password broke, in policy order. Displays as the rule
+/// messages joined with `"; "`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswordPolicyError(pub Vec<PasswordRule>);
+
+impl std::fmt::Display for PasswordPolicyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, rule) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str("; ")?;
+            }
+            write!(f, "{}", rule)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for PasswordPolicyError {}
+
+impl From<PasswordPolicyError> for PlatformError {
+    fn from(err: PasswordPolicyError) -> Self {
+        PlatformError::Validation {
+            message: err.to_string(),
+        }
+    }
+}
+
 impl PasswordPolicy {
     /// Validate a password against the policy
-    pub fn validate(&self, password: &str) -> std::result::Result<(), Vec<String>> {
+    pub fn validate(&self, password: &str) -> std::result::Result<(), PasswordPolicyError> {
         let mut errors = Vec::new();
 
         if password.len() < self.min_length {
-            errors.push(format!(
-                "Password must be at least {} characters",
-                self.min_length
-            ));
+            errors.push(PasswordRule::MinLength(self.min_length));
         }
 
         if password.len() > self.max_length {
-            errors.push(format!(
-                "Password must be at most {} characters",
-                self.max_length
-            ));
+            errors.push(PasswordRule::MaxLength(self.max_length));
         }
 
         if self.require_uppercase && !password.chars().any(|c| c.is_ascii_uppercase()) {
-            errors.push("Password must contain at least one uppercase letter".to_string());
+            errors.push(PasswordRule::Uppercase);
         }
 
         if self.require_lowercase && !password.chars().any(|c| c.is_ascii_lowercase()) {
-            errors.push("Password must contain at least one lowercase letter".to_string());
+            errors.push(PasswordRule::Lowercase);
         }
 
         if self.require_digit && !password.chars().any(|c| c.is_ascii_digit()) {
-            errors.push("Password must contain at least one digit".to_string());
+            errors.push(PasswordRule::Digit);
         }
 
         if self.require_special && !password.chars().any(|c| self.special_chars.contains(c)) {
-            errors.push("Password must contain at least one special character".to_string());
+            errors.push(PasswordRule::SpecialChar);
         }
 
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(errors)
+            Err(PasswordPolicyError(errors))
         }
     }
 
@@ -223,11 +261,7 @@ impl PasswordService {
     }
 
     fn hash_with_policy(&self, password: &str, policy: &PasswordPolicy) -> Result<String> {
-        if let Err(errors) = policy.validate(password) {
-            return Err(PlatformError::Validation {
-                message: errors.join("; "),
-            });
-        }
+        policy.validate(password)?;
 
         let salt = SaltString::generate(&mut OsRng);
 
@@ -286,11 +320,7 @@ impl PasswordService {
 
     /// Validate password against policy without hashing
     pub fn validate_password(&self, password: &str) -> Result<()> {
-        self.policy
-            .validate(password)
-            .map_err(|errors| PlatformError::Validation {
-                message: errors.join("; "),
-            })
+        Ok(self.policy.validate(password)?)
     }
 
     /// Validate password, optionally bypassing complexity for SDK callers.
@@ -299,20 +329,12 @@ impl PasswordService {
         password: &str,
         enforce_complexity: bool,
     ) -> Result<()> {
-        let policy = if enforce_complexity {
-            &self.policy
+        if enforce_complexity {
+            self.policy.validate(password)?;
         } else {
-            return PasswordPolicy::relaxed()
-                .validate(password)
-                .map_err(|errors| PlatformError::Validation {
-                    message: errors.join("; "),
-                });
-        };
-        policy
-            .validate(password)
-            .map_err(|errors| PlatformError::Validation {
-                message: errors.join("; "),
-            })
+            PasswordPolicy::relaxed().validate(password)?;
+        }
+        Ok(())
     }
 
     /// Get the current password policy
@@ -494,7 +516,7 @@ mod tests {
         let policy = PasswordPolicy::default();
         let result = policy.validate(""); // empty: fails length + all requirements
         assert!(result.is_err());
-        let errors = result.unwrap_err();
+        let errors = result.unwrap_err().0;
         // Should report at least length + uppercase + lowercase + digit + special
         assert!(
             errors.len() >= 5,
@@ -502,5 +524,21 @@ mod tests {
             errors.len(),
             errors
         );
+    }
+
+    #[test]
+    fn test_password_policy_error_message() {
+        let err = PasswordPolicy::default().validate("short").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Password must be at least 8 characters; \
+             Password must contain at least one uppercase letter; \
+             Password must contain at least one digit; \
+             Password must contain at least one special character"
+        );
+        match PlatformError::from(err) {
+            PlatformError::Validation { message } => assert!(message.starts_with("Password must")),
+            other => panic!("expected Validation, got {other:?}"),
+        }
     }
 }

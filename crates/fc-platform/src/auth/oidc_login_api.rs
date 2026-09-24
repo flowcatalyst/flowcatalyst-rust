@@ -28,7 +28,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 
-use crate::auth::jwks_cache::JwksCache;
+use crate::auth::jwks_cache::{JwksCache, JwksError};
 use crate::email_domain_mapping::entity::ScopeType;
 use crate::identity_provider::entity::{IdentityProvider, IdentityProviderType};
 use crate::principal::operations::events::UserLoggedIn;
@@ -893,16 +893,43 @@ struct TokenExchangeResponse {
     refresh_token: Option<String>,
 }
 
+/// Why the authorization code could not be exchanged at the IDP. Only
+/// logged; the user sees a fixed message.
+#[derive(Debug, thiserror::Error)]
+enum TokenExchangeError {
+    #[error("Missing issuer URL")]
+    MissingIssuerUrl,
+    #[error("Missing client ID")]
+    MissingClientId,
+    #[error("HTTP request failed: {0}")]
+    Http(#[source] reqwest::Error),
+    #[error("Token endpoint returned {status}: {body}")]
+    TokenEndpoint {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+    #[error("Failed to parse token response: {0}")]
+    ParseResponse(#[source] reqwest::Error),
+    #[error("No ID token in response")]
+    MissingIdToken,
+}
+
 async fn exchange_code_for_tokens_from_idp(
     idp: &IdentityProvider,
     code: &str,
     code_verifier: &str,
     callback_url: &str,
     encryption_service: Option<&EncryptionService>,
-) -> Result<TokenExchangeResponse, String> {
-    let issuer = idp.oidc_issuer_url.as_deref().ok_or("Missing issuer URL")?;
+) -> Result<TokenExchangeResponse, TokenExchangeError> {
+    let issuer = idp
+        .oidc_issuer_url
+        .as_deref()
+        .ok_or(TokenExchangeError::MissingIssuerUrl)?;
     let token_endpoint = get_token_endpoint(issuer);
-    let client_id = idp.oidc_client_id.as_deref().ok_or("Missing client ID")?;
+    let client_id = idp
+        .oidc_client_id
+        .as_deref()
+        .ok_or(TokenExchangeError::MissingClientId)?;
 
     let mut params = vec![
         ("grant_type", "authorization_code"),
@@ -940,22 +967,22 @@ async fn exchange_code_for_tokens_from_idp(
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
+        .map_err(TokenExchangeError::Http)?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Token endpoint returned {}: {}", status, body));
+        return Err(TokenExchangeError::TokenEndpoint { status, body });
     }
 
     let json: serde_json::Value = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse token response: {}", e))?;
+        .map_err(TokenExchangeError::ParseResponse)?;
 
     let id_token = json["id_token"]
         .as_str()
-        .ok_or("No ID token in response")?
+        .ok_or(TokenExchangeError::MissingIdToken)?
         .to_string();
 
     Ok(TokenExchangeResponse {
@@ -978,6 +1005,42 @@ struct IdTokenClaims {
     raw_claims: serde_json::Value,
 }
 
+/// Why an ID token was rejected. Only logged; the user sees a fixed
+/// message.
+#[derive(Debug, thiserror::Error)]
+enum IdTokenError {
+    #[error("Missing issuer URL on IDP")]
+    MissingIssuerUrl,
+    #[error("Missing client ID on IDP")]
+    MissingClientId,
+    #[error("Invalid ID token header: {0}")]
+    InvalidHeader(#[source] jsonwebtoken::errors::Error),
+    #[error(transparent)]
+    Jwks(#[from] JwksError),
+    #[error("No matching key found in JWKS for kid: {0:?}")]
+    NoMatchingKey(Option<String>),
+    #[error("Missing '{0}' in RSA JWK")]
+    MissingRsaComponent(&'static str),
+    #[error("Invalid RSA key components: {0}")]
+    InvalidRsaKey(#[source] jsonwebtoken::errors::Error),
+    #[error("Unsupported JWK key type: {0}")]
+    UnsupportedKeyType(String),
+    #[error("JWT signature validation failed: {0}")]
+    Signature(#[source] jsonwebtoken::errors::Error),
+    #[error("Missing {0} claim")]
+    MissingClaim(&'static str),
+    #[error("Invalid issuer for multi-tenant IDP: {0}")]
+    InvalidIssuer(String),
+    #[error("Nonce mismatch")]
+    NonceMismatch,
+    #[error("No email claim in ID token")]
+    MissingEmail,
+    #[error(
+        "External guest accounts are not supported. Please sign in with your home organization."
+    )]
+    ExternalGuest,
+}
+
 /// Validate an ID token using JWKS signature verification.
 ///
 /// This fetches (or uses cached) JWKS from the IDP's discovery endpoint,
@@ -988,18 +1051,18 @@ async fn validate_id_token_with_jwks(
     idp: &IdentityProvider,
     expected_nonce: &str,
     jwks_cache: &JwksCache,
-) -> Result<IdTokenClaims, String> {
+) -> Result<IdTokenClaims, IdTokenError> {
     let issuer_url = idp
         .oidc_issuer_url
         .as_deref()
-        .ok_or("Missing issuer URL on IDP")?;
+        .ok_or(IdTokenError::MissingIssuerUrl)?;
     let expected_client_id = idp
         .oidc_client_id
         .as_deref()
-        .ok_or("Missing client ID on IDP")?;
+        .ok_or(IdTokenError::MissingClientId)?;
 
     // Decode JWT header to get `kid` (key ID)
-    let header = decode_header(id_token).map_err(|e| format!("Invalid ID token header: {}", e))?;
+    let header = decode_header(id_token).map_err(IdTokenError::InvalidHeader)?;
 
     // Fetch JWKS for this issuer
     let jwks = jwks_cache.get_jwks(issuer_url).await?;
@@ -1014,17 +1077,22 @@ async fn validate_id_token_with_jwks(
                 .as_ref()
                 .is_none_or(|kid| k.kid.as_ref() == Some(kid))
         })
-        .ok_or_else(|| format!("No matching key found in JWKS for kid: {:?}", header.kid))?;
+        .ok_or_else(|| IdTokenError::NoMatchingKey(header.kid.clone()))?;
 
     // Build DecodingKey from JWK (RSA only for now — covers Entra ID, Keycloak, Google, etc.)
     let decoding_key = match jwk.kty.as_str() {
         "RSA" => {
-            let n = jwk.n.as_ref().ok_or("Missing 'n' in RSA JWK")?;
-            let e = jwk.e.as_ref().ok_or("Missing 'e' in RSA JWK")?;
-            DecodingKey::from_rsa_components(n, e)
-                .map_err(|e| format!("Invalid RSA key components: {}", e))?
+            let n = jwk
+                .n
+                .as_ref()
+                .ok_or(IdTokenError::MissingRsaComponent("n"))?;
+            let e = jwk
+                .e
+                .as_ref()
+                .ok_or(IdTokenError::MissingRsaComponent("e"))?;
+            DecodingKey::from_rsa_components(n, e).map_err(IdTokenError::InvalidRsaKey)?
         }
-        other => return Err(format!("Unsupported JWK key type: {}", other)),
+        other => return Err(IdTokenError::UnsupportedKeyType(other.to_string())),
     };
 
     // Determine algorithm from header (default RS256)
@@ -1053,36 +1121,36 @@ async fn validate_id_token_with_jwks(
 
     // Decode and verify signature + standard claims
     let token_data = decode::<serde_json::Value>(id_token, &decoding_key, &validation)
-        .map_err(|e| format!("JWT signature validation failed: {}", e))?;
+        .map_err(IdTokenError::Signature)?;
 
     let payload = token_data.claims;
 
     // Extract claims
     let issuer = payload["iss"]
         .as_str()
-        .ok_or("Missing issuer claim")?
+        .ok_or(IdTokenError::MissingClaim("issuer"))?
         .to_string();
     let subject = payload["sub"]
         .as_str()
-        .ok_or("Missing subject claim")?
+        .ok_or(IdTokenError::MissingClaim("subject"))?
         .to_string();
 
     // For multi-tenant: manually validate issuer against pattern
     if idp.oidc_multi_tenant && !is_valid_issuer_for_idp(idp, &issuer) {
-        return Err(format!("Invalid issuer for multi-tenant IDP: {}", issuer));
+        return Err(IdTokenError::InvalidIssuer(issuer));
     }
 
     // Validate nonce
     let nonce = payload["nonce"].as_str();
     if nonce != Some(expected_nonce) {
-        return Err("Nonce mismatch".to_string());
+        return Err(IdTokenError::NonceMismatch);
     }
 
     // Extract email
     let email = payload["email"]
         .as_str()
         .or_else(|| payload["preferred_username"].as_str())
-        .ok_or("No email claim in ID token")?
+        .ok_or(IdTokenError::MissingEmail)?
         .to_lowercase();
 
     // Reject Entra external/guest users whose UPN contains #EXT#
@@ -1091,9 +1159,7 @@ async fn validate_id_token_with_jwks(
     // our email domain trust boundary. Users should sign in via their
     // home organization's IDP instead.
     if email.contains("#ext#") {
-        return Err(
-            "External guest accounts are not supported. Please sign in with your home organization.".to_string()
-        );
+        return Err(IdTokenError::ExternalGuest);
     }
 
     // Extract name
@@ -1545,7 +1611,9 @@ pub async fn session_end(
 
         let client = match state.oauth_client_repo.find_by_client_id(&client_id).await {
             Ok(Some(c)) => c,
-            Ok(None) => return reject("id_token_hint audience does not match any registered client"),
+            Ok(None) => {
+                return reject("id_token_hint audience does not match any registered client")
+            }
             Err(e) => {
                 error!(error = %e, "Failed to look up client for post_logout_redirect_uri check");
                 return reject("internal error verifying client");
