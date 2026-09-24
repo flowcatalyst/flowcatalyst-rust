@@ -6,7 +6,10 @@ use std::sync::Arc;
 
 use super::events::SchemaAdded;
 use crate::event_type::entity::{SchemaType, SpecVersion};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::EventType;
 use crate::EventTypeRepository;
 
 /// Command for adding a new schema version to an event type.
@@ -95,32 +98,38 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
         command: AddSchemaCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<SchemaAdded> {
+        let (event_type, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&event_type, &*self.event_type_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> AddSchemaUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &AddSchemaCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(EventType, SchemaAdded), UseCaseError> {
         let version = command.version.trim();
 
         // Fetch event type
-        let mut event_type = match self
+        let mut event_type = self
             .event_type_repo
             .find_by_id(&command.event_type_id)
             .await
-        {
-            Ok(Some(et)) => et,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "EVENT_TYPE_NOT_FOUND",
-                    format!("Event type with ID '{}' not found", command.event_type_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch event type: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "EVENT_TYPE_NOT_FOUND",
+                format!("Event type with ID '{}' not found", command.event_type_id),
+            )?;
 
         // Business rule: cannot add schema to archived event type
         if event_type.status == crate::EventTypeStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "EVENT_TYPE_ARCHIVED",
                 "Cannot add schema to an archived event type",
             ));
@@ -132,7 +141,7 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
             .iter()
             .any(|sv| sv.version == version)
         {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "VERSION_EXISTS",
                 format!("Schema version '{}' already exists", version),
             ));
@@ -151,16 +160,13 @@ impl<U: UnitOfWork> UseCase for AddSchemaUseCase<U> {
 
         // Create domain event
         let event = SchemaAdded::new(
-            &ctx,
+            ctx,
             &event_type.id,
             version,
             &command.mime_type,
             command.schema_type.as_deref().unwrap_or("JSON_SCHEMA"),
         );
-
-        self.unit_of_work
-            .commit(&event_type, &*self.event_type_repo, event, &command)
-            .await
+        Ok((event_type, event))
     }
 }
 

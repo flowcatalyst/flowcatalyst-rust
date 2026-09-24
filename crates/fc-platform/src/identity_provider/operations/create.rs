@@ -81,24 +81,30 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
         command: CreateIdentityProviderCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<IdentityProviderCreated> {
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &CreateIdentityProviderCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<IdentityProviderCreated, UseCaseError> {
         // Business rule: code must be unique
-        match self.idp_repo.find_by_code(&command.code).await {
-            Ok(Some(_)) => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "IDENTITY_PROVIDER_CODE_EXISTS",
-                    format!(
-                        "Identity provider with code '{}' already exists",
-                        command.code
-                    ),
-                ));
-            }
-            Ok(None) => {}
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to check identity provider code: {}",
-                    e
-                )));
-            }
+        if self.idp_repo.find_by_code(&command.code).await?.is_some() {
+            return Err(UseCaseError::business_rule(
+                "IDENTITY_PROVIDER_CODE_EXISTS",
+                format!(
+                    "Identity provider with code '{}' already exists",
+                    command.code
+                ),
+            ));
         }
 
         // Parse the type
@@ -119,17 +125,16 @@ impl<U: UnitOfWork> UseCase for CreateIdentityProviderUseCase<U> {
 
         // Create domain event
         let event =
-            IdentityProviderCreated::new(&ctx, &idp.id, &idp.code, &idp.name, idp_type.as_str());
+            IdentityProviderCreated::new(ctx, &idp.id, &idp.code, &idp.name, idp_type.as_str());
 
         // Insert via repo
         if let Err(e) = self.idp_repo.insert(&idp).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
+            return Err(UseCaseError::commit(format!(
                 "Failed to insert identity provider: {}",
                 e
             )));
         }
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

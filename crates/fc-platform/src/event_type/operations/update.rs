@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EventTypeUpdated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::EventType;
 use crate::EventTypeRepository;
 use crate::EventTypeStatus;
 
@@ -76,30 +79,37 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
         command: UpdateEventTypeCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EventTypeUpdated> {
+        let (event_type, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&event_type, &*self.event_type_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateEventTypeUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateEventTypeCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(EventType, EventTypeUpdated), UseCaseError> {
         // Fetch existing event type
-        let mut event_type = match self
+        let mut event_type = self
             .event_type_repo
             .find_by_id(&command.event_type_id)
             .await
-        {
-            Ok(Some(et)) => et,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "EVENT_TYPE_NOT_FOUND",
-                    format!("Event type with ID '{}' not found", command.event_type_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch event type: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "EVENT_TYPE_NOT_FOUND",
+                format!("Event type with ID '{}' not found", command.event_type_id),
+            )?;
 
         // Business rule: can only update active event types
         if event_type.status == EventTypeStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CANNOT_UPDATE_ARCHIVED",
                 "Cannot update an archived event type",
             ));
@@ -128,7 +138,7 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
 
         // Check if anything actually changed
         if updated_name.is_none() && updated_description.is_none() {
-            return UseCaseResult::failure(UseCaseError::validation(
+            return Err(UseCaseError::validation(
                 "NO_CHANGES",
                 "No changes detected",
             ));
@@ -137,12 +147,8 @@ impl<U: UnitOfWork> UseCase for UpdateEventTypeUseCase<U> {
         event_type.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = EventTypeUpdated::new(&ctx, &event_type.id, updated_name, updated_description);
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&event_type, &*self.event_type_repo, event, &command)
-            .await
+        let event = EventTypeUpdated::new(ctx, &event_type.id, updated_name, updated_description);
+        Ok((event_type, event))
     }
 }
 

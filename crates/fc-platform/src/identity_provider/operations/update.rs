@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::IdentityProviderUpdated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::IdentityProviderRepository;
 
 /// Command for updating an existing identity provider.
@@ -66,22 +68,30 @@ impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
         command: UpdateIdentityProviderCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<IdentityProviderUpdated> {
-        // Fetch existing identity provider
-        let mut idp = match self.idp_repo.find_by_id(&command.idp_id).await {
-            Ok(Some(idp)) => idp,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "NOT_FOUND",
-                    format!("Identity provider with ID '{}' not found", command.idp_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch identity provider: {}",
-                    e
-                )));
-            }
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateIdentityProviderCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<IdentityProviderUpdated, UseCaseError> {
+        // Fetch existing identity provider
+        let mut idp = self
+            .idp_repo
+            .find_by_id(&command.idp_id)
+            .await
+            .or_not_found(
+                "NOT_FOUND",
+                format!("Identity provider with ID '{}' not found", command.idp_id),
+            )?;
 
         // Track name change for event
         let mut updated_name: Option<&str> = None;
@@ -120,17 +130,16 @@ impl<U: UnitOfWork> UseCase for UpdateIdentityProviderUseCase<U> {
         idp.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = IdentityProviderUpdated::new(&ctx, &idp.id, updated_name);
+        let event = IdentityProviderUpdated::new(ctx, &idp.id, updated_name);
 
         // Update via repo
         if let Err(e) = self.idp_repo.update(&idp).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
+            return Err(UseCaseError::commit(format!(
                 "Failed to update identity provider: {}",
                 e
             )));
         }
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

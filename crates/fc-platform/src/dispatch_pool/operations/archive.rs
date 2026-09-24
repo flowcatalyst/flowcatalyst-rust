@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::DispatchPoolArchived;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::DispatchPool;
 use crate::DispatchPoolRepository;
 use crate::DispatchPoolStatus;
 
@@ -54,26 +57,37 @@ impl<U: UnitOfWork> UseCase for ArchiveDispatchPoolUseCase<U> {
         command: ArchiveDispatchPoolCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<DispatchPoolArchived> {
-        // Find the dispatch pool
-        let mut pool = match self.dispatch_pool_repo.find_by_id(&command.id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "DISPATCH_POOL_NOT_FOUND",
-                    format!("Dispatch pool with ID '{}' not found", command.id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find dispatch pool: {}",
-                    e
-                )));
-            }
+        let (pool, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&pool, &*self.dispatch_pool_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> ArchiveDispatchPoolUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &ArchiveDispatchPoolCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(DispatchPool, DispatchPoolArchived), UseCaseError> {
+        // Find the dispatch pool
+        let mut pool = self
+            .dispatch_pool_repo
+            .find_by_id(&command.id)
+            .await
+            .or_not_found(
+                "DISPATCH_POOL_NOT_FOUND",
+                format!("Dispatch pool with ID '{}' not found", command.id),
+            )?;
 
         // Business rule: must be active to archive
         if pool.status == DispatchPoolStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "DISPATCH_POOL_ALREADY_ARCHIVED",
                 "Dispatch pool is already archived",
             ));
@@ -83,12 +97,8 @@ impl<U: UnitOfWork> UseCase for ArchiveDispatchPoolUseCase<U> {
         pool.archive();
 
         // Create domain event
-        let event = DispatchPoolArchived::new(&ctx, &pool.id, &pool.code);
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&pool, &*self.dispatch_pool_repo, event, &command)
-            .await
+        let event = DispatchPoolArchived::new(ctx, &pool.id, &pool.code);
+        Ok((pool, event))
     }
 }
 

@@ -6,7 +6,10 @@ use std::sync::Arc;
 
 use super::events::SchemaDeprecated;
 use crate::event_type::entity::SpecVersionStatus;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::EventType;
 use crate::EventTypeRepository;
 
 /// Command for deprecating a schema version.
@@ -69,43 +72,46 @@ impl<U: UnitOfWork> UseCase for DeprecateSchemaUseCase<U> {
         command: DeprecateSchemaCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<SchemaDeprecated> {
-        let mut event_type = match self
+        let (event_type, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&event_type, &*self.event_type_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DeprecateSchemaUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeprecateSchemaCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(EventType, SchemaDeprecated), UseCaseError> {
+        let mut event_type = self
             .event_type_repo
             .find_by_id(&command.event_type_id)
             .await
-        {
-            Ok(Some(et)) => et,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "EVENT_TYPE_NOT_FOUND",
-                    format!("Event type with ID '{}' not found", command.event_type_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch event type: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "EVENT_TYPE_NOT_FOUND",
+                format!("Event type with ID '{}' not found", command.event_type_id),
+            )?;
 
         let target_idx = event_type
             .spec_versions
             .iter()
-            .position(|sv| sv.version == command.version);
-        let target_idx = match target_idx {
-            Some(i) => i,
-            None => {
-                return UseCaseResult::failure(UseCaseError::not_found(
+            .position(|sv| sv.version == command.version)
+            .ok_or_else(|| {
+                UseCaseError::not_found(
                     "VERSION_NOT_FOUND",
                     format!("Schema version '{}' not found", command.version),
-                ));
-            }
-        };
+                )
+            })?;
 
         // Business rule: cannot deprecate FINALISING schemas
         if event_type.spec_versions[target_idx].status == SpecVersionStatus::Finalising {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CANNOT_DEPRECATE_FINALISING",
                 "Cannot deprecate a schema that is still in FINALISING status",
             ));
@@ -113,7 +119,7 @@ impl<U: UnitOfWork> UseCase for DeprecateSchemaUseCase<U> {
 
         // Business rule: cannot deprecate already deprecated
         if event_type.spec_versions[target_idx].status == SpecVersionStatus::Deprecated {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ALREADY_DEPRECATED",
                 "Schema version is already deprecated",
             ));
@@ -124,11 +130,8 @@ impl<U: UnitOfWork> UseCase for DeprecateSchemaUseCase<U> {
         event_type.spec_versions[target_idx].updated_at = chrono::Utc::now();
         event_type.updated_at = chrono::Utc::now();
 
-        let event = SchemaDeprecated::new(&ctx, &event_type.id, &command.version);
-
-        self.unit_of_work
-            .commit(&event_type, &*self.event_type_repo, event, &command)
-            .await
+        let event = SchemaDeprecated::new(ctx, &event_type.id, &command.version);
+        Ok((event_type, event))
     }
 }
 

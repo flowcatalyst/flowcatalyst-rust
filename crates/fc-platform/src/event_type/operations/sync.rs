@@ -91,20 +91,26 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
         command: SyncEventTypesCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EventTypesSynced> {
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SyncEventTypesCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<EventTypesSynced, UseCaseError> {
         // Fetch existing event types for this application
-        let existing = match self
+        let existing = self
             .event_type_repo
             .find_by_application(&command.application_code)
-            .await
-        {
-            Ok(list) => list,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch existing event types: {}",
-                    e
-                )));
-            }
-        };
+            .await?;
 
         let mut created_count = 0u32;
         let mut updated_count = 0u32;
@@ -127,7 +133,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                         updated.description = input.description.clone();
                         updated.updated_at = chrono::Utc::now();
                         if let Err(e) = self.event_type_repo.update(&updated).await {
-                            return UseCaseResult::failure(UseCaseError::commit(format!(
+                            return Err(UseCaseError::commit(format!(
                                 "Failed to update event type '{}': {}",
                                 input.code, e
                             )));
@@ -138,19 +144,12 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                 }
                 None => {
                     // Create new event type
-                    let mut et = match EventType::new(&input.code, &input.name) {
-                        Ok(et) => et,
-                        Err(e) => {
-                            return UseCaseResult::failure(UseCaseError::validation(
-                                "INVALID_EVENT_TYPE_CODE",
-                                e,
-                            ));
-                        }
-                    };
+                    let mut et = EventType::new(&input.code, &input.name)
+                        .map_err(|e| UseCaseError::validation("INVALID_EVENT_TYPE_CODE", e))?;
                     et.source = EventTypeSource::Api;
                     et.description = input.description.clone();
                     if let Err(e) = self.event_type_repo.insert(&et).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to create event type '{}': {}",
                             input.code, e
                         )));
@@ -163,15 +162,9 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
             // Sync schema as SpecVersion "1.0" if provided
             if let Some(ref schema) = input.schema {
                 // Re-fetch to get current spec_versions (especially for just-created types)
-                let current = match self.event_type_repo.find_by_id(&current_id).await {
-                    Ok(Some(et)) => et,
-                    Ok(None) => continue, // race: vanished between write and read; skip schema
-                    Err(e) => {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
-                            "Failed to reload event type '{}': {}",
-                            input.code, e
-                        )));
-                    }
+                let current = match self.event_type_repo.find_by_id(&current_id).await? {
+                    Some(et) => et,
+                    None => continue, // race: vanished between write and read; skip schema
                 };
 
                 match current.spec_versions.iter().find(|sv| sv.version == "1.0") {
@@ -183,7 +176,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                             if let Err(e) =
                                 self.event_type_repo.update_spec_version(&updated_sv).await
                             {
-                                return UseCaseResult::failure(UseCaseError::commit(format!(
+                                return Err(UseCaseError::commit(format!(
                                     "Failed to update schema for '{}': {}",
                                     input.code, e
                                 )));
@@ -196,7 +189,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                     None => {
                         let sv = SpecVersion::new(&current.id, "1.0", Some(schema.clone()));
                         if let Err(e) = self.event_type_repo.insert_spec_version(&sv).await {
-                            return UseCaseResult::failure(UseCaseError::commit(format!(
+                            return Err(UseCaseError::commit(format!(
                                 "Failed to insert schema for '{}': {}",
                                 input.code, e
                             )));
@@ -216,7 +209,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
                     && !synced_codes.contains(&et.code)
                 {
                     if let Err(e) = self.event_type_repo.delete(&et.id).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to delete event type '{}': {}",
                             et.code, e
                         )));
@@ -227,7 +220,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
         }
 
         let event = EventTypesSynced::new(
-            &ctx,
+            ctx,
             &command.application_code,
             created_count,
             updated_count,
@@ -237,8 +230,7 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
             schemas_updated,
             schemas_unchanged,
         );
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

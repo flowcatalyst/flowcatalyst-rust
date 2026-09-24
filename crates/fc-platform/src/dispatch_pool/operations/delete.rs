@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::DispatchPoolDeleted;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::DispatchPool;
 use crate::DispatchPoolRepository;
 
 /// Command for deleting a dispatch pool.
@@ -53,30 +56,37 @@ impl<U: UnitOfWork> UseCase for DeleteDispatchPoolUseCase<U> {
         command: DeleteDispatchPoolCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<DispatchPoolDeleted> {
-        // Find the dispatch pool
-        let pool = match self.dispatch_pool_repo.find_by_id(&command.id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "DISPATCH_POOL_NOT_FOUND",
-                    format!("Dispatch pool with ID '{}' not found", command.id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find dispatch pool: {}",
-                    e
-                )));
-            }
+        let (pool, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        // Create domain event
-        let event = DispatchPoolDeleted::new(&ctx, &pool.id, &pool.code);
 
         // Atomic commit with delete
         self.unit_of_work
             .commit_delete(&pool, &*self.dispatch_pool_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteDispatchPoolUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteDispatchPoolCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(DispatchPool, DispatchPoolDeleted), UseCaseError> {
+        // Find the dispatch pool
+        let pool = self
+            .dispatch_pool_repo
+            .find_by_id(&command.id)
+            .await
+            .or_not_found(
+                "DISPATCH_POOL_NOT_FOUND",
+                format!("Dispatch pool with ID '{}' not found", command.id),
+            )?;
+
+        // Create domain event
+        let event = DispatchPoolDeleted::new(ctx, &pool.id, &pool.code);
+        Ok((pool, event))
     }
 }
 

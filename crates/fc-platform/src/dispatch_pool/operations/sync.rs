@@ -119,16 +119,23 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         command: SyncDispatchPoolsCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<DispatchPoolsSynced> {
-        // Fetch existing pools
-        let existing = match self.dispatch_pool_repo.find_all().await {
-            Ok(list) => list,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch existing pools: {}",
-                    e
-                )));
-            }
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> SyncDispatchPoolsUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SyncDispatchPoolsCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<DispatchPoolsSynced, UseCaseError> {
+        // Fetch existing pools
+        let existing = self.dispatch_pool_repo.find_all().await?;
 
         let mut created_count = 0u32;
         let mut updated_count = 0u32;
@@ -148,7 +155,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     updated.concurrency = input.concurrency as i32;
                     updated.updated_at = chrono::Utc::now();
                     if let Err(e) = self.dispatch_pool_repo.update(&updated).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to update pool '{}': {}",
                             input.code, e
                         )));
@@ -161,7 +168,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     pool.rate_limit = input.rate_limit.map(|r| r as i32);
                     pool.concurrency = input.concurrency as i32;
                     if let Err(e) = self.dispatch_pool_repo.insert(&pool).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to create pool '{}': {}",
                             input.code, e
                         )));
@@ -180,7 +187,7 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
                     let mut archived = pool.clone();
                     archived.archive();
                     if let Err(e) = self.dispatch_pool_repo.update(&archived).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to archive pool '{}': {}",
                             pool.code, e
                         )));
@@ -191,15 +198,14 @@ impl<U: UnitOfWork> UseCase for SyncDispatchPoolsUseCase<U> {
         }
 
         let event = DispatchPoolsSynced::new(
-            &ctx,
+            ctx,
             &command.application_code,
             created_count,
             updated_count,
             deleted_count,
             synced_codes,
         );
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::DispatchPoolUpdated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::DispatchPool;
 use crate::DispatchPoolRepository;
 
 /// Command for updating a dispatch pool.
@@ -70,22 +73,33 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
         command: UpdateDispatchPoolCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<DispatchPoolUpdated> {
-        // Find the dispatch pool
-        let mut pool = match self.dispatch_pool_repo.find_by_id(&command.id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "DISPATCH_POOL_NOT_FOUND",
-                    format!("Dispatch pool with ID '{}' not found", command.id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find dispatch pool: {}",
-                    e
-                )));
-            }
+        let (pool, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&pool, &*self.dispatch_pool_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateDispatchPoolCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(DispatchPool, DispatchPoolUpdated), UseCaseError> {
+        // Find the dispatch pool
+        let mut pool = self
+            .dispatch_pool_repo
+            .find_by_id(&command.id)
+            .await
+            .or_not_found(
+                "DISPATCH_POOL_NOT_FOUND",
+                format!("Dispatch pool with ID '{}' not found", command.id),
+            )?;
 
         // Track changes for event
         let mut updated_name: Option<String> = None;
@@ -94,7 +108,7 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
         if let Some(ref name) = command.name {
             let name = name.trim();
             if name.is_empty() {
-                return UseCaseResult::failure(UseCaseError::validation(
+                return Err(UseCaseError::validation(
                     "INVALID_NAME",
                     "Name cannot be empty",
                 ));
@@ -124,17 +138,13 @@ impl<U: UnitOfWork> UseCase for UpdateDispatchPoolUseCase<U> {
 
         // Create domain event
         let event = DispatchPoolUpdated::new(
-            &ctx,
+            ctx,
             &pool.id,
             updated_name.as_deref(),
             command.rate_limit,
             command.concurrency,
         );
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&pool, &*self.dispatch_pool_repo, event, &command)
-            .await
+        Ok((pool, event))
     }
 }
 
