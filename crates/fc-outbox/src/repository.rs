@@ -39,9 +39,9 @@ impl OutboxTableConfig {
     /// Get table name for item type
     pub fn table_for_type(&self, item_type: OutboxItemType) -> &str {
         match item_type {
-            OutboxItemType::EVENT => &self.events_table,
-            OutboxItemType::DISPATCH_JOB => &self.dispatch_jobs_table,
-            OutboxItemType::AUDIT_LOG => &self.audit_logs_table,
+            OutboxItemType::Event => &self.events_table,
+            OutboxItemType::DispatchJob => &self.dispatch_jobs_table,
+            OutboxItemType::AuditLog => &self.audit_logs_table,
         }
     }
 
@@ -141,7 +141,7 @@ pub trait OutboxRepository: Send + Sync {
     /// Mark items as processing (legacy method)
     async fn mark_processing(&self, ids: Vec<String>) -> Result<()> {
         // Assume EVENT type for legacy callers
-        self.mark_in_progress(OutboxItemType::EVENT, ids).await
+        self.mark_in_progress(OutboxItemType::Event, ids).await
     }
 
     /// Update status for a single item (legacy method)
@@ -152,7 +152,7 @@ pub trait OutboxRepository: Send + Sync {
         error: Option<String>,
     ) -> Result<()> {
         // Assume EVENT type for legacy callers
-        self.mark_with_status(OutboxItemType::EVENT, vec![id.to_string()], status, error)
+        self.mark_with_status(OutboxItemType::Event, vec![id.to_string()], status, error)
             .await
     }
 

@@ -675,83 +675,73 @@ impl MediationOutcome {
 // Outbox Types
 // ============================================================================
 
-/// Outbox row status. Stored as an integer code; every SDK writes these codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Outbox row status.
+///
+/// Stored as the integer discriminant (`status` column); every SDK (Rust,
+/// TypeScript, Laravel, Go) writes and reads these codes, so they must never
+/// change. Only [`OutboxStatus::Pending`] is written by producers; the rest are
+/// set by the outbox processor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[allow(non_camel_case_types)]
+#[repr(i32)]
 pub enum OutboxStatus {
-    /// Item is pending processing (code: 0)
+    /// Waiting to be picked up.
     #[default]
-    PENDING,
-    /// Item was successfully processed (code: 1)
-    SUCCESS,
-    /// Client error (4xx) - won't retry (code: 2)
-    BAD_REQUEST,
-    /// Server error (5xx) - will retry (code: 3)
-    INTERNAL_ERROR,
-    /// Authentication failed - will retry (code: 4)
-    UNAUTHORIZED,
-    /// Permission denied - won't retry (code: 5)
-    FORBIDDEN,
-    /// Gateway/upstream error - will retry (code: 6)
-    GATEWAY_ERROR,
-    /// Currently being processed (code: 9)
-    IN_PROGRESS,
+    Pending = 0,
+    /// Accepted by the platform.
+    Success = 1,
+    /// Client error (4xx), won't retry.
+    BadRequest = 2,
+    /// Server error (5xx), will retry.
+    InternalError = 3,
+    /// Authentication failed, will retry.
+    Unauthorized = 4,
+    /// Permission denied, won't retry.
+    Forbidden = 5,
+    /// Gateway/upstream error, will retry.
+    GatewayError = 6,
+    /// Claimed by a processor.
+    InProgress = 9,
 }
 
-// Legacy aliases for backward compatibility
-impl OutboxStatus {
-    /// Alias for IN_PROGRESS (for Rust code compatibility)
-    pub const PROCESSING: OutboxStatus = OutboxStatus::IN_PROGRESS;
-    /// Alias for SUCCESS (for Rust code compatibility)
-    pub const COMPLETED: OutboxStatus = OutboxStatus::SUCCESS;
-    /// Alias for INTERNAL_ERROR (for Rust code compatibility)
-    pub const FAILED: OutboxStatus = OutboxStatus::INTERNAL_ERROR;
+/// An integer read from the `status` column that is not an [`OutboxStatus`] code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownOutboxStatus(pub i32);
+
+impl std::fmt::Display for UnknownOutboxStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown outbox status code {}", self.0)
+    }
 }
 
+impl std::error::Error for UnknownOutboxStatus {}
+
 impl OutboxStatus {
-    /// Convert status to integer code for database storage
-    pub fn code(&self) -> i32 {
-        match self {
-            OutboxStatus::PENDING => 0,
-            OutboxStatus::SUCCESS => 1,
-            OutboxStatus::BAD_REQUEST => 2,
-            OutboxStatus::INTERNAL_ERROR => 3,
-            OutboxStatus::UNAUTHORIZED => 4,
-            OutboxStatus::FORBIDDEN => 5,
-            OutboxStatus::GATEWAY_ERROR => 6,
-            OutboxStatus::IN_PROGRESS => 9,
-        }
-    }
+    /// Every status, in code order.
+    pub const ALL: [OutboxStatus; 8] = [
+        OutboxStatus::Pending,
+        OutboxStatus::Success,
+        OutboxStatus::BadRequest,
+        OutboxStatus::InternalError,
+        OutboxStatus::Unauthorized,
+        OutboxStatus::Forbidden,
+        OutboxStatus::GatewayError,
+        OutboxStatus::InProgress,
+    ];
 
-    /// Alias for code() - for compatibility
-    pub fn to_code(&self) -> i32 {
-        self.code()
-    }
-
-    /// Create status from integer code, defaulting to PENDING for unknown codes
-    pub fn from_code(code: i32) -> Self {
-        match code {
-            0 => OutboxStatus::PENDING,
-            1 => OutboxStatus::SUCCESS,
-            2 => OutboxStatus::BAD_REQUEST,
-            3 => OutboxStatus::INTERNAL_ERROR,
-            4 => OutboxStatus::UNAUTHORIZED,
-            5 => OutboxStatus::FORBIDDEN,
-            6 => OutboxStatus::GATEWAY_ERROR,
-            9 => OutboxStatus::IN_PROGRESS,
-            _ => OutboxStatus::PENDING, // Default for unknown codes
-        }
+    /// The integer stored in the `status` column.
+    pub const fn code(self) -> i32 {
+        self as i32
     }
 
     /// Check if this status is retryable
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            OutboxStatus::INTERNAL_ERROR
-                | OutboxStatus::UNAUTHORIZED
-                | OutboxStatus::GATEWAY_ERROR
-                | OutboxStatus::IN_PROGRESS
+            OutboxStatus::InternalError
+                | OutboxStatus::Unauthorized
+                | OutboxStatus::GatewayError
+                | OutboxStatus::InProgress
         )
     }
 
@@ -759,74 +749,113 @@ impl OutboxStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            OutboxStatus::SUCCESS | OutboxStatus::BAD_REQUEST | OutboxStatus::FORBIDDEN
+            OutboxStatus::Success | OutboxStatus::BadRequest | OutboxStatus::Forbidden
         )
     }
 }
 
-/// Outbox item type, stored as the row's `type` string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[allow(non_camel_case_types)]
+impl From<OutboxStatus> for i32 {
+    fn from(status: OutboxStatus) -> i32 {
+        status.code()
+    }
+}
+
+impl TryFrom<i32> for OutboxStatus {
+    type Error = UnknownOutboxStatus;
+
+    /// Strict: an unknown code is an error, never a default (owner ruling X-06).
+    fn try_from(code: i32) -> Result<Self, Self::Error> {
+        Self::ALL
+            .into_iter()
+            .find(|s| s.code() == code)
+            .ok_or(UnknownOutboxStatus(code))
+    }
+}
+
+/// Outbox item type, stored as the row's `type` string ([`OutboxItemType::as_str`]).
+///
+/// Serde uses the same strings, so [`OutboxItemType::as_str`] is the single
+/// source of truth for every representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(into = "&'static str", try_from = "String")]
 pub enum OutboxItemType {
     /// Event items - sent to /api/events/batch
     #[default]
-    EVENT,
-    /// Dispatch job items - sent to /api/dispatch/jobs/batch
-    DISPATCH_JOB,
-    /// Audit log items - sent to /api/audit/logs/batch
-    AUDIT_LOG,
+    Event,
+    /// Dispatch job items - sent to /api/dispatch-jobs/batch
+    DispatchJob,
+    /// Audit log items - sent to /api/audit-logs/batch
+    AuditLog,
 }
+
+/// A string that is not an [`OutboxItemType`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownOutboxItemType(pub String);
+
+impl std::fmt::Display for UnknownOutboxItemType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown outbox item type {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownOutboxItemType {}
 
 impl OutboxItemType {
     /// All item types for iteration
     pub const ALL: [OutboxItemType; 3] = [
-        OutboxItemType::EVENT,
-        OutboxItemType::DISPATCH_JOB,
-        OutboxItemType::AUDIT_LOG,
+        OutboxItemType::Event,
+        OutboxItemType::DispatchJob,
+        OutboxItemType::AuditLog,
     ];
+
+    /// The value of the `type` column (and the serde string).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            OutboxItemType::Event => "EVENT",
+            OutboxItemType::DispatchJob => "DISPATCH_JOB",
+            OutboxItemType::AuditLog => "AUDIT_LOG",
+        }
+    }
 
     /// Get the API endpoint path for this item type
     pub fn api_path(&self) -> &'static str {
         match self {
-            OutboxItemType::EVENT => "/api/events/batch",
-            OutboxItemType::DISPATCH_JOB => "/api/dispatch-jobs/batch",
-            OutboxItemType::AUDIT_LOG => "/api/audit-logs/batch",
-        }
-    }
-
-    /// Get the database type column value
-    pub fn type_value(&self) -> &'static str {
-        match self {
-            OutboxItemType::EVENT => "EVENT",
-            OutboxItemType::DISPATCH_JOB => "DISPATCH_JOB",
-            OutboxItemType::AUDIT_LOG => "AUDIT_LOG",
-        }
-    }
-
-    /// Parse from string. Accepts case-insensitive plus the underscore/
-    /// hyphen/run-together forms used by various legacy callers. Returns
-    /// `None` on unknown input — fallible, like FromStr would be, but the
-    /// `Option` return shape doesn't match the trait so it's not the
-    /// trait method.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_uppercase().as_str() {
-            "EVENT" => Some(OutboxItemType::EVENT),
-            "DISPATCH_JOB" | "DISPATCHJOB" | "DISPATCH-JOB" => Some(OutboxItemType::DISPATCH_JOB),
-            "AUDIT_LOG" | "AUDITLOG" | "AUDIT-LOG" => Some(OutboxItemType::AUDIT_LOG),
-            _ => None,
+            OutboxItemType::Event => "/api/events/batch",
+            OutboxItemType::DispatchJob => "/api/dispatch-jobs/batch",
+            OutboxItemType::AuditLog => "/api/audit-logs/batch",
         }
     }
 }
 
 impl std::fmt::Display for OutboxItemType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OutboxItemType::EVENT => write!(f, "EVENT"),
-            OutboxItemType::DISPATCH_JOB => write!(f, "DISPATCH_JOB"),
-            OutboxItemType::AUDIT_LOG => write!(f, "AUDIT_LOG"),
-        }
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<OutboxItemType> for &'static str {
+    fn from(item_type: OutboxItemType) -> Self {
+        item_type.as_str()
+    }
+}
+
+impl std::str::FromStr for OutboxItemType {
+    type Err = UnknownOutboxItemType;
+
+    /// Strict, exact match on [`OutboxItemType::as_str`] (owner ruling X-06).
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|t| t.as_str() == s)
+            .ok_or_else(|| UnknownOutboxItemType(s.to_string()))
+    }
+}
+
+impl TryFrom<String> for OutboxItemType {
+    type Error = UnknownOutboxItemType;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
     }
 }
 
@@ -1206,5 +1235,86 @@ mod message_tests {
     fn message_empty_pool_code_defaults_and_is_distinguishable() {
         let msg = wire_message(base_message_json());
         assert_eq!(msg.pool_code, "");
+    }
+}
+
+#[cfg(test)]
+mod outbox_enum_tests {
+    use super::*;
+
+    #[test]
+    fn outbox_status_codes_are_the_storage_contract() {
+        let expected = [
+            (OutboxStatus::Pending, 0),
+            (OutboxStatus::Success, 1),
+            (OutboxStatus::BadRequest, 2),
+            (OutboxStatus::InternalError, 3),
+            (OutboxStatus::Unauthorized, 4),
+            (OutboxStatus::Forbidden, 5),
+            (OutboxStatus::GatewayError, 6),
+            (OutboxStatus::InProgress, 9),
+        ];
+        assert_eq!(OutboxStatus::ALL.len(), expected.len());
+        for (status, code) in expected {
+            assert_eq!(status.code(), code);
+            assert_eq!(i32::from(status), code);
+            assert_eq!(OutboxStatus::try_from(code), Ok(status));
+        }
+    }
+
+    #[test]
+    fn outbox_status_unknown_code_is_an_error() {
+        for code in [-1, 7, 8, 10, 99] {
+            assert_eq!(OutboxStatus::try_from(code), Err(UnknownOutboxStatus(code)));
+        }
+    }
+
+    #[test]
+    fn outbox_status_serde_strings() {
+        let expected = [
+            (OutboxStatus::Pending, "PENDING"),
+            (OutboxStatus::Success, "SUCCESS"),
+            (OutboxStatus::BadRequest, "BAD_REQUEST"),
+            (OutboxStatus::InternalError, "INTERNAL_ERROR"),
+            (OutboxStatus::Unauthorized, "UNAUTHORIZED"),
+            (OutboxStatus::Forbidden, "FORBIDDEN"),
+            (OutboxStatus::GatewayError, "GATEWAY_ERROR"),
+            (OutboxStatus::InProgress, "IN_PROGRESS"),
+        ];
+        for (status, s) in expected {
+            assert_eq!(serde_json::to_value(status).unwrap(), s);
+            assert_eq!(
+                serde_json::from_value::<OutboxStatus>(serde_json::json!(s)).unwrap(),
+                status
+            );
+        }
+    }
+
+    #[test]
+    fn outbox_item_type_strings_are_the_storage_contract() {
+        let expected = [
+            (OutboxItemType::Event, "EVENT"),
+            (OutboxItemType::DispatchJob, "DISPATCH_JOB"),
+            (OutboxItemType::AuditLog, "AUDIT_LOG"),
+        ];
+        assert_eq!(OutboxItemType::ALL.len(), expected.len());
+        for (t, s) in expected {
+            assert_eq!(t.as_str(), s);
+            assert_eq!(t.to_string(), s);
+            assert_eq!(s.parse::<OutboxItemType>(), Ok(t));
+            assert_eq!(serde_json::to_value(t).unwrap(), s);
+            assert_eq!(
+                serde_json::from_value::<OutboxItemType>(serde_json::json!(s)).unwrap(),
+                t
+            );
+        }
+    }
+
+    #[test]
+    fn outbox_item_type_parse_is_strict() {
+        for bad in ["event", "DISPATCH-JOB", "AUDITLOG", ""] {
+            assert!(bad.parse::<OutboxItemType>().is_err(), "{bad}");
+            assert!(serde_json::from_value::<OutboxItemType>(serde_json::json!(bad)).is_err());
+        }
     }
 }

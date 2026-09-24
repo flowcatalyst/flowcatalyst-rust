@@ -1,3 +1,4 @@
+pub mod backend;
 pub mod buffer;
 pub mod enhanced_processor;
 pub mod error;
@@ -17,6 +18,7 @@ pub mod postgres;
 pub mod sqlite;
 
 // Re-export key types
+pub use backend::{OutboxBackend, UnknownOutboxBackend};
 pub use buffer::{BufferFullError, GlobalBuffer, GlobalBufferConfig};
 pub use enhanced_processor::{EnhancedOutboxProcessor, EnhancedProcessorConfig, ProcessorMetrics};
 pub use error::OutboxError;

@@ -444,10 +444,10 @@ mod tests {
     fn create_test_item(id: &str) -> OutboxItem {
         OutboxItem {
             id: id.to_string(),
-            item_type: fc_common::OutboxItemType::EVENT,
+            item_type: fc_common::OutboxItemType::Event,
             message_group: Some("group-1".to_string()),
             payload: serde_json::json!({"test": true}),
-            status: OutboxStatus::IN_PROGRESS,
+            status: OutboxStatus::InProgress,
             retry_count: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),

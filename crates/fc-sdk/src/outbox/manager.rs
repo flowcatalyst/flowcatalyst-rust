@@ -223,10 +223,10 @@ impl OutboxManager {
         let now = chrono::Utc::now().to_rfc3339();
         OutboxMessage {
             id,
-            message_type: message_type.as_str().to_string(),
+            message_type,
             message_group: message_group.map(|s| s.to_string()),
             payload: payload.to_string(),
-            status: OutboxStatus::PENDING,
+            status: OutboxStatus::Pending,
             created_at: now.clone(),
             updated_at: now,
             client_id: self.client_id.clone(),
@@ -298,9 +298,9 @@ mod tests {
 
         let msg = &msgs[0];
         assert_eq!(msg.id, id);
-        assert_eq!(msg.message_type, "EVENT");
+        assert_eq!(msg.message_type, MessageType::Event);
         assert_eq!(msg.message_group.as_deref(), Some("users:user:u1"));
-        assert_eq!(msg.status, OutboxStatus::PENDING);
+        assert_eq!(msg.status, OutboxStatus::Pending);
         assert_eq!(msg.client_id, "clt_test");
         assert!(msg.payload_size > 0);
         assert!(msg.headers.is_none()); // no headers on DTO
@@ -343,7 +343,7 @@ mod tests {
         // IDs match
         for (i, msg) in msgs.iter().enumerate() {
             assert_eq!(msg.id, ids[i]);
-            assert_eq!(msg.message_type, "EVENT");
+            assert_eq!(msg.message_type, MessageType::Event);
             assert_eq!(msg.client_id, "clt_batch");
         }
     }
@@ -367,7 +367,7 @@ mod tests {
 
         let msgs = captured.lock().unwrap();
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].message_type, "DISPATCH_JOB");
+        assert_eq!(msgs[0].message_type, MessageType::DispatchJob);
         assert_eq!(msgs[0].message_group.as_deref(), Some("grp:1"));
         assert_eq!(msgs[0].client_id, "clt_dj");
         // Dispatch jobs don't pass headers
@@ -388,7 +388,7 @@ mod tests {
         let msgs = captured.lock().unwrap();
         assert_eq!(msgs.len(), 2);
         for msg in msgs.iter() {
-            assert_eq!(msg.message_type, "DISPATCH_JOB");
+            assert_eq!(msg.message_type, MessageType::DispatchJob);
         }
     }
 
@@ -410,7 +410,7 @@ mod tests {
 
         let msgs = captured.lock().unwrap();
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].message_type, "AUDIT_LOG");
+        assert_eq!(msgs[0].message_type, MessageType::AuditLog);
         // Audit logs have no message_group
         assert!(msgs[0].message_group.is_none());
         assert_eq!(msgs[0].client_id, "clt_al");
@@ -444,7 +444,7 @@ mod tests {
         let msgs = captured.lock().unwrap();
         assert_eq!(msgs.len(), 2);
         for msg in msgs.iter() {
-            assert_eq!(msg.message_type, "AUDIT_LOG");
+            assert_eq!(msg.message_type, MessageType::AuditLog);
         }
     }
 

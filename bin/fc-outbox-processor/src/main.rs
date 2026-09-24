@@ -37,7 +37,7 @@ use tracing::info;
 use fc_outbox::http_dispatcher::HttpDispatcherConfig;
 use fc_outbox::repository::OutboxRepository;
 use fc_outbox::repository::OutboxTableConfig;
-use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig};
+use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
     info!("Starting FlowCatalyst Outbox Processor");
 
     // Configuration
-    let db_type = env_or("FC_OUTBOX_DB_TYPE", "postgres");
+    let backend: OutboxBackend = env_or("FC_OUTBOX_DB_TYPE", "postgres").parse()?;
     let poll_interval_ms: u64 = env_or_parse("FC_OUTBOX_POLL_INTERVAL_MS", 1000);
     let metrics_port: u16 = env_or_parse("FC_METRICS_PORT", 9090);
 
@@ -71,8 +71,8 @@ async fn main() -> Result<()> {
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     // Initialize outbox repository
-    let outbox_repo = create_outbox_repository(&db_type, table_config).await?;
-    info!("Outbox repository initialized ({})", db_type);
+    let outbox_repo = create_outbox_repository(backend, table_config).await?;
+    info!("Outbox repository initialized ({})", backend);
 
     // Enhanced mode (HTTP API with message group ordering)
     let api_base_url = env_or("FC_API_BASE_URL", "http://localhost:8080");
@@ -163,11 +163,11 @@ async fn main() -> Result<()> {
 }
 
 async fn create_outbox_repository(
-    db_type: &str,
+    backend: OutboxBackend,
     table_config: OutboxTableConfig,
 ) -> Result<Arc<dyn OutboxRepository>> {
-    match db_type {
-        "sqlite" => {
+    match backend {
+        OutboxBackend::Sqlite => {
             let url = env_required("FC_OUTBOX_DB_URL")?;
             let pool = SqlitePoolOptions::new()
                 .max_connections(5)
@@ -178,7 +178,7 @@ async fn create_outbox_repository(
             info!("Using SQLite outbox: {}", url);
             Ok(Arc::new(repo))
         }
-        "postgres" => {
+        OutboxBackend::Postgres => {
             let url = env_required("FC_OUTBOX_DB_URL")?;
             let pool = PgPoolOptions::new()
                 .max_connections(10)
@@ -190,7 +190,7 @@ async fn create_outbox_repository(
             info!("Using PostgreSQL outbox");
             Ok(Arc::new(repo))
         }
-        "mongo" => {
+        OutboxBackend::Mongo => {
             let url = env_required("FC_OUTBOX_DB_URL")?;
             let db_name = env_or("FC_OUTBOX_MONGO_DB", "flowcatalyst");
             let client = mongodb::Client::with_uri_str(&url).await?;
@@ -203,10 +203,6 @@ async fn create_outbox_repository(
             info!("Using MongoDB outbox: {}", db_name);
             Ok(Arc::new(repo))
         }
-        other => Err(anyhow::anyhow!(
-            "Unknown database type: {}. Use sqlite, postgres, or mongo",
-            other
-        )),
     }
 }
 

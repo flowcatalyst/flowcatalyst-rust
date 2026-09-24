@@ -266,7 +266,7 @@ impl EnhancedOutboxProcessor {
                                     .mark_with_status(
                                         item_type,
                                         vec![item_id.clone()],
-                                        OutboxStatus::SUCCESS,
+                                        OutboxStatus::Success,
                                         None,
                                     )
                                     .await
@@ -284,7 +284,7 @@ impl EnhancedOutboxProcessor {
                                     .mark_with_status(
                                         item_type,
                                         vec![item_id.clone()],
-                                        OutboxStatus::INTERNAL_ERROR,
+                                        OutboxStatus::InternalError,
                                         Some(e.to_string()),
                                     )
                                     .await
@@ -455,7 +455,7 @@ impl EnhancedOutboxProcessor {
                                     .mark_with_status(
                                         item_type,
                                         vec![item_id.clone()],
-                                        OutboxStatus::SUCCESS,
+                                        OutboxStatus::Success,
                                         None,
                                     )
                                     .await
@@ -473,7 +473,7 @@ impl EnhancedOutboxProcessor {
                                     .mark_with_status(
                                         item_type,
                                         vec![item_id.clone()],
-                                        OutboxStatus::INTERNAL_ERROR,
+                                        OutboxStatus::InternalError,
                                         Some(e.to_string()),
                                     )
                                     .await

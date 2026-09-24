@@ -47,12 +47,14 @@ impl PostgresOutboxRepository {
         let updated_at: DateTime<Utc> = row.get("updated_at");
 
         let status_code: i32 = row.get("status");
-        let status = OutboxStatus::from_code(status_code);
+        let id: String = row.get("id");
+        let status = OutboxStatus::try_from(status_code)
+            .map_err(|e| anyhow::anyhow!("outbox row {id}: {e}"))?;
 
         let payload: serde_json::Value = row.get("payload");
 
         Ok(OutboxItem {
-            id: row.get("id"),
+            id,
             item_type,
             message_group: row.try_get("message_group").ok().flatten(),
             payload,
@@ -88,8 +90,8 @@ impl OutboxRepository for PostgresOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code())
-            .bind(item_type.type_value())
+            .bind(OutboxStatus::Pending.code())
+            .bind(item_type.as_str())
             .bind(limit as i64)
             .fetch_all(&self.pool)
             .await?;
@@ -122,9 +124,9 @@ impl OutboxRepository for PostgresOutboxRepository {
         );
 
         sqlx::query(&query)
-            .bind(OutboxStatus::IN_PROGRESS.code())
+            .bind(OutboxStatus::InProgress.code())
             .bind(&ids)
-            .bind(item_type.type_value())
+            .bind(item_type.as_str())
             .execute(&self.pool)
             .await?;
 
@@ -153,11 +155,11 @@ impl OutboxRepository for PostgresOutboxRepository {
         // SUCCESS is terminal — the platform now owns the message. Delete the
         // outbox row instead of updating it; otherwise the customer's outbox
         // table grows unbounded.
-        if matches!(status, OutboxStatus::SUCCESS) {
+        if matches!(status, OutboxStatus::Success) {
             let query = format!("DELETE FROM {} WHERE id = ANY($1) AND type = $2", table);
             sqlx::query(&query)
                 .bind(&ids)
-                .bind(item_type.type_value())
+                .bind(item_type.as_str())
                 .execute(&self.pool)
                 .await?;
 
@@ -174,7 +176,7 @@ impl OutboxRepository for PostgresOutboxRepository {
             .bind(status.code())
             .bind(&error_message)
             .bind(&ids)
-            .bind(item_type.type_value())
+            .bind(item_type.as_str())
             .execute(&self.pool)
             .await?;
 
@@ -205,9 +207,9 @@ impl OutboxRepository for PostgresOutboxRepository {
         );
 
         sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code())
+            .bind(OutboxStatus::Pending.code())
             .bind(&ids)
-            .bind(item_type.type_value())
+            .bind(item_type.as_str())
             .execute(&self.pool)
             .await?;
 
@@ -239,13 +241,13 @@ impl OutboxRepository for PostgresOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(item_type.type_value())
-            .bind(OutboxStatus::IN_PROGRESS.code())
-            .bind(OutboxStatus::BAD_REQUEST.code())
-            .bind(OutboxStatus::INTERNAL_ERROR.code())
-            .bind(OutboxStatus::UNAUTHORIZED.code())
-            .bind(OutboxStatus::FORBIDDEN.code())
-            .bind(OutboxStatus::GATEWAY_ERROR.code())
+            .bind(item_type.as_str())
+            .bind(OutboxStatus::InProgress.code())
+            .bind(OutboxStatus::BadRequest.code())
+            .bind(OutboxStatus::InternalError.code())
+            .bind(OutboxStatus::Unauthorized.code())
+            .bind(OutboxStatus::Forbidden.code())
+            .bind(OutboxStatus::GatewayError.code())
             .bind(cutoff)
             .bind(limit as i64)
             .fetch_all(&self.pool)
@@ -276,9 +278,9 @@ impl OutboxRepository for PostgresOutboxRepository {
         );
 
         sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code())
+            .bind(OutboxStatus::Pending.code())
             .bind(&ids)
-            .bind(item_type.type_value())
+            .bind(item_type.as_str())
             .execute(&self.pool)
             .await?;
 
@@ -309,8 +311,8 @@ impl OutboxRepository for PostgresOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(OutboxStatus::IN_PROGRESS.code())
-            .bind(item_type.type_value())
+            .bind(OutboxStatus::InProgress.code())
+            .bind(item_type.as_str())
             .bind(cutoff)
             .bind(limit as i64)
             .fetch_all(&self.pool)
@@ -390,15 +392,15 @@ mod tests {
     fn test_table_for_type() {
         let config = OutboxTableConfig::default();
         assert_eq!(
-            config.table_for_type(OutboxItemType::EVENT),
+            config.table_for_type(OutboxItemType::Event),
             "outbox_messages"
         );
         assert_eq!(
-            config.table_for_type(OutboxItemType::DISPATCH_JOB),
+            config.table_for_type(OutboxItemType::DispatchJob),
             "outbox_messages"
         );
         assert_eq!(
-            config.table_for_type(OutboxItemType::AUDIT_LOG),
+            config.table_for_type(OutboxItemType::AuditLog),
             "outbox_messages"
         );
     }

@@ -61,12 +61,14 @@ impl SqliteOutboxRepository {
             .map_err(|e| anyhow::anyhow!("Invalid updated_at timestamp: {}", e))?;
 
         let status_code: i32 = row.get("status");
-        let status = OutboxStatus::from_code(status_code);
+        let id: String = row.get("id");
+        let status = OutboxStatus::try_from(status_code)
+            .map_err(|e| anyhow::anyhow!("outbox row {id}: {e}"))?;
 
         let payload_str: String = row.get("payload");
 
         Ok(OutboxItem {
-            id: row.get("id"),
+            id,
             item_type,
             message_group: row.try_get("message_group").ok().flatten(),
             payload: serde_json::from_str(&payload_str)?,
@@ -107,8 +109,8 @@ impl OutboxRepository for SqliteOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code())
-            .bind(item_type.type_value())
+            .bind(OutboxStatus::Pending.code())
+            .bind(item_type.as_str())
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
@@ -137,9 +139,9 @@ impl OutboxRepository for SqliteOutboxRepository {
         );
 
         let mut q = sqlx::query(&query)
-            .bind(OutboxStatus::IN_PROGRESS.code())
+            .bind(OutboxStatus::InProgress.code())
             .bind(&now)
-            .bind(item_type.type_value());
+            .bind(item_type.as_str());
         for id in &ids {
             q = q.bind(id);
         }
@@ -166,12 +168,12 @@ impl OutboxRepository for SqliteOutboxRepository {
         // SUCCESS is terminal — the platform now owns the message. Delete the
         // outbox row instead of updating it; otherwise the customer's outbox
         // table grows unbounded.
-        if matches!(status, OutboxStatus::SUCCESS) {
+        if matches!(status, OutboxStatus::Success) {
             let query = format!(
                 "DELETE FROM {} WHERE type = ? AND id IN ({})",
                 table, in_clause
             );
-            let mut q = sqlx::query(&query).bind(item_type.type_value());
+            let mut q = sqlx::query(&query).bind(item_type.as_str());
             for id in &ids {
                 q = q.bind(id);
             }
@@ -191,7 +193,7 @@ impl OutboxRepository for SqliteOutboxRepository {
             .bind(status.code())
             .bind(&error_message)
             .bind(&now)
-            .bind(item_type.type_value());
+            .bind(item_type.as_str());
         for id in &ids {
             q = q.bind(id);
         }
@@ -220,9 +222,9 @@ impl OutboxRepository for SqliteOutboxRepository {
         );
 
         let mut q = sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code())
+            .bind(OutboxStatus::Pending.code())
             .bind(&now)
-            .bind(item_type.type_value());
+            .bind(item_type.as_str());
         for id in &ids {
             q = q.bind(id);
         }
@@ -251,13 +253,13 @@ impl OutboxRepository for SqliteOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(item_type.type_value())
-            .bind(OutboxStatus::IN_PROGRESS.code())
-            .bind(OutboxStatus::BAD_REQUEST.code())
-            .bind(OutboxStatus::INTERNAL_ERROR.code())
-            .bind(OutboxStatus::UNAUTHORIZED.code())
-            .bind(OutboxStatus::FORBIDDEN.code())
-            .bind(OutboxStatus::GATEWAY_ERROR.code())
+            .bind(item_type.as_str())
+            .bind(OutboxStatus::InProgress.code())
+            .bind(OutboxStatus::BadRequest.code())
+            .bind(OutboxStatus::InternalError.code())
+            .bind(OutboxStatus::Unauthorized.code())
+            .bind(OutboxStatus::Forbidden.code())
+            .bind(OutboxStatus::GatewayError.code())
             .bind(&cutoff)
             .bind(limit)
             .fetch_all(&self.pool)
@@ -289,9 +291,9 @@ impl OutboxRepository for SqliteOutboxRepository {
         );
 
         let mut q = sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code())
+            .bind(OutboxStatus::Pending.code())
             .bind(&now)
-            .bind(item_type.type_value());
+            .bind(item_type.as_str());
         for id in &ids {
             q = q.bind(id);
         }
@@ -320,8 +322,8 @@ impl OutboxRepository for SqliteOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(OutboxStatus::IN_PROGRESS.code())
-            .bind(item_type.type_value())
+            .bind(OutboxStatus::InProgress.code())
+            .bind(item_type.as_str())
             .bind(&cutoff)
             .bind(limit)
             .fetch_all(&self.pool)
