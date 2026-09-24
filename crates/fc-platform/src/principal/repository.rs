@@ -9,7 +9,8 @@ use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use super::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
 use crate::service_account::entity::RoleAssignment;
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode_opt;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 
 // ── Row types ────────────────────────────────────────────────────────────────
@@ -94,6 +95,25 @@ struct PrincipalRoleRow {
     role_name: String,
     assignment_source: Option<String>,
     assigned_at: DateTime<Utc>,
+}
+
+impl TryFrom<PrincipalRoleRow> for RoleAssignment {
+    type Error = PlatformError;
+    fn try_from(r: PrincipalRoleRow) -> Result<Self> {
+        let assignment_source = decode_opt(
+            r.assignment_source.as_deref(),
+            "iam_principal_roles",
+            "assignment_source",
+            &format!("{}/{}", r.principal_id, r.role_name),
+        )?;
+        Ok(RoleAssignment {
+            role: r.role_name,
+            client_id: None,
+            assignment_source,
+            assigned_at: r.assigned_at,
+            assigned_by: None,
+        })
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -575,8 +595,10 @@ impl PrincipalRepository {
         let count = roles.len();
         let pids: Vec<String> = std::iter::repeat_n(principal_id.to_string(), count).collect();
         let role_names: Vec<String> = roles.iter().map(|r| r.role.clone()).collect();
-        let sources: Vec<Option<String>> =
-            roles.iter().map(|r| r.assignment_source.clone()).collect();
+        let sources: Vec<Option<&str>> = roles
+            .iter()
+            .map(|r| r.assignment_source.map(|s| s.as_str()))
+            .collect();
         let assigned_ats: Vec<DateTime<Utc>> = roles.iter().map(|r| r.assigned_at).collect();
 
         sqlx::query(
@@ -585,7 +607,7 @@ impl PrincipalRepository {
         )
         .bind(&pids)
         .bind(&role_names)
-        .bind(&sources as &[Option<String>])
+        .bind(&sources as &[Option<&str>])
         .bind(&assigned_ats)
         .execute(&self.pool)
         .await?;
@@ -609,14 +631,8 @@ impl PrincipalRepository {
         .await?;
         principal.roles = role_rows
             .into_iter()
-            .map(|r| RoleAssignment {
-                role: r.role_name,
-                client_id: None,
-                assignment_source: r.assignment_source,
-                assigned_at: r.assigned_at,
-                assigned_by: None,
-            })
-            .collect();
+            .map(RoleAssignment::try_from)
+            .collect::<Result<_>>()?;
 
         // Load client access grants
         let grant_rows = sqlx::query_as::<_, ClientAccessGrantRow>(
@@ -688,13 +704,7 @@ impl PrincipalRepository {
             role_map
                 .entry(r.principal_id.clone())
                 .or_default()
-                .push(RoleAssignment {
-                    role: r.role_name,
-                    client_id: None,
-                    assignment_source: r.assignment_source,
-                    assigned_at: r.assigned_at,
-                    assigned_by: None,
-                });
+                .push(RoleAssignment::try_from(r)?);
         }
 
         // Batch-load client access grants
@@ -883,7 +893,7 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
             )
             .bind(&p.id)
             .bind(&r.role)
-            .bind(&r.assignment_source)
+            .bind(r.assignment_source.map(|s| s.as_str()))
             .bind(r.assigned_at)
             .execute(&mut **tx.inner).await?;
         }

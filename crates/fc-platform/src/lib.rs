@@ -109,7 +109,8 @@ pub use scheduled_job::entity::{
     ScheduledJobInstanceLog, ScheduledJobStatus, TriggerKind,
 };
 pub use service_account::entity::{
-    RoleAssignment, ServiceAccount, WebhookAuthType, WebhookCredentials,
+    AssignmentSource, RoleAssignment, ServiceAccount, SigningAlgorithm, WebhookAuthType,
+    WebhookCredentials,
 };
 pub use subscription::entity::{EventTypeBinding, Subscription, SubscriptionStatus};
 
@@ -432,7 +433,8 @@ pub mod domain {
     };
     pub use crate::role::entity::{permissions, AuthRole, Permission, RoleSource};
     pub use crate::service_account::entity::{
-        RoleAssignment, ServiceAccount, WebhookAuthType, WebhookCredentials,
+        AssignmentSource, RoleAssignment, ServiceAccount, SigningAlgorithm, WebhookAuthType,
+        WebhookCredentials,
     };
     pub use crate::subscription::entity::{
         ConfigEntry, EventTypeBinding, Subscription, SubscriptionStatus,

@@ -24,6 +24,7 @@ use crate::identity_provider::entity::{IdentityProvider, IdentityProviderType};
 use crate::identity_provider::repository::IdentityProviderRepository;
 use crate::principal::entity::{Principal, UserScope};
 use crate::principal::repository::PrincipalRepository;
+use crate::service_account::entity::AssignmentSource;
 use crate::shared::error::Result;
 
 const ENV_EMAIL: &str = "FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL";
@@ -31,7 +32,7 @@ const ENV_PASSWORD: &str = "FLOWCATALYST_BOOTSTRAP_ADMIN_PASSWORD";
 const ENV_NAME: &str = "FLOWCATALYST_BOOTSTRAP_ADMIN_NAME";
 const DEFAULT_NAME: &str = "Bootstrap Admin";
 const ROLE_SUPER_ADMIN: &str = "platform:super-admin";
-const ROLE_SOURCE: &str = "BOOTSTRAP";
+const ROLE_SOURCE: AssignmentSource = AssignmentSource::Bootstrap;
 
 /// Bootstrap an initial admin if no anchor `USER` exists. See module docs.
 pub async fn bootstrap_admin_user(pool: &PgPool) -> Result<()> {

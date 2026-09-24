@@ -473,7 +473,10 @@ async fn create_admin(
     if let Some(identity) = principal.user_identity.as_mut() {
         identity.password_hash = Some(password_hash);
     }
-    principal.assign_role_with_source("platform:super-admin", "BOOTSTRAP");
+    principal.assign_role_with_source(
+        "platform:super-admin",
+        fc_platform::AssignmentSource::Bootstrap,
+    );
     principal_repo
         .insert(&principal)
         .await

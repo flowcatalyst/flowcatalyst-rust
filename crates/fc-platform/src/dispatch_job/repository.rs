@@ -1,8 +1,8 @@
 //! DispatchJob Repository — PostgreSQL via SQLx
 
 use crate::dispatch_job::entity::{
-    default_content_type, DispatchKind, DispatchMetadata, DispatchMode, DispatchProtocol,
-    RetryStrategy,
+    default_content_type, DispatchAttemptStatus, DispatchKind, DispatchMetadata, DispatchMode,
+    DispatchProtocol, ErrorType, RetryStrategy,
 };
 use crate::shared::error::Result;
 use crate::{DispatchJob, DispatchJobRead, DispatchStatus};
@@ -189,11 +189,11 @@ impl From<DispatchJobReadRow> for DispatchJobRead {
 pub struct NewDispatchAttempt<'a> {
     pub dispatch_job_id: &'a str,
     pub attempt_number: u32,
-    pub status: &'a str,
+    pub status: DispatchAttemptStatus,
     pub response_code: Option<u16>,
     pub response_body: Option<&'a str>,
     pub error_message: Option<&'a str>,
-    pub error_type: Option<&'a str>,
+    pub error_type: Option<ErrorType>,
     pub error_stack_trace: Option<&'a str>,
     pub duration_millis: i64,
 }
@@ -1100,11 +1100,11 @@ impl DispatchJobRepository {
         .bind(&id)
         .bind(dispatch_job_id)
         .bind(attempt_number as i32)
-        .bind(status)
+        .bind(status.as_str())
         .bind(response_code.map(|c| c as i32))
         .bind(response_body)
         .bind(error_message)
-        .bind(error_type)
+        .bind(error_type.map(|t| t.as_str()))
         .bind(error_stack_trace)
         .bind(duration_millis)
         .bind(now)

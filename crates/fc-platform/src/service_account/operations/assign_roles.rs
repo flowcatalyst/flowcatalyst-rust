@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::events::ServiceAccountRolesAssigned;
-use crate::service_account::RoleAssignment;
+use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::service_account::ServiceAccount;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
@@ -110,7 +110,11 @@ impl<U: UnitOfWork> AssignRolesUseCase<U> {
         let roles_removed: Vec<String> = current_roles.difference(&new_roles).cloned().collect();
 
         // Replace roles
-        service_account.roles = command.roles.iter().map(RoleAssignment::new).collect();
+        service_account.roles = command
+            .roles
+            .iter()
+            .map(|r| RoleAssignment::with_source(r, AssignmentSource::AdminAssigned))
+            .collect();
         service_account.updated_at = Utc::now();
 
         // Create domain event

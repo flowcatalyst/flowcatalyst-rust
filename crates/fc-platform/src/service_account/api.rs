@@ -659,7 +659,7 @@ pub async fn get_roles<U: UnitOfWork>(
         .iter()
         .map(|r| RoleAssignmentResponse {
             role_name: r.role.clone(),
-            assignment_source: r.assignment_source.clone(),
+            assignment_source: r.assignment_source.map(|s| s.as_str().to_string()),
             assigned_at: r.assigned_at.to_rfc3339(),
         })
         .collect();
@@ -716,7 +716,7 @@ pub async fn assign_roles<U: UnitOfWork>(
                 .iter()
                 .map(|r| RoleAssignmentResponse {
                     role_name: r.role.clone(),
-                    assignment_source: r.assignment_source.clone(),
+                    assignment_source: r.assignment_source.map(|s| s.as_str().to_string()),
                     assigned_at: r.assigned_at.to_rfc3339(),
                 })
                 .collect();

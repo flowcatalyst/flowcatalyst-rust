@@ -53,17 +53,22 @@ impl DispatchProtocol {
     }
 }
 
-/// Retry strategy for failed jobs
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[derive(Default)]
+/// Retry strategy for failed jobs.
+///
+/// Stored and sent lowercase (`immediate` / `fixed` / `exponential`), as the
+/// stored data and the Go port spell it. The uppercase forms are legacy
+/// spellings that are still accepted on input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RetryStrategy {
     /// Immediate retry
+    #[serde(rename = "immediate", alias = "IMMEDIATE")]
     Immediate,
     /// Fixed delay between retries
+    #[serde(rename = "fixed", alias = "FIXED_DELAY")]
     FixedDelay,
     /// Exponential backoff
     #[default]
+    #[serde(rename = "exponential", alias = "EXPONENTIAL_BACKOFF")]
     ExponentialBackoff,
 }
 
@@ -122,6 +127,22 @@ impl ErrorType {
         }
     }
 }
+
+/// Outcome of one delivery attempt, as stored in
+/// `msg_dispatch_job_attempts.status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DispatchAttemptStatus {
+    Success,
+    /// Earlier Rust builds wrote `FAILED`; accepted on read.
+    #[serde(alias = "FAILED")]
+    Failure,
+}
+
+crate::shared::enum_str::str_enum!(DispatchAttemptStatus, "dispatch attempt status", {
+    Success => "SUCCESS",
+    Failure => "FAILURE" | "FAILED",
+});
 
 /// Dispatch attempt record
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -824,6 +845,43 @@ mod tests {
             RetryStrategy::from_str("unknown"),
             RetryStrategy::ExponentialBackoff
         );
+    }
+
+    #[test]
+    fn retry_strategy_serde_matches_stored_lowercase() {
+        for (v, s) in [
+            (RetryStrategy::Immediate, "immediate"),
+            (RetryStrategy::FixedDelay, "fixed"),
+            (RetryStrategy::ExponentialBackoff, "exponential"),
+        ] {
+            assert_eq!(v.as_str(), s);
+            assert_eq!(serde_json::to_value(v).unwrap(), serde_json::json!(s));
+            assert_eq!(
+                serde_json::from_value::<RetryStrategy>(serde_json::json!(s)).unwrap(),
+                v
+            );
+        }
+        // Earlier serde spellings still read.
+        for (s, v) in [
+            ("IMMEDIATE", RetryStrategy::Immediate),
+            ("FIXED_DELAY", RetryStrategy::FixedDelay),
+            ("EXPONENTIAL_BACKOFF", RetryStrategy::ExponentialBackoff),
+        ] {
+            assert_eq!(
+                serde_json::from_value::<RetryStrategy>(serde_json::json!(s)).unwrap(),
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_attempt_status_writes_failure_and_reads_legacy_failed() {
+        crate::shared::enum_str::assert_str_enum(
+            DispatchAttemptStatus::ALL,
+            DispatchAttemptStatus::as_str,
+        );
+        assert_eq!(DispatchAttemptStatus::Failure.as_str(), "FAILURE");
+        assert_eq!("FAILED".parse(), Ok(DispatchAttemptStatus::Failure));
     }
 
     #[test]

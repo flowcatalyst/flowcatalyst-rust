@@ -6,6 +6,7 @@ pub mod api_common;
 pub mod bootstrap_admin;
 pub mod database;
 pub mod default_processes;
+pub mod enum_str;
 pub mod error;
 pub mod middleware;
 pub mod tsid;

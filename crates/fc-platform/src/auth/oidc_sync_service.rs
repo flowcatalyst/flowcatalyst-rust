@@ -18,11 +18,11 @@ use tracing::{debug, info, warn};
 
 use crate::auth::config_entity::IdpRoleMapping;
 use crate::shared::error::Result;
-use crate::{ExternalIdentity, Principal, UserScope};
+use crate::{AssignmentSource, ExternalIdentity, Principal, UserScope};
 use crate::{IdpRoleMappingRepository, PrincipalRepository};
 
 /// Assignment source for IDP-synced roles
-pub const IDP_SYNC_SOURCE: &str = "IDP_SYNC";
+pub const IDP_SYNC_SOURCE: AssignmentSource = AssignmentSource::IdpSync;
 
 /// The identity an IdP asserted at OIDC login, to be synced into a principal.
 #[derive(Debug, Clone, Copy)]
@@ -402,6 +402,6 @@ mod tests {
 
     #[test]
     fn test_idp_sync_source_constant() {
-        assert_eq!(IDP_SYNC_SOURCE, "IDP_SYNC");
+        assert_eq!(IDP_SYNC_SOURCE.as_str(), "IDP_SYNC");
     }
 }

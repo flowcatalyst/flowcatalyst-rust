@@ -289,6 +289,14 @@ pub struct RoleAssignmentDto {
     pub assigned_at: String,
 }
 
+/// The wire label for a role's source. Unsourced assignments read as `ADMIN`,
+/// as in the Go port.
+fn assignment_source_label(r: &RoleAssignment) -> String {
+    r.assignment_source
+        .map_or("ADMIN", |s| s.as_str())
+        .to_string()
+}
+
 /// Roles list response
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -904,7 +912,7 @@ pub async fn get_roles(
         .map(|(i, r)| RoleAssignmentDto {
             id: format!("{}-role-{}", id, i),
             role_name: r.role.clone(),
-            assignment_source: "ADMIN".to_string(), // Default source
+            assignment_source: assignment_source_label(r),
             assigned_at: r.assigned_at.to_rfc3339(),
         })
         .collect();
@@ -1031,7 +1039,7 @@ pub async fn batch_assign_roles(
         .map(|(i, r)| RoleAssignmentDto {
             id: format!("{}-role-{}", id, i),
             role_name: r.role.clone(),
-            assignment_source: "ADMIN".to_string(),
+            assignment_source: assignment_source_label(r),
             assigned_at: r.assigned_at.to_rfc3339(),
         })
         .collect();

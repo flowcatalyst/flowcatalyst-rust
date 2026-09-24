@@ -10,7 +10,8 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use crate::service_account::entity::{RoleAssignment, WebhookAuthType, WebhookCredentials};
-use crate::shared::error::Result;
+use crate::shared::enum_str::decode_opt;
+use crate::shared::error::{PlatformError, Result};
 use crate::usecase::unit_of_work::HasId;
 use crate::ServiceAccount;
 
@@ -64,6 +65,25 @@ struct PrincipalRoleRow {
     assigned_at: DateTime<Utc>,
 }
 
+impl TryFrom<PrincipalRoleRow> for RoleAssignment {
+    type Error = PlatformError;
+    fn try_from(r: PrincipalRoleRow) -> Result<Self> {
+        let assignment_source = decode_opt(
+            r.assignment_source.as_deref(),
+            "iam_principal_roles",
+            "assignment_source",
+            &format!("{}/{}", r.principal_id, r.role_name),
+        )?;
+        Ok(RoleAssignment {
+            role: r.role_name,
+            client_id: None,
+            assignment_source,
+            assigned_at: r.assigned_at,
+            assigned_by: None,
+        })
+    }
+}
+
 pub struct ServiceAccountRepository {
     pool: PgPool,
 }
@@ -98,7 +118,7 @@ impl ServiceAccountRepository {
         .bind(Some(wh.auth_type.as_str()))
         .bind(&wh.token)
         .bind(&wh.signing_secret)
-        .bind(&wh.signing_algorithm)
+        .bind(wh.signing_algorithm.map(|a| a.as_str()))
         .bind(Some(now)) // wh_credentials_created_at
         .bind(account.last_used_at)
         .bind(now)
@@ -231,7 +251,7 @@ impl ServiceAccountRepository {
             .bind(Some(wh.auth_type.as_str()))
             .bind(&wh.token)
             .bind(&wh.signing_secret)
-            .bind(&wh.signing_algorithm)
+            .bind(wh.signing_algorithm.map(|a| a.as_str()))
             .bind(account.last_used_at)
             .bind(now)
             .execute(&self.pool)
@@ -268,11 +288,7 @@ impl ServiceAccountRepository {
             None
         };
         let roles = self.load_roles(&principal.id).await?;
-        Ok(Self::build_service_account_sync(
-            principal,
-            sa_row.as_ref(),
-            roles,
-        ))
+        Self::build_service_account_sync(principal, sa_row.as_ref(), roles)
     }
 
     /// Hydrate when we already have both rows.
@@ -282,11 +298,7 @@ impl ServiceAccountRepository {
         sa_row: ServiceAccountRow,
     ) -> Result<ServiceAccount> {
         let roles = self.load_roles(&principal.id).await?;
-        Ok(Self::build_service_account_sync(
-            principal,
-            Some(&sa_row),
-            roles,
-        ))
+        Self::build_service_account_sync(principal, Some(&sa_row), roles)
     }
 
     /// Hydrate multiple principals into ServiceAccounts (batch).
@@ -335,17 +347,11 @@ impl ServiceAccountRepository {
             role_map
                 .entry(r.principal_id.clone())
                 .or_default()
-                .push(RoleAssignment {
-                    role: r.role_name,
-                    client_id: None,
-                    assignment_source: r.assignment_source,
-                    assigned_at: r.assigned_at,
-                    assigned_by: None,
-                });
+                .push(RoleAssignment::try_from(r)?);
         }
 
         // Build ServiceAccount entities
-        let results = principals
+        principals
             .into_iter()
             .map(|p| {
                 let id = p.id.clone();
@@ -357,9 +363,7 @@ impl ServiceAccountRepository {
 
                 Self::build_service_account_sync(p, sa_row, roles)
             })
-            .collect();
-
-        Ok(results)
+            .collect()
     }
 
     /// Synchronous builder (no DB calls).
@@ -367,29 +371,38 @@ impl ServiceAccountRepository {
         principal: PrincipalRow,
         sa_row: Option<&ServiceAccountRow>,
         roles: Vec<RoleAssignment>,
-    ) -> ServiceAccount {
-        let webhook_credentials = sa_row
-            .map(|sa| WebhookCredentials {
-                auth_type: sa
-                    .wh_auth_type
-                    .as_deref()
-                    .map(WebhookAuthType::from_str)
-                    .unwrap_or_default(),
-                token: sa.wh_auth_token_ref.clone(),
-                username: None,
-                password: None,
-                header_name: None,
-                signing_secret: sa.wh_signing_secret_ref.clone(),
-                signing_algorithm: sa.wh_signing_algorithm.clone(),
-                signature_header: None,
-            })
-            .unwrap_or_default();
+    ) -> Result<ServiceAccount> {
+        let webhook_credentials = match sa_row {
+            Some(sa) => {
+                let signing_algorithm = decode_opt(
+                    sa.wh_signing_algorithm.as_deref(),
+                    "iam_service_accounts",
+                    "wh_signing_algorithm",
+                    &sa.id,
+                )?;
+                WebhookCredentials {
+                    auth_type: sa
+                        .wh_auth_type
+                        .as_deref()
+                        .map(WebhookAuthType::from_str)
+                        .unwrap_or_default(),
+                    token: sa.wh_auth_token_ref.clone(),
+                    username: None,
+                    password: None,
+                    header_name: None,
+                    signing_secret: sa.wh_signing_secret_ref.clone(),
+                    signing_algorithm,
+                    signature_header: None,
+                }
+            }
+            None => WebhookCredentials::default(),
+        };
 
         let code = sa_row
             .map(|sa| sa.code.clone())
             .unwrap_or_else(|| principal.name.clone());
 
-        ServiceAccount {
+        Ok(ServiceAccount {
             // The principal ID is what gets returned to clients
             id: principal.id,
             code,
@@ -405,7 +418,7 @@ impl ServiceAccountRepository {
             last_used_at: sa_row.and_then(|sa| sa.last_used_at),
             created_at: principal.created_at,
             updated_at: principal.updated_at,
-        }
+        })
     }
 
     /// Load roles for a principal from the junction table.
@@ -418,16 +431,7 @@ impl ServiceAccountRepository {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|m| RoleAssignment {
-                role: m.role_name,
-                client_id: None,
-                assignment_source: m.assignment_source,
-                assigned_at: m.assigned_at,
-                assigned_by: None,
-            })
-            .collect())
+        rows.into_iter().map(RoleAssignment::try_from).collect()
     }
 }
 
@@ -498,7 +502,7 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(Some(wh.auth_type.as_str()))
         .bind(&wh.token)
         .bind(&wh.signing_secret)
-        .bind(&wh.signing_algorithm)
+        .bind(wh.signing_algorithm.map(|a| a.as_str()))
         .bind(Some(now))
         .bind(sa.last_used_at)
         .bind(now)
@@ -517,7 +521,7 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
             )
             .bind(&sa.id)
             .bind(&r.role)
-            .bind(&r.assignment_source)
+            .bind(r.assignment_source.map(|s| s.as_str()))
             .bind(r.assigned_at)
             .execute(&mut **tx.inner).await?;
         }
@@ -544,10 +548,12 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
         // Migration 028 adds an `ON DELETE SET NULL` FK so the DB does
         // this automatically; the explicit UPDATE here is defense in
         // depth for pre-migration installs.
-        sqlx::query("UPDATE app_applications SET service_account_id = NULL WHERE service_account_id = $1")
-            .bind(&sa.id)
-            .execute(&mut **tx.inner)
-            .await?;
+        sqlx::query(
+            "UPDATE app_applications SET service_account_id = NULL WHERE service_account_id = $1",
+        )
+        .bind(&sa.id)
+        .execute(&mut **tx.inner)
+        .await?;
         if let Some(ref sa_id) = sa.service_account_table_id {
             sqlx::query("DELETE FROM iam_service_accounts WHERE id = $1")
                 .bind(sa_id)

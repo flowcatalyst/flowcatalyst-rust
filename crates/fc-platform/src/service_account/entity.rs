@@ -45,6 +45,49 @@ impl WebhookAuthType {
     }
 }
 
+/// HMAC algorithm for webhook signatures (`iam_service_accounts.wh_signing_algorithm`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SigningAlgorithm {
+    /// Earlier Rust builds wrote `SHA256`; accepted on read.
+    #[serde(alias = "SHA256")]
+    HmacSha256,
+}
+
+crate::shared::enum_str::str_enum!(SigningAlgorithm, "signing algorithm", {
+    HmacSha256 => "HMAC_SHA256" | "SHA256",
+});
+
+/// Where a role assignment came from (`iam_principal_roles.assignment_source`).
+/// A sync only ever replaces the assignments carrying its own source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AssignmentSource {
+    /// Assigned by an administrator. Earlier Rust builds wrote `ADMIN`,
+    /// which is accepted on read.
+    #[serde(alias = "ADMIN")]
+    AdminAssigned,
+    /// Derived from the identity provider's claims at login.
+    IdpSync,
+    /// Pushed by an application's SDK principal sync.
+    SdkSync,
+    /// Granted when an application's service account was provisioned.
+    Provisioned,
+    /// Granted to the bootstrap admin at first start.
+    Bootstrap,
+    /// Granted by the platform itself.
+    System,
+}
+
+crate::shared::enum_str::str_enum!(AssignmentSource, "role assignment source", {
+    AdminAssigned => "ADMIN_ASSIGNED" | "ADMIN",
+    IdpSync => "IDP_SYNC",
+    SdkSync => "SDK_SYNC",
+    Provisioned => "PROVISIONED",
+    Bootstrap => "BOOTSTRAP",
+    System => "SYSTEM",
+});
+
 /// Webhook credentials for service account
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,9 +116,9 @@ pub struct WebhookCredentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signing_secret: Option<String>,
 
-    /// HMAC algorithm (default: SHA256)
+    /// HMAC algorithm
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub signing_algorithm: Option<String>,
+    pub signing_algorithm: Option<SigningAlgorithm>,
 
     /// Header name for signature (default: X-Signature)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -126,7 +169,7 @@ impl WebhookCredentials {
         Self {
             auth_type: WebhookAuthType::HmacSignature,
             signing_secret: Some(secret.into()),
-            signing_algorithm: Some("SHA256".to_string()),
+            signing_algorithm: Some(SigningAlgorithm::HmacSha256),
             signature_header: Some("X-Signature".to_string()),
             ..Self::none()
         }
@@ -151,9 +194,9 @@ pub struct RoleAssignment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
 
-    /// Source of this role assignment (e.g., "ADMIN", "IDP_SYNC")
+    /// Source of this role assignment
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub assignment_source: Option<String>,
+    pub assignment_source: Option<AssignmentSource>,
 
     /// When the role was assigned
     pub assigned_at: DateTime<Utc>,
@@ -174,11 +217,11 @@ impl RoleAssignment {
         }
     }
 
-    pub fn with_source(role: impl Into<String>, source: impl Into<String>) -> Self {
+    pub fn with_source(role: impl Into<String>, source: AssignmentSource) -> Self {
         Self {
             role: role.into(),
             client_id: None,
-            assignment_source: Some(source.into()),
+            assignment_source: Some(source),
             assigned_at: Utc::now(),
             assigned_by: None,
         }
@@ -196,7 +239,12 @@ impl RoleAssignment {
 
     /// Check if this assignment is from IDP sync
     pub fn is_idp_sync(&self) -> bool {
-        self.assignment_source.as_deref() == Some("IDP_SYNC")
+        self.has_source(AssignmentSource::IdpSync)
+    }
+
+    /// Whether this assignment carries the given source
+    pub fn has_source(&self, source: AssignmentSource) -> bool {
+        self.assignment_source == Some(source)
     }
 }
 
@@ -556,7 +604,7 @@ mod tests {
         let creds = WebhookCredentials::hmac_signature("my-signing-secret");
         assert_eq!(creds.auth_type, WebhookAuthType::HmacSignature);
         assert_eq!(creds.signing_secret, Some("my-signing-secret".to_string()));
-        assert_eq!(creds.signing_algorithm, Some("SHA256".to_string()));
+        assert_eq!(creds.signing_algorithm, Some(SigningAlgorithm::HmacSha256));
         assert_eq!(creds.signature_header, Some("X-Signature".to_string()));
     }
 
@@ -579,9 +627,9 @@ mod tests {
 
     #[test]
     fn test_role_assignment_with_source() {
-        let ra = RoleAssignment::with_source("admin", "IDP_SYNC");
+        let ra = RoleAssignment::with_source("admin", AssignmentSource::IdpSync);
         assert_eq!(ra.role, "admin");
-        assert_eq!(ra.assignment_source, Some("IDP_SYNC".to_string()));
+        assert_eq!(ra.assignment_source, Some(AssignmentSource::IdpSync));
         assert!(ra.is_idp_sync());
     }
 
@@ -594,13 +642,40 @@ mod tests {
 
     #[test]
     fn test_role_assignment_is_idp_sync() {
-        let ra_sync = RoleAssignment::with_source("admin", "IDP_SYNC");
+        let ra_sync = RoleAssignment::with_source("admin", AssignmentSource::IdpSync);
         assert!(ra_sync.is_idp_sync());
 
-        let ra_not_sync = RoleAssignment::with_source("admin", "ADMIN");
+        let ra_not_sync = RoleAssignment::with_source("admin", AssignmentSource::AdminAssigned);
         assert!(!ra_not_sync.is_idp_sync());
 
         let ra_no_source = RoleAssignment::new("admin");
         assert!(!ra_no_source.is_idp_sync());
+    }
+
+    #[test]
+    fn signing_algorithm_writes_hmac_sha256_and_reads_legacy_sha256() {
+        crate::shared::enum_str::assert_str_enum(SigningAlgorithm::ALL, SigningAlgorithm::as_str);
+        assert_eq!(SigningAlgorithm::HmacSha256.as_str(), "HMAC_SHA256");
+        assert_eq!("SHA256".parse(), Ok(SigningAlgorithm::HmacSha256));
+        assert!("sha256".parse::<SigningAlgorithm>().is_err());
+    }
+
+    #[test]
+    fn assignment_source_spellings() {
+        crate::shared::enum_str::assert_str_enum(AssignmentSource::ALL, AssignmentSource::as_str);
+        // Every value the production table holds, plus the other ports' values.
+        for s in [
+            "ADMIN_ASSIGNED",
+            "PROVISIONED",
+            "IDP_SYNC",
+            "SDK_SYNC",
+            "BOOTSTRAP",
+            "SYSTEM",
+        ] {
+            assert_eq!(s.parse::<AssignmentSource>().unwrap().as_str(), s);
+        }
+        // Earlier Rust builds' admin spelling reads as the canonical one.
+        assert_eq!("ADMIN".parse(), Ok(AssignmentSource::AdminAssigned));
+        assert!("MANUAL".parse::<AssignmentSource>().is_err());
     }
 }

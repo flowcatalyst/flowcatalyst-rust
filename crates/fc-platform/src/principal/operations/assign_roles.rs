@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::events::RolesAssigned;
 use crate::principal::entity::{Principal, PrincipalType};
-use crate::service_account::entity::RoleAssignment;
+use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
@@ -134,7 +134,7 @@ impl<U: UnitOfWork> AssignUserRolesUseCase<U> {
         principal.roles = command
             .roles
             .iter()
-            .map(|r| RoleAssignment::with_source(r, "ADMIN_ASSIGNED"))
+            .map(|r| RoleAssignment::with_source(r, AssignmentSource::AdminAssigned))
             .collect();
         principal.updated_at = chrono::Utc::now();
 

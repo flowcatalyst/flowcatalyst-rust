@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use super::events::PrincipalsSynced;
 use crate::principal::entity::{Principal, UserScope};
-use crate::service_account::entity::RoleAssignment;
+use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
@@ -143,7 +143,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
             let role_assignments: Vec<RoleAssignment> = input
                 .roles
                 .iter()
-                .map(|r| RoleAssignment::with_source(r.to_lowercase(), "SDK_SYNC"))
+                .map(|r| RoleAssignment::with_source(r.to_lowercase(), AssignmentSource::SdkSync))
                 .collect();
 
             match self.principal_repo.find_by_email(&email).await? {
@@ -152,7 +152,7 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                     let non_sdk_roles: Vec<RoleAssignment> = principal
                         .roles
                         .iter()
-                        .filter(|r| r.assignment_source.as_deref() != Some("SDK_SYNC"))
+                        .filter(|r| !r.has_source(AssignmentSource::SdkSync))
                         .cloned()
                         .collect();
                     let mut merged = non_sdk_roles;
@@ -207,13 +207,13 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
                 let has_sdk_roles = principal
                     .roles
                     .iter()
-                    .any(|r| r.assignment_source.as_deref() == Some("SDK_SYNC"));
+                    .any(|r| r.has_source(AssignmentSource::SdkSync));
 
                 if has_sdk_roles {
                     let mut updated = principal.clone();
                     updated
                         .roles
-                        .retain(|r| r.assignment_source.as_deref() != Some("SDK_SYNC"));
+                        .retain(|r| !r.has_source(AssignmentSource::SdkSync));
                     updated.updated_at = chrono::Utc::now();
                     if let Err(e) = self.principal_repo.update(&updated).await {
                         return Err(UseCaseError::commit(format!(

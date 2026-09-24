@@ -3,7 +3,7 @@
 //! Unified model for users and service accounts.
 //! Multi-tenant with UserScope determining client access.
 
-use crate::service_account::entity::RoleAssignment;
+use crate::service_account::entity::{AssignmentSource, RoleAssignment};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -313,7 +313,7 @@ impl Principal {
         self.updated_at = Utc::now();
     }
 
-    pub fn assign_role_with_source(&mut self, role: impl Into<String>, source: impl Into<String>) {
+    pub fn assign_role_with_source(&mut self, role: impl Into<String>, source: AssignmentSource) {
         self.roles.push(RoleAssignment::with_source(role, source));
         self.updated_at = Utc::now();
     }
@@ -327,11 +327,10 @@ impl Principal {
         self.updated_at = Utc::now();
     }
 
-    /// Remove all roles from a specific source (e.g., "IDP_SYNC")
-    pub fn remove_roles_by_source(&mut self, source: &str) -> usize {
+    /// Remove all roles from a specific source (e.g. `IdpSync`)
+    pub fn remove_roles_by_source(&mut self, source: AssignmentSource) -> usize {
         let original_count = self.roles.len();
-        self.roles
-            .retain(|r| r.assignment_source.as_deref() != Some(source));
+        self.roles.retain(|r| !r.has_source(source));
         let removed = original_count - self.roles.len();
         if removed > 0 {
             self.updated_at = Utc::now();
@@ -563,11 +562,11 @@ mod tests {
     #[test]
     fn remove_roles_by_source_only_removes_matching_source() {
         let mut p = Principal::new_user("a@b.com", UserScope::Client);
-        p.assign_role_with_source("role-idp-1", "IDP_SYNC");
-        p.assign_role_with_source("role-idp-2", "IDP_SYNC");
-        p.assign_role_with_source("role-manual", "ADMIN");
+        p.assign_role_with_source("role-idp-1", AssignmentSource::IdpSync);
+        p.assign_role_with_source("role-idp-2", AssignmentSource::IdpSync);
+        p.assign_role_with_source("role-manual", AssignmentSource::AdminAssigned);
 
-        let removed = p.remove_roles_by_source("IDP_SYNC");
+        let removed = p.remove_roles_by_source(AssignmentSource::IdpSync);
         assert_eq!(removed, 2);
         assert_eq!(p.roles.len(), 1);
         assert_eq!(p.roles[0].role, "role-manual");
@@ -576,11 +575,11 @@ mod tests {
     #[test]
     fn remove_roles_by_source_is_noop_when_no_match() {
         let mut p = Principal::new_user("a@b.com", UserScope::Client);
-        p.assign_role_with_source("role-manual", "ADMIN");
+        p.assign_role_with_source("role-manual", AssignmentSource::AdminAssigned);
         let before = p.updated_at;
         std::thread::sleep(std::time::Duration::from_millis(2));
 
-        let removed = p.remove_roles_by_source("IDP_SYNC");
+        let removed = p.remove_roles_by_source(AssignmentSource::IdpSync);
         assert_eq!(removed, 0);
         // Timestamp should NOT update when nothing changed
         assert_eq!(p.updated_at, before);

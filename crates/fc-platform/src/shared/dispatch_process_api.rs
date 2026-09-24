@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
-use crate::dispatch_job::entity::DispatchStatus;
+use crate::dispatch_job::entity::{DispatchAttemptStatus, DispatchStatus, ErrorType};
 use crate::dispatch_job::repository::{DispatchJobRepository, NewDispatchAttempt};
 use crate::shared::error::PlatformError;
 
@@ -130,7 +130,7 @@ async fn process_dispatch(
         new_status: DispatchStatus,
         response_code: Option<u16>,
         error_message: Option<String>,
-        error_type: Option<&'static str>,
+        error_type: Option<ErrorType>,
         response_body: Option<String>,
     }
 
@@ -181,7 +181,7 @@ async fn process_dispatch(
                     new_status: DispatchStatus::Pending,
                     response_code: Some(status_code),
                     error_message: Some("Rate limited".to_string()),
-                    error_type: Some("HTTP_ERROR"),
+                    error_type: Some(ErrorType::HttpError),
                     response_body: Some(body),
                 }
             } else if (400..500).contains(&(status_code as i32)) {
@@ -197,7 +197,7 @@ async fn process_dispatch(
                     new_status: status,
                     response_code: Some(status_code),
                     error_message: Some(format!("HTTP {}", status_code)),
-                    error_type: Some("HTTP_ERROR"),
+                    error_type: Some(ErrorType::HttpError),
                     response_body: Some(body),
                 }
             } else {
@@ -213,18 +213,18 @@ async fn process_dispatch(
                     new_status: status,
                     response_code: Some(status_code),
                     error_message: Some(format!("HTTP {}", status_code)),
-                    error_type: Some("HTTP_ERROR"),
+                    error_type: Some(ErrorType::HttpError),
                     response_body: Some(body),
                 }
             }
         }
         Err(e) => {
             let (error_msg, err_type) = if e.is_timeout() {
-                ("Connection timeout".to_string(), "TIMEOUT")
+                ("Connection timeout".to_string(), ErrorType::Timeout)
             } else if e.is_connect() {
-                (format!("Connection error: {}", e), "CONNECTION")
+                (format!("Connection error: {}", e), ErrorType::Connection)
             } else {
-                (format!("Request failed: {}", e), "UNKNOWN")
+                (format!("Request failed: {}", e), ErrorType::Unknown)
             };
             warn!(job_id = %job_id, error = %error_msg, "Webhook delivery failed");
             let should_fail = attempt_number >= job.max_retries;
@@ -246,9 +246,9 @@ async fn process_dispatch(
 
     // 6. Record attempt
     let attempt_status = if outcome.new_status == DispatchStatus::Completed {
-        "SUCCESS"
+        DispatchAttemptStatus::Success
     } else {
-        "FAILED"
+        DispatchAttemptStatus::Failure
     };
     if let Err(e) = state
         .dispatch_job_repo
