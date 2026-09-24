@@ -169,9 +169,8 @@ pub struct UpdateClientApplicationsRequest {
 #[derive(Clone)]
 pub struct ClientsState {
     pub client_repo: Arc<ClientRepository>,
-    pub application_repo: Option<Arc<crate::application::repository::ApplicationRepository>>,
-    pub application_client_config_repo:
-        Option<Arc<crate::application::ApplicationClientConfigRepository>>,
+    pub application_repo: Arc<crate::application::repository::ApplicationRepository>,
+    pub application_client_config_repo: Arc<crate::application::ApplicationClientConfigRepository>,
     pub create_use_case:
         Arc<crate::client::operations::CreateClientUseCase<crate::usecase::PgUnitOfWork>>,
     pub update_use_case:
@@ -184,25 +183,19 @@ pub struct ClientsState {
         Arc<crate::client::operations::SuspendClientUseCase<crate::usecase::PgUnitOfWork>>,
     pub add_note_use_case:
         Arc<crate::client::operations::AddClientNoteUseCase<crate::usecase::PgUnitOfWork>>,
-    pub update_applications_use_case: Option<
-        Arc<
-            crate::application::operations::UpdateClientApplicationsUseCase<
-                crate::usecase::PgUnitOfWork,
-            >,
+    pub update_applications_use_case: Arc<
+        crate::application::operations::UpdateClientApplicationsUseCase<
+            crate::usecase::PgUnitOfWork,
         >,
     >,
-    pub enable_application_use_case: Option<
-        Arc<
-            crate::application::operations::EnableApplicationForClientUseCase<
-                crate::usecase::PgUnitOfWork,
-            >,
+    pub enable_application_use_case: Arc<
+        crate::application::operations::EnableApplicationForClientUseCase<
+            crate::usecase::PgUnitOfWork,
         >,
     >,
-    pub disable_application_use_case: Option<
-        Arc<
-            crate::application::operations::DisableApplicationForClientUseCase<
-                crate::usecase::PgUnitOfWork,
-            >,
+    pub disable_application_use_case: Arc<
+        crate::application::operations::DisableApplicationForClientUseCase<
+            crate::usecase::PgUnitOfWork,
         >,
     >,
 }
@@ -694,43 +687,28 @@ pub async fn get_client_applications(
     // Get all applications and their configs for this client
     let mut applications = Vec::new();
 
-    if let Some(ref app_repo) = state.application_repo {
-        // Get ALL applications (not just active)
-        let all_apps = app_repo.find_all().await?;
+    // Get ALL applications (not just active)
+    let all_apps = state.application_repo.find_all().await?;
+    let configs = state
+        .application_client_config_repo
+        .find_by_client(&id)
+        .await?;
+    let enabled_app_ids: std::collections::HashSet<_> = configs
+        .iter()
+        .filter(|c| c.enabled)
+        .map(|c| c.application_id.as_str())
+        .collect();
 
-        if let Some(ref config_repo) = state.application_client_config_repo {
-            let configs = config_repo.find_by_client(&id).await?;
-            let enabled_app_ids: std::collections::HashSet<_> = configs
-                .iter()
-                .filter(|c| c.enabled)
-                .map(|c| c.application_id.as_str())
-                .collect();
-
-            for app in all_apps {
-                applications.push(ClientApplicationResponse {
-                    id: app.id.clone(),
-                    code: app.code.clone(),
-                    name: app.name.clone(),
-                    description: app.description.clone(),
-                    icon_url: app.icon_url.clone(),
-                    active: app.active,
-                    enabled_for_client: enabled_app_ids.contains(app.id.as_str()),
-                });
-            }
-        } else {
-            // No config repo, return apps as all disabled
-            for app in all_apps {
-                applications.push(ClientApplicationResponse {
-                    id: app.id.clone(),
-                    code: app.code.clone(),
-                    name: app.name.clone(),
-                    description: app.description.clone(),
-                    icon_url: app.icon_url.clone(),
-                    active: app.active,
-                    enabled_for_client: false,
-                });
-            }
-        }
+    for app in all_apps {
+        applications.push(ClientApplicationResponse {
+            id: app.id.clone(),
+            code: app.code.clone(),
+            name: app.name.clone(),
+            description: app.description.clone(),
+            icon_url: app.icon_url.clone(),
+            active: app.active,
+            enabled_for_client: enabled_app_ids.contains(app.id.as_str()),
+        });
     }
 
     let total = applications.len();
@@ -765,10 +743,7 @@ pub async fn enable_application(
 
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
-    let use_case = state
-        .enable_application_use_case
-        .as_ref()
-        .ok_or_else(|| PlatformError::internal("Enable-application use case not configured"))?;
+    let use_case = &state.enable_application_use_case;
 
     let command = crate::application::operations::EnableApplicationForClientCommand {
         application_id,
@@ -805,10 +780,7 @@ pub async fn disable_application(
 
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
-    let use_case = state
-        .disable_application_use_case
-        .as_ref()
-        .ok_or_else(|| PlatformError::internal("Disable-application use case not configured"))?;
+    let use_case = &state.disable_application_use_case;
 
     let command = crate::application::operations::DisableApplicationForClientCommand {
         application_id,
@@ -846,10 +818,7 @@ pub async fn update_client_applications(
 
     use crate::usecase::{ExecutionContext, UseCase};
 
-    let use_case = state
-        .update_applications_use_case
-        .as_ref()
-        .ok_or_else(|| PlatformError::internal("Client applications use case not configured"))?;
+    let use_case = &state.update_applications_use_case;
 
     let command = crate::application::operations::UpdateClientApplicationsCommand {
         client_id: id,

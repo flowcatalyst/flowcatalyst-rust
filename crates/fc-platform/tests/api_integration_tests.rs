@@ -30,7 +30,10 @@ use fc_platform::domain::{Principal, UserScope};
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 use fc_platform::AuthorizationService;
 use fc_platform::Client;
-use fc_platform::{ClientRepository, DispatchJobRepository, EventRepository, RoleRepository};
+use fc_platform::{
+    ApplicationClientConfigRepository, ApplicationRepository, ClientRepository,
+    DispatchJobRepository, EventRepository, RoleRepository,
+};
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────
 
@@ -92,10 +95,12 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
 
     let client_repo = Arc::new(ClientRepository::new(pool));
     let unit_of_work = Arc::new(fc_platform::usecase::PgUnitOfWork::new(pool.clone()));
+    let application_repo = Arc::new(ApplicationRepository::new(pool));
+    let application_client_config_repo = Arc::new(ApplicationClientConfigRepository::new(pool));
     let clients_state = ClientsState {
         client_repo: client_repo.clone(),
-        application_repo: None,
-        application_client_config_repo: None,
+        application_repo: application_repo.clone(),
+        application_client_config_repo: application_client_config_repo.clone(),
         create_use_case: Arc::new(fc_platform::client::operations::CreateClientUseCase::new(
             client_repo.clone(),
             unit_of_work.clone(),
@@ -120,11 +125,28 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
             client_repo.clone(),
             unit_of_work.clone(),
         )),
-        // Application management is exercised via the dedicated
-        // application tests; this integration test doesn't need them.
-        update_applications_use_case: None,
-        enable_application_use_case: None,
-        disable_application_use_case: None,
+        update_applications_use_case: Arc::new(
+            fc_platform::application::operations::UpdateClientApplicationsUseCase::new(
+                application_repo.clone(),
+                client_repo.clone(),
+                application_client_config_repo.clone(),
+                unit_of_work.clone(),
+            ),
+        ),
+        enable_application_use_case: Arc::new(
+            fc_platform::application::operations::EnableApplicationForClientUseCase::new(
+                application_repo.clone(),
+                client_repo.clone(),
+                application_client_config_repo.clone(),
+                unit_of_work.clone(),
+            ),
+        ),
+        disable_application_use_case: Arc::new(
+            fc_platform::application::operations::DisableApplicationForClientUseCase::new(
+                application_client_config_repo.clone(),
+                unit_of_work.clone(),
+            ),
+        ),
     };
 
     let sdk_events_state = SdkEventsState {

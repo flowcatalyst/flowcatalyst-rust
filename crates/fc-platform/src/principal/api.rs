@@ -21,7 +21,7 @@ use crate::service_account::entity::RoleAssignment;
 use crate::shared::api_common::PaginationParams;
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
-use crate::{AuditService, PasswordService};
+use crate::AuditService;
 
 /// Create user request
 #[derive(Debug, Deserialize, ToSchema)]
@@ -418,18 +418,16 @@ pub struct PrincipalsQuery {
 #[derive(Clone)]
 pub struct PrincipalsState {
     pub principal_repo: Arc<PrincipalRepository>,
-    pub audit_service: Option<Arc<AuditService>>,
-    pub password_service: Option<Arc<PasswordService>>,
-    pub anchor_domain_repo: Option<Arc<crate::AnchorDomainRepository>>,
-    pub client_auth_config_repo: Option<Arc<crate::ClientAuthConfigRepository>>,
-    pub email_domain_mapping_repo: Option<Arc<crate::EmailDomainMappingRepository>>,
-    pub identity_provider_repo: Option<Arc<crate::IdentityProviderRepository>>,
-    pub application_repo: Option<Arc<ApplicationRepository>>,
-    pub app_client_config_repo: Option<Arc<ApplicationClientConfigRepository>>,
-    /// When configured, enables `POST /api/principals/{id}/send-password-reset`
-    /// which emails the user a single-use reset link (same flow as
-    /// user-initiated `/auth/password-reset/request`).
-    pub password_reset_emailer: Option<Arc<crate::auth::password_reset_api::PasswordResetEmailer>>,
+    pub audit_service: Arc<AuditService>,
+    pub anchor_domain_repo: Arc<crate::AnchorDomainRepository>,
+    pub email_domain_mapping_repo: Arc<crate::EmailDomainMappingRepository>,
+    pub identity_provider_repo: Arc<crate::IdentityProviderRepository>,
+    pub application_repo: Arc<ApplicationRepository>,
+    pub app_client_config_repo: Arc<ApplicationClientConfigRepository>,
+    /// Backs `POST /api/principals/{id}/send-password-reset`, which emails the
+    /// user a single-use reset link (same flow as user-initiated
+    /// `/auth/password-reset/request`), and the magic link sent on create.
+    pub password_reset_emailer: Arc<crate::auth::password_reset_api::PasswordResetEmailer>,
     // Use cases — writes go through these so that events + audit logs are
     // emitted atomically via UnitOfWork.
     pub create_user_use_case:
@@ -491,28 +489,24 @@ pub async fn create_user(
         .ok_or_else(|| PlatformError::validation("Invalid email format"))?
         .to_lowercase();
 
-    let is_anchor_domain = if let Some(ref anchor_repo) = state.anchor_domain_repo {
-        anchor_repo.is_anchor_domain(&domain).await?
-    } else {
-        false
-    };
+    let is_anchor_domain = state.anchor_domain_repo.is_anchor_domain(&domain).await?;
 
-    let mapping = if let Some(ref edm_repo) = state.email_domain_mapping_repo {
-        edm_repo.find_by_email_domain(&domain).await?
-    } else {
-        None
-    };
+    let mapping = state
+        .email_domain_mapping_repo
+        .find_by_email_domain(&domain)
+        .await?;
 
     // Resolve IdP type (INTERNAL / OIDC) so the use case can key its password
     // handling off it. Unmapped domains default to INTERNAL — they can only
     // log in through embedded auth anyway.
-    let idp_type = match (&mapping, &state.identity_provider_repo) {
-        (Some(m), Some(idp_repo)) => idp_repo
+    let idp_type = match &mapping {
+        Some(m) => state
+            .identity_provider_repo
             .find_by_id(&m.identity_provider_id)
             .await?
             .map(|idp| idp.r#type.as_str().to_string())
             .unwrap_or_else(|| "INTERNAL".to_string()),
-        _ => "INTERNAL".to_string(),
+        None => "INTERNAL".to_string(),
     };
 
     // Resolve scope + client association from email domain.
@@ -621,26 +615,22 @@ pub async fn create_user(
             .map(|i| !i.email.is_empty())
             .unwrap_or(false);
     if should_send_magic_link {
-        if let Some(ref emailer) = state.password_reset_emailer {
-            if let Err(e) = emailer.send_reset_email(&created).await {
-                // Don't fail the create — the user is in the DB. Surface the
-                // problem in logs; the admin can resend from the detail page.
-                tracing::error!(
-                    principal_id = %created.id,
-                    error = %e,
-                    "User created but magic-link email failed to send"
-                );
-            } else {
-                tracing::info!(
-                    principal_id = %created.id,
-                    "Sent magic sign-in link to new user"
-                );
-            }
-        } else {
-            tracing::warn!(
+        if let Err(e) = state
+            .password_reset_emailer
+            .send_reset_email(&created)
+            .await
+        {
+            // Don't fail the create — the user is in the DB. Surface the
+            // problem in logs; the admin can resend from the detail page.
+            tracing::error!(
                 principal_id = %created.id,
-                "Magic sign-in link not sent — password_reset_emailer not configured. \
-                 Admin must trigger the reset manually from the user detail page."
+                error = %e,
+                "User created but magic-link email failed to send"
+            );
+        } else {
+            tracing::info!(
+                principal_id = %created.id,
+                "Sent magic sign-in link to new user"
             );
         }
     }
@@ -1467,10 +1457,7 @@ pub async fn send_password_reset(
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
 
-    let emailer = state
-        .password_reset_emailer
-        .as_ref()
-        .ok_or_else(|| PlatformError::internal("Password reset emailer not configured"))?;
+    let emailer = &state.password_reset_emailer;
 
     let principal = state
         .principal_repo
@@ -1507,16 +1494,15 @@ pub async fn send_password_reset(
         "Admin triggered password reset email"
     );
 
-    if let Some(ref audit) = state.audit_service {
-        let _ = audit
-            .log_update(
-                &auth.0,
-                "Principal",
-                &id,
-                "Password reset email sent by admin".to_string(),
-            )
-            .await;
-    }
+    let _ = state
+        .audit_service
+        .log_update(
+            &auth.0,
+            "Principal",
+            &id,
+            "Password reset email sent by admin".to_string(),
+        )
+        .await;
 
     Ok(Json(StatusChangeResponse {
         message: "Password reset email sent".to_string(),
@@ -1556,21 +1542,16 @@ pub async fn check_email_domain(
     let email_exists = state.principal_repo.find_by_email(email).await?.is_some();
 
     // Check if it's an anchor domain
-    let is_anchor_domain = if let Some(ref anchor_repo) = state.anchor_domain_repo {
-        anchor_repo.is_anchor_domain(&domain).await?
-    } else {
-        false
-    };
+    let is_anchor_domain = state.anchor_domain_repo.is_anchor_domain(&domain).await?;
 
     // Resolve auth provider + scope derivation. The scope/client_id logic
     // here MUST stay in sync with `create_user` above — the form uses
     // `requires_client_id` to decide whether to show a client picker, and the
     // backend would otherwise reject the submission with CLIENT_ID_REQUIRED.
-    let mapping = if let Some(ref edm_repo) = state.email_domain_mapping_repo {
-        edm_repo.find_by_email_domain(&domain).await?
-    } else {
-        None
-    };
+    let mapping = state
+        .email_domain_mapping_repo
+        .find_by_email_domain(&domain)
+        .await?;
 
     let (has_auth_config, auth_provider, info, warning) = if is_anchor_domain {
         (
@@ -1579,8 +1560,12 @@ pub async fn check_email_domain(
             Some("This is an anchor domain. User will have access to all clients.".to_string()),
             None,
         )
-    } else if let (Some(ref m), Some(ref idp_repo)) = (&mapping, &state.identity_provider_repo) {
-        match idp_repo.find_by_id(&m.identity_provider_id).await? {
+    } else if let Some(ref m) = mapping {
+        match state
+            .identity_provider_repo
+            .find_by_id(&m.identity_provider_id)
+            .await?
+        {
             Some(idp) => {
                 let provider = match idp.r#type {
                     crate::IdentityProviderType::Oidc => "OIDC",
@@ -1702,10 +1687,7 @@ pub async fn get_application_access(
         }
     }
 
-    let app_repo = state
-        .application_repo
-        .as_ref()
-        .ok_or_else(|| PlatformError::internal("Application repository not configured"))?;
+    let app_repo = &state.application_repo;
 
     // Resolve application details for each accessible application ID
     let mut applications = Vec::new();
@@ -1761,10 +1743,7 @@ pub async fn set_application_access(
         .await?
         .or_not_found("Principal", &id)?;
 
-    let app_repo = state
-        .application_repo
-        .as_ref()
-        .ok_or_else(|| PlatformError::internal("Application repository not configured"))?;
+    let app_repo = &state.application_repo;
 
     // Validate applications exist and are active (kept in handler for 400 mapping).
     for app_id in &req.application_ids {
@@ -1863,10 +1842,7 @@ pub async fn get_available_applications(
         }
     }
 
-    let app_repo = state
-        .application_repo
-        .as_ref()
-        .ok_or_else(|| PlatformError::internal("Application repository not configured"))?;
+    let app_repo = &state.application_repo;
 
     let applications: Vec<AvailableApplicationResponse> = if principal.scope == UserScope::Anchor {
         // Anchor users see all active applications
@@ -1876,9 +1852,7 @@ pub async fn get_available_applications(
             .collect()
     } else {
         // Client users see only apps enabled for their accessible clients
-        let config_repo = state.app_client_config_repo.as_ref().ok_or_else(|| {
-            PlatformError::internal("Application client config repository not configured")
-        })?;
+        let config_repo = &state.app_client_config_repo;
 
         // Gather all client IDs this principal can access
         let mut client_ids: Vec<String> = principal.assigned_clients.clone();

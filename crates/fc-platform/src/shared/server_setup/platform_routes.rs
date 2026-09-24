@@ -261,17 +261,17 @@ pub fn build_platform_routes(
     );
     let clients_state = ClientsState {
         client_repo: repos.client_repo.clone(),
-        application_repo: Some(repos.application_repo.clone()),
-        application_client_config_repo: Some(repos.application_client_config_repo.clone()),
+        application_repo: repos.application_repo.clone(),
+        application_client_config_repo: repos.application_client_config_repo.clone(),
         create_use_case: create_client_use_case,
         update_use_case: update_client_use_case,
         delete_use_case: delete_client_use_case,
         activate_use_case: activate_client_use_case,
         suspend_use_case: suspend_client_use_case,
         add_note_use_case: add_client_note_use_case,
-        update_applications_use_case: Some(update_client_applications_use_case),
-        enable_application_use_case: Some(enable_application_for_client_use_case),
-        disable_application_use_case: Some(disable_application_for_client_use_case),
+        update_applications_use_case: update_client_applications_use_case,
+        enable_application_use_case: enable_application_for_client_use_case,
+        disable_application_use_case: disable_application_for_client_use_case,
     };
     // Password reset emailer — shared between user-initiated /auth/password-reset/request
     // and admin-initiated /api/principals/{id}/send-password-reset.
@@ -342,15 +342,13 @@ pub fn build_platform_routes(
 
     let principals_state = PrincipalsState {
         principal_repo: repos.principal_repo.clone(),
-        audit_service: Some(audit_service),
-        password_service: Some(auth.password.clone()),
-        anchor_domain_repo: Some(repos.anchor_domain_repo.clone()),
-        client_auth_config_repo: Some(repos.client_auth_config_repo.clone()),
-        email_domain_mapping_repo: Some(repos.edm_repo.clone()),
-        identity_provider_repo: Some(repos.idp_repo.clone()),
-        application_repo: Some(repos.application_repo.clone()),
-        app_client_config_repo: Some(repos.application_client_config_repo.clone()),
-        password_reset_emailer: Some(password_reset_emailer.clone()),
+        audit_service,
+        anchor_domain_repo: repos.anchor_domain_repo.clone(),
+        email_domain_mapping_repo: repos.edm_repo.clone(),
+        identity_provider_repo: repos.idp_repo.clone(),
+        application_repo: repos.application_repo.clone(),
+        app_client_config_repo: repos.application_client_config_repo.clone(),
+        password_reset_emailer: password_reset_emailer.clone(),
         create_user_use_case,
         grant_client_access_use_case,
         reset_password_use_case: reset_password_use_case.clone(),
@@ -377,7 +375,7 @@ pub fn build_platform_routes(
     ));
     let roles_state = RolesState {
         role_repo: repos.role_repo.clone(),
-        application_repo: Some(repos.application_repo.clone()),
+        application_repo: repos.application_repo.clone(),
         create_use_case: create_role_use_case,
         update_use_case: update_role_use_case,
         delete_use_case: delete_role_use_case,
@@ -514,7 +512,7 @@ pub fn build_platform_routes(
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
         client_auth_config_repo: repos.client_auth_config_repo.clone(),
         idp_role_mapping_repo: repos.idp_role_mapping_repo.clone(),
-        principal_repo: Some(repos.principal_repo.clone()),
+        principal_repo: repos.principal_repo.clone(),
         unit_of_work: unit_of_work.clone(),
         create_anchor_domain_use_case,
         update_anchor_domain_use_case,
@@ -933,7 +931,7 @@ pub fn build_platform_routes(
 
     let bff_roles_state = BffRolesState {
         role_repo: repos.role_repo.clone(),
-        application_repo: Some(repos.application_repo.clone()),
+        application_repo: repos.application_repo.clone(),
         unit_of_work: unit_of_work.clone(),
         role_sync_service: Arc::new(crate::shared::role_sync_service::RoleSyncService::new(
             repos.role_repo.clone(),
@@ -947,7 +945,6 @@ pub fn build_platform_routes(
 
     let bff_event_types_state = BffEventTypesState {
         event_type_repo: repos.event_type_repo.clone(),
-        application_repo: Some(repos.application_repo.clone()),
         sync_use_case: sync_event_types_use_case.clone(),
         unit_of_work: unit_of_work.clone(),
     };

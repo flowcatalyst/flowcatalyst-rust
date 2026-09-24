@@ -13,7 +13,6 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::application::repository::ApplicationRepository;
 use crate::event_type::entity::{EventType, EventTypeStatus, SpecVersion};
 use crate::event_type::operations::{
     AddSchemaCommand, AddSchemaUseCase, ArchiveEventTypeCommand, ArchiveEventTypeUseCase,
@@ -208,7 +207,6 @@ pub struct BffAggregateFilterQuery {
 #[derive(Clone)]
 pub struct BffEventTypesState {
     pub event_type_repo: Arc<EventTypeRepository>,
-    pub application_repo: Option<Arc<ApplicationRepository>>,
     pub sync_use_case: Arc<SyncEventTypesUseCase<crate::usecase::PgUnitOfWork>>,
     pub unit_of_work: Arc<PgUnitOfWork>,
 }

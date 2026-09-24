@@ -163,7 +163,7 @@ pub struct BffRolesQuery {
 #[derive(Clone)]
 pub struct BffRolesState {
     pub role_repo: Arc<RoleRepository>,
-    pub application_repo: Option<Arc<ApplicationRepository>>,
+    pub application_repo: Arc<ApplicationRepository>,
     pub unit_of_work: Arc<PgUnitOfWork>,
     pub role_sync_service: Arc<crate::shared::role_sync_service::RoleSyncService>,
 }
@@ -230,18 +230,15 @@ pub async fn get_filter_applications(
     State(state): State<BffRolesState>,
     _auth: Authenticated,
 ) -> Result<Json<BffApplicationOptionsResponse>, PlatformError> {
-    let options = if let Some(ref app_repo) = state.application_repo {
-        let apps = app_repo.find_active().await?;
-        apps.into_iter()
-            .map(|a| BffApplicationOption {
-                id: a.id,
-                code: a.code,
-                name: a.name,
-            })
-            .collect()
-    } else {
-        vec![]
-    };
+    let apps = state.application_repo.find_active().await?;
+    let options = apps
+        .into_iter()
+        .map(|a| BffApplicationOption {
+            id: a.id,
+            code: a.code,
+            name: a.name,
+        })
+        .collect();
 
     Ok(Json(BffApplicationOptionsResponse { options }))
 }

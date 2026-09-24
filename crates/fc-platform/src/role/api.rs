@@ -137,7 +137,7 @@ pub struct RolesQuery {
 #[derive(Clone)]
 pub struct RolesState {
     pub role_repo: Arc<RoleRepository>,
-    pub application_repo: Option<Arc<ApplicationRepository>>,
+    pub application_repo: Arc<ApplicationRepository>,
     pub create_use_case:
         Arc<crate::role::operations::CreateRoleUseCase<crate::usecase::PgUnitOfWork>>,
     pub update_use_case:
@@ -542,18 +542,15 @@ pub async fn get_filter_applications(
     State(state): State<RolesState>,
     _auth: Authenticated,
 ) -> Result<Json<ApplicationOptionsResponse>, PlatformError> {
-    let options = if let Some(ref app_repo) = state.application_repo {
-        let apps = app_repo.find_active().await?;
-        apps.into_iter()
-            .map(|a| ApplicationOption {
-                id: a.id,
-                code: a.code,
-                name: a.name,
-            })
-            .collect()
-    } else {
-        vec![]
-    };
+    let apps = state.application_repo.find_active().await?;
+    let options = apps
+        .into_iter()
+        .map(|a| ApplicationOption {
+            id: a.id,
+            code: a.code,
+            name: a.name,
+        })
+        .collect();
 
     Ok(Json(ApplicationOptionsResponse { options }))
 }

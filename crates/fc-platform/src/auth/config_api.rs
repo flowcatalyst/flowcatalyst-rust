@@ -312,8 +312,8 @@ pub struct AuthConfigState {
     pub anchor_domain_repo: Arc<AnchorDomainRepository>,
     pub client_auth_config_repo: Arc<ClientAuthConfigRepository>,
     pub idp_role_mapping_repo: Arc<IdpRoleMappingRepository>,
-    /// Optional - needed for counting users by email domain
-    pub principal_repo: Option<Arc<crate::PrincipalRepository>>,
+    /// Used for counting users by email domain
+    pub principal_repo: Arc<crate::PrincipalRepository>,
     pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
 
     // Anchor domain use cases
@@ -411,14 +411,11 @@ pub async fn list_anchor_domains(
     // Convert to response DTOs with user counts
     let mut domains = Vec::with_capacity(anchor_domains.len());
     for d in anchor_domains {
-        let user_count = if let Some(ref principal_repo) = state.principal_repo {
-            principal_repo
-                .count_by_email_domain(&d.domain)
-                .await
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        let user_count = state
+            .principal_repo
+            .count_by_email_domain(&d.domain)
+            .await
+            .unwrap_or(0);
         domains.push(AnchorDomainResponse::from_domain(d, user_count));
     }
 
@@ -455,14 +452,11 @@ pub async fn get_anchor_domain(
         .ok_or_else(|| PlatformError::not_found("AnchorDomain", &id))?;
 
     // Count users from this domain
-    let user_count = if let Some(ref principal_repo) = state.principal_repo {
-        principal_repo
-            .count_by_email_domain(&domain.domain)
-            .await
-            .unwrap_or(0)
-    } else {
-        0
-    };
+    let user_count = state
+        .principal_repo
+        .count_by_email_domain(&domain.domain)
+        .await
+        .unwrap_or(0);
 
     Ok(Json(AnchorDomainResponse::from_domain(domain, user_count)))
 }
