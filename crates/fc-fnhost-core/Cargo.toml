@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "FlowCatalyst function host: environment, logging, observability, reconciler, artifact stores and Sigstore verification (a drop-in for Java's fc-fnhost)"
+description = "FlowCatalyst function host: environment, logging, observability, reconciler, artifact stores, Sigstore verification and the function listeners (a drop-in for Java's fc-fnhost)"
 
 [dependencies]
 fc-function-abi = { path = "../fc-function-abi" }
@@ -21,7 +21,7 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
-sha2 = { workspace = true }
+sha2 = { workspace = true, features = ["oid"] }
 hex = { workspace = true }
 parking_lot = { workspace = true }
 async-trait = { workspace = true }
@@ -29,8 +29,18 @@ thiserror = { workspace = true }
 bytes = { workspace = true }
 rand = { workspace = true }
 url = { workspace = true }
+indexmap = { workspace = true }
+hmac = { workspace = true }
+subtle = { workspace = true }
 
 base64 = "0.22"
+# The listeners (H5): HTTP/1.1 + h2c with graceful shutdown.
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio", "http1", "http2", "service"] }
+http = "1"
+http-body-util = "0.1"
+# RS256 verification of platform bearer tokens (already in the lock via jsonwebtoken).
+rsa = "0.9"
 prometheus-client = "0.23"
 gethostname = "1"
 # Sigstore verification is a port of Java's JDK-only SignatureVerifier on the

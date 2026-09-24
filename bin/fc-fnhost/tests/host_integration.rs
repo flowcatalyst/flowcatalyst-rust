@@ -11,8 +11,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use fc_fnhost_core::env::{EnvReader, HostEnv};
-use fc_fnhost_core::host::FnHost;
+use fc_fnhost_core::host::{FnHost, Listener};
+use fc_fnhost_core::invoke::{InvocationContext, InvokeError, Invoker};
+use fc_fnhost_core::listener::FnListener;
 use fc_fnhost_core::loader::{FunctionInstance, FunctionLoader, LoadOutcome, LoadRequest, Loaders};
+use fc_function_abi::Response;
 use parking_lot::Mutex;
 use serde_json::json;
 
@@ -25,6 +28,13 @@ struct RecordingLoader {
 
 struct Instance {
     closed: AtomicBool,
+}
+
+#[async_trait]
+impl Invoker for Instance {
+    async fn invoke(&self, _context: InvocationContext) -> Result<Response, InvokeError> {
+        Ok(Response::ack())
+    }
 }
 
 #[async_trait]
@@ -252,4 +262,102 @@ async fn ready_reports_starting_then_platform_unreachable() {
         .unwrap();
     assert_eq!(health.status(), 200, "an outage is not a liveness failure");
     host.close().await;
+}
+
+#[tokio::test]
+async fn the_listeners_serve_through_the_host_and_close_with_it() {
+    let (platform, url) = support::start().await;
+    let cache = tempfile::tempdir().unwrap();
+    let bytes = b"\0asm served".to_vec();
+    platform
+        .artifacts
+        .lock()
+        .insert(support::version_id("app.orders.ship", 1), bytes.clone());
+    let artifact_ref = format!("platform://fnc_1/{}", &support::sha256_digest(&bytes)[7..]);
+    let mut entry = support::entry("app.orders.ship", 1, "wasm", "warm", &artifact_ref, &bytes);
+    entry["manifest"]["endpoints"] = json!([{"path": "/x", "auth": "none"}]);
+    platform.set_document(json!({
+        "functions": [entry],
+        "publicRoutes": [{"hostname": "api.acme.com", "pathPrefix": "/", "address": "app.orders.ship"}]
+    }));
+    let env = HostEnv::load(&EnvReader::from_pairs([
+        ("FC_FN_PLATFORM_URL", url.as_str()),
+        ("FC_FN_CLIENT_ID", "id"),
+        ("FC_FN_CLIENT_SECRET", "secret"),
+        ("FC_FN_SIGNATURES", "off"),
+        ("FLOWCATALYST_DEV_MODE", "true"),
+        ("FC_METRICS_PORT", "0"),
+        ("FC_FN_PORT", "0"),
+        ("FC_FN_PUBLIC_PORT", "0"),
+        ("FC_FN_CACHE_DIR", cache.path().to_str().unwrap()),
+    ]))
+    .unwrap();
+    let listener: Arc<dyn Listener> = Arc::new(FnListener::from_env(&env));
+    let loader = Arc::new(RecordingLoader::default());
+    let mut host = FnHost::new(
+        env,
+        Loaders::none().with("wasm", loader.clone()),
+        Some(listener),
+    )
+    .unwrap();
+    host.start().await.unwrap();
+    let port = host.port().unwrap();
+    let public_port = host.public_port().unwrap();
+    let http = reqwest::Client::new();
+
+    let private = http
+        .get(format!(
+            "http://127.0.0.1:{port}/functions/app.orders.ship/x"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(private.status(), 200);
+    let public = http
+        .get(format!("http://127.0.0.1:{public_port}/x"))
+        .header("Host", "api.acme.com")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(public.status(), 200);
+    let ready: serde_json::Value = http
+        .get(format!(
+            "http://127.0.0.1:{}/ready",
+            host.metrics_port().unwrap()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ready["status"], "UP", "{ready}");
+    let metrics = http
+        .get(format!(
+            "http://127.0.0.1:{}/metrics",
+            host.metrics_port().unwrap()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(metrics.contains("fc_fn_permits_available{scope=\"host\",address=\"\"} 512"));
+    assert!(metrics.contains(
+        "fc_fn_invocations_total{address=\"app.orders.ship\",version=\"1\",outcome=\"ok\",entry=\"public\"} 1"
+    ));
+
+    host.close().await;
+    assert!(
+        http.get(format!(
+            "http://127.0.0.1:{port}/functions/app.orders.ship/x"
+        ))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .is_err(),
+        "the listener is closed"
+    );
+    assert!(loader.closed("app.orders.ship@1"));
 }

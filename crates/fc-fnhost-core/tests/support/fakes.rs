@@ -17,9 +17,10 @@ use fc_fnhost_core::control_plane::{
 use fc_fnhost_core::desired::DesiredDocument;
 use fc_fnhost_core::digest::Digest;
 use fc_fnhost_core::heartbeat::{HeartbeatReport, LoadState};
+use fc_fnhost_core::invoke::{InvocationContext, InvokeError, Invoker};
 use fc_fnhost_core::loader::{FunctionInstance, FunctionLoader, LoadOutcome, LoadRequest};
 use fc_fnhost_core::registry::FunctionRegistry;
-use fc_function_abi::{EventEmitError, FunctionAddress};
+use fc_function_abi::{EventEmitError, FunctionAddress, Response};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 
@@ -195,6 +196,13 @@ pub struct FakeInstance {
     registry: Option<Arc<FunctionRegistry>>,
     address: FunctionAddress,
     pub served_at_close: Mutex<Option<Option<i32>>>,
+}
+
+#[async_trait]
+impl Invoker for FakeInstance {
+    async fn invoke(&self, _context: InvocationContext) -> Result<Response, InvokeError> {
+        Ok(Response::ack())
+    }
 }
 
 #[async_trait]

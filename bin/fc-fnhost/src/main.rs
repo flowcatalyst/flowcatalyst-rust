@@ -4,8 +4,11 @@
 //! after `FC_EXIT_AFTER_START` or a clean shutdown (SIGTERM / Ctrl-C), 1 if
 //! the host cannot start.
 
+use std::sync::Arc;
+
 use fc_fnhost_core::env::EnvReader;
-use fc_fnhost_core::host::{run, shutdown_signal};
+use fc_fnhost_core::host::{run, shutdown_signal, Listener};
+use fc_fnhost_core::listener::FnListener;
 use fc_fnhost_core::loader::Loaders;
 
 fn main() {
@@ -16,13 +19,15 @@ fn main() {
         .expect("the tokio runtime builds");
     // No runtimes are registered yet: the WASM engine lands in H4, and a
     // `jvm` entry is reported RUNTIME_UNSUPPORTED (it stays on JVM hosts).
+    // The listeners bind regardless, as Java's do; a call to a function no
+    // runtime could load is 503 FUNCTION_UNAVAILABLE.
     let code = runtime.block_on(async {
         let mut stderr = std::io::stderr();
         run(
             EnvReader::system(),
             &mut stderr,
             Loaders::none(),
-            None,
+            |env| Some(Arc::new(FnListener::from_env(env)) as Arc<dyn Listener>),
             shutdown_signal(),
         )
         .await
