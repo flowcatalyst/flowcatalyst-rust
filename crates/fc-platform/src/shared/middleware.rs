@@ -302,7 +302,7 @@ where
 mod tests {
     use super::*;
     use crate::auth::auth_service::{AuthConfig, AuthService};
-    use crate::domain::{Principal, UserScope};
+    use crate::domain::{Principal, PrincipalType, UserScope};
     use crate::shared::authorization_service::AuthorizationService;
     use crate::RoleRepository;
     use axum::http::{header, Request};
@@ -475,8 +475,8 @@ mod tests {
 
         let auth = result.unwrap();
         assert_eq!(auth.0.email, Some("test@example.com".to_string()));
-        assert_eq!(auth.0.scope, "ANCHOR");
-        assert_eq!(auth.0.principal_type, "USER");
+        assert_eq!(auth.0.scope, UserScope::Anchor);
+        assert_eq!(auth.0.principal_type, PrincipalType::User);
     }
 
     #[tokio::test]
@@ -603,7 +603,7 @@ mod tests {
 
         let auth = result.unwrap();
         assert_eq!(auth.0.email, Some("test@example.com".to_string()));
-        assert_eq!(auth.0.scope, "ANCHOR");
+        assert_eq!(auth.0.scope, UserScope::Anchor);
     }
 
     #[tokio::test]
@@ -662,7 +662,7 @@ mod tests {
         assert!(auth.0.is_anchor());
         assert!(auth.0.can_access_client("any-client-id"));
         assert!(auth.0.can_access_client("another-client"));
-        assert_eq!(auth.0.scope, "ANCHOR");
+        assert_eq!(auth.0.scope, UserScope::Anchor);
         assert!(auth.0.accessible_clients.contains(&"*".to_string()));
     }
 
@@ -678,7 +678,7 @@ mod tests {
             .unwrap();
 
         assert!(!auth.0.is_anchor());
-        assert_eq!(auth.0.scope, "CLIENT");
+        assert_eq!(auth.0.scope, UserScope::Client);
         assert!(auth.0.can_access_client("client-abc"));
         assert!(!auth.0.can_access_client("other-client"));
         assert_eq!(auth.0.email, Some("user@client.com".to_string()));
@@ -696,7 +696,7 @@ mod tests {
             .unwrap();
 
         assert!(!auth.0.is_anchor());
-        assert_eq!(auth.0.scope, "PARTNER");
+        assert_eq!(auth.0.scope, UserScope::Partner);
         assert!(auth.0.can_access_client("client-1"));
         assert!(auth.0.can_access_client("client-2"));
         assert!(!auth.0.can_access_client("client-3"));
@@ -718,7 +718,7 @@ mod tests {
         let opt_auth = result.unwrap();
         assert!(opt_auth.0.is_some());
         let ctx = opt_auth.0.unwrap();
-        assert_eq!(ctx.scope, "ANCHOR");
+        assert_eq!(ctx.scope, UserScope::Anchor);
         assert_eq!(ctx.email, Some("test@example.com".to_string()));
     }
 
@@ -762,7 +762,7 @@ mod tests {
         let opt_auth = result.unwrap();
         assert!(opt_auth.0.is_some());
         let ctx = opt_auth.0.unwrap();
-        assert_eq!(ctx.scope, "ANCHOR");
+        assert_eq!(ctx.scope, UserScope::Anchor);
     }
 
     // ─── ClientIp Extractor Tests ──────────────────────────────────────────

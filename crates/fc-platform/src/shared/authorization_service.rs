@@ -6,6 +6,7 @@ use crate::permissions;
 use crate::shared::error::{PlatformError, Result};
 use crate::AccessTokenClaims;
 use crate::RoleRepository;
+use crate::{PrincipalType, UserScope};
 use dashmap::DashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -17,11 +18,11 @@ pub struct AuthContext {
     /// Principal ID
     pub principal_id: String,
 
-    /// Principal type (USER or SERVICE)
-    pub principal_type: String,
+    /// Principal type
+    pub principal_type: PrincipalType,
 
     /// User scope
-    pub scope: String,
+    pub scope: UserScope,
 
     /// Email (for users)
     pub email: Option<String>,
@@ -47,8 +48,8 @@ impl AuthContext {
     ) -> Self {
         Self {
             principal_id: claims.sub.clone(),
-            principal_type: claims.principal_type.clone(),
-            scope: claims.scope.clone(),
+            principal_type: claims.principal_type,
+            scope: claims.scope,
             email: claims.email.clone(),
             name: claims.name.clone(),
             accessible_clients: claims.clients.clone(),
@@ -59,7 +60,7 @@ impl AuthContext {
 
     /// Check if this context is for an anchor user
     pub fn is_anchor(&self) -> bool {
-        self.scope == "ANCHOR"
+        self.scope.is_anchor()
     }
 
     /// Check if this context can access a specific client
@@ -779,8 +780,8 @@ mod tests {
     fn create_test_context(permissions: Vec<&str>, scope: &str, clients: Vec<&str>) -> AuthContext {
         AuthContext {
             principal_id: "test123".to_string(),
-            principal_type: "USER".to_string(),
-            scope: scope.to_string(),
+            principal_type: PrincipalType::User,
+            scope: scope.parse().unwrap(),
             email: Some("test@example.com".to_string()),
             name: "Test User".to_string(),
             accessible_clients: clients.into_iter().map(String::from).collect(),
@@ -879,8 +880,8 @@ mod tests {
     fn test_empty_roles_list() {
         let ctx = AuthContext {
             principal_id: "p1".to_string(),
-            principal_type: "USER".to_string(),
-            scope: "CLIENT".to_string(),
+            principal_type: PrincipalType::User,
+            scope: UserScope::Client,
             email: None,
             name: "No Roles".to_string(),
             accessible_clients: vec![],
@@ -1003,8 +1004,8 @@ mod tests {
             iat: 1699996400,
             nbf: 1699996400,
             jti: "jwt-id-1".to_string(),
-            principal_type: "SERVICE".to_string(),
-            scope: "ANCHOR".to_string(),
+            principal_type: PrincipalType::Service,
+            scope: UserScope::Anchor,
             email: Some("svc@test.com".to_string()),
             name: "Service Account".to_string(),
             clients: vec!["*".to_string()],
@@ -1016,8 +1017,8 @@ mod tests {
 
         let ctx = AuthContext::from_claims_with_permissions(&claims, perms);
         assert_eq!(ctx.principal_id, "principal_1");
-        assert_eq!(ctx.principal_type, "SERVICE");
-        assert_eq!(ctx.scope, "ANCHOR");
+        assert_eq!(ctx.principal_type, PrincipalType::Service);
+        assert_eq!(ctx.scope, UserScope::Anchor);
         assert_eq!(ctx.email, Some("svc@test.com".to_string()));
         assert_eq!(ctx.name, "Service Account");
         assert!(ctx.can_access_client("any_client"));

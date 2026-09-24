@@ -12,16 +12,16 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::Engine as _;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::auth::auth_service::{extract_bearer_token, AccessTokenClaims};
-use crate::auth::oauth_entity::OAuthClient;
+use crate::auth::authorization_code::{Pkce, PkceMethod};
+use crate::auth::oauth_entity::{GrantType, OAuthClient};
 use crate::auth::password_service::PasswordService;
 use crate::auth::pending_auth_repository::{PendingAuth, PendingAuthRepository};
 use crate::login_attempt::entity::{AttemptType, LoginAttempt, LoginOutcome};
@@ -309,18 +309,28 @@ pub async fn authorize(
 
     // Validate code_challenge_method
     if let Some(ref method) = req.code_challenge_method {
-        if method != "S256" && method != "plain" {
-            return error_redirect(
-                &req.redirect_uri,
-                "invalid_request",
-                "Invalid code_challenge_method",
-                req.state.as_deref(),
-            );
-        }
-        if method == "plain" {
-            warn!(client_id = %req.client_id, "PKCE plain method used — S256 is strongly recommended");
+        match method.parse::<PkceMethod>() {
+            Err(_) => {
+                return error_redirect(
+                    &req.redirect_uri,
+                    "invalid_request",
+                    "Invalid code_challenge_method",
+                    req.state.as_deref(),
+                );
+            }
+            Ok(PkceMethod::Plain) => {
+                warn!(client_id = %req.client_id, "PKCE plain method used — S256 is strongly recommended");
+            }
+            Ok(PkceMethod::S256) => {}
         }
     }
+    // The method was validated just above, so this can't fail.
+    let pkce = Pkce::from_parts(
+        req.code_challenge.clone(),
+        req.code_challenge_method.as_deref(),
+    )
+    .ok()
+    .flatten();
 
     // Validate requested scopes against client's allowed scopes
     if let Some(ref scope_str) = req.scope {
@@ -407,11 +417,7 @@ pub async fn authorize(
                         )
                     };
 
-                    if let (Some(challenge), Some(method)) =
-                        (&req.code_challenge, &req.code_challenge_method)
-                    {
-                        auth_code = auth_code.with_pkce(challenge.clone(), method.clone());
-                    }
+                    auth_code = auth_code.with_pkce(pkce.clone());
 
                     if let Err(e) = state.auth_code_repo.insert(&auth_code).await {
                         error!(error = %e, "Failed to store authorization code");
@@ -775,8 +781,11 @@ pub async fn token(
     // P0-1: Authenticate the client before processing any grant type.
     // For client_credentials grant, the handler does its own auth (backward compat),
     // but for authorization_code and refresh_token, we authenticate here.
-    let authenticated_client = match req.grant_type.as_str() {
-        "client_credentials" => {
+    // An unrecognised grant type still authenticates the client first, then
+    // gets `unsupported_grant_type` below.
+    let grant_type = req.grant_type.parse::<GrantType>().ok();
+    let authenticated_client = match grant_type {
+        Some(GrantType::ClientCredentials) => {
             // client_credentials handler does its own full auth including type checks
             None
         }
@@ -795,13 +804,15 @@ pub async fn token(
         }
     };
 
-    match req.grant_type.as_str() {
-        "authorization_code" => {
+    match grant_type {
+        Some(GrantType::AuthorizationCode) => {
             handle_authorization_code_grant(state, req, authenticated_client).await
         }
-        "refresh_token" => handle_refresh_token_grant(state, req, authenticated_client).await,
-        "client_credentials" => handle_client_credentials_grant(state, req).await,
-        _ => (
+        Some(GrantType::RefreshToken) => {
+            handle_refresh_token_grant(state, req, authenticated_client).await
+        }
+        Some(GrantType::ClientCredentials) => handle_client_credentials_grant(state, req).await,
+        Some(GrantType::Password) | None => (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
                 error: "unsupported_grant_type".to_string(),
@@ -902,7 +913,7 @@ async fn handle_authorization_code_grant(
     }
 
     // Validate PKCE if code_challenge was provided
-    if let Some(ref challenge) = auth_code.code_challenge {
+    if let Some(ref pkce) = auth_code.pkce {
         let verifier = match req.code_verifier {
             Some(v) => v,
             None => {
@@ -946,16 +957,7 @@ async fn handle_authorization_code_grant(
                 .into_response();
         }
 
-        let method = auth_code.code_challenge_method.as_deref().unwrap_or("S256");
-        let computed_challenge = if method == "S256" {
-            let mut hasher = Sha256::new();
-            hasher.update(verifier.as_bytes());
-            URL_SAFE_NO_PAD.encode(hasher.finalize())
-        } else {
-            verifier.clone()
-        };
-
-        if computed_challenge != *challenge {
+        if !pkce.verify(&verifier) {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
@@ -1575,10 +1577,16 @@ pub async fn issue_code(
         )
     };
 
-    if let (Some(challenge), Some(method)) = (pending.code_challenge, pending.code_challenge_method)
-    {
-        auth_code = auth_code.with_pkce(challenge, method);
-    }
+    let method = pending.code_challenge_method.as_deref();
+    let pkce = Pkce::from_parts(pending.code_challenge.clone(), method).map_err(|_| {
+        crate::shared::enum_str::corrupt_value(
+            "oauth_oidc_payloads",
+            "payload.codeChallengeMethod",
+            method.unwrap_or_default(),
+            pending_state,
+        )
+    })?;
+    auth_code = auth_code.with_pkce(pkce);
 
     // Store authorization code
     state.auth_code_repo.insert(&auth_code).await.map_err(|e| {
@@ -1764,8 +1772,8 @@ pub async fn userinfo(State(state): State<OAuthState>, headers: HeaderMap) -> Re
             sub: claims.sub,
             email: claims.email,
             name: Some(claims.name),
-            scope: Some(claims.scope),
-            principal_type: Some(claims.principal_type),
+            scope: Some(claims.scope.as_str().to_string()),
+            principal_type: Some(claims.principal_type.as_str().to_string()),
             client_id: claims.clients.first().and_then(|c| {
                 // Extract the raw client ID from "id:identifier" format
                 if c == "*" {
@@ -1832,11 +1840,11 @@ pub async fn introspect(
             Json(IntrospectResponse {
                 active: true,
                 sub: Some(claims.sub),
-                scope: Some(claims.scope),
+                scope: Some(claims.scope.as_str().to_string()),
                 client_id: claims.clients.first().cloned(),
                 email: claims.email,
                 name: Some(claims.name),
-                principal_type: Some(claims.principal_type),
+                principal_type: Some(claims.principal_type.as_str().to_string()),
                 exp: Some(claims.exp),
                 iat: Some(claims.iat),
                 iss: Some(claims.iss),

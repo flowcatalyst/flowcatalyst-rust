@@ -4,7 +4,7 @@
 //! Supports both RS256 (RSA) for production and HS256 (HMAC) for development.
 
 use crate::shared::error::{PlatformError, Result};
-use crate::{Principal, UserScope};
+use crate::{Principal, PrincipalType, UserScope};
 use chrono::{Duration, Utc};
 use dashmap::DashMap;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -84,12 +84,13 @@ pub struct IdTokenClaims {
     pub azp: Option<String>,
 
     // --- FlowCatalyst custom claims (matching TypeScript provider) ---
-    /// Principal type (USER or SERVICE)
+    /// Principal type; on the wire `USER` or `SERVICE`
     #[serde(rename = "type")]
-    pub principal_type: String,
+    pub principal_type: PrincipalType,
 
-    /// User scope (ANCHOR, PARTNER, CLIENT)
-    pub scope: String,
+    /// User scope; on the wire `ANCHOR`, `PARTNER` or `CLIENT` (uppercase —
+    /// the TS SDK lowercases it on receipt, so the spelling is load-bearing)
+    pub scope: UserScope,
 
     /// Client ID this principal belongs to
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -129,12 +130,13 @@ pub struct AccessTokenClaims {
     /// JWT ID (unique identifier)
     pub jti: String,
 
-    /// Principal type (USER or SERVICE)
+    /// Principal type; on the wire `USER` or `SERVICE`
     #[serde(rename = "type")]
-    pub principal_type: String,
+    pub principal_type: PrincipalType,
 
-    /// User scope (ANCHOR, PARTNER, CLIENT)
-    pub scope: String,
+    /// User scope; on the wire `ANCHOR`, `PARTNER` or `CLIENT` (uppercase —
+    /// the TS SDK lowercases it on receipt, so the spelling is load-bearing)
+    pub scope: UserScope,
 
     /// User email (for USER type)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,7 +177,7 @@ impl AccessTokenClaims {
 
     /// Check if the claims are for an anchor user.
     pub fn is_anchor(&self) -> bool {
-        self.scope == "ANCHOR"
+        self.scope.is_anchor()
     }
 
     /// The principal ID (the `sub` claim).
@@ -733,8 +735,8 @@ impl AuthService {
             acr: None, // Not tracking authentication context class yet
             amr: None, // Not tracking authentication methods yet
             azp: Some(client_id.to_string()), // Always set when aud is single-valued (OIDC Core §2)
-            principal_type: principal.principal_type.as_str().to_string(),
-            scope: principal.scope.as_str().to_string(),
+            principal_type: principal.principal_type,
+            scope: principal.scope,
             client_id: principal.client_id.clone(),
             roles: role_names,
             applications,
@@ -801,8 +803,8 @@ impl AuthService {
             iat: now.timestamp(),
             nbf: now.timestamp(),
             jti: crate::shared::tsid::generate_untyped(),
-            principal_type: principal.principal_type.as_str().to_string(),
-            scope: principal.scope.as_str().to_string(),
+            principal_type: principal.principal_type,
+            scope: principal.scope,
             email: principal.email().map(String::from),
             name: principal.name.clone(),
             clients,
@@ -899,7 +901,7 @@ pub fn extract_bearer_token(auth_header: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Principal, UserScope};
+    use crate::{Principal, PrincipalType, UserScope};
 
     #[test]
     fn test_generate_and_validate_token() {
@@ -911,7 +913,7 @@ mod tests {
 
         let claims = service.validate_token(&token).unwrap();
         assert_eq!(claims.sub, principal.id);
-        assert_eq!(claims.scope, "ANCHOR");
+        assert_eq!(claims.scope, UserScope::Anchor);
         assert!(claims.clients.contains(&"*".to_string()));
     }
 
@@ -926,9 +928,95 @@ mod tests {
         let token = service.generate_access_token(&principal).unwrap();
         let claims = service.validate_token(&token).unwrap();
 
-        assert_eq!(claims.scope, "CLIENT");
+        assert_eq!(claims.scope, UserScope::Client);
         assert!(claims.clients.contains(&"client123".to_string()));
         assert!(!claims.clients.contains(&"*".to_string()));
+    }
+
+    /// The claim shape before `type`/`scope` became enums: plain strings.
+    #[derive(Serialize)]
+    struct PreEnumAccessClaims {
+        sub: String,
+        iss: String,
+        aud: String,
+        exp: i64,
+        iat: i64,
+        nbf: i64,
+        jti: String,
+        #[serde(rename = "type")]
+        principal_type: String,
+        scope: String,
+        email: Option<String>,
+        name: String,
+        clients: Vec<String>,
+        roles: Vec<String>,
+        applications: Vec<String>,
+    }
+
+    fn payload_json(token: &str) -> serde_json::Value {
+        use base64::Engine;
+        let payload = token.split('.').nth(1).unwrap();
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn tokens_issued_before_the_enum_claims_still_validate() {
+        let service = AuthService::new(AuthConfig::default());
+        let now = Utc::now().timestamp();
+        for (ty, scope, want_ty, want_scope) in [
+            ("USER", "ANCHOR", PrincipalType::User, UserScope::Anchor),
+            (
+                "SERVICE",
+                "CLIENT",
+                PrincipalType::Service,
+                UserScope::Client,
+            ),
+            ("USER", "PARTNER", PrincipalType::User, UserScope::Partner),
+        ] {
+            let old = PreEnumAccessClaims {
+                sub: "prn_1".to_string(),
+                iss: service.config.issuer.clone(),
+                aud: service.config.audience.clone(),
+                exp: now + 600,
+                iat: now,
+                nbf: now,
+                jti: "jti_1".to_string(),
+                principal_type: ty.to_string(),
+                scope: scope.to_string(),
+                email: None,
+                name: "Old Token".to_string(),
+                clients: vec!["*".to_string()],
+                roles: vec![],
+                applications: vec![],
+            };
+            let mut header = Header::new(service.algorithm);
+            header.kid = service.key_id.clone();
+            let token = encode(&header, &old, &service.encoding_key).unwrap();
+            let claims = service.validate_token(&token).unwrap();
+            assert_eq!(claims.principal_type, want_ty);
+            assert_eq!(claims.scope, want_scope);
+        }
+    }
+
+    #[test]
+    fn issued_claims_keep_their_uppercase_wire_values() {
+        let service = AuthService::new(AuthConfig::default());
+        let mut principal = Principal::new_user("test@example.com", UserScope::Anchor);
+        principal.principal_type = PrincipalType::Service;
+        let token = service.generate_access_token(&principal).unwrap();
+        let json = payload_json(&token);
+        assert_eq!(json["type"], "SERVICE");
+        assert_eq!(json["scope"], "ANCHOR");
+
+        let id_token = service
+            .generate_id_token(&principal, "client-1", None)
+            .unwrap();
+        let json = payload_json(&id_token);
+        assert_eq!(json["type"], "SERVICE");
+        assert_eq!(json["scope"], "ANCHOR");
     }
 
     #[test]

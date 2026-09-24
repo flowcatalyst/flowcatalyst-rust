@@ -3,7 +3,9 @@
 //! Stores authorization codes in `oauth_oidc_payloads` (type = "AuthorizationCode")
 //! for compatibility with the TypeScript oidc-provider implementation.
 
-use crate::shared::error::Result;
+use crate::auth::authorization_code::Pkce;
+use crate::shared::enum_str::corrupt_value;
+use crate::shared::error::{PlatformError, Result};
 use crate::AuthorizationCode;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -28,9 +30,25 @@ struct PayloadRow {
     created_at: DateTime<Utc>,
 }
 
-impl From<PayloadRow> for AuthorizationCode {
-    fn from(m: PayloadRow) -> Self {
+impl TryFrom<PayloadRow> for AuthorizationCode {
+    type Error = PlatformError;
+    fn try_from(m: PayloadRow) -> Result<Self> {
         let p = &m.payload;
+        let method = p.get("codeChallengeMethod").and_then(|v| v.as_str());
+        let pkce = Pkce::from_parts(
+            p.get("codeChallenge")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            method,
+        )
+        .map_err(|_| {
+            corrupt_value(
+                "oauth_oidc_payloads",
+                "payload.codeChallengeMethod",
+                method.unwrap_or_default(),
+                &m.id,
+            )
+        })?;
         let code =
             m.id.strip_prefix("AuthorizationCode:")
                 .unwrap_or(&m.id)
@@ -43,7 +61,7 @@ impl From<PayloadRow> for AuthorizationCode {
         // consumed_at being set means the code was used
         let used = m.consumed_at.is_some();
 
-        AuthorizationCode {
+        Ok(AuthorizationCode {
             code,
             client_id: p
                 .get("clientId")
@@ -61,14 +79,7 @@ impl From<PayloadRow> for AuthorizationCode {
                 .unwrap_or("")
                 .to_string(),
             scope: p.get("scope").and_then(|v| v.as_str()).map(String::from),
-            code_challenge: p
-                .get("codeChallenge")
-                .and_then(|v| v.as_str())
-                .map(String::from),
-            code_challenge_method: p
-                .get("codeChallengeMethod")
-                .and_then(|v| v.as_str())
-                .map(String::from),
+            pkce,
             nonce: p.get("nonce").and_then(|v| v.as_str()).map(String::from),
             state: p.get("state").and_then(|v| v.as_str()).map(String::from),
             context_client_id: p
@@ -78,7 +89,7 @@ impl From<PayloadRow> for AuthorizationCode {
             created_at,
             expires_at,
             used,
-        }
+        })
     }
 }
 
@@ -104,8 +115,8 @@ impl AuthorizationCodeRepository {
             "clientId": code.client_id,
             "redirectUri": code.redirect_uri,
             "scope": code.scope,
-            "codeChallenge": code.code_challenge,
-            "codeChallengeMethod": code.code_challenge_method,
+            "codeChallenge": code.pkce.as_ref().map(|p| &p.challenge),
+            "codeChallengeMethod": code.pkce.as_ref().map(|p| p.method.as_str()),
             "nonce": code.nonce,
             "state": code.state,
             "contextClientId": code.context_client_id,
@@ -140,7 +151,7 @@ impl AuthorizationCodeRepository {
                 .bind(Self::make_id(code))
                 .fetch_optional(&self.pool)
                 .await?;
-        Ok(row.map(AuthorizationCode::from))
+        row.map(AuthorizationCode::try_from).transpose()
     }
 
     /// Find a valid (not used, not expired) authorization code.
@@ -154,7 +165,7 @@ impl AuthorizationCodeRepository {
         .bind(Self::make_id(code))
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(AuthorizationCode::from))
+        row.map(AuthorizationCode::try_from).transpose()
     }
 
     /// Atomically find and consume a valid (not used, not expired) authorization code.
@@ -184,7 +195,7 @@ impl AuthorizationCodeRepository {
             );
         }
 
-        Ok(row.map(AuthorizationCode::from))
+        row.map(AuthorizationCode::try_from).transpose()
     }
 
     /// Mark an authorization code as used (consumed).

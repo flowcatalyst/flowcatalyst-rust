@@ -7,7 +7,7 @@
 //! with HS256 keys for JWT generation/validation.
 
 use fc_platform::auth::auth_service::{AuthConfig, AuthService};
-use fc_platform::domain::{Principal, UserScope};
+use fc_platform::domain::{Principal, PrincipalType, UserScope};
 
 /// Create a test AuthService with HS256 (no RSA keys needed)
 fn test_auth_service() -> AuthService {
@@ -44,8 +44,8 @@ fn test_generate_and_validate_access_token() {
 
     assert_eq!(claims.sub, principal.id);
     assert_eq!(claims.email, Some("test@example.com".to_string()));
-    assert_eq!(claims.principal_type, "USER");
-    assert_eq!(claims.scope, "ANCHOR");
+    assert_eq!(claims.principal_type, PrincipalType::User);
+    assert_eq!(claims.scope, UserScope::Anchor);
     assert_eq!(claims.iss, "flowcatalyst");
     assert_eq!(claims.aud, "flowcatalyst");
     assert!(claims.roles.contains(&"admin".to_string()));
@@ -89,8 +89,8 @@ fn test_token_claims_for_service_principal() {
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
-    assert_eq!(claims.principal_type, "SERVICE");
-    assert_eq!(claims.scope, "ANCHOR");
+    assert_eq!(claims.principal_type, PrincipalType::Service);
+    assert_eq!(claims.scope, UserScope::Anchor);
     assert_eq!(claims.name, "Test Service");
     assert_eq!(claims.email, None);
 }
@@ -103,7 +103,7 @@ fn test_token_claims_for_client_scope_user() {
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
-    assert_eq!(claims.scope, "CLIENT");
+    assert_eq!(claims.scope, UserScope::Client);
     assert!(claims.clients.contains(&"client-abc".to_string()));
 }
 
@@ -116,7 +116,7 @@ fn test_token_claims_for_partner_scope_user() {
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
-    assert_eq!(claims.scope, "PARTNER");
+    assert_eq!(claims.scope, UserScope::Partner);
     // Partner users should have their assigned clients in the token
     assert!(claims.clients.contains(&"client-1".to_string()));
     assert!(claims.clients.contains(&"client-2".to_string()));
@@ -129,7 +129,7 @@ fn test_anchor_scope_has_wildcard_client_access() {
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
-    assert_eq!(claims.scope, "ANCHOR");
+    assert_eq!(claims.scope, UserScope::Anchor);
     assert!(claims.clients.contains(&"*".to_string()));
 }
 
@@ -196,7 +196,7 @@ fn test_introspect_valid_token() {
     // Validate token (this is what the introspect endpoint does)
     let claims = auth_service.validate_token(&token).unwrap();
     assert!(!claims.sub.is_empty());
-    assert_eq!(claims.scope, "ANCHOR");
+    assert_eq!(claims.scope, UserScope::Anchor);
     assert!(claims.exp > 0);
     assert!(claims.iat > 0);
 }
@@ -475,8 +475,8 @@ fn test_auth_context_permission_matching() {
 
     let ctx = AuthContext {
         principal_id: "p-123".to_string(),
-        principal_type: "USER".to_string(),
-        scope: "ANCHOR".to_string(),
+        principal_type: PrincipalType::User,
+        scope: UserScope::Anchor,
         email: Some("admin@example.com".to_string()),
         name: "Admin".to_string(),
         accessible_clients: vec!["*".to_string()],
@@ -513,8 +513,8 @@ fn test_auth_context_multiple_permissions_check() {
 
     let ctx = AuthContext {
         principal_id: "p-123".to_string(),
-        principal_type: "USER".to_string(),
-        scope: "CLIENT".to_string(),
+        principal_type: PrincipalType::User,
+        scope: UserScope::Client,
         email: Some("user@client.com".to_string()),
         name: "User".to_string(),
         accessible_clients: vec!["client-1".to_string()],

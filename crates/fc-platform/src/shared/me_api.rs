@@ -261,8 +261,8 @@ async fn whoami(
 
     Ok(Json(WhoamiResponse {
         principal_id: ctx.principal_id.clone(),
-        principal_type: ctx.principal_type.clone(),
-        scope: ctx.scope.clone(),
+        principal_type: ctx.principal_type.as_str().to_string(),
+        scope: ctx.scope.as_str().to_string(),
         name: ctx.name.clone(),
         email: ctx.email.clone(),
         active: true,

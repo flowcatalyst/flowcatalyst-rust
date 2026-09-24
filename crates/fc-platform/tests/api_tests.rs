@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use fc_platform::domain::{Principal, UserScope};
+use fc_platform::domain::{Principal, PrincipalType, UserScope};
 use fc_platform::shared::tsid;
 use fc_platform::EntityType;
 
@@ -106,8 +106,8 @@ mod authorization_tests {
     fn create_auth_context(permissions: Vec<&str>, scope: &str, clients: Vec<&str>) -> AuthContext {
         AuthContext {
             principal_id: tsid::generate(EntityType::Principal),
-            principal_type: "USER".to_string(),
-            scope: scope.to_string(),
+            principal_type: PrincipalType::User,
+            scope: scope.parse().unwrap(),
             email: Some("test@example.com".to_string()),
             name: "Test User".to_string(),
             accessible_clients: clients.into_iter().map(String::from).collect(),

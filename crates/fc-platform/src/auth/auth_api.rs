@@ -391,11 +391,11 @@ pub async fn get_current_user(
 
     Ok(Json(CurrentUserResponse {
         id: ctx.principal_id.clone(),
-        principal_type: ctx.principal_type.clone(),
+        principal_type: ctx.principal_type.as_str().to_string(),
         email: ctx.email.clone(),
         name: ctx.name.clone(),
-        scope: ctx.scope.clone(),
-        client_id: if ctx.scope == "CLIENT" {
+        scope: ctx.scope.as_str().to_string(),
+        client_id: if ctx.scope == crate::UserScope::Client {
             ctx.accessible_clients.first().cloned()
         } else {
             None
