@@ -4,7 +4,6 @@
 //! information through the execution of a use case.
 
 use super::domain_event::DomainEvent;
-use super::tracing_context::TracingContext;
 use crate::shared::authorization_service::AuthContext;
 use crate::shared::tsid::TsidGenerator;
 use chrono::{DateTime, Utc};
@@ -37,40 +36,14 @@ impl ExecutionContext {
     /// Create a new execution context for a fresh request.
     ///
     /// The execution_id and correlation_id are both set to a new TSID.
-    /// Use this for API-initiated requests when no tracing context is available.
-    ///
-    /// **Prefer using [`from_tracing_context`] when a TracingContext
-    /// is available**, as it will preserve correlation/causation from HTTP headers
-    /// or background job context.
+    /// To continue an existing trace, use [`Self::with_correlation`] or
+    /// [`Self::from_parent_event`] instead.
     pub fn create(principal_id: impl Into<String>) -> Self {
-        // Check if there's a thread-local TracingContext
-        if let Some(tracing_ctx) = TracingContext::current() {
-            return Self::from_tracing_context(&tracing_ctx, principal_id);
-        }
-
         let exec_id = format!("exec-{}", TsidGenerator::generate_untyped());
         Self {
             execution_id: exec_id.clone(),
             correlation_id: exec_id, // correlation starts as execution ID
             causation_id: None,      // no causation for fresh requests
-            principal_id: principal_id.into(),
-            initiated_at: Utc::now(),
-        }
-    }
-
-    /// Create an execution context from a TracingContext.
-    ///
-    /// This is the preferred method when running within an HTTP request
-    /// where TracingContext has been populated from headers.
-    pub fn from_tracing_context(
-        tracing_context: &TracingContext,
-        principal_id: impl Into<String>,
-    ) -> Self {
-        let exec_id = format!("exec-{}", TsidGenerator::generate_untyped());
-        Self {
-            execution_id: exec_id,
-            correlation_id: tracing_context.correlation_id(),
-            causation_id: tracing_context.causation_id().map(|s| s.to_string()),
             principal_id: principal_id.into(),
             initiated_at: Utc::now(),
         }
@@ -186,15 +159,5 @@ mod tests {
 
         assert_eq!(new_ctx.execution_id, ctx.execution_id);
         assert_eq!(new_ctx.principal_id, "system");
-    }
-
-    #[test]
-    fn test_from_tracing_context() {
-        TracingContext::run_with_context("trace-123", Some("cause-456".to_string()), || {
-            let ctx = ExecutionContext::create("user-789");
-            assert_eq!(ctx.correlation_id, "trace-123");
-            assert_eq!(ctx.causation_id, Some("cause-456".to_string()));
-            assert_eq!(ctx.principal_id, "user-789");
-        });
     }
 }

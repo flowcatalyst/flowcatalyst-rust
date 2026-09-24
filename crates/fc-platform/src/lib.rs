@@ -79,8 +79,8 @@ pub use shared::tsid::{EntityType, TsidGenerator};
 
 // Re-export use case infrastructure
 pub use usecase::{
-    DbTx, DomainEvent, ExecutionContext, HasId, Persist, PgUnitOfWork, TracingContext, UnitOfWork,
-    UseCaseError, UseCaseResult,
+    DbTx, DomainEvent, ExecutionContext, HasId, Persist, PgUnitOfWork, UnitOfWork, UseCaseError,
+    UseCaseResult,
 };
 // Note: impl_domain_event! macro is automatically exported at crate root via #[macro_export]
 
@@ -102,13 +102,13 @@ pub use dispatch_pool::entity::{DispatchPool, DispatchPoolStatus};
 pub use email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
 pub use event::entity::{ContextData, Event, EventRead};
 pub use event_type::entity::{EventType, EventTypeStatus, SpecVersion};
-pub use process::entity::{Process, ProcessSource, ProcessStatus};
 pub use identity_provider::entity::{IdentityProvider, IdentityProviderType};
 pub use login_attempt::entity::{AttemptType, LoginAttempt, LoginOutcome};
 pub use password_reset::entity::PasswordResetToken;
 pub use platform_config::access_entity::PlatformConfigAccess;
 pub use platform_config::entity::{ConfigScope, ConfigValueType, PlatformConfig};
 pub use principal::entity::{ExternalIdentity, Principal, PrincipalType, UserIdentity, UserScope};
+pub use process::entity::{Process, ProcessSource, ProcessStatus};
 pub use role::entity::{permissions, AuthRole, Permission, RoleSource};
 pub use scheduled_job::entity::{
     CompletionStatus, InstanceStatus, LogLevel, ScheduledJob, ScheduledJobInstance,
@@ -131,13 +131,13 @@ pub use dispatch_pool::repository::DispatchPoolRepository;
 pub use email_domain_mapping::repository::EmailDomainMappingRepository;
 pub use event::repository::EventRepository;
 pub use event_type::repository::EventTypeRepository;
-pub use process::repository::ProcessRepository;
 pub use identity_provider::repository::IdentityProviderRepository;
 pub use login_attempt::repository::LoginAttemptRepository;
 pub use password_reset::repository::PasswordResetTokenRepository;
 pub use platform_config::access_repository::PlatformConfigAccessRepository;
 pub use platform_config::repository::PlatformConfigRepository;
 pub use principal::repository::PrincipalRepository;
+pub use process::repository::ProcessRepository;
 pub use role::repository::RoleRepository;
 pub use scheduled_job::instance_repository::{InstanceListFilters, ScheduledJobInstanceRepository};
 pub use scheduled_job::repository::ScheduledJobRepository;
@@ -199,13 +199,13 @@ pub mod repository {
     pub use crate::email_domain_mapping::repository::EmailDomainMappingRepository;
     pub use crate::event::repository::EventRepository;
     pub use crate::event_type::repository::EventTypeRepository;
-    pub use crate::process::repository::ProcessRepository;
     pub use crate::identity_provider::repository::IdentityProviderRepository;
     pub use crate::login_attempt::repository::LoginAttemptRepository;
     pub use crate::password_reset::repository::PasswordResetTokenRepository;
     pub use crate::platform_config::access_repository::PlatformConfigAccessRepository;
     pub use crate::platform_config::repository::PlatformConfigRepository;
     pub use crate::principal::repository::PrincipalRepository;
+    pub use crate::process::repository::ProcessRepository;
     pub use crate::role::repository::RoleRepository;
     pub use crate::scheduled_job::instance_repository::ScheduledJobInstanceRepository;
     pub use crate::scheduled_job::repository::ScheduledJobRepository;
@@ -348,8 +348,8 @@ pub mod api {
     pub use crate::dispatch_pool::api::{dispatch_pools_router, DispatchPoolsState};
     pub use crate::event::api::{events_api_router, events_router, EventsState};
     pub use crate::event_type::api::{event_types_router, EventTypesState};
-    pub use crate::process::api::{processes_router, ProcessesState};
     pub use crate::principal::api::{principals_router, PrincipalsState};
+    pub use crate::process::api::{processes_router, ProcessesState};
     pub use crate::role::api::{roles_router, RolesState};
     pub use crate::scheduled_job::api::{scheduled_jobs_router, ScheduledJobsState};
     pub use crate::service_account::api::{service_accounts_router, ServiceAccountsState};
