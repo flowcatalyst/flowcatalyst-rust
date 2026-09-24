@@ -10,7 +10,7 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use super::entity::LoginAttempt;
-use super::repository::LoginAttemptRepository;
+use super::repository::{LoginAttemptFilter, LoginAttemptRepository};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -114,12 +114,14 @@ async fn list_login_attempts(
     let mut items = state
         .login_attempt_repo
         .find_with_cursor(
-            query.attempt_type.as_deref(),
-            query.outcome.as_deref(),
-            query.identifier.as_deref(),
-            query.principal_id.as_deref(),
-            query.date_from.as_deref(),
-            query.date_to.as_deref(),
+            &LoginAttemptFilter {
+                attempt_type: query.attempt_type.as_deref(),
+                outcome: query.outcome.as_deref(),
+                identifier: query.identifier.as_deref(),
+                principal_id: query.principal_id.as_deref(),
+                date_from: query.date_from.as_deref(),
+                date_to: query.date_to.as_deref(),
+            },
             cursor.as_ref(),
             (size as i64) + 1,
         )

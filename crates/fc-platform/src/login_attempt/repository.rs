@@ -35,6 +35,18 @@ impl From<LoginAttemptRow> for LoginAttempt {
     }
 }
 
+/// Filters for listing login attempts; `None` means "don't filter".
+/// Dates are RFC 3339 strings.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LoginAttemptFilter<'a> {
+    pub attempt_type: Option<&'a str>,
+    pub outcome: Option<&'a str>,
+    pub identifier: Option<&'a str>,
+    pub principal_id: Option<&'a str>,
+    pub date_from: Option<&'a str>,
+    pub date_to: Option<&'a str>,
+}
+
 pub struct LoginAttemptRepository {
     pool: PgPool,
 }
@@ -65,142 +77,22 @@ impl LoginAttemptRepository {
         Ok(())
     }
 
-    pub async fn find_paged(
-        &self,
-        attempt_type: Option<&str>,
-        outcome: Option<&str>,
-        identifier: Option<&str>,
-        principal_id: Option<&str>,
-        date_from: Option<&str>,
-        date_to: Option<&str>,
-        limit: i64,
-        offset: i64,
-        sort_field: Option<&str>,
-        sort_order: Option<&str>,
-    ) -> Result<(Vec<LoginAttempt>, u64)> {
-        // Parse date bounds up front so failures silently skip that condition.
-        let date_from_parsed = date_from
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc));
-        let date_to_parsed = date_to
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc));
-
-        fn apply_filters(
-            qb: &mut QueryBuilder<Postgres>,
-            attempt_type: Option<&str>,
-            outcome: Option<&str>,
-            identifier: Option<&str>,
-            principal_id: Option<&str>,
-            date_from: Option<DateTime<Utc>>,
-            date_to: Option<DateTime<Utc>>,
-        ) {
-            let mut has_where = false;
-            let push_where = |qb: &mut QueryBuilder<Postgres>, has_where: &mut bool| {
-                qb.push(if *has_where { " AND " } else { " WHERE " });
-                *has_where = true;
-            };
-
-            if let Some(at) = attempt_type {
-                push_where(qb, &mut has_where);
-                qb.push("attempt_type = ").push_bind(at.to_string());
-            }
-            if let Some(o) = outcome {
-                push_where(qb, &mut has_where);
-                qb.push("outcome = ").push_bind(o.to_string());
-            }
-            if let Some(ident) = identifier {
-                push_where(qb, &mut has_where);
-                qb.push("identifier = ").push_bind(ident.to_string());
-            }
-            if let Some(pid) = principal_id {
-                push_where(qb, &mut has_where);
-                qb.push("principal_id = ").push_bind(pid.to_string());
-            }
-            if let Some(dt) = date_from {
-                push_where(qb, &mut has_where);
-                qb.push("attempted_at >= ").push_bind(dt);
-            }
-            if let Some(dt) = date_to {
-                push_where(qb, &mut has_where);
-                qb.push("attempted_at <= ").push_bind(dt);
-            }
-        }
-
-        // Count query
-        let mut count_qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT COUNT(*) FROM iam_login_attempts");
-        apply_filters(
-            &mut count_qb,
-            attempt_type,
-            outcome,
-            identifier,
-            principal_id,
-            date_from_parsed,
-            date_to_parsed,
-        );
-        let total: i64 = count_qb.build_query_scalar().fetch_one(&self.pool).await?;
-        let total = total as u64;
-
-        // Resolve sort column (whitelist to prevent SQL injection — never bound)
-        let sort_col = match sort_field {
-            Some("identifier") => "identifier",
-            Some("outcome") => "outcome",
-            Some("attempt_type") => "attempt_type",
-            _ => "attempted_at",
-        };
-        let direction = if matches!(sort_order, Some("asc")) {
-            "ASC"
-        } else {
-            "DESC"
-        };
-
-        let mut data_qb: QueryBuilder<Postgres> =
-            QueryBuilder::new("SELECT * FROM iam_login_attempts");
-        apply_filters(
-            &mut data_qb,
-            attempt_type,
-            outcome,
-            identifier,
-            principal_id,
-            date_from_parsed,
-            date_to_parsed,
-        );
-        data_qb
-            .push(" ORDER BY ")
-            .push(sort_col)
-            .push(" ")
-            .push(direction)
-            .push(" LIMIT ")
-            .push_bind(limit)
-            .push(" OFFSET ")
-            .push_bind(offset);
-
-        let rows: Vec<LoginAttemptRow> = data_qb.build_query_as().fetch_all(&self.pool).await?;
-
-        Ok((rows.into_iter().map(LoginAttempt::from).collect(), total))
-    }
-
-    /// Cursor-paginated variant. Drops the `SELECT COUNT(*)` and the
-    /// configurable sort — orders by `(attempted_at, id) DESC` so the keyset
-    /// comparison is well-defined. Returns `fetch_limit` rows so the caller
-    /// can detect `hasMore`.
-    #[allow(clippy::too_many_arguments)]
+    /// Cursor-paginated listing. Orders by `(attempted_at, id) DESC` so the
+    /// keyset comparison is well-defined. Returns `fetch_limit` rows so the
+    /// caller can detect `hasMore`.
     pub async fn find_with_cursor(
         &self,
-        attempt_type: Option<&str>,
-        outcome: Option<&str>,
-        identifier: Option<&str>,
-        principal_id: Option<&str>,
-        date_from: Option<&str>,
-        date_to: Option<&str>,
+        filter: &LoginAttemptFilter<'_>,
         cursor: Option<&crate::shared::api_common::DecodedCursor>,
         fetch_limit: i64,
     ) -> Result<Vec<LoginAttempt>> {
-        let date_from_parsed = date_from
+        // Unparseable dates silently drop that condition.
+        let date_from_parsed = filter
+            .date_from
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
-        let date_to_parsed = date_to
+        let date_to_parsed = filter
+            .date_to
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc));
 
@@ -211,19 +103,19 @@ impl LoginAttemptRepository {
             *has_where = true;
         };
 
-        if let Some(at) = attempt_type {
+        if let Some(at) = filter.attempt_type {
             push_where(&mut qb, &mut has_where);
             qb.push("attempt_type = ").push_bind(at.to_string());
         }
-        if let Some(o) = outcome {
+        if let Some(o) = filter.outcome {
             push_where(&mut qb, &mut has_where);
             qb.push("outcome = ").push_bind(o.to_string());
         }
-        if let Some(ident) = identifier {
+        if let Some(ident) = filter.identifier {
             push_where(&mut qb, &mut has_where);
             qb.push("identifier = ").push_bind(ident.to_string());
         }
-        if let Some(pid) = principal_id {
+        if let Some(pid) = filter.principal_id {
             push_where(&mut qb, &mut has_where);
             qb.push("principal_id = ").push_bind(pid.to_string());
         }
