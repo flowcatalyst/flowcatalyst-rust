@@ -27,6 +27,7 @@ pub mod service_account;
 
 // Event platform aggregates
 pub mod dispatch_job;
+pub mod function;
 pub mod dispatch_pool;
 pub mod event;
 pub mod event_type;

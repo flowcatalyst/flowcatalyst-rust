@@ -1,0 +1,2471 @@
+{
+  "manifest" : [ {
+    "name" : "valid/minimal-jvm",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"com.acme.billing.CreateInvoice\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/invoice-created\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"billing:invoices:invoice:created\",\"path\":\"/events/invoice-created\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/full-jvm",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"com.acme.billing.CreateInvoice\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000},{\"path\":\"/jobs/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000},{\"path\":\"/api/*\",\"auth\":\"platform\",\"methods\":[\"GET\",\"POST\"],\"cors\":{\"origins\":[\"https://app.acme.com\"],\"methods\":[],\"headers\":[],\"allowCredentials\":false},\"maxBodyBytes\":1048576,\"timeoutMs\":10000},{\"path\":\"/hooks/stripe\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"billing:invoices:invoice:created\",\"path\":\"/events/invoice-created\",\"mode\":\"BLOCK_ON_ERROR\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[{\"cron\":\"0 * * * *\",\"timezone\":\"UTC\",\"path\":\"/jobs/hourly\",\"payload\":{\"x\":1}}],\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/\"}],\"config\":[\"INVOICE_PREFIX\"],\"secrets\":[\"billing/stripe-key\"],\"db\":[{\"name\":\"main\",\"secretRef\":\"billing/dsn\",\"poolSize\":4}],\"httpAllow\":[\"api.stripe.com\"]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/wasm-memory",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"wasm\",\"entrypoint\":\"handle\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32,\"wasmMemoryMb\":32},\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"billing:invoices:invoice:created\",\"path\":\"/events/invoice-created\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/wasm-defaults",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"wasm\",\"entrypoint\":\"handle\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32,\"wasmMemoryMb\":64},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/tight-ceilings-clamp-absent-limit",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"com.acme.billing.CreateInvoice\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":10},\"endpoints\":[{\"path\":\"/events/invoice-created\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"billing:invoices:invoice:created\",\"path\":\"/events/invoice-created\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/low-ceilings-wasm-db",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"wasm\",\"entrypoint\":\"_start\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":1000,\"maxConcurrency\":5,\"wasmMemoryMb\":16},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":1000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[{\"name\":\"main\",\"secretRef\":\"dsn\",\"poolSize\":2}],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/schema-escape",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"com.acme.billing.CreateInvoice\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/invoice-created\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"billing:invoices:invoice:created\",\"path\":\"/events/invoice-created\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/endpoint-methods-absent",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/webhook-no-methods",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/webhook-exactly-post",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"webhook\",\"methods\":[\"POST\"],\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/webhook-lower-case-post",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"webhook\",\"methods\":[\"POST\"],\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/cors-wildcard-no-credentials",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"*\"],\"methods\":[],\"headers\":[],\"allowCredentials\":false},\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/cors-real-origin-credentials",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com\"],\"methods\":[],\"headers\":[],\"allowCredentials\":true},\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/cors-origin-with-port",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com:8443\"],\"methods\":[\"GET\"],\"headers\":[\"X-Trace\"],\"allowCredentials\":false},\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/route-not-ambiguous-disjoint-methods",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a/{x}\",\"auth\":\"none\",\"methods\":[\"GET\"],\"maxBodyBytes\":1048576,\"timeoutMs\":30000},{\"path\":\"/a/{y}\",\"auth\":\"none\",\"methods\":[\"POST\"],\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/subscription-defaults",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/cron-and-timezone-joined-with-nul",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[{\"cron\":\"0 12 * * *\",\"timezone\":\"X Y\",\"path\":\"/jobs/a\"},{\"cron\":\"0 12 * * * X\",\"timezone\":\"Y\",\"path\":\"/jobs/b\"}],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/same-cron-different-timezone",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[{\"cron\":\"0 * * * *\",\"timezone\":\"UTC\",\"path\":\"/jobs/hourly\"},{\"cron\":\"0 * * * *\",\"timezone\":\"America/New_York\",\"path\":\"/jobs/hourly\"}],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/public-prefix-defaults-to-root",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/\"}],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/public-same-host-different-prefix",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/a\"},{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/b\"}],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/alias-prefixes-empty",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/\"}],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/alias-prefixes",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/\",\"aliasPrefixes\":[\"qa\",\"staging\"]}],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/secrets-key-format",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[\"billing/stripe-key\"],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "valid/db-secret-ref-format",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[{\"name\":\"main\",\"secretRef\":\"billing/dsn\",\"poolSize\":4}],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/upper-case-runtime-and-hostname",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/v1\"}],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/payload-order-and-numbers",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[{\"cron\":\"* * * * *\",\"path\":\"/jobs/a\",\"payload\":{\"b\":1,\"a\":[1.5,1000.0,0,12345678901234567890123,1.0E21,1.0E-5,\"x\\u0001é\\n\",true,null],\"n\":null,\"o\":{\"z\":{},\"y\":[]}}},{\"cron\":\"0 * * * *\",\"path\":\"/jobs/b\"}],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/entrypoint-boolean-is-its-text",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"true\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/entrypoint-number-is-invalid",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENTRYPOINT_INVALID",
+      "message" : "entrypoint must be a binary class name",
+      "pointer" : "/entrypoint"
+    } ],
+    "thrown" : {
+      "code" : "ENTRYPOINT_INVALID",
+      "message" : "entrypoint must be a binary class name"
+    }
+  }, {
+    "name" : "edge/entrypoint-number-with-bad-runtime",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm",
+      "pointer" : "/runtime"
+    } ],
+    "thrown" : {
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm"
+    }
+  }, {
+    "name" : "edge/duplicate-key-keeps-first-position",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"b\",\"pool\":\"default\",\"warm\":true,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/warm-pool-and-exact-ceilings",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"orders\",\"warm\":true,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":10},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":1,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/jvm-wasm-memory-null-is-absent",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/nulls-are-absent",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/nbsp-event-type-is-not-blank",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\" \",\"path\":\"/events/a\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/mode-and-auth-spellings",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\",\"mode\":\"NEXT_ON_ERROR\",\"maxRetries\":7,\"timeoutSeconds\":5,\"dataOnly\":true}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/webhook-match-tie-first-wins",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/a\",\"auth\":\"webhook\",\"methods\":[\"POST\"],\"maxBodyBytes\":1048576,\"timeoutMs\":30000},{\"path\":\"/events/a\",\"auth\":\"platform\",\"methods\":[\"GET\"],\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "edge/webhook-match-tie-first-loses",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/a' does not match a webhook endpoint",
+      "pointer" : "/subscriptions/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/a' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "edge/http-allow",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[\"api.stripe.com\",\"*.example.com\"]}",
+    "roundTrip" : true
+  }, {
+    "name" : "example/function-hello",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"io.flowcatalyst.example.hello.HelloFunction\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":10000,\"maxConcurrency\":8},\"endpoints\":[{\"path\":\"/events/greeting-requested\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":10000},{\"path\":\"/api/hello/{name}\",\"auth\":\"platform\",\"methods\":[\"GET\"],\"maxBodyBytes\":1048576,\"timeoutMs\":10000},{\"path\":\"/healthz\",\"auth\":\"none\",\"methods\":[\"GET\"],\"maxBodyBytes\":1048576,\"timeoutMs\":10000}],\"subscriptions\":[{\"eventType\":\"hello:greeting:greeting:requested\",\"path\":\"/events/greeting-requested\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[\"GREETING\"],\"secrets\":[\"API_KEY\"],\"db\":[],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "example/function-subscription-test",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"io.flowcatalyst.example.subscriptiontest.SubscriptionTestFunction\",\"pool\":\"default\",\"warm\":true,\"limits\":{\"maxDurationMs\":10000,\"maxConcurrency\":4},\"endpoints\":[{\"path\":\"/events/received\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":10000},{\"path\":\"/healthz\",\"auth\":\"none\",\"methods\":[\"GET\"],\"maxBodyBytes\":1048576,\"timeoutMs\":10000}],\"subscriptions\":[{\"eventType\":\"platform:admin:eventtypes:synced\",\"path\":\"/events/received\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[\"EVENTS_DSN\"],\"db\":[{\"name\":\"events\",\"secretRef\":\"EVENTS_DSN\",\"poolSize\":2}],\"httpAllow\":[]}",
+    "roundTrip" : true
+  }, {
+    "name" : "single/00",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_REQUIRED",
+      "message" : "manifest is required and must be an object",
+      "pointer" : ""
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_REQUIRED",
+      "message" : "manifest is required and must be an object"
+    }
+  }, {
+    "name" : "single/01",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_REQUIRED",
+      "message" : "manifest is required and must be an object",
+      "pointer" : ""
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_REQUIRED",
+      "message" : "manifest is required and must be an object"
+    }
+  }, {
+    "name" : "single/02",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_REQUIRED",
+      "message" : "manifest is required and must be an object",
+      "pointer" : ""
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_REQUIRED",
+      "message" : "manifest is required and must be an object"
+    }
+  }, {
+    "name" : "single/03",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "bogus is not a recognised manifest field",
+      "pointer" : "/bogus"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "bogus is not a recognised manifest field"
+    }
+  }, {
+    "name" : "single/04",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "limits.maxConcurency is not a recognised manifest field",
+      "pointer" : "/limits/maxConcurency"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "limits.maxConcurency is not a recognised manifest field"
+    }
+  }, {
+    "name" : "single/05",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "endpoints[0].pth is not a recognised manifest field",
+      "pointer" : "/endpoints/0/pth"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "endpoints[0].pth is not a recognised manifest field"
+    }
+  }, {
+    "name" : "single/06",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "subscriptions[0].bogus is not a recognised manifest field",
+      "pointer" : "/subscriptions/0/bogus"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "subscriptions[0].bogus is not a recognised manifest field"
+    }
+  }, {
+    "name" : "single/07",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_INVALID",
+      "message" : "warm must be a boolean",
+      "pointer" : "/warm"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_INVALID",
+      "message" : "warm must be a boolean"
+    }
+  }, {
+    "name" : "single/08",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm",
+      "pointer" : "/runtime"
+    } ],
+    "thrown" : {
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm"
+    }
+  }, {
+    "name" : "single/09",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm",
+      "pointer" : "/runtime"
+    } ],
+    "thrown" : {
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm"
+    }
+  }, {
+    "name" : "single/10",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "RUNTIME_MISMATCH",
+      "message" : "manifest runtime 'wasm' does not match the function's runtime 'jvm'",
+      "pointer" : "/runtime"
+    } ],
+    "thrown" : {
+      "code" : "RUNTIME_MISMATCH",
+      "message" : "manifest runtime 'wasm' does not match the function's runtime 'jvm'"
+    }
+  }, {
+    "name" : "single/11",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENTRYPOINT_REQUIRED",
+      "message" : "entrypoint is required",
+      "pointer" : "/entrypoint"
+    } ],
+    "thrown" : {
+      "code" : "ENTRYPOINT_REQUIRED",
+      "message" : "entrypoint is required"
+    }
+  }, {
+    "name" : "single/12",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENTRYPOINT_REQUIRED",
+      "message" : "entrypoint is required",
+      "pointer" : "/entrypoint"
+    } ],
+    "thrown" : {
+      "code" : "ENTRYPOINT_REQUIRED",
+      "message" : "entrypoint is required"
+    }
+  }, {
+    "name" : "single/13",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENTRYPOINT_INVALID",
+      "message" : "entrypoint must be a binary class name",
+      "pointer" : "/entrypoint"
+    } ],
+    "thrown" : {
+      "code" : "ENTRYPOINT_INVALID",
+      "message" : "entrypoint must be a binary class name"
+    }
+  }, {
+    "name" : "single/14",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENTRYPOINT_INVALID",
+      "message" : "entrypoint must be a wasm export name",
+      "pointer" : "/entrypoint"
+    } ],
+    "thrown" : {
+      "code" : "ENTRYPOINT_INVALID",
+      "message" : "entrypoint must be a wasm export name"
+    }
+  }, {
+    "name" : "single/15",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "POOL_INVALID",
+      "message" : "pool must be a DNS label",
+      "pointer" : "/pool"
+    } ],
+    "thrown" : {
+      "code" : "POOL_INVALID",
+      "message" : "pool must be a DNS label"
+    }
+  }, {
+    "name" : "single/16",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer",
+      "pointer" : "/limits/maxDurationMs"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer"
+    }
+  }, {
+    "name" : "single/17",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer",
+      "pointer" : "/limits/maxDurationMs"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer"
+    }
+  }, {
+    "name" : "single/18",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "maxConcurrency is 20, which exceeds the ceiling of 10",
+      "pointer" : "/limits/maxConcurrency"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "maxConcurrency is 20, which exceeds the ceiling of 10"
+    }
+  }, {
+    "name" : "single/19",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_NOT_APPLICABLE",
+      "message" : "wasmMemoryMb is not applicable to a jvm function",
+      "pointer" : "/limits/wasmMemoryMb"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_NOT_APPLICABLE",
+      "message" : "wasmMemoryMb is not applicable to a jvm function"
+    }
+  }, {
+    "name" : "single/20",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_AUTH_REQUIRED",
+      "message" : "endpoints[0].auth is required",
+      "pointer" : "/endpoints/0/auth"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_AUTH_REQUIRED",
+      "message" : "endpoints[0].auth is required"
+    }
+  }, {
+    "name" : "single/21",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "auth must be webhook, platform or none",
+      "pointer" : "/endpoints/0/auth"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "auth must be webhook, platform or none"
+    }
+  }, {
+    "name" : "single/22",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].path: route path must start with '/' and contain only literal, {param} or trailing '*' segments",
+      "pointer" : "/endpoints/0/path"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].path: route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }
+  }, {
+    "name" : "single/23",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].methods, if given, must be a non-empty array",
+      "pointer" : "/endpoints/0/methods"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].methods, if given, must be a non-empty array"
+    }
+  }, {
+    "name" : "single/24",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].methods has an unrecognised entry 'TRACE'",
+      "pointer" : "/endpoints/0/methods/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].methods has an unrecognised entry 'TRACE'"
+    }
+  }, {
+    "name" : "single/25",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].methods has a duplicate entry 'GET'",
+      "pointer" : "/endpoints/0/methods/1"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].methods has a duplicate entry 'GET'"
+    }
+  }, {
+    "name" : "single/26",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].maxBodyBytes must be a positive integer",
+      "pointer" : "/endpoints/0/maxBodyBytes"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].maxBodyBytes must be a positive integer"
+    }
+  }, {
+    "name" : "single/27",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].timeoutMs must be a positive integer",
+      "pointer" : "/endpoints/0/timeoutMs"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].timeoutMs must be a positive integer"
+    }
+  }, {
+    "name" : "single/28",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entries must be non-blank strings",
+      "pointer" : "/endpoints/0/cors/origins/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entries must be non-blank strings"
+    }
+  }, {
+    "name" : "single/29",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors: origins must not contain '*' when allowCredentials is true",
+      "pointer" : "/endpoints/0/cors"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors: origins must not contain '*' when allowCredentials is true"
+    }
+  }, {
+    "name" : "single/30",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0]: a webhook endpoint's methods, if given, must be exactly [\"POST\"]",
+      "pointer" : "/endpoints/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0]: a webhook endpoint's methods, if given, must be exactly [\"POST\"]"
+    }
+  }, {
+    "name" : "single/31",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ROUTE_AMBIGUOUS",
+      "message" : "endpoint '/a/{x}' and endpoint '/a/{y}' are ambiguous",
+      "pointer" : "/endpoints"
+    } ],
+    "thrown" : {
+      "code" : "ROUTE_AMBIGUOUS",
+      "message" : "endpoint '/a/{x}' and endpoint '/a/{y}' are ambiguous"
+    }
+  }, {
+    "name" : "single/32",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/invoice-created' does not match a webhook endpoint",
+      "pointer" : "/subscriptions/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/invoice-created' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/33",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/special' does not match a webhook endpoint",
+      "pointer" : "/subscriptions/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/special' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/34",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SCHEDULE_PATH_NOT_WEBHOOK",
+      "message" : "schedules[0].path '/jobs/invoice-created' does not match a webhook endpoint",
+      "pointer" : "/schedules/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SCHEDULE_PATH_NOT_WEBHOOK",
+      "message" : "schedules[0].path '/jobs/invoice-created' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/35",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[0].path must be a literal path, not a pattern",
+      "pointer" : "/subscriptions/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[0].path must be a literal path, not a pattern"
+    }
+  }, {
+    "name" : "single/36",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[0].eventType is required",
+      "pointer" : "/subscriptions/0/eventType"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[0].eventType is required"
+    }
+  }, {
+    "name" : "single/37",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[0].mode: mode must be IMMEDIATE, NEXT_ON_ERROR or BLOCK_ON_ERROR",
+      "pointer" : "/subscriptions/0/mode"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[0].mode: mode must be IMMEDIATE, NEXT_ON_ERROR or BLOCK_ON_ERROR"
+    }
+  }, {
+    "name" : "single/38",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_DUPLICATE",
+      "message" : "duplicate subscription for eventType 'a:b:c'",
+      "pointer" : "/subscriptions/1"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_DUPLICATE",
+      "message" : "duplicate subscription for eventType 'a:b:c'"
+    }
+  }, {
+    "name" : "single/39",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SCHEDULE_INVALID",
+      "message" : "schedules[0].cron is required",
+      "pointer" : "/schedules/0/cron"
+    } ],
+    "thrown" : {
+      "code" : "SCHEDULE_INVALID",
+      "message" : "schedules[0].cron is required"
+    }
+  }, {
+    "name" : "single/40",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SCHEDULE_DUPLICATE",
+      "message" : "duplicate schedule for cron '0 * * * *' timezone 'UTC'",
+      "pointer" : "/schedules/1"
+    } ],
+    "thrown" : {
+      "code" : "SCHEDULE_DUPLICATE",
+      "message" : "duplicate schedule for cron '0 * * * *' timezone 'UTC'"
+    }
+  }, {
+    "name" : "single/41",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].hostname: hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal",
+      "pointer" : "/public/0/hostname"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].hostname: hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }
+  }, {
+    "name" : "single/42",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].pathPrefix must be a literal path, not a pattern",
+      "pointer" : "/public/0/pathPrefix"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].pathPrefix must be a literal path, not a pattern"
+    }
+  }, {
+    "name" : "single/43",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[0] must not be 'live'",
+      "pointer" : "/public/0/aliasPrefixes/0"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[0] must not be 'live'"
+    }
+  }, {
+    "name" : "single/44",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[1] is a duplicate",
+      "pointer" : "/public/0/aliasPrefixes/1"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[1] is a duplicate"
+    }
+  }, {
+    "name" : "single/45",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_DUPLICATE",
+      "message" : "duplicate public route for 'api.acme.com/a'",
+      "pointer" : "/public/1"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_DUPLICATE",
+      "message" : "duplicate public route for 'api.acme.com/a'"
+    }
+  }, {
+    "name" : "single/46",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "DB_INVALID",
+      "message" : "db[0].name must be a DNS label",
+      "pointer" : "/db/0/name"
+    } ],
+    "thrown" : {
+      "code" : "DB_INVALID",
+      "message" : "db[0].name must be a DNS label"
+    }
+  }, {
+    "name" : "single/47",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "DB_INVALID",
+      "message" : "db[0].secretRef is required",
+      "pointer" : "/db/0/secretRef"
+    } ],
+    "thrown" : {
+      "code" : "DB_INVALID",
+      "message" : "db[0].secretRef is required"
+    }
+  }, {
+    "name" : "single/48",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "DB_INVALID",
+      "message" : "db[1].name 'main' is duplicated",
+      "pointer" : "/db/1/name"
+    } ],
+    "thrown" : {
+      "code" : "DB_INVALID",
+      "message" : "db[1].name 'main' is duplicated"
+    }
+  }, {
+    "name" : "single/49",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "DB_INVALID",
+      "message" : "db[0].secretRef: '1bad' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$",
+      "pointer" : "/db/0/secretRef"
+    } ],
+    "thrown" : {
+      "code" : "DB_INVALID",
+      "message" : "db[0].secretRef: '1bad' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    }
+  }, {
+    "name" : "single/50",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "CONFIG_INVALID",
+      "message" : "config entries must be non-blank strings",
+      "pointer" : "/config/0"
+    } ],
+    "thrown" : {
+      "code" : "CONFIG_INVALID",
+      "message" : "config entries must be non-blank strings"
+    }
+  }, {
+    "name" : "single/51",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "CONFIG_INVALID",
+      "message" : "config has a duplicate entry 'A'",
+      "pointer" : "/config/1"
+    } ],
+    "thrown" : {
+      "code" : "CONFIG_INVALID",
+      "message" : "config has a duplicate entry 'A'"
+    }
+  }, {
+    "name" : "single/52",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "CONFIG_INVALID",
+      "message" : "config must be an array",
+      "pointer" : "/config"
+    } ],
+    "thrown" : {
+      "code" : "CONFIG_INVALID",
+      "message" : "config must be an array"
+    }
+  }, {
+    "name" : "single/53",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "CONFIG_INVALID",
+      "message" : "config: '1BAD' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$",
+      "pointer" : "/config/0"
+    } ],
+    "thrown" : {
+      "code" : "CONFIG_INVALID",
+      "message" : "config: '1BAD' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    }
+  }, {
+    "name" : "single/endpoint-max-body-out-of-int",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].maxBodyBytes must be a positive integer",
+      "pointer" : "/endpoints/0/maxBodyBytes"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].maxBodyBytes must be a positive integer"
+    }
+  }, {
+    "name" : "single/limit-negative",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer",
+      "pointer" : "/limits/maxDurationMs"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer"
+    }
+  }, {
+    "name" : "single/limit-fraction",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer",
+      "pointer" : "/limits/maxDurationMs"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer"
+    }
+  }, {
+    "name" : "single/limit-string",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer",
+      "pointer" : "/limits/maxDurationMs"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxDurationMs must be a positive integer"
+    }
+  }, {
+    "name" : "single/cors-origin-path",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'https://app.acme.com/' must be '*' or 'scheme://host[:port]' with no path",
+      "pointer" : "/endpoints/0/cors/origins/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'https://app.acme.com/' must be '*' or 'scheme://host[:port]' with no path"
+    }
+  }, {
+    "name" : "single/cors-origin-path-segment",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'https://app.acme.com/callback' must be '*' or 'scheme://host[:port]' with no path",
+      "pointer" : "/endpoints/0/cors/origins/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'https://app.acme.com/callback' must be '*' or 'scheme://host[:port]' with no path"
+    }
+  }, {
+    "name" : "single/cors-origin-no-scheme",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'app.acme.com' must be '*' or 'scheme://host[:port]' with no path",
+      "pointer" : "/endpoints/0/cors/origins/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'app.acme.com' must be '*' or 'scheme://host[:port]' with no path"
+    }
+  }, {
+    "name" : "single/cors-origin-userinfo",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'https://user@app.acme.com' must be '*' or 'scheme://host[:port]' with no path",
+      "pointer" : "/endpoints/0/cors/origins/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'https://user@app.acme.com' must be '*' or 'scheme://host[:port]' with no path"
+    }
+  }, {
+    "name" : "single/cors-origin-query",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'https://app.acme.com?x=1' must be '*' or 'scheme://host[:port]' with no path",
+      "pointer" : "/endpoints/0/cors/origins/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors.origins entry 'https://app.acme.com?x=1' must be '*' or 'scheme://host[:port]' with no path"
+    }
+  }, {
+    "name" : "single/cors-wildcard-among-others-with-credentials",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors: origins must not contain '*' when allowCredentials is true",
+      "pointer" : "/endpoints/0/cors"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].cors: origins must not contain '*' when allowCredentials is true"
+    }
+  }, {
+    "name" : "single/webhook-post-and-get",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0]: a webhook endpoint's methods, if given, must be exactly [\"POST\"]",
+      "pointer" : "/endpoints/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0]: a webhook endpoint's methods, if given, must be exactly [\"POST\"]"
+    }
+  }, {
+    "name" : "single/ambiguous-one-side-no-methods",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ROUTE_AMBIGUOUS",
+      "message" : "endpoint '/a/{x}' and endpoint '/a/{y}' are ambiguous",
+      "pointer" : "/endpoints"
+    } ],
+    "thrown" : {
+      "code" : "ROUTE_AMBIGUOUS",
+      "message" : "endpoint '/a/{x}' and endpoint '/a/{y}' are ambiguous"
+    }
+  }, {
+    "name" : "single/subscription-no-webhook-none",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/invoice-created' does not match a webhook endpoint",
+      "pointer" : "/subscriptions/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/invoice-created' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/schedule-no-webhook-none",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SCHEDULE_PATH_NOT_WEBHOOK",
+      "message" : "schedules[0].path '/jobs/hourly' does not match a webhook endpoint",
+      "pointer" : "/schedules/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SCHEDULE_PATH_NOT_WEBHOOK",
+      "message" : "schedules[0].path '/jobs/hourly' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/subscription-no-webhook-platform",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/invoice-created' does not match a webhook endpoint",
+      "pointer" : "/subscriptions/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/invoice-created' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/schedule-no-webhook-platform",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SCHEDULE_PATH_NOT_WEBHOOK",
+      "message" : "schedules[0].path '/jobs/hourly' does not match a webhook endpoint",
+      "pointer" : "/schedules/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SCHEDULE_PATH_NOT_WEBHOOK",
+      "message" : "schedules[0].path '/jobs/hourly' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/subscription-no-webhook-none-auth",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/invoice-created' does not match a webhook endpoint",
+      "pointer" : "/subscriptions/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_PATH_NOT_WEBHOOK",
+      "message" : "subscriptions[0].path '/events/invoice-created' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/schedule-no-webhook-none-auth",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SCHEDULE_PATH_NOT_WEBHOOK",
+      "message" : "schedules[0].path '/jobs/hourly' does not match a webhook endpoint",
+      "pointer" : "/schedules/0/path"
+    } ],
+    "thrown" : {
+      "code" : "SCHEDULE_PATH_NOT_WEBHOOK",
+      "message" : "schedules[0].path '/jobs/hourly' does not match a webhook endpoint"
+    }
+  }, {
+    "name" : "single/alias-upper-case",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[0] must be a DNS label",
+      "pointer" : "/public/0/aliasPrefixes/0"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[0] must be a DNS label"
+    }
+  }, {
+    "name" : "single/alias-over-63",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[0] must be a DNS label",
+      "pointer" : "/public/0/aliasPrefixes/0"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[0] must be a DNS label"
+    }
+  }, {
+    "name" : "single/alias-names-offender",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[1] must be a DNS label",
+      "pointer" : "/public/0/aliasPrefixes/1"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0].aliasPrefixes[1] must be a DNS label"
+    }
+  }, {
+    "name" : "single/config-bad-character",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "CONFIG_INVALID",
+      "message" : "config: 'BAD KEY' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$",
+      "pointer" : "/config/0"
+    } ],
+    "thrown" : {
+      "code" : "CONFIG_INVALID",
+      "message" : "config: 'BAD KEY' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    }
+  }, {
+    "name" : "single/secrets-starts-with-digit",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "CONFIG_INVALID",
+      "message" : "secrets: '1BAD' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$",
+      "pointer" : "/secrets/0"
+    } ],
+    "thrown" : {
+      "code" : "CONFIG_INVALID",
+      "message" : "secrets: '1BAD' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    }
+  }, {
+    "name" : "many/unknown-deep-endpoint-no-path",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "endpoints[0].pth is not a recognised manifest field",
+      "pointer" : "/endpoints/0/pth"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0].path is required",
+      "pointer" : "/endpoints/0/path"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "endpoints[0].pth is not a recognised manifest field"
+    }
+  }, {
+    "name" : "single/filter-is-unknown",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "subscriptions[0].filter is not a recognised manifest field",
+      "pointer" : "/subscriptions/0/filter"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "subscriptions[0].filter is not a recognised manifest field"
+    }
+  }, {
+    "name" : "single/schema-not-string",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_INVALID",
+      "message" : "$schema must be a string",
+      "pointer" : "/$schema"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_INVALID",
+      "message" : "$schema must be a string"
+    }
+  }, {
+    "name" : "many/six-independent-mistakes",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "x is not a recognised manifest field",
+      "pointer" : "/x"
+    }, {
+      "code" : "POOL_INVALID",
+      "message" : "pool must be a DNS label",
+      "pointer" : "/pool"
+    }, {
+      "code" : "ENDPOINT_AUTH_REQUIRED",
+      "message" : "endpoints[1].auth is required",
+      "pointer" : "/endpoints/1/auth"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].cors.origins entry 'https://app.acme.com/callback' must be '*' or 'scheme://host[:port]' with no path",
+      "pointer" : "/endpoints/2/cors/origins/0"
+    }, {
+      "code" : "SUBSCRIPTION_DUPLICATE",
+      "message" : "duplicate subscription for eventType 'billing:invoice:created'",
+      "pointer" : "/subscriptions/1"
+    }, {
+      "code" : "DB_INVALID",
+      "message" : "db[0].name must be a DNS label",
+      "pointer" : "/db/0/name"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "x is not a recognised manifest field"
+    }
+  }, {
+    "name" : "many/cascade-guard",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "auth must be webhook, platform or none",
+      "pointer" : "/endpoints/0/auth"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "auth must be webhook, platform or none"
+    }
+  }, {
+    "name" : "many/cascade-guard-schedule",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0]: a webhook endpoint's methods, if given, must be exactly [\"POST\"]",
+      "pointer" : "/endpoints/0"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0]: a webhook endpoint's methods, if given, must be exactly [\"POST\"]"
+    }
+  }, {
+    "name" : "many/unknown-keys-everywhere",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "zz is not a recognised manifest field",
+      "pointer" : "/zz"
+    }, {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "aa is not a recognised manifest field",
+      "pointer" : "/aa"
+    }, {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "limits.q is not a recognised manifest field",
+      "pointer" : "/limits/q"
+    }, {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "endpoints[0].e1 is not a recognised manifest field",
+      "pointer" : "/endpoints/0/e1"
+    }, {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "endpoints[0].cors.c1 is not a recognised manifest field",
+      "pointer" : "/endpoints/0/cors/c1"
+    }, {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "subscriptions[0].s1 is not a recognised manifest field",
+      "pointer" : "/subscriptions/0/s1"
+    }, {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "schedules[0].k is not a recognised manifest field",
+      "pointer" : "/schedules/0/k"
+    }, {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "public[0].p is not a recognised manifest field",
+      "pointer" : "/public/0/p"
+    }, {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "db[0].x is not a recognised manifest field",
+      "pointer" : "/db/0/x"
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_UNKNOWN_FIELD",
+      "message" : "zz is not a recognised manifest field"
+    }
+  }, {
+    "name" : "many/runtime-invalid-skips-dependents",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm",
+      "pointer" : "/runtime"
+    }, {
+      "code" : "LIMIT_INVALID",
+      "message" : "maxConcurrency must be a positive integer",
+      "pointer" : "/limits/maxConcurrency"
+    } ],
+    "thrown" : {
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm"
+    }
+  }, {
+    "name" : "many/limits-invalid-skips-timeout-default",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_INVALID",
+      "message" : "limits must be an object",
+      "pointer" : "/limits"
+    }, {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "timeoutMs is 999999, which exceeds the ceiling of 30000",
+      "pointer" : "/endpoints/1/timeoutMs"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_INVALID",
+      "message" : "limits must be an object"
+    }
+  }, {
+    "name" : "many/three-ambiguous-endpoints",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ROUTE_AMBIGUOUS",
+      "message" : "endpoint '/a/{x}' and endpoint '/a/{y}' are ambiguous",
+      "pointer" : "/endpoints"
+    }, {
+      "code" : "ROUTE_AMBIGUOUS",
+      "message" : "endpoint '/a/{x}' and endpoint '/a/{z}' are ambiguous",
+      "pointer" : "/endpoints"
+    }, {
+      "code" : "ROUTE_AMBIGUOUS",
+      "message" : "endpoint '/a/{y}' and endpoint '/a/{z}' are ambiguous",
+      "pointer" : "/endpoints"
+    } ],
+    "thrown" : {
+      "code" : "ROUTE_AMBIGUOUS",
+      "message" : "endpoint '/a/{x}' and endpoint '/a/{y}' are ambiguous"
+    }
+  }, {
+    "name" : "many/endpoint-shapes",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0] must be an object",
+      "pointer" : "/endpoints/0"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[1].path is required",
+      "pointer" : "/endpoints/1/path"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[1].auth must be a string",
+      "pointer" : "/endpoints/1/auth"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[1].methods, if given, must be a non-empty array",
+      "pointer" : "/endpoints/1/methods"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[1].cors must be an object",
+      "pointer" : "/endpoints/1/cors"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].methods entries must be strings",
+      "pointer" : "/endpoints/2/methods/0"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].methods has an unrecognised entry 'TRACE'",
+      "pointer" : "/endpoints/2/methods/1"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].methods has a duplicate entry 'GET'",
+      "pointer" : "/endpoints/2/methods/3"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].cors.origins must be an array",
+      "pointer" : "/endpoints/2/cors/origins"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].cors.methods entries must be non-blank strings",
+      "pointer" : "/endpoints/2/cors/methods/0"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].cors.headers entries must be non-blank strings",
+      "pointer" : "/endpoints/2/cors/headers/0"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].cors.allowCredentials must be a boolean",
+      "pointer" : "/endpoints/2/cors/allowCredentials"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].maxBodyBytes must be a positive integer",
+      "pointer" : "/endpoints/2/maxBodyBytes"
+    }, {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[2].timeoutMs must be a positive integer",
+      "pointer" : "/endpoints/2/timeoutMs"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints[0] must be an object"
+    }
+  }, {
+    "name" : "many/endpoints-not-array",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints must be an array",
+      "pointer" : "/endpoints"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions must be an array",
+      "pointer" : "/subscriptions"
+    }, {
+      "code" : "SCHEDULE_INVALID",
+      "message" : "schedules must be an array",
+      "pointer" : "/schedules"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public must be an array",
+      "pointer" : "/public"
+    }, {
+      "code" : "DB_INVALID",
+      "message" : "db must be an array",
+      "pointer" : "/db"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "config must be an array",
+      "pointer" : "/config"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "secrets must be an array",
+      "pointer" : "/secrets"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "httpAllow must be an array",
+      "pointer" : "/httpAllow"
+    } ],
+    "thrown" : {
+      "code" : "ENDPOINT_INVALID",
+      "message" : "endpoints must be an array"
+    }
+  }, {
+    "name" : "many/subscription-shapes",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[0] must be an object",
+      "pointer" : "/subscriptions/0"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[1].eventType is required",
+      "pointer" : "/subscriptions/1/eventType"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[1].path must be a literal path, not a pattern",
+      "pointer" : "/subscriptions/1/path"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[1].mode must be a string",
+      "pointer" : "/subscriptions/1/mode"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[1].maxRetries must be a positive integer",
+      "pointer" : "/subscriptions/1/maxRetries"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[1].timeoutSeconds must be a positive integer",
+      "pointer" : "/subscriptions/1/timeoutSeconds"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[1].dataOnly must be a boolean",
+      "pointer" : "/subscriptions/1/dataOnly"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[2].path is required",
+      "pointer" : "/subscriptions/2/path"
+    }, {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[2].mode: mode must be IMMEDIATE, NEXT_ON_ERROR or BLOCK_ON_ERROR",
+      "pointer" : "/subscriptions/2/mode"
+    } ],
+    "thrown" : {
+      "code" : "SUBSCRIPTION_INVALID",
+      "message" : "subscriptions[0] must be an object"
+    }
+  }, {
+    "name" : "many/schedule-shapes",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SCHEDULE_INVALID",
+      "message" : "schedules[0] must be an object",
+      "pointer" : "/schedules/0"
+    }, {
+      "code" : "SCHEDULE_INVALID",
+      "message" : "schedules[1].cron is required",
+      "pointer" : "/schedules/1/cron"
+    }, {
+      "code" : "SCHEDULE_INVALID",
+      "message" : "schedules[1].timezone must be a string",
+      "pointer" : "/schedules/1/timezone"
+    }, {
+      "code" : "SCHEDULE_INVALID",
+      "message" : "schedules[1].path: route path must start with '/' and contain only literal, {param} or trailing '*' segments",
+      "pointer" : "/schedules/1/path"
+    }, {
+      "code" : "SCHEDULE_DUPLICATE",
+      "message" : "duplicate schedule for cron '* * * * *' timezone 'null'",
+      "pointer" : "/schedules/3"
+    } ],
+    "thrown" : {
+      "code" : "SCHEDULE_INVALID",
+      "message" : "schedules[0] must be an object"
+    }
+  }, {
+    "name" : "many/public-shapes",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0] must be an object",
+      "pointer" : "/public/0"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[1].hostname is required",
+      "pointer" : "/public/1/hostname"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[1].pathPrefix must be a literal path, not a pattern",
+      "pointer" : "/public/1/pathPrefix"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[1].aliasPrefixes must be an array",
+      "pointer" : "/public/1/aliasPrefixes"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[2].aliasPrefixes[0] must be a DNS label",
+      "pointer" : "/public/2/aliasPrefixes/0"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[2].aliasPrefixes[1] must not be 'live'",
+      "pointer" : "/public/2/aliasPrefixes/1"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[2].aliasPrefixes[3] is a duplicate",
+      "pointer" : "/public/2/aliasPrefixes/3"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[3].hostname: hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal",
+      "pointer" : "/public/3/hostname"
+    }, {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[3].pathPrefix is required",
+      "pointer" : "/public/3/pathPrefix"
+    } ],
+    "thrown" : {
+      "code" : "PUBLIC_ROUTE_INVALID",
+      "message" : "public[0] must be an object"
+    }
+  }, {
+    "name" : "many/db-shapes",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "DB_INVALID",
+      "message" : "db[0] must be an object",
+      "pointer" : "/db/0"
+    }, {
+      "code" : "DB_INVALID",
+      "message" : "db[1].name must be a DNS label",
+      "pointer" : "/db/1/name"
+    }, {
+      "code" : "DB_INVALID",
+      "message" : "db[1].secretRef is required",
+      "pointer" : "/db/1/secretRef"
+    }, {
+      "code" : "DB_INVALID",
+      "message" : "db[2].poolSize must be a positive integer",
+      "pointer" : "/db/2/poolSize"
+    }, {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "db[3].poolSize is 5, which exceeds the ceiling of 4",
+      "pointer" : "/db/3/poolSize"
+    }, {
+      "code" : "DB_INVALID",
+      "message" : "db[4].name 'a' is duplicated",
+      "pointer" : "/db/4/name"
+    } ],
+    "thrown" : {
+      "code" : "DB_INVALID",
+      "message" : "db[0] must be an object"
+    }
+  }, {
+    "name" : "many/list-shapes",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "CONFIG_INVALID",
+      "message" : "config entries must be non-blank strings",
+      "pointer" : "/config/1"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "config has a duplicate entry 'A'",
+      "pointer" : "/config/2"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "config: '1B' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$",
+      "pointer" : "/config/3"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "secrets: ' ' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$",
+      "pointer" : "/secrets/0"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "secrets entries must be non-blank strings",
+      "pointer" : "/secrets/1"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "httpAllow entries must be non-blank strings",
+      "pointer" : "/httpAllow/1"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "httpAllow has a duplicate entry 'h'",
+      "pointer" : "/httpAllow/2"
+    }, {
+      "code" : "CONFIG_INVALID",
+      "message" : "httpAllow entries must be non-blank strings",
+      "pointer" : "/httpAllow/3"
+    } ],
+    "thrown" : {
+      "code" : "CONFIG_INVALID",
+      "message" : "config entries must be non-blank strings"
+    }
+  }, {
+    "name" : "many/wasm-limits",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "maxDurationMs is 30001, which exceeds the ceiling of 30000",
+      "pointer" : "/limits/maxDurationMs"
+    }, {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "maxConcurrency is 33, which exceeds the ceiling of 32",
+      "pointer" : "/limits/maxConcurrency"
+    }, {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "wasmMemoryMb is 65, which exceeds the ceiling of 64",
+      "pointer" : "/limits/wasmMemoryMb"
+    }, {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "timeoutMs is 30001, which exceeds the ceiling of 30000",
+      "pointer" : "/endpoints/0/timeoutMs"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_OVER_CEILING",
+      "message" : "maxDurationMs is 30001, which exceeds the ceiling of 30000"
+    }
+  }, {
+    "name" : "many/wasm-memory-zero",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "LIMIT_INVALID",
+      "message" : "wasmMemoryMb must be a positive integer",
+      "pointer" : "/limits/wasmMemoryMb"
+    } ],
+    "thrown" : {
+      "code" : "LIMIT_INVALID",
+      "message" : "wasmMemoryMb must be a positive integer"
+    }
+  }, {
+    "name" : "many/runtime-mismatch-jvm-on-wasm",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "RUNTIME_MISMATCH",
+      "message" : "manifest runtime 'jvm' does not match the function's runtime 'wasm'",
+      "pointer" : "/runtime"
+    } ],
+    "thrown" : {
+      "code" : "RUNTIME_MISMATCH",
+      "message" : "manifest runtime 'jvm' does not match the function's runtime 'wasm'"
+    }
+  }, {
+    "name" : "many/null-timezone-duplicate",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "SCHEDULE_DUPLICATE",
+      "message" : "duplicate schedule for cron 'c' timezone ''",
+      "pointer" : "/schedules/1"
+    } ],
+    "thrown" : {
+      "code" : "SCHEDULE_DUPLICATE",
+      "message" : "duplicate schedule for cron 'c' timezone ''"
+    }
+  }, {
+    "name" : "many/pool-not-string",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "POOL_INVALID",
+      "message" : "pool must be a DNS label",
+      "pointer" : "/pool"
+    }, {
+      "code" : "MANIFEST_INVALID",
+      "message" : "warm must be a boolean",
+      "pointer" : "/warm"
+    } ],
+    "thrown" : {
+      "code" : "POOL_INVALID",
+      "message" : "pool must be a DNS label"
+    }
+  }, {
+    "name" : "deviation/runtime-object",
+    "result" : "exception",
+    "exception" : "JsonNodeException"
+  }, {
+    "name" : "deviation/entrypoint-array",
+    "result" : "exception",
+    "exception" : "JsonNodeException"
+  }, {
+    "name" : "single/absent",
+    "result" : "rejected",
+    "problems" : [ {
+      "code" : "MANIFEST_REQUIRED",
+      "message" : "manifest is required and must be an object",
+      "pointer" : ""
+    } ],
+    "thrown" : {
+      "code" : "MANIFEST_REQUIRED",
+      "message" : "manifest is required and must be an object"
+    }
+  } ],
+  "stored" : [ {
+    "name" : "unreadable/empty-object",
+    "result" : "unreadable",
+    "message" : "manifest runtime is unreadable"
+  }, {
+    "name" : "unreadable/runtime-cobol",
+    "result" : "unreadable",
+    "message" : "manifest runtime is unreadable"
+  }, {
+    "name" : "unreadable/no-entrypoint",
+    "result" : "unreadable",
+    "message" : "manifest entrypoint is unreadable"
+  }, {
+    "name" : "unreadable/blank-entrypoint",
+    "result" : "unreadable",
+    "message" : "manifest entrypoint is unreadable"
+  }, {
+    "name" : "unreadable/array",
+    "result" : "unreadable",
+    "message" : "manifest is unreadable: not an object"
+  }, {
+    "name" : "unreadable/runtime-object",
+    "result" : "unreadable",
+    "message" : "manifest runtime is unreadable"
+  }, {
+    "name" : "tolerant/unknown-keys",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/missing-optionals",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/wasm-defaults",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"wasm\",\"entrypoint\":\"h\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32,\"wasmMemoryMb\":64},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/limit-out-of-int",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/malformed-endpoint-dropped",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/subscription-no-longer-webhook",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"platform\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/messy-entries",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"5\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/messy-endpoint",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/b\",\"auth\":\"webhook\",\"methods\":[\"GET\",\"POST\",\"POST\"],\"cors\":{\"origins\":[\"*\"],\"methods\":[],\"headers\":[],\"allowCredentials\":false},\"maxBodyBytes\":1048576,\"timeoutMs\":7},{\"path\":\"/c\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/messy-triggers",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/e/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"a\",\"path\":\"/e/a\",\"mode\":\"IMMEDIATE\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false},{\"eventType\":\"c\",\"path\":\"/e/c\",\"mode\":\"BLOCK_ON_ERROR\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[{\"cron\":\"c\",\"path\":\"/e/a\"},{\"cron\":\"d\",\"timezone\":\"UTC\",\"path\":\"/e/b\",\"payload\":{\"k\":[1]}}],\"public\":[],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/messy-public",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[{\"hostname\":\"a.io\",\"pathPrefix\":\"/\",\"aliasPrefixes\":[\"qa\",\"stg\"]},{\"hostname\":\"b.io\",\"pathPrefix\":\"/\"}],\"config\":[],\"secrets\":[],\"db\":[],\"httpAllow\":[]}"
+  }, {
+    "name" : "tolerant/messy-db-and-lists",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[],\"subscriptions\":[],\"schedules\":[],\"public\":[],\"config\":[\"A\",\"A\"],\"secrets\":[\"s\"],\"db\":[{\"name\":\"a\",\"secretRef\":\"s\",\"poolSize\":4},{\"name\":\"d\",\"secretRef\":\"s\",\"poolSize\":99}],\"httpAllow\":[\"h\",\"h\"]}"
+  }, {
+    "name" : "roundtrip/full-jvm",
+    "result" : "ok",
+    "normalised" : "{\"runtime\":\"jvm\",\"entrypoint\":\"com.acme.billing.CreateInvoice\",\"pool\":\"default\",\"warm\":false,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32},\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000},{\"path\":\"/jobs/*\",\"auth\":\"webhook\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000},{\"path\":\"/api/*\",\"auth\":\"platform\",\"methods\":[\"GET\",\"POST\"],\"cors\":{\"origins\":[\"https://app.acme.com\"],\"methods\":[],\"headers\":[],\"allowCredentials\":false},\"maxBodyBytes\":1048576,\"timeoutMs\":10000},{\"path\":\"/hooks/stripe\",\"auth\":\"none\",\"maxBodyBytes\":1048576,\"timeoutMs\":30000}],\"subscriptions\":[{\"eventType\":\"billing:invoices:invoice:created\",\"path\":\"/events/invoice-created\",\"mode\":\"BLOCK_ON_ERROR\",\"maxRetries\":3,\"timeoutSeconds\":30,\"dataOnly\":false}],\"schedules\":[{\"cron\":\"0 * * * *\",\"timezone\":\"UTC\",\"path\":\"/jobs/hourly\",\"payload\":{\"x\":1}}],\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/\"}],\"config\":[\"INVOICE_PREFIX\"],\"secrets\":[\"billing/stripe-key\"],\"db\":[{\"name\":\"main\",\"secretRef\":\"billing/dsn\",\"poolSize\":4}],\"httpAllow\":[\"api.stripe.com\"]}"
+  } ],
+  "values" : {
+    "dnsLabel" : [ {
+      "input" : "billing",
+      "ok" : "billing"
+    }, {
+      "input" : "a",
+      "ok" : "a"
+    }, {
+      "input" : "0",
+      "ok" : "0"
+    }, {
+      "input" : "inv-2",
+      "ok" : "inv-2"
+    }, {
+      "input" : "9lives",
+      "ok" : "9lives"
+    }, {
+      "input" : "Billing",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "in_voices",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "a.b",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "a b",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "é",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "-a",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "a-",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "-",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "a-b",
+      "ok" : "a-b"
+    }, {
+      "input" : "a--b",
+      "ok" : "a--b"
+    }, {
+      "input" : " a",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "a ",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    }, {
+      "input" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ok" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }, {
+      "input" : "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "code" : "LABEL_INVALID",
+      "message" : "field must be a DNS label: 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+    } ],
+    "hostname" : [ {
+      "input" : "API.Acme.com",
+      "ok" : "api.acme.com api.acme.com,acme.com"
+    }, {
+      "input" : "a.io",
+      "ok" : "a.io a.io"
+    }, {
+      "input" : "x-1.acme.co.za",
+      "ok" : "x-1.acme.co.za x-1.acme.co.za,acme.co.za,co.za"
+    }, {
+      "input" : "localhost",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "a..com",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "-a.com",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "a_b.com",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "acme.com.",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "*.acme.com",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "acme.com:443",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "https://acme.com",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "10.0.0.1",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    }, {
+      "input" : "a.b.c.acme.com",
+      "ok" : "a.b.c.acme.com a.b.c.acme.com,b.c.acme.com,c.acme.com,acme.com"
+    }, {
+      "input" : "a.1b",
+      "ok" : "a.1b a.1b"
+    }, {
+      "input" : "1.io",
+      "ok" : "1.io 1.io"
+    }, {
+      "input" : "a.io1",
+      "ok" : "a.io1 a.io1"
+    }, {
+      "input" : "Kcme.com",
+      "ok" : "kcme.com kcme.com"
+    }, {
+      "input" : "é.com",
+      "code" : "HOSTNAME_INVALID",
+      "message" : "hostname must be a lower-cased DNS name of at least two labels, with no trailing dot, wildcard, port or IP literal"
+    } ],
+    "digest" : [ {
+      "input" : "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ok" : "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }, {
+      "input" : "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "code" : "DIGEST_INVALID",
+      "message" : "digest must be sha256: followed by 64 lower-case hex characters"
+    }, {
+      "input" : "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "code" : "DIGEST_INVALID",
+      "message" : "digest must be sha256: followed by 64 lower-case hex characters"
+    }, {
+      "input" : "sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "code" : "DIGEST_INVALID",
+      "message" : "digest must be sha256: followed by 64 lower-case hex characters"
+    }, {
+      "input" : "deadbeef",
+      "code" : "DIGEST_INVALID",
+      "message" : "digest must be sha256: followed by 64 lower-case hex characters"
+    }, {
+      "input" : "",
+      "code" : "DIGEST_INVALID",
+      "message" : "digest must be sha256: followed by 64 lower-case hex characters"
+    } ],
+    "settingKey" : [ {
+      "input" : "A",
+      "ok" : "A"
+    }, {
+      "input" : "INVOICE_PREFIX",
+      "ok" : "INVOICE_PREFIX"
+    }, {
+      "input" : "billing/stripe-key",
+      "ok" : "billing/stripe-key"
+    }, {
+      "input" : "1BAD",
+      "code" : "SETTING_KEY_INVALID",
+      "message" : "'1BAD' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    }, {
+      "input" : "BAD KEY",
+      "code" : "SETTING_KEY_INVALID",
+      "message" : "'BAD KEY' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    }, {
+      "input" : "",
+      "code" : "SETTING_KEY_INVALID",
+      "message" : "'' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    }, {
+      "input" : "_x",
+      "code" : "SETTING_KEY_INVALID",
+      "message" : "'_x' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    }, {
+      "input" : "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "ok" : "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }, {
+      "input" : "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "code" : "SETTING_KEY_INVALID",
+      "message" : "'abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is not a valid setting key: expected ^[A-Za-z][A-Za-z0-9_./-]{0,99}$"
+    } ],
+    "routePattern" : [ {
+      "input" : "/",
+      "ok" : "/ "
+    }, {
+      "input" : "/invoices",
+      "ok" : "/invoices L:invoices|"
+    }, {
+      "input" : "invoices",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/v1/invoices.json",
+      "ok" : "/v1/invoices.json L:v1|L:invoices.json|"
+    }, {
+      "input" : "/in voices",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/a%20b",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/a?b",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/a#b",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/invoices/{id}",
+      "ok" : "/invoices/{id} L:invoices|P:id|"
+    }, {
+      "input" : "/a/{x}/b/{y}",
+      "ok" : "/a/{x}/b/{y} L:a|P:x|L:b|P:y|"
+    }, {
+      "input" : "/{}",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/{1d}",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/a{id}",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/{id}x",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/{a}/{a}",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/files/*",
+      "ok" : "/files/* L:files|R|"
+    }, {
+      "input" : "/*",
+      "ok" : "/* R|"
+    }, {
+      "input" : "/*/a",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/a*",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/**",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "//a",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/a//b",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/a/",
+      "code" : "ROUTE_PATTERN_INVALID",
+      "message" : "route path must start with '/' and contain only literal, {param} or trailing '*' segments"
+    }, {
+      "input" : "/{a_1}/~x",
+      "ok" : "/{a_1}/~x P:a_1|L:~x|"
+    } ],
+    "addressPattern" : [ {
+      "input" : "billing.invoices.create",
+      "ok" : "Exact billing.invoices.create"
+    }, {
+      "input" : "billing.invoices.*",
+      "ok" : "Service billing.invoices.*"
+    }, {
+      "input" : "billing.*",
+      "ok" : "Application billing.*"
+    }, {
+      "input" : "*",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    }, {
+      "input" : "a.*.c",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    }, {
+      "input" : "*.b.c",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    }, {
+      "input" : "billing.inv*",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    }, {
+      "input" : "a.b.c.*",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    }, {
+      "input" : "",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    }, {
+      "input" : "billing",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    }, {
+      "input" : "Billing.*",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    }, {
+      "input" : "a.B.*",
+      "code" : "ADDRESS_PATTERN_INVALID",
+      "message" : "address pattern must be app.service.function, app.service.*, or app.*"
+    } ],
+    "poolUrl" : [ {
+      "input" : "http://fn-{pool}:8080",
+      "ok" : "http://fn-{pool}:8080 http://fn-orders:8080"
+    }, {
+      "input" : "https://fn-{pool}:8443",
+      "ok" : "https://fn-{pool}:8443 https://fn-orders:8443"
+    }, {
+      "input" : "http://127.0.0.1:8080",
+      "ok" : "http://127.0.0.1:8080 http://127.0.0.1:8080"
+    }, {
+      "input" : "https://fn-pool.internal:8080",
+      "ok" : "https://fn-pool.internal:8080 https://fn-pool.internal:8080"
+    }, {
+      "input" : "http://fn-{pool}:8080/",
+      "ok" : "http://fn-{pool}:8080/ http://fn-orders:8080"
+    }, {
+      "input" : "http://fn-{pool}.internal",
+      "ok" : "http://fn-{pool}.internal http://fn-orders.internal"
+    }, {
+      "input" : "http://{pool}:8080",
+      "ok" : "http://{pool}:8080 http://orders:8080"
+    }, {
+      "input" : "http://{pool}@127.0.0.1:8080",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must not contain userinfo: 'http://{pool}@127.0.0.1:8080'"
+    }, {
+      "input" : "http://admin@fn-host:8080",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must not contain userinfo: 'http://admin@fn-host:8080'"
+    }, {
+      "input" : "http://{pool}-{pool}:8080",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must contain at most one '{pool}' placeholder: 'http://{pool}-{pool}:8080'"
+    }, {
+      "input" : "http://fn-{pool}:8080/{pool}",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must contain at most one '{pool}' placeholder: 'http://fn-{pool}:8080/{pool}'"
+    }, {
+      "input" : "http://fn-{pool}:8080/base",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must not contain a path beyond an optional trailing slash: 'http://fn-{pool}:8080/base'"
+    }, {
+      "input" : "http://fn-host:8080/base",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must not contain a path beyond an optional trailing slash: 'http://fn-host:8080/base'"
+    }, {
+      "input" : "http://fn-{pool}:8080?x=1",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must not contain a query: 'http://fn-{pool}:8080?x=1'"
+    }, {
+      "input" : "http://fn-{pool}:8080#frag",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must not contain a fragment: 'http://fn-{pool}:8080#frag'"
+    }, {
+      "input" : "//fn-{pool}:8080",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be an absolute http/https URL: '//fn-{pool}:8080'"
+    }, {
+      "input" : "ftp://fn-{pool}:8080",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must use the http or https scheme: 'ftp://fn-{pool}:8080'"
+    }, {
+      "input" : "not a url",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be a valid URL: 'not a url'"
+    }, {
+      "input" : "",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be an absolute http/https URL: ''"
+    }, {
+      "input" : "HTTP://FN-{pool}:80",
+      "ok" : "HTTP://FN-{pool}:80 HTTP://FN-orders:80"
+    }, {
+      "input" : "http:foo",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http:foo'"
+    }, {
+      "input" : "http:///x",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http:///x'"
+    }, {
+      "input" : "http://fn_pool:8080",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://fn_pool:8080'"
+    }, {
+      "input" : "http://host:abc",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://host:abc'"
+    }, {
+      "input" : "http://host:",
+      "ok" : "http://host: http://host:"
+    }, {
+      "input" : "http://host:99999999999",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://host:99999999999'"
+    }, {
+      "input" : "http://[::1]:8080",
+      "ok" : "http://[::1]:8080 http://[::1]:8080"
+    }, {
+      "input" : "http://[::1",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be a valid URL: 'http://[::1'"
+    }, {
+      "input" : "http://0001.0.0.1:8080",
+      "ok" : "http://0001.0.0.1:8080 http://0001.0.0.1:8080"
+    }, {
+      "input" : "http://999.1.1.1:8080",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://999.1.1.1:8080'"
+    }, {
+      "input" : "http://1.2.3.4.5",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://1.2.3.4.5'"
+    }, {
+      "input" : "http://a.1b",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://a.1b'"
+    }, {
+      "input" : "http://123:8080",
+      "ok" : "http://123:8080 http://123:8080"
+    }, {
+      "input" : "http://host.:8080",
+      "ok" : "http://host.:8080 http://host.:8080"
+    }, {
+      "input" : "http://-host",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://-host'"
+    }, {
+      "input" : "http://é.com",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://é.com'"
+    }, {
+      "input" : "http://a%zz",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be a valid URL: 'http://a%zz'"
+    }, {
+      "input" : "http://a%41b.com",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must name a host: 'http://a%41b.com'"
+    }, {
+      "input" : " http://x",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be a valid URL: ' http://x'"
+    }, {
+      "input" : "1http://x",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be a valid URL: '1http://x'"
+    }, {
+      "input" : "http://x y",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be a valid URL: 'http://x y'"
+    }, {
+      "input" : "http://{pool}.{x}",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must be a valid URL: 'http://{pool}.{x}'"
+    }, {
+      "input" : "http://host/?",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must not contain a query: 'http://host/?'"
+    }, {
+      "input" : "mailto:x@y",
+      "code" : "IllegalStateException",
+      "message" : "FC_FN_POOL_URL must use the http or https scheme: 'mailto:x@y'"
+    } ],
+    "runtime" : [ {
+      "input" : "jvm",
+      "ok" : "JVM"
+    }, {
+      "input" : "Wasm",
+      "ok" : "WASM"
+    }, {
+      "input" : "WASM",
+      "ok" : "WASM"
+    }, {
+      "input" : "dotnet",
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm"
+    }, {
+      "input" : "",
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm"
+    }, {
+      "input" : " jvm",
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm"
+    }, {
+      "input" : "component",
+      "code" : "RUNTIME_INVALID",
+      "message" : "runtime is required and must be jvm or wasm"
+    } ],
+    "httpMethod" : [ {
+      "input" : "get",
+      "ok" : "GET"
+    }, {
+      "input" : "Post",
+      "ok" : "POST"
+    }, {
+      "input" : "DELETE",
+      "ok" : "DELETE"
+    }, {
+      "input" : "TRACE",
+      "code" : "ENDPOINT_INVALID",
+      "message" : "unknown HTTP method: TRACE"
+    }, {
+      "input" : "",
+      "code" : "ENDPOINT_INVALID",
+      "message" : "unknown HTTP method: "
+    }, {
+      "input" : "po st",
+      "code" : "ENDPOINT_INVALID",
+      "message" : "unknown HTTP method: po st"
+    } ],
+    "endpointAuth" : [ {
+      "input" : "webhook",
+      "ok" : "WEBHOOK"
+    }, {
+      "input" : "PLATFORM",
+      "ok" : "PLATFORM"
+    }, {
+      "input" : "None",
+      "ok" : "NONE"
+    }, {
+      "input" : "bearer",
+      "code" : "ENDPOINT_INVALID",
+      "message" : "auth must be webhook, platform or none"
+    }, {
+      "input" : "",
+      "code" : "ENDPOINT_INVALID",
+      "message" : "auth must be webhook, platform or none"
+    } ]
+  },
+  "matches" : [ {
+    "pattern" : "/invoices/{id}",
+    "path" : "/invoices/abc-123",
+    "params" : {
+      "id" : "abc-123"
+    }
+  }, {
+    "pattern" : "/search/{term}",
+    "path" : "/search/caf%C3%A9",
+    "params" : {
+      "term" : "café"
+    }
+  }, {
+    "pattern" : "/search/{term}",
+    "path" : "/search/a+b",
+    "params" : {
+      "term" : "a+b"
+    }
+  }, {
+    "pattern" : "/search/{term}",
+    "path" : "/search/a%2",
+    "params" : null
+  }, {
+    "pattern" : "/search/{term}",
+    "path" : "/search/a%zz",
+    "params" : null
+  }, {
+    "pattern" : "/search/{term}",
+    "path" : "/search/%FF",
+    "params" : null
+  }, {
+    "pattern" : "/files/*",
+    "path" : "/files",
+    "params" : { }
+  }, {
+    "pattern" : "/files/*",
+    "path" : "/files/",
+    "params" : { }
+  }, {
+    "pattern" : "/files/*",
+    "path" : "/files/a/b",
+    "params" : { }
+  }, {
+    "pattern" : "/a",
+    "path" : "/a",
+    "params" : { }
+  }, {
+    "pattern" : "/a",
+    "path" : "/a/",
+    "params" : null
+  }, {
+    "pattern" : "/a",
+    "path" : "/a/b",
+    "params" : null
+  }, {
+    "pattern" : "/a-b",
+    "path" : "/a%2Db",
+    "params" : null
+  }, {
+    "pattern" : "/Invoices",
+    "path" : "/invoices",
+    "params" : null
+  }, {
+    "pattern" : "/",
+    "path" : "/",
+    "params" : { }
+  }, {
+    "pattern" : "/",
+    "path" : "/x",
+    "params" : null
+  }, {
+    "pattern" : "/*",
+    "path" : "/",
+    "params" : { }
+  }, {
+    "pattern" : "/a/{x}/{y}",
+    "path" : "/a/1/2",
+    "params" : {
+      "x" : "1",
+      "y" : "2"
+    }
+  }, {
+    "pattern" : "/a/{x}",
+    "path" : "/a//",
+    "params" : null
+  }, {
+    "pattern" : "/a/{x}",
+    "path" : "a/b",
+    "params" : null
+  }, {
+    "pattern" : "/a/{x}",
+    "path" : "/a/%E2%82%AC",
+    "params" : {
+      "x" : "€"
+    }
+  }, {
+    "pattern" : "/a/{x}",
+    "path" : "/a/é",
+    "params" : null
+  } ]
+}
