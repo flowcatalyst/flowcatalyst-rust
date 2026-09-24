@@ -82,11 +82,7 @@ impl LockHandleInner for RedisLockHandle {
 
 #[async_trait]
 impl LockProvider for RedisLockProvider {
-    async fn acquire(
-        &self,
-        key: &str,
-        ttl: Duration,
-    ) -> Result<Option<LockHandle>, LockError> {
+    async fn acquire(&self, key: &str, ttl: Duration) -> Result<Option<LockHandle>, LockError> {
         ensure_positive_ttl(ttl)?;
         let mut conn = self.conn.clone();
         let full_key = self.make_key(key);
@@ -94,7 +90,7 @@ impl LockProvider for RedisLockProvider {
         let ttl_ms: u64 = ttl
             .as_millis()
             .try_into()
-            .map_err(|_| LockError::Backend("TTL exceeds Redis maximum".into()))?;
+            .map_err(|_| LockError::TtlTooLarge(ttl))?;
 
         // `set_options` with NX + PX: returns "OK" on success, nil on collision.
         let opts = redis::SetOptions::default()
@@ -110,7 +106,7 @@ impl LockProvider for RedisLockProvider {
                 released: false,
             })))),
             Ok(None) => Ok(None),
-            Err(e) => Err(LockError::Backend(e.to_string())),
+            Err(e) => Err(e.into()),
         }
     }
 }

@@ -10,6 +10,8 @@ use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
 use tracing::{error, info, trace, warn};
 
+use crate::error::OutboxError;
+
 /// Message dispatch result
 #[derive(Debug, Clone)]
 pub enum DispatchResult {
@@ -48,12 +50,6 @@ impl BatchDispatchResult {
     }
 }
 
-/// Single item dispatcher trait
-#[async_trait]
-pub trait MessageDispatcher: Send + Sync {
-    async fn dispatch(&self, item: &OutboxItem) -> DispatchResult;
-}
-
 /// Batch dispatcher trait - dispatches multiple outbox items in one API call
 #[async_trait]
 pub trait BatchMessageDispatcher: Send + Sync {
@@ -69,7 +65,7 @@ pub struct MessageGroupProcessorConfig {
     pub block_on_error: bool,
     /// Maximum retry attempts before giving up
     pub max_retries: u32,
-    /// Batch size for API calls (like Java's apiBatchSize)
+    /// Batch size for API calls
     pub batch_size: usize,
 }
 
@@ -161,7 +157,7 @@ impl MessageGroupProcessor {
     }
 
     /// Enqueue an outbox item for processing
-    pub async fn enqueue(&self, item: OutboxItem) -> Result<(), String> {
+    pub async fn enqueue(&self, item: OutboxItem) -> Result<(), OutboxError> {
         let mut queue = self.queue.lock().await;
 
         if queue.len() >= self.config.max_queue_depth {
@@ -170,7 +166,7 @@ impl MessageGroupProcessor {
                 self.group_id,
                 queue.len()
             );
-            return Err("Queue depth exceeded".to_string());
+            return Err(OutboxError::QueueFull);
         }
 
         queue.push_back(TrackedMessage::new(item));
@@ -448,10 +444,10 @@ mod tests {
     fn create_test_item(id: &str) -> OutboxItem {
         OutboxItem {
             id: id.to_string(),
-            item_type: fc_common::OutboxItemType::EVENT,
+            item_type: fc_common::OutboxItemType::Event,
             message_group: Some("group-1".to_string()),
             payload: serde_json::json!({"test": true}),
-            status: OutboxStatus::IN_PROGRESS,
+            status: OutboxStatus::InProgress,
             retry_count: 0,
             created_at: Utc::now(),
             updated_at: Utc::now(),

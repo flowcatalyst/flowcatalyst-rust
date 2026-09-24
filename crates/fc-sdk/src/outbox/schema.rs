@@ -5,6 +5,8 @@
 
 use sqlx::PgPool;
 
+use super::error::OutboxError;
+
 /// SQL to create the outbox_messages table.
 pub const CREATE_OUTBOX_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS outbox_messages (
@@ -47,13 +49,16 @@ CREATE INDEX IF NOT EXISTS idx_outbox_created_at
 /// let pool = sqlx::PgPool::connect("postgresql://localhost/myapp").await?;
 /// init_outbox_schema(&pool).await?;
 /// ```
-pub async fn init_outbox_schema(pool: &PgPool) -> anyhow::Result<()> {
+pub async fn init_outbox_schema(pool: &PgPool) -> Result<(), OutboxError> {
     sqlx::raw_sql(CREATE_OUTBOX_TABLE_SQL).execute(pool).await?;
     Ok(())
 }
 
 /// Initialize the outbox schema with a custom table name.
-pub async fn init_outbox_schema_with_table(pool: &PgPool, table_name: &str) -> anyhow::Result<()> {
+pub async fn init_outbox_schema_with_table(
+    pool: &PgPool,
+    table_name: &str,
+) -> Result<(), OutboxError> {
     let sql = CREATE_OUTBOX_TABLE_SQL.replace("outbox_messages", table_name);
     // Also fix the index names to avoid conflicts
     let sql = sql.replace("idx_outbox_", &format!("idx_{}_", table_name));

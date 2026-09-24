@@ -6,18 +6,18 @@
 //! # Example
 //!
 //! ```ignore
-//! use fc_sdk::outbox::{OutboxDriver, OutboxMessage};
+//! use fc_sdk::outbox::{OutboxDriver, OutboxError, OutboxMessage};
 //!
 //! struct MyPgDriver { pool: sqlx::PgPool }
 //!
 //! #[async_trait::async_trait]
 //! impl OutboxDriver for MyPgDriver {
-//!     async fn insert(&self, message: OutboxMessage) -> anyhow::Result<()> {
+//!     async fn insert(&self, message: OutboxMessage) -> Result<(), OutboxError> {
 //!         sqlx::query("INSERT INTO outbox_messages ...")
 //!             .bind(&message.id).execute(&self.pool).await?;
 //!         Ok(())
 //!     }
-//!     async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> anyhow::Result<()> {
+//!     async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> Result<(), OutboxError> {
 //!         for m in messages { self.insert(m).await?; }
 //!         Ok(())
 //!     }
@@ -28,57 +28,50 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Message types supported by the outbox.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MessageType {
-    #[serde(rename = "EVENT")]
-    Event,
-    #[serde(rename = "DISPATCH_JOB")]
-    DispatchJob,
-    #[serde(rename = "AUDIT_LOG")]
-    AuditLog,
-}
+use super::error::OutboxError;
 
-impl MessageType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Event => "EVENT",
-            Self::DispatchJob => "DISPATCH_JOB",
-            Self::AuditLog => "AUDIT_LOG",
-        }
-    }
-}
-
-/// Outbox status codes matching the outbox-processor.
+/// Message types supported by the outbox: the row's `type` column.
 ///
-/// Only `PENDING` (0) is written by the SDK; all others are managed by the processor.
-pub struct OutboxStatus;
+/// This is [`fc_common::OutboxItemType`]; the `as_str()` / serde strings
+/// (`EVENT`, `DISPATCH_JOB`, `AUDIT_LOG`) are what every SDK stores.
+pub use fc_common::OutboxItemType as MessageType;
 
-impl OutboxStatus {
-    pub const PENDING: i32 = 0;
-    pub const SUCCESS: i32 = 1;
-    pub const BAD_REQUEST: i32 = 2;
-    pub const INTERNAL_ERROR: i32 = 3;
-    pub const UNAUTHORIZED: i32 = 4;
-    pub const FORBIDDEN: i32 = 5;
-    pub const GATEWAY_ERROR: i32 = 6;
-    pub const IN_PROGRESS: i32 = 9;
-}
+/// Outbox status codes, stored as integers in the `status` column.
+///
+/// Only [`OutboxStatus::Pending`] (0) is written by the SDK; all others are
+/// managed by the processor.
+pub use fc_common::OutboxStatus;
 
 /// An outbox message record to be persisted by the driver.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutboxMessage {
     pub id: String,
     #[serde(rename = "type")]
-    pub message_type: String,
+    pub message_type: MessageType,
     pub message_group: Option<String>,
     pub payload: String,
-    pub status: i32,
+    /// Serialized as the integer code, like the database column.
+    #[serde(with = "status_code")]
+    pub status: OutboxStatus,
     pub created_at: String,
     pub updated_at: String,
     pub client_id: String,
     pub payload_size: i32,
     pub headers: Option<HashMap<String, String>>,
+}
+
+/// Serde adapter: [`OutboxStatus`] as its integer storage code.
+mod status_code {
+    use super::OutboxStatus;
+    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(status: &OutboxStatus, ser: S) -> Result<S::Ok, S::Error> {
+        ser.serialize_i32(status.code())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<OutboxStatus, D::Error> {
+        OutboxStatus::try_from(i32::deserialize(de)?).map_err(D::Error::custom)
+    }
 }
 
 /// Driver interface for outbox persistence.
@@ -89,10 +82,10 @@ pub struct OutboxMessage {
 #[async_trait]
 pub trait OutboxDriver: Send + Sync {
     /// Insert a single message into the outbox.
-    async fn insert(&self, message: OutboxMessage) -> anyhow::Result<()>;
+    async fn insert(&self, message: OutboxMessage) -> Result<(), OutboxError>;
 
     /// Insert multiple messages into the outbox (batch).
-    async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> anyhow::Result<()>;
+    async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> Result<(), OutboxError>;
 }
 
 #[cfg(test)]
@@ -149,15 +142,15 @@ mod tests {
     // ─── OutboxStatus ───────────────────────────────────────────────────
 
     #[test]
-    fn outbox_status_constants() {
-        assert_eq!(OutboxStatus::PENDING, 0);
-        assert_eq!(OutboxStatus::SUCCESS, 1);
-        assert_eq!(OutboxStatus::BAD_REQUEST, 2);
-        assert_eq!(OutboxStatus::INTERNAL_ERROR, 3);
-        assert_eq!(OutboxStatus::UNAUTHORIZED, 4);
-        assert_eq!(OutboxStatus::FORBIDDEN, 5);
-        assert_eq!(OutboxStatus::GATEWAY_ERROR, 6);
-        assert_eq!(OutboxStatus::IN_PROGRESS, 9);
+    fn outbox_status_codes() {
+        assert_eq!(OutboxStatus::Pending.code(), 0);
+        assert_eq!(OutboxStatus::Success.code(), 1);
+        assert_eq!(OutboxStatus::BadRequest.code(), 2);
+        assert_eq!(OutboxStatus::InternalError.code(), 3);
+        assert_eq!(OutboxStatus::Unauthorized.code(), 4);
+        assert_eq!(OutboxStatus::Forbidden.code(), 5);
+        assert_eq!(OutboxStatus::GatewayError.code(), 6);
+        assert_eq!(OutboxStatus::InProgress.code(), 9);
     }
 
     // ─── OutboxMessage ──────────────────────────────────────────────────
@@ -166,10 +159,10 @@ mod tests {
     fn outbox_message_serialization_round_trip() {
         let msg = OutboxMessage {
             id: "msg_1".to_string(),
-            message_type: "EVENT".to_string(),
+            message_type: MessageType::Event,
             message_group: Some("grp:1".to_string()),
             payload: r#"{"key":"value"}"#.to_string(),
-            status: OutboxStatus::PENDING,
+            status: OutboxStatus::Pending,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             client_id: "clt_test".to_string(),
@@ -185,9 +178,9 @@ mod tests {
         let deserialized: OutboxMessage = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.id, "msg_1");
-        assert_eq!(deserialized.message_type, "EVENT");
+        assert_eq!(deserialized.message_type, MessageType::Event);
         assert_eq!(deserialized.message_group.as_deref(), Some("grp:1"));
-        assert_eq!(deserialized.status, 0);
+        assert_eq!(deserialized.status, OutboxStatus::Pending);
         assert_eq!(deserialized.client_id, "clt_test");
         assert_eq!(deserialized.payload_size, 15);
         assert_eq!(deserialized.headers.unwrap()["X-Custom"], "val");
@@ -197,10 +190,10 @@ mod tests {
     fn outbox_message_type_field_rename() {
         let msg = OutboxMessage {
             id: "m".into(),
-            message_type: "AUDIT_LOG".into(),
+            message_type: MessageType::AuditLog,
             message_group: None,
             payload: "{}".into(),
-            status: 0,
+            status: OutboxStatus::Pending,
             created_at: "t".into(),
             updated_at: "t".into(),
             client_id: "c".into(),
@@ -208,8 +201,9 @@ mod tests {
             headers: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
-        // message_type serialized as "type"
+        // message_type serialized as "type", status as its integer code
         assert_eq!(json["type"], "AUDIT_LOG");
+        assert_eq!(json["status"], 0);
         assert!(json.get("message_type").is_none());
     }
 
@@ -217,10 +211,10 @@ mod tests {
     fn outbox_message_optional_fields_none() {
         let msg = OutboxMessage {
             id: "m".into(),
-            message_type: "EVENT".into(),
+            message_type: MessageType::Event,
             message_group: None,
             payload: "{}".into(),
-            status: 0,
+            status: OutboxStatus::Pending,
             created_at: "t".into(),
             updated_at: "t".into(),
             client_id: "c".into(),
@@ -236,10 +230,10 @@ mod tests {
     fn outbox_message_clone() {
         let msg = OutboxMessage {
             id: "m".into(),
-            message_type: "EVENT".into(),
+            message_type: MessageType::Event,
             message_group: Some("grp".into()),
             payload: "{}".into(),
-            status: 0,
+            status: OutboxStatus::Pending,
             created_at: "t".into(),
             updated_at: "t".into(),
             client_id: "c".into(),

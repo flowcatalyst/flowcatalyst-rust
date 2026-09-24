@@ -178,7 +178,7 @@ fc-platform   fc-router   fc-stream   fc-outbox   fc-mcp   fc-sdk
         │           │          │         │           │       │
         └───────┬───┴──────────┴─────────┴───────────┴───────┘
                 ▼
-fc-common · fc-queue · fc-standby · fc-config · fc-secrets
+fc-common · fc-queue · fc-standby
 ```
 
 Detail: [`docs/architecture/shared-crates.md`](docs/architecture/shared-crates.md).

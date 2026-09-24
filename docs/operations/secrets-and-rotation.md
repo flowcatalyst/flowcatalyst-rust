@@ -1,8 +1,6 @@
 # Secrets and Rotation
 
-FlowCatalyst pulls every long-lived secret through `fc-secrets` (multi-backend) or `fc-platform/src/shared/database.rs` (database credentials specifically). This document covers what's a secret, where to put it, and how rotation works.
-
-For the architectural picture see [../architecture/shared-crates.md#fc-secrets](../architecture/shared-crates.md#fc-secrets).
+Database credentials are resolved by `fc-platform/src/shared/database.rs`; other secrets come from environment variables or are stored encrypted by `fc-platform/src/shared/encryption_service.rs`. This document covers what's a secret, where to put it, and how rotation works.
 
 ---
 
@@ -18,39 +16,6 @@ For the architectural picture see [../architecture/shared-crates.md#fc-secrets](
 | Webhook signing secrets (per connection) | Encrypted in `msg_connections` | Rotated by editing the connection |
 | Redis password | `FC_STANDBY_REDIS_URL` (or `REDIS_URL`) | Restart-only |
 | AWS credentials | AWS default credential chain (IAM role / IRSA / instance profile) | Auto-rotated by AWS |
-
----
-
-## fc-secrets backends
-
-For application-side secret resolution (e.g. inside an outbox processor that needs its own API token). The single trait `Provider` abstracts:
-
-| Backend | URI prefix | When |
-|---|---|---|
-| Environment variables | — (default) | Dev, simple deployments |
-| Encrypted local file | `encrypted:<base64>` | Air-gapped, no cloud secret store |
-| AWS Secrets Manager | `aws-sm://name` | AWS, primary |
-| AWS Parameter Store SSM | `aws-ps://name` | AWS, when SSM is preferred over Secrets Manager for cost |
-| HashiCorp Vault | `vault://path#key` | Vault-shop |
-
-Configuration via `FC_SECRETS_PROVIDER`:
-
-```sh
-FC_SECRETS_PROVIDER=aws-sm
-AWS_REGION=eu-west-1
-FC_AWS_SECRETS_PREFIX=/flowcatalyst/
-```
-
-The `_PREFIX` env var is prepended to every lookup, so `secrets.get("api/key")` actually reads `/flowcatalyst/api/key`. Useful for IAM scoping (the role only has access to one prefix).
-
-For Vault:
-
-```sh
-FC_SECRETS_PROVIDER=vault
-VAULT_ADDR=https://vault.internal:8200
-VAULT_TOKEN=hvs.…
-FC_VAULT_PATH=secret      # the KV v2 mount path
-```
 
 ---
 
@@ -238,7 +203,7 @@ Beyond what's described above:
 
 ## Audit
 
-Every secret read goes through `fc-secrets`. The AWS provider logs each `GetSecretValue` call via CloudTrail. Vault logs to its audit device. Use those to detect unexpected access patterns.
+Database-secret reads go through AWS Secrets Manager, which logs each `GetSecretValue` call via CloudTrail. Use that to detect unexpected access patterns.
 
 Within the platform, `aud_logs` records every operator action — including secret-regeneration calls (`POST /api/oauth-clients/:id/regenerate-secret`). The admin UI's audit log view exposes this.
 
@@ -249,7 +214,6 @@ Within the platform, `aud_logs` records every operator action — including secr
 - Database resolution: `bin/fc-server/src/main.rs::resolve_database_url`.
 - Secret refresh task: `crates/fc-platform/src/shared/database.rs::start_secret_refresh`.
 - AWS secret provider: `crates/fc-platform/src/shared/database.rs::AwsSecretProvider`.
-- Multi-backend secrets: `crates/fc-secrets/src/lib.rs`.
 - JWT key loading: `crates/fc-platform/src/auth/auth_service.rs::AuthService::new`.
 - Encryption service: `crates/fc-platform/src/shared/encryption_service.rs`.
 - Webhook signing: `crates/fc-router/src/mediator.rs::sign`.

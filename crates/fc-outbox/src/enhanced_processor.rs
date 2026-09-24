@@ -1,6 +1,6 @@
 //! Enhanced Outbox Processor
 //!
-//! Matches the Java outbox processor architecture:
+//! Architecture:
 //! - Polls database for pending items
 //! - Routes through GlobalBuffer and GroupDistributor
 //! - Sends to FlowCatalyst HTTP API (not directly to SQS)
@@ -86,7 +86,7 @@ pub struct ProcessorMetrics {
     pub blocked_groups: usize,
 }
 
-/// Enhanced outbox processor with Java-like architecture
+/// Outbox processor: poll → global buffer → per-group FIFO → batched HTTP dispatch.
 pub struct EnhancedOutboxProcessor {
     config: EnhancedProcessorConfig,
     repository: Arc<dyn OutboxRepository>,
@@ -190,7 +190,7 @@ impl EnhancedOutboxProcessor {
     }
 
     /// Unblock a message group
-    pub async fn unblock_group(&self, group_id: &str) -> Result<(), String> {
+    pub async fn unblock_group(&self, group_id: &str) -> Result<(), crate::OutboxError> {
         self.distributor.unblock_group(group_id).await
     }
 
@@ -266,7 +266,7 @@ impl EnhancedOutboxProcessor {
                                     .mark_with_status(
                                         item_type,
                                         vec![item_id.clone()],
-                                        OutboxStatus::SUCCESS,
+                                        OutboxStatus::Success,
                                         None,
                                     )
                                     .await
@@ -284,8 +284,8 @@ impl EnhancedOutboxProcessor {
                                     .mark_with_status(
                                         item_type,
                                         vec![item_id.clone()],
-                                        OutboxStatus::INTERNAL_ERROR,
-                                        Some(e),
+                                        OutboxStatus::InternalError,
+                                        Some(e.to_string()),
                                     )
                                     .await
                                 {
@@ -455,7 +455,7 @@ impl EnhancedOutboxProcessor {
                                     .mark_with_status(
                                         item_type,
                                         vec![item_id.clone()],
-                                        OutboxStatus::SUCCESS,
+                                        OutboxStatus::Success,
                                         None,
                                     )
                                     .await
@@ -473,8 +473,8 @@ impl EnhancedOutboxProcessor {
                                     .mark_with_status(
                                         item_type,
                                         vec![item_id.clone()],
-                                        OutboxStatus::INTERNAL_ERROR,
-                                        Some(e),
+                                        OutboxStatus::InternalError,
+                                        Some(e.to_string()),
                                     )
                                     .await
                                 {

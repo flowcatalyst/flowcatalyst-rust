@@ -1,7 +1,7 @@
 //! MySQL Outbox Repository Implementation
 //!
 //! Implements the OutboxRepository trait for MySQL with a single shared
-//! `outbox_messages` table using a `type` column, matching Java/TypeScript.
+//! `outbox_messages` table using a `type` column.
 
 use crate::repository::{OutboxRepository, OutboxTableConfig};
 use anyhow::Result;
@@ -53,12 +53,14 @@ impl MySqlOutboxRepository {
         let updated_at: DateTime<Utc> = row.get("updated_at");
 
         let status_code: i16 = row.get("status");
-        let status = OutboxStatus::from_code(status_code as i32);
+        let id: String = row.get("id");
+        let status = OutboxStatus::try_from(i32::from(status_code))
+            .map_err(|e| anyhow::anyhow!("outbox row {id}: {e}"))?;
 
         let payload_str: String = row.get("payload");
 
         Ok(OutboxItem {
-            id: row.get("id"),
+            id,
             item_type,
             message_group: row.try_get("message_group").ok().flatten(),
             payload: serde_json::from_str(&payload_str)?,
@@ -94,8 +96,8 @@ impl OutboxRepository for MySqlOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code() as i16)
-            .bind(item_type.type_value())
+            .bind(OutboxStatus::Pending.code() as i16)
+            .bind(item_type.as_str())
             .bind(limit as i64)
             .fetch_all(&self.pool)
             .await?;
@@ -123,8 +125,8 @@ impl OutboxRepository for MySqlOutboxRepository {
         );
 
         let mut q = sqlx::query(&query)
-            .bind(OutboxStatus::IN_PROGRESS.code() as i16)
-            .bind(item_type.type_value());
+            .bind(OutboxStatus::InProgress.code() as i16)
+            .bind(item_type.as_str());
         for id in &ids {
             q = q.bind(id);
         }
@@ -151,12 +153,12 @@ impl OutboxRepository for MySqlOutboxRepository {
         // SUCCESS is terminal — the platform now owns the message. Delete the
         // outbox row instead of updating it; otherwise the customer's outbox
         // table grows unbounded.
-        if matches!(status, OutboxStatus::SUCCESS) {
+        if matches!(status, OutboxStatus::Success) {
             let query = format!(
                 "DELETE FROM {} WHERE type = ? AND id IN ({})",
                 table, in_clause
             );
-            let mut q = sqlx::query(&query).bind(item_type.type_value());
+            let mut q = sqlx::query(&query).bind(item_type.as_str());
             for id in &ids {
                 q = q.bind(id);
             }
@@ -174,7 +176,7 @@ impl OutboxRepository for MySqlOutboxRepository {
         let mut q = sqlx::query(&query)
             .bind(status.code() as i16)
             .bind(&error_message)
-            .bind(item_type.type_value());
+            .bind(item_type.as_str());
         for id in &ids {
             q = q.bind(id);
         }
@@ -202,8 +204,8 @@ impl OutboxRepository for MySqlOutboxRepository {
         );
 
         let mut q = sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code() as i16)
-            .bind(item_type.type_value());
+            .bind(OutboxStatus::Pending.code() as i16)
+            .bind(item_type.as_str());
         for id in &ids {
             q = q.bind(id);
         }
@@ -231,13 +233,13 @@ impl OutboxRepository for MySqlOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(item_type.type_value())
-            .bind(OutboxStatus::IN_PROGRESS.code() as i16)
-            .bind(OutboxStatus::BAD_REQUEST.code() as i16)
-            .bind(OutboxStatus::INTERNAL_ERROR.code() as i16)
-            .bind(OutboxStatus::UNAUTHORIZED.code() as i16)
-            .bind(OutboxStatus::FORBIDDEN.code() as i16)
-            .bind(OutboxStatus::GATEWAY_ERROR.code() as i16)
+            .bind(item_type.as_str())
+            .bind(OutboxStatus::InProgress.code() as i16)
+            .bind(OutboxStatus::BadRequest.code() as i16)
+            .bind(OutboxStatus::InternalError.code() as i16)
+            .bind(OutboxStatus::Unauthorized.code() as i16)
+            .bind(OutboxStatus::Forbidden.code() as i16)
+            .bind(OutboxStatus::GatewayError.code() as i16)
             .bind(cutoff)
             .bind(limit as i64)
             .fetch_all(&self.pool)
@@ -268,8 +270,8 @@ impl OutboxRepository for MySqlOutboxRepository {
         );
 
         let mut q = sqlx::query(&query)
-            .bind(OutboxStatus::PENDING.code() as i16)
-            .bind(item_type.type_value());
+            .bind(OutboxStatus::Pending.code() as i16)
+            .bind(item_type.as_str());
         for id in &ids {
             q = q.bind(id);
         }
@@ -297,8 +299,8 @@ impl OutboxRepository for MySqlOutboxRepository {
         );
 
         let rows = sqlx::query(&query)
-            .bind(OutboxStatus::IN_PROGRESS.code() as i16)
-            .bind(item_type.type_value())
+            .bind(OutboxStatus::InProgress.code() as i16)
+            .bind(item_type.as_str())
             .bind(cutoff)
             .bind(limit as i64)
             .fetch_all(&self.pool)

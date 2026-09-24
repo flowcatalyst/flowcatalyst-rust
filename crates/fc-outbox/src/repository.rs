@@ -1,8 +1,9 @@
 //! Outbox Repository Trait
 //!
-//! Defines the interface for outbox persistence matching Java's OutboxRepository.
+//! Defines the interface for outbox persistence.
 //! Supports type-aware queries (EVENT, DISPATCH_JOB, AUDIT_LOG) and granular status tracking.
-//! Uses a single shared table (outbox_messages) with a `type` column, matching Java/TypeScript.
+//! Uses a single shared table (outbox_messages) with a `type` column; the SDKs
+//! (Rust, TypeScript, Laravel, Go) write rows into the same layout.
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -12,7 +13,7 @@ use std::time::Duration;
 
 /// Configuration for outbox repository tables.
 ///
-/// By default all types share a single `outbox_messages` table (matching Java/TypeScript).
+/// By default all types share a single `outbox_messages` table.
 /// Each type can optionally be routed to a separate table.
 #[derive(Debug, Clone)]
 pub struct OutboxTableConfig {
@@ -38,9 +39,9 @@ impl OutboxTableConfig {
     /// Get table name for item type
     pub fn table_for_type(&self, item_type: OutboxItemType) -> &str {
         match item_type {
-            OutboxItemType::EVENT => &self.events_table,
-            OutboxItemType::DISPATCH_JOB => &self.dispatch_jobs_table,
-            OutboxItemType::AUDIT_LOG => &self.audit_logs_table,
+            OutboxItemType::Event => &self.events_table,
+            OutboxItemType::DispatchJob => &self.dispatch_jobs_table,
+            OutboxItemType::AuditLog => &self.audit_logs_table,
         }
     }
 
@@ -62,17 +63,15 @@ impl OutboxTableConfig {
     }
 }
 
-/// Outbox repository trait matching Java's OutboxRepository interface
+/// Outbox persistence, implemented once per supported database.
 #[async_trait]
 pub trait OutboxRepository: Send + Sync {
     // ========================================================================
-    // Core Operations (Java-compatible)
+    // Core Operations
     // ========================================================================
 
     /// Fetch pending items of the specified type
-    ///
-    /// Java equivalent: `fetchPending(OutboxItemType type, int limit)`
-    /// Orders by message_group, created_at to match Java/TypeScript behavior.
+    /// Orders by message_group, created_at.
     async fn fetch_pending_by_type(
         &self,
         item_type: OutboxItemType,
@@ -80,13 +79,9 @@ pub trait OutboxRepository: Send + Sync {
     ) -> Result<Vec<OutboxItem>>;
 
     /// Mark items as IN_PROGRESS (status = 9)
-    ///
-    /// Java equivalent: `markAsInProgress(OutboxItemType type, List<String> ids)`
     async fn mark_in_progress(&self, item_type: OutboxItemType, ids: Vec<String>) -> Result<()>;
 
     /// Update status for items with optional error message
-    ///
-    /// Java equivalent: `markWithStatus(OutboxItemType type, List<String> ids, OutboxStatus status)`
     async fn mark_with_status(
         &self,
         item_type: OutboxItemType,
@@ -96,8 +91,6 @@ pub trait OutboxRepository: Send + Sync {
     ) -> Result<()>;
 
     /// Increment retry count and reset to PENDING for retry
-    ///
-    /// Java equivalent: `incrementRetryCount(OutboxItemType type, List<String> ids)`
     async fn increment_retry_count(
         &self,
         item_type: OutboxItemType,
@@ -105,8 +98,6 @@ pub trait OutboxRepository: Send + Sync {
     ) -> Result<()>;
 
     /// Fetch items that are recoverable (stuck in IN_PROGRESS or error states)
-    ///
-    /// Java equivalent: `fetchRecoverableItems(OutboxItemType type, int timeoutSeconds, int limit)`
     async fn fetch_recoverable_items(
         &self,
         item_type: OutboxItemType,
@@ -115,8 +106,6 @@ pub trait OutboxRepository: Send + Sync {
     ) -> Result<Vec<OutboxItem>>;
 
     /// Reset recoverable items back to PENDING
-    ///
-    /// Java equivalent: `resetRecoverableItems(OutboxItemType type, List<String> ids)`
     async fn reset_recoverable_items(
         &self,
         item_type: OutboxItemType,
@@ -124,8 +113,6 @@ pub trait OutboxRepository: Send + Sync {
     ) -> Result<()>;
 
     /// Fetch items stuck in IN_PROGRESS for longer than timeout
-    ///
-    /// Java equivalent: `fetchStuckItems(OutboxItemType type, int timeoutSeconds, int limit)`
     async fn fetch_stuck_items(
         &self,
         item_type: OutboxItemType,
@@ -134,8 +121,6 @@ pub trait OutboxRepository: Send + Sync {
     ) -> Result<Vec<OutboxItem>>;
 
     /// Reset stuck items back to PENDING
-    ///
-    /// Java equivalent: `resetStuckItems(OutboxItemType type, List<String> ids)`
     async fn reset_stuck_items(&self, item_type: OutboxItemType, ids: Vec<String>) -> Result<()>;
 
     // ========================================================================
@@ -156,7 +141,7 @@ pub trait OutboxRepository: Send + Sync {
     /// Mark items as processing (legacy method)
     async fn mark_processing(&self, ids: Vec<String>) -> Result<()> {
         // Assume EVENT type for legacy callers
-        self.mark_in_progress(OutboxItemType::EVENT, ids).await
+        self.mark_in_progress(OutboxItemType::Event, ids).await
     }
 
     /// Update status for a single item (legacy method)
@@ -167,7 +152,7 @@ pub trait OutboxRepository: Send + Sync {
         error: Option<String>,
     ) -> Result<()> {
         // Assume EVENT type for legacy callers
-        self.mark_with_status(OutboxItemType::EVENT, vec![id.to_string()], status, error)
+        self.mark_with_status(OutboxItemType::Event, vec![id.to_string()], status, error)
             .await
     }
 
@@ -199,86 +184,3 @@ pub trait OutboxRepository: Send + Sync {
     /// Get the table configuration
     fn table_config(&self) -> &OutboxTableConfig;
 }
-
-/// Extension trait for batch operations
-#[async_trait]
-pub trait OutboxRepositoryExt: OutboxRepository {
-    /// Process a batch of items with status update
-    async fn process_batch(
-        &self,
-        item_type: OutboxItemType,
-        _items: &[OutboxItem],
-        results: Vec<(String, OutboxStatus, Option<String>)>,
-    ) -> Result<()> {
-        // Group by status
-        let mut success_ids = Vec::new();
-        let mut error_items: Vec<(String, OutboxStatus, Option<String>)> = Vec::new();
-
-        for (id, status, error) in results {
-            if status.is_terminal() && matches!(status, OutboxStatus::SUCCESS) {
-                success_ids.push(id);
-            } else {
-                error_items.push((id, status, error));
-            }
-        }
-
-        // Mark successful items
-        if !success_ids.is_empty() {
-            self.mark_with_status(item_type, success_ids, OutboxStatus::SUCCESS, None)
-                .await?;
-        }
-
-        // Handle error items individually (they may have different statuses)
-        for (id, status, error) in error_items {
-            self.mark_with_status(item_type, vec![id], status, error)
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    /// Retry failed items that haven't exceeded max retries
-    async fn retry_failed_items(
-        &self,
-        item_type: OutboxItemType,
-        max_retries: i32,
-        limit: u32,
-    ) -> Result<u64> {
-        let recoverable = self
-            .fetch_recoverable_items(item_type, Duration::from_secs(0), limit)
-            .await?;
-
-        let mut retried = 0u64;
-        let mut to_retry = Vec::new();
-        let mut exhausted = Vec::new();
-
-        for item in recoverable {
-            if item.retry_count < max_retries {
-                to_retry.push(item.id);
-            } else {
-                exhausted.push(item.id);
-            }
-        }
-
-        if !to_retry.is_empty() {
-            retried = to_retry.len() as u64;
-            self.increment_retry_count(item_type, to_retry).await?;
-        }
-
-        // Mark exhausted items as permanently failed
-        if !exhausted.is_empty() {
-            self.mark_with_status(
-                item_type,
-                exhausted,
-                OutboxStatus::INTERNAL_ERROR,
-                Some("Max retries exceeded".to_string()),
-            )
-            .await?;
-        }
-
-        Ok(retried)
-    }
-}
-
-// Blanket implementation
-impl<T: OutboxRepository + ?Sized> OutboxRepositoryExt for T {}

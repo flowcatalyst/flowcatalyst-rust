@@ -1,14 +1,12 @@
 [workspace]
 members = [
     "crates/fc-common",
-    "crates/fc-config",
     "crates/fc-queue",
     "crates/fc-router",
     "crates/fc-standby",
     "crates/fc-outbox",
     "crates/fc-stream",
     "crates/fc-platform",
-    "crates/fc-secrets",
     "crates/fc-sdk",
     "crates/fc-mcp",
     "bin/fc-dev",

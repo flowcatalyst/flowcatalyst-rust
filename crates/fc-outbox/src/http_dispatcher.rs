@@ -1,7 +1,6 @@
 //! HTTP Dispatcher for FlowCatalyst API
 //!
 //! Sends outbox items to the FlowCatalyst REST API endpoints.
-//! Matches the Java FlowCatalystApiClient behavior.
 //!
 //! Routes items to the correct endpoint based on type:
 //! - `/api/events/batch` for EVENT items
@@ -16,7 +15,7 @@ use std::time::Duration;
 use tracing::{debug, error, warn};
 
 use crate::message_group_processor::{
-    BatchDispatchResult, BatchItemResult, BatchMessageDispatcher, DispatchResult, MessageDispatcher,
+    BatchDispatchResult, BatchItemResult, BatchMessageDispatcher, DispatchResult,
 };
 
 /// HTTP dispatcher configuration
@@ -98,12 +97,12 @@ impl ItemStatus {
     /// Convert to OutboxStatus for database storage
     pub fn to_outbox_status(&self) -> OutboxStatus {
         match self {
-            ItemStatus::Success => OutboxStatus::SUCCESS,
-            ItemStatus::BadRequest => OutboxStatus::BAD_REQUEST,
-            ItemStatus::InternalError => OutboxStatus::INTERNAL_ERROR,
-            ItemStatus::Unauthorized => OutboxStatus::UNAUTHORIZED,
-            ItemStatus::Forbidden => OutboxStatus::FORBIDDEN,
-            ItemStatus::GatewayError => OutboxStatus::GATEWAY_ERROR,
+            ItemStatus::Success => OutboxStatus::Success,
+            ItemStatus::BadRequest => OutboxStatus::BadRequest,
+            ItemStatus::InternalError => OutboxStatus::InternalError,
+            ItemStatus::Unauthorized => OutboxStatus::Unauthorized,
+            ItemStatus::Forbidden => OutboxStatus::Forbidden,
+            ItemStatus::GatewayError => OutboxStatus::GatewayError,
         }
     }
 }
@@ -185,7 +184,7 @@ impl HttpDispatcher {
                                 .iter()
                                 .map(|item| OutboxDispatchResult {
                                     id: item.id.clone(),
-                                    status: OutboxStatus::INTERNAL_ERROR,
+                                    status: OutboxStatus::InternalError,
                                     error_message: Some(format!("Parse error: {}", e)),
                                 })
                                 .collect()
@@ -193,12 +192,12 @@ impl HttpDispatcher {
                     }
                 } else {
                     let outbox_status = match status.as_u16() {
-                        400 => OutboxStatus::BAD_REQUEST,
-                        401 => OutboxStatus::UNAUTHORIZED,
-                        403 => OutboxStatus::FORBIDDEN,
-                        500 => OutboxStatus::INTERNAL_ERROR,
-                        502..=504 => OutboxStatus::GATEWAY_ERROR,
-                        _ => OutboxStatus::INTERNAL_ERROR,
+                        400 => OutboxStatus::BadRequest,
+                        401 => OutboxStatus::Unauthorized,
+                        403 => OutboxStatus::Forbidden,
+                        500 => OutboxStatus::InternalError,
+                        502..=504 => OutboxStatus::GatewayError,
+                        _ => OutboxStatus::InternalError,
                     };
 
                     let error_body = response.text().await.unwrap_or_default();
@@ -224,38 +223,11 @@ impl HttpDispatcher {
                     .iter()
                     .map(|item| OutboxDispatchResult {
                         id: item.id.clone(),
-                        status: OutboxStatus::GATEWAY_ERROR,
+                        status: OutboxStatus::GatewayError,
                         error_message: Some(error_msg.clone()),
                     })
                     .collect()
             }
-        }
-    }
-}
-
-#[async_trait]
-impl MessageDispatcher for HttpDispatcher {
-    async fn dispatch(&self, item: &OutboxItem) -> DispatchResult {
-        let results = self.send_outbox_batch(std::slice::from_ref(item)).await;
-
-        match results.first() {
-            Some(result) => {
-                if matches!(result.status, OutboxStatus::SUCCESS) {
-                    DispatchResult::Success
-                } else {
-                    DispatchResult::Failure {
-                        error: result
-                            .error_message
-                            .clone()
-                            .unwrap_or_else(|| "Unknown error".to_string()),
-                        retryable: result.status.is_retryable(),
-                    }
-                }
-            }
-            None => DispatchResult::Failure {
-                error: "No result returned".to_string(),
-                retryable: true,
-            },
         }
     }
 }
@@ -268,7 +240,7 @@ impl BatchMessageDispatcher for HttpDispatcher {
         let results = api_results
             .into_iter()
             .map(|r| {
-                let result = if matches!(r.status, OutboxStatus::SUCCESS) {
+                let result = if matches!(r.status, OutboxStatus::Success) {
                     DispatchResult::Success
                 } else {
                     DispatchResult::Failure {
@@ -334,10 +306,10 @@ mod tests {
     fn test_batch_request_serialization() {
         let item = OutboxItem {
             id: "test-1".to_string(),
-            item_type: OutboxItemType::EVENT,
+            item_type: OutboxItemType::Event,
             message_group: Some("group-1".to_string()),
             payload: serde_json::json!({"key": "value"}),
-            status: OutboxStatus::PENDING,
+            status: OutboxStatus::Pending,
             retry_count: 0,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

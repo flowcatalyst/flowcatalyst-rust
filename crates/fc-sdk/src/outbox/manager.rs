@@ -25,10 +25,11 @@
 //! let job_ids = outbox.create_dispatch_jobs(vec![job1, job2]).await?;
 //! ```
 
-use crate::tsid::TsidGenerator;
+use crate::tsid;
 
 use super::driver::{MessageType, OutboxDriver, OutboxMessage, OutboxStatus};
 use super::dto::{CreateAuditLogDto, CreateDispatchJobDto, CreateEventDto};
+use super::error::OutboxError;
 
 /// Manages outbox message creation.
 pub struct OutboxManager {
@@ -45,10 +46,10 @@ impl OutboxManager {
     }
 
     /// Create a single event in the outbox. Returns the generated TSID.
-    pub async fn create_event(&self, event: CreateEventDto) -> anyhow::Result<String> {
+    pub async fn create_event(&self, event: CreateEventDto) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
-        let id = TsidGenerator::generate_untyped();
+        let id = tsid::generate_untyped();
         let payload = serde_json::to_string(&event.to_payload())?;
         let headers = if event.headers.is_empty() {
             None
@@ -69,7 +70,10 @@ impl OutboxManager {
     }
 
     /// Create multiple events in the outbox (batch). Returns the generated TSIDs.
-    pub async fn create_events(&self, events: Vec<CreateEventDto>) -> anyhow::Result<Vec<String>> {
+    pub async fn create_events(
+        &self,
+        events: Vec<CreateEventDto>,
+    ) -> Result<Vec<String>, OutboxError> {
         if events.is_empty() {
             return Ok(Vec::new());
         }
@@ -79,7 +83,7 @@ impl OutboxManager {
         let mut messages = Vec::with_capacity(events.len());
 
         for event in &events {
-            let id = TsidGenerator::generate_untyped();
+            let id = tsid::generate_untyped();
             ids.push(id.clone());
             let payload = serde_json::to_string(&event.to_payload())?;
             let headers = if event.headers.is_empty() {
@@ -102,10 +106,13 @@ impl OutboxManager {
     }
 
     /// Create a single dispatch job in the outbox. Returns the generated TSID.
-    pub async fn create_dispatch_job(&self, job: CreateDispatchJobDto) -> anyhow::Result<String> {
+    pub async fn create_dispatch_job(
+        &self,
+        job: CreateDispatchJobDto,
+    ) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
-        let id = TsidGenerator::generate_untyped();
+        let id = tsid::generate_untyped();
         let payload = serde_json::to_string(&job.to_payload())?;
 
         let message = self.build_message(
@@ -124,7 +131,7 @@ impl OutboxManager {
     pub async fn create_dispatch_jobs(
         &self,
         jobs: Vec<CreateDispatchJobDto>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>, OutboxError> {
         if jobs.is_empty() {
             return Ok(Vec::new());
         }
@@ -134,7 +141,7 @@ impl OutboxManager {
         let mut messages = Vec::with_capacity(jobs.len());
 
         for job in &jobs {
-            let id = TsidGenerator::generate_untyped();
+            let id = tsid::generate_untyped();
             ids.push(id.clone());
             let payload = serde_json::to_string(&job.to_payload())?;
 
@@ -152,10 +159,10 @@ impl OutboxManager {
     }
 
     /// Create a single audit log in the outbox. Returns the generated TSID.
-    pub async fn create_audit_log(&self, audit: CreateAuditLogDto) -> anyhow::Result<String> {
+    pub async fn create_audit_log(&self, audit: CreateAuditLogDto) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
-        let id = TsidGenerator::generate_untyped();
+        let id = tsid::generate_untyped();
         let payload = serde_json::to_string(&audit.to_payload())?;
         let headers = if audit.headers.is_empty() {
             None
@@ -174,7 +181,7 @@ impl OutboxManager {
     pub async fn create_audit_logs(
         &self,
         audits: Vec<CreateAuditLogDto>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>, OutboxError> {
         if audits.is_empty() {
             return Ok(Vec::new());
         }
@@ -184,7 +191,7 @@ impl OutboxManager {
         let mut messages = Vec::with_capacity(audits.len());
 
         for audit in &audits {
-            let id = TsidGenerator::generate_untyped();
+            let id = tsid::generate_untyped();
             ids.push(id.clone());
             let payload = serde_json::to_string(&audit.to_payload())?;
             let headers = if audit.headers.is_empty() {
@@ -216,10 +223,10 @@ impl OutboxManager {
         let now = chrono::Utc::now().to_rfc3339();
         OutboxMessage {
             id,
-            message_type: message_type.as_str().to_string(),
+            message_type,
             message_group: message_group.map(|s| s.to_string()),
             payload: payload.to_string(),
-            status: OutboxStatus::PENDING,
+            status: OutboxStatus::Pending,
             created_at: now.clone(),
             updated_at: now,
             client_id: self.client_id.clone(),
@@ -228,11 +235,9 @@ impl OutboxManager {
         }
     }
 
-    fn ensure_client_id(&self) -> anyhow::Result<()> {
+    fn ensure_client_id(&self) -> Result<(), OutboxError> {
         if self.client_id.is_empty() {
-            anyhow::bail!(
-                "OutboxManager: client_id is required. Provide a valid client ID when constructing the OutboxManager."
-            );
+            return Err(OutboxError::MissingClientId);
         }
         Ok(())
     }
@@ -262,11 +267,11 @@ mod tests {
 
     #[async_trait::async_trait]
     impl OutboxDriver for MockDriver {
-        async fn insert(&self, message: OutboxMessage) -> anyhow::Result<()> {
+        async fn insert(&self, message: OutboxMessage) -> Result<(), OutboxError> {
             self.messages.lock().unwrap().push(message);
             Ok(())
         }
-        async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> anyhow::Result<()> {
+        async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> Result<(), OutboxError> {
             self.messages.lock().unwrap().extend(messages);
             Ok(())
         }
@@ -293,9 +298,9 @@ mod tests {
 
         let msg = &msgs[0];
         assert_eq!(msg.id, id);
-        assert_eq!(msg.message_type, "EVENT");
+        assert_eq!(msg.message_type, MessageType::Event);
         assert_eq!(msg.message_group.as_deref(), Some("users:user:u1"));
-        assert_eq!(msg.status, OutboxStatus::PENDING);
+        assert_eq!(msg.status, OutboxStatus::Pending);
         assert_eq!(msg.client_id, "clt_test");
         assert!(msg.payload_size > 0);
         assert!(msg.headers.is_none()); // no headers on DTO
@@ -338,7 +343,7 @@ mod tests {
         // IDs match
         for (i, msg) in msgs.iter().enumerate() {
             assert_eq!(msg.id, ids[i]);
-            assert_eq!(msg.message_type, "EVENT");
+            assert_eq!(msg.message_type, MessageType::Event);
             assert_eq!(msg.client_id, "clt_batch");
         }
     }
@@ -362,7 +367,7 @@ mod tests {
 
         let msgs = captured.lock().unwrap();
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].message_type, "DISPATCH_JOB");
+        assert_eq!(msgs[0].message_type, MessageType::DispatchJob);
         assert_eq!(msgs[0].message_group.as_deref(), Some("grp:1"));
         assert_eq!(msgs[0].client_id, "clt_dj");
         // Dispatch jobs don't pass headers
@@ -383,7 +388,7 @@ mod tests {
         let msgs = captured.lock().unwrap();
         assert_eq!(msgs.len(), 2);
         for msg in msgs.iter() {
-            assert_eq!(msg.message_type, "DISPATCH_JOB");
+            assert_eq!(msg.message_type, MessageType::DispatchJob);
         }
     }
 
@@ -405,7 +410,7 @@ mod tests {
 
         let msgs = captured.lock().unwrap();
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].message_type, "AUDIT_LOG");
+        assert_eq!(msgs[0].message_type, MessageType::AuditLog);
         // Audit logs have no message_group
         assert!(msgs[0].message_group.is_none());
         assert_eq!(msgs[0].client_id, "clt_al");
@@ -439,7 +444,7 @@ mod tests {
         let msgs = captured.lock().unwrap();
         assert_eq!(msgs.len(), 2);
         for msg in msgs.iter() {
-            assert_eq!(msg.message_type, "AUDIT_LOG");
+            assert_eq!(msg.message_type, MessageType::AuditLog);
         }
     }
 

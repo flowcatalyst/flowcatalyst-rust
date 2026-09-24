@@ -42,20 +42,20 @@ mod memory;
 
 #[cfg(feature = "cache-postgres")]
 mod pg;
-#[cfg(feature = "cache-postgres")]
-mod schema;
 #[cfg(feature = "cache-redis")]
 mod redis;
+#[cfg(feature = "cache-postgres")]
+mod schema;
 
 pub use error::CacheError;
 pub use memory::MemoryCache;
 
+#[cfg(feature = "cache-redis")]
+pub use self::redis::RedisCache;
 #[cfg(feature = "cache-postgres")]
 pub use pg::PgCache;
 #[cfg(feature = "cache-postgres")]
 pub use schema::{init_cache_schema, init_cache_schema_with_table, CREATE_CACHE_TABLE_SQL};
-#[cfg(feature = "cache-redis")]
-pub use self::redis::RedisCache;
 
 /// Pluggable cache contract. Implementations store opaque bytes; typed access
 /// is provided by the [`get`], [`set`], and [`get_or_set`] free helpers.
@@ -73,12 +73,7 @@ pub trait Cache: Send + Sync {
     /// Write `value` for `key`, expiring after `ttl`. Overwrites any existing
     /// value. Implementations must reject zero / negative TTLs by returning
     /// [`CacheError::InvalidTtl`].
-    async fn set_bytes(
-        &self,
-        key: &str,
-        value: Vec<u8>,
-        ttl: Duration,
-    ) -> Result<(), CacheError>;
+    async fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<(), CacheError>;
 
     /// Remove `key`. Returns `Ok(())` whether or not the key existed.
     async fn delete(&self, key: &str) -> Result<(), CacheError>;
@@ -95,7 +90,7 @@ pub async fn get<T: DeserializeOwned>(
     match cache.get_bytes(key).await? {
         Some(bytes) => match serde_json::from_slice::<T>(&bytes) {
             Ok(v) => Ok(Some(v)),
-            Err(e) => Err(CacheError::Deserialize(e.to_string())),
+            Err(e) => Err(CacheError::Deserialize(e)),
         },
         None => Ok(None),
     }
@@ -108,8 +103,7 @@ pub async fn set<T: Serialize + Sync>(
     value: &T,
     ttl: Duration,
 ) -> Result<(), CacheError> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|e| CacheError::Serialize(e.to_string()))?;
+    let bytes = serde_json::to_vec(value).map_err(CacheError::Serialize)?;
     cache.set_bytes(key, bytes, ttl).await
 }
 

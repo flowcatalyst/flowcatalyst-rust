@@ -30,11 +30,7 @@ impl LockHandleInner for NoOpHandle {
 
 #[async_trait]
 impl LockProvider for NoOpLockProvider {
-    async fn acquire(
-        &self,
-        _key: &str,
-        _ttl: Duration,
-    ) -> Result<Option<LockHandle>, LockError> {
+    async fn acquire(&self, _key: &str, _ttl: Duration) -> Result<Option<LockHandle>, LockError> {
         Ok(Some(LockHandle::new(Box::new(NoOpHandle))))
     }
 }
@@ -80,11 +76,7 @@ impl LockHandleInner for MemoryHandle {
 
 #[async_trait]
 impl LockProvider for MemoryLockProvider {
-    async fn acquire(
-        &self,
-        key: &str,
-        ttl: Duration,
-    ) -> Result<Option<LockHandle>, LockError> {
+    async fn acquire(&self, key: &str, ttl: Duration) -> Result<Option<LockHandle>, LockError> {
         ensure_positive_ttl(ttl)?;
         let mut guard = self.held.lock().await;
         let now = Instant::now();
@@ -93,9 +85,7 @@ impl LockProvider for MemoryLockProvider {
                 return Ok(None);
             }
         }
-        let expires_at = now
-            .checked_add(ttl)
-            .ok_or_else(|| LockError::Backend("TTL overflow on Instant".into()))?;
+        let expires_at = now.checked_add(ttl).ok_or(LockError::TtlTooLarge(ttl))?;
         guard.insert(key.to_string(), expires_at);
         Ok(Some(LockHandle::new(Box::new(MemoryHandle {
             key: key.to_string(),
@@ -129,16 +119,10 @@ mod tests {
             .await
             .unwrap()
             .expect("first acquire");
-        let h2 = lock
-            .acquire("k", Duration::from_secs(30))
-            .await
-            .unwrap();
+        let h2 = lock.acquire("k", Duration::from_secs(30)).await.unwrap();
         assert!(h2.is_none(), "second acquire should fail while h1 holds");
         h1.release().await;
-        let h3 = lock
-            .acquire("k", Duration::from_secs(30))
-            .await
-            .unwrap();
+        let h3 = lock.acquire("k", Duration::from_secs(30)).await.unwrap();
         assert!(h3.is_some(), "should reacquire after release");
         h3.unwrap().release().await;
     }
@@ -152,10 +136,7 @@ mod tests {
             .unwrap()
             .unwrap();
         tokio::time::sleep(Duration::from_millis(20)).await;
-        let h2 = lock
-            .acquire("k", Duration::from_secs(30))
-            .await
-            .unwrap();
+        let h2 = lock.acquire("k", Duration::from_secs(30)).await.unwrap();
         assert!(h2.is_some(), "should acquire after previous TTL expires");
     }
 

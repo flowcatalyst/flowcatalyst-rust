@@ -977,27 +977,34 @@ async fn spawn_scheduled_job_scheduler(
     Ok(())
 }
 
+/// Dispatch scheduler settings, read from the environment.
+///
+/// `FLOWCATALYST_SCHEDULER_*` are the names the removed `fc-config` crate
+/// honoured; their defaults are unchanged. Batch size, stale threshold and the
+/// HMAC app key were never env-configurable there, so they stay fixed here
+/// (no app key means unsigned dispatch callbacks, as before).
 fn load_scheduler_config() -> fc_platform::scheduler::SchedulerConfig {
-    let config = fc_config::AppConfig::load().unwrap_or_default();
     fc_platform::scheduler::SchedulerConfig {
-        enabled: config.scheduler.enabled,
-        poll_interval: Duration::from_millis(config.scheduler.poll_interval_ms),
-        batch_size: config.scheduler.batch_size,
-        stale_threshold: Duration::from_secs(config.scheduler.stale_threshold_minutes * 60),
-        default_dispatch_mode: fc_common::DispatchMode::from_str(
-            &config.scheduler.default_dispatch_mode,
-        ),
+        // Parsed with `bool::from_str`: only "true"/"false" are understood and
+        // anything else keeps the default, exactly as fc-config did.
+        enabled: env_or_parse("FLOWCATALYST_SCHEDULER_ENABLED", true),
+        poll_interval: Duration::from_millis(env_or_parse(
+            "FLOWCATALYST_SCHEDULER_POLL_INTERVAL_MS",
+            100,
+        )),
+        batch_size: 100,
+        stale_threshold: Duration::from_secs(15 * 60),
+        default_dispatch_mode: fc_common::DispatchMode::from_str(&env_or(
+            "FLOWCATALYST_SCHEDULER_DISPATCH_MODE",
+            "immediate",
+        )),
         default_pool_code: env_or("FC_SCHEDULER_DEFAULT_POOL_CODE", "DISPATCH-POOL"),
         processing_endpoint: env_or_alias(
             "FC_SCHEDULER_PROCESSING_ENDPOINT",
             "DISPATCH_SCHEDULER_PROCESSING_ENDPOINT",
             "http://localhost:8080/api/dispatch/process",
         ),
-        app_key: if config.scheduler.app_key.is_empty() {
-            None
-        } else {
-            Some(config.scheduler.app_key.clone())
-        },
+        app_key: None,
         max_concurrent_groups: env_or_parse("FC_SCHEDULER_MAX_CONCURRENT_GROUPS", 10),
         connection_filter_enabled: true,
     }
@@ -1130,9 +1137,9 @@ impl StreamProcessorShutdown {
 async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<()> {
     use fc_outbox::http_dispatcher::HttpDispatcherConfig;
     use fc_outbox::repository::{OutboxRepository, OutboxTableConfig};
-    use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig};
+    use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
 
-    let db_type = env_or("FC_OUTBOX_DB_TYPE", "postgres");
+    let backend: OutboxBackend = env_or("FC_OUTBOX_DB_TYPE", "postgres").parse()?;
     let poll_interval_ms: u64 = env_or_parse("FC_OUTBOX_POLL_INTERVAL_MS", 1000);
 
     let table_config = OutboxTableConfig {
@@ -1141,8 +1148,8 @@ async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<
         audit_logs_table: env_or("FC_OUTBOX_AUDIT_LOGS_TABLE", "outbox_messages"),
     };
 
-    let outbox_repo: Arc<dyn OutboxRepository> = match db_type.as_str() {
-        "sqlite" => {
+    let outbox_repo: Arc<dyn OutboxRepository> = match backend {
+        OutboxBackend::Sqlite => {
             let url = std::env::var("FC_OUTBOX_DB_URL")
                 .map_err(|_| anyhow::anyhow!("FC_OUTBOX_DB_URL required for sqlite outbox"))?;
             let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -1153,7 +1160,7 @@ async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<
             repo.init_schema().await?;
             Arc::new(repo)
         }
-        "postgres" => {
+        OutboxBackend::Postgres => {
             let url = std::env::var("FC_OUTBOX_DB_URL")
                 .map_err(|_| anyhow::anyhow!("FC_OUTBOX_DB_URL required for postgres outbox"))?;
             let pool = sqlx::postgres::PgPoolOptions::new()
@@ -1165,7 +1172,11 @@ async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<
             repo.init_schema().await?;
             Arc::new(repo)
         }
-        other => return Err(anyhow::anyhow!("Unknown outbox DB type: {}", other)),
+        OutboxBackend::Mongo => {
+            return Err(anyhow::anyhow!(
+                "The mongo outbox backend is not supported by fc-server; run fc-outbox-processor instead"
+            ))
+        }
     };
 
     let api_base_url = env_or("FC_API_BASE_URL", "http://localhost:8080");

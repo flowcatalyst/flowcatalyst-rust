@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 
 use super::driver::{OutboxDriver, OutboxMessage};
+use super::error::OutboxError;
 
 /// PostgreSQL outbox driver backed by sqlx.
 ///
@@ -40,7 +41,7 @@ impl SqlxPgDriver {
 
 #[async_trait]
 impl OutboxDriver for SqlxPgDriver {
-    async fn insert(&self, message: OutboxMessage) -> anyhow::Result<()> {
+    async fn insert(&self, message: OutboxMessage) -> Result<(), OutboxError> {
         let query = format!(
             "INSERT INTO {} (id, type, message_group, payload, status, retry_count, \
              created_at, updated_at, client_id, payload_size, headers) \
@@ -51,14 +52,15 @@ impl OutboxDriver for SqlxPgDriver {
         let headers_json = message
             .headers
             .as_ref()
-            .map(|h| serde_json::to_string(h).unwrap_or_default());
+            .map(serde_json::to_string)
+            .transpose()?;
 
         sqlx::query(&query)
             .bind(&message.id)
-            .bind(&message.message_type)
+            .bind(message.message_type.as_str())
             .bind(&message.message_group)
             .bind(&message.payload)
-            .bind(message.status)
+            .bind(message.status.code())
             .bind(&message.client_id)
             .bind(message.payload_size)
             .bind(&headers_json)
@@ -68,7 +70,7 @@ impl OutboxDriver for SqlxPgDriver {
         Ok(())
     }
 
-    async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> anyhow::Result<()> {
+    async fn insert_batch(&self, messages: Vec<OutboxMessage>) -> Result<(), OutboxError> {
         if messages.is_empty() {
             return Ok(());
         }
@@ -86,14 +88,15 @@ impl OutboxDriver for SqlxPgDriver {
             let headers_json = message
                 .headers
                 .as_ref()
-                .map(|h| serde_json::to_string(h).unwrap_or_default());
+                .map(serde_json::to_string)
+                .transpose()?;
 
             sqlx::query(&query)
                 .bind(&message.id)
-                .bind(&message.message_type)
+                .bind(message.message_type.as_str())
                 .bind(&message.message_group)
                 .bind(&message.payload)
-                .bind(message.status)
+                .bind(message.status.code())
                 .bind(&message.client_id)
                 .bind(message.payload_size)
                 .bind(&headers_json)

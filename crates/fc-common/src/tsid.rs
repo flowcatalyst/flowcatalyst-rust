@@ -1,7 +1,8 @@
 //! TSID Generator
 //!
 //! Generates Time-Sorted IDs as Crockford Base32 strings.
-//! Compatible with Java's TsidGenerator for cross-platform ID consistency.
+//! The encoding matches the other FlowCatalyst implementations, so IDs are
+//! interchangeable across them.
 //!
 //! Typed IDs follow the format `{prefix}_{tsid}` (e.g., `clt_0HZXEQ5Y8JY5Z`).
 
@@ -15,8 +16,8 @@ static COUNTER: AtomicU16 = AtomicU16::new(0);
 
 /// Well-known entity type prefixes matching the FlowCatalyst platform.
 ///
-/// Use these with [`TsidGenerator::generate`] for platform-compatible typed IDs.
-/// For custom entity types, use [`TsidGenerator::generate_with_prefix`].
+/// Use these with [`generate`] for platform-compatible typed IDs.
+/// For custom entity types, use [`generate_with_prefix`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityType {
     Client,
@@ -101,79 +102,100 @@ impl EntityType {
     }
 }
 
-/// TSID Generator for creating unique, time-sorted identifiers.
-///
-/// # Examples
+/// Generate a raw TSID as a Crockford Base32 string (13 characters).
+fn generate_raw() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis() as u64;
+
+    let counter = COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
+    let random: u64 = rand_u16() as u64 & 0x3FF;
+
+    // Combine: timestamp (42 bits) | random (10 bits) | counter (12 bits)
+    let tsid = ((now & 0x3FFFFFFFFFF) << 22) | (random << 12) | (counter & 0xFFF);
+
+    encode_crockford(tsid)
+}
+
+/// Generate a typed ID with a platform entity prefix: `{prefix}_{tsid}`.
 ///
 /// ```
-/// use fc_common::tsid::{TsidGenerator, EntityType};
+/// use fc_common::tsid::{self, EntityType};
 ///
-/// // Generate a typed ID for a known entity type
-/// let client_id = TsidGenerator::generate(EntityType::Client);
+/// let client_id = tsid::generate(EntityType::Client);
 /// assert!(client_id.starts_with("clt_"));
-///
-/// // Generate with a custom prefix for your own entity types
-/// let order_id = TsidGenerator::generate_with_prefix("ord");
-/// assert!(order_id.starts_with("ord_"));
-///
-/// // Generate an untyped ID (e.g., for execution IDs, trace IDs)
-/// let trace_id = TsidGenerator::generate_untyped();
-/// assert_eq!(trace_id.len(), 13);
 /// ```
+pub fn generate(entity_type: EntityType) -> String {
+    format!("{}_{}", entity_type.prefix(), generate_raw())
+}
+
+/// Generate a typed ID with a custom prefix: `{prefix}_{tsid}`.
+///
+/// Use this for application-specific entity types not covered by [`EntityType`].
+///
+/// ```
+/// let order_id = fc_common::tsid::generate_with_prefix("ord");
+/// assert!(order_id.starts_with("ord_"));
+/// ```
+pub fn generate_with_prefix(prefix: &str) -> String {
+    format!("{}_{}", prefix, generate_raw())
+}
+
+/// Generate an untyped ID for non-entity contexts (execution IDs, trace IDs, etc.)
+///
+/// ```
+/// assert_eq!(fc_common::tsid::generate_untyped().len(), 13);
+/// ```
+pub fn generate_untyped() -> String {
+    generate_raw()
+}
+
+/// Convert a TSID string to its numeric representation.
+/// Handles both typed (`clt_0HZXEQ5Y8JY5Z`) and raw (`0HZXEQ5Y8JY5Z`) formats.
+pub fn to_long(tsid_str: &str) -> Option<i64> {
+    let raw = if tsid_str.len() > 14 && tsid_str.contains('_') {
+        tsid_str.split('_').nth(1)?
+    } else {
+        tsid_str
+    };
+    decode_crockford(raw).map(|v| v as i64)
+}
+
+/// Convert a numeric TSID to its string representation (raw, no prefix).
+pub fn from_long(value: i64) -> String {
+    encode_crockford(value as u64)
+}
+
+/// Namespace kept for existing callers; prefer the free functions in this
+/// module ([`generate`], [`generate_with_prefix`], [`generate_untyped`],
+/// [`to_long`], [`from_long`]), which these methods delegate to.
 pub struct TsidGenerator;
 
 impl TsidGenerator {
-    /// Generate a raw TSID as a Crockford Base32 string (13 characters).
-    fn generate_raw() -> String {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_millis() as u64;
-
-        let counter = COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
-        let random: u64 = rand_u16() as u64 & 0x3FF;
-
-        // Combine: timestamp (42 bits) | random (10 bits) | counter (12 bits)
-        let tsid = ((now & 0x3FFFFFFFFFF) << 22) | (random << 12) | (counter & 0xFFF);
-
-        encode_crockford(tsid)
-    }
-
-    /// Generate a typed ID with a platform entity prefix: `{prefix}_{tsid}`.
-    ///
-    /// Example: `generate(EntityType::Client)` → `"clt_0HZXEQ5Y8JY5Z"`
+    /// See [`generate`].
     pub fn generate(entity_type: EntityType) -> String {
-        format!("{}_{}", entity_type.prefix(), Self::generate_raw())
+        generate(entity_type)
     }
 
-    /// Generate a typed ID with a custom prefix: `{prefix}_{tsid}`.
-    ///
-    /// Use this for application-specific entity types not covered by [`EntityType`].
-    ///
-    /// Example: `generate_with_prefix("ord")` → `"ord_0HZXEQ5Y8JY5Z"`
+    /// See [`generate_with_prefix`].
     pub fn generate_with_prefix(prefix: &str) -> String {
-        format!("{}_{}", prefix, Self::generate_raw())
+        generate_with_prefix(prefix)
     }
 
-    /// Generate an untyped ID for non-entity contexts (execution IDs, trace IDs, etc.)
+    /// See [`generate_untyped`].
     pub fn generate_untyped() -> String {
-        Self::generate_raw()
+        generate_untyped()
     }
 
-    /// Convert a TSID string to its numeric representation.
-    /// Handles both typed (`clt_0HZXEQ5Y8JY5Z`) and raw (`0HZXEQ5Y8JY5Z`) formats.
+    /// See [`to_long`].
     pub fn to_long(tsid_str: &str) -> Option<i64> {
-        let raw = if tsid_str.len() > 14 && tsid_str.contains('_') {
-            tsid_str.split('_').nth(1)?
-        } else {
-            tsid_str
-        };
-        decode_crockford(raw).map(|v| v as i64)
+        to_long(tsid_str)
     }
 
-    /// Convert a numeric TSID to its string representation (raw, no prefix).
+    /// See [`from_long`].
     pub fn from_long(value: i64) -> String {
-        encode_crockford(value as u64)
+        from_long(value)
     }
 }
 
@@ -229,21 +251,21 @@ mod tests {
 
     #[test]
     fn test_generate_typed_id() {
-        let id = TsidGenerator::generate(EntityType::Client);
+        let id = generate(EntityType::Client);
         assert_eq!(id.len(), 17);
         assert!(id.starts_with("clt_"));
     }
 
     #[test]
     fn test_generate_custom_prefix() {
-        let id = TsidGenerator::generate_with_prefix("ord");
+        let id = generate_with_prefix("ord");
         assert_eq!(id.len(), 17);
         assert!(id.starts_with("ord_"));
     }
 
     #[test]
     fn test_generate_untyped_id() {
-        let id = TsidGenerator::generate_untyped();
+        let id = generate_untyped();
         assert_eq!(id.len(), 13);
     }
 
@@ -251,32 +273,43 @@ mod tests {
     fn test_uniqueness() {
         let mut ids = std::collections::HashSet::new();
         for _ in 0..1000 {
-            let id = TsidGenerator::generate(EntityType::Client);
+            let id = generate(EntityType::Client);
             assert!(ids.insert(id), "Duplicate TSID generated");
         }
     }
 
     #[test]
     fn test_round_trip_typed() {
-        let id = TsidGenerator::generate(EntityType::Client);
-        let num = TsidGenerator::to_long(&id).unwrap();
-        let back = TsidGenerator::from_long(num);
+        let id = generate(EntityType::Client);
+        let num = to_long(&id).unwrap();
+        let back = from_long(num);
         assert_eq!(&id[4..], back);
     }
 
     #[test]
     fn test_round_trip_raw() {
-        let id = TsidGenerator::generate_untyped();
-        let num = TsidGenerator::to_long(&id).unwrap();
-        let back = TsidGenerator::from_long(num);
+        let id = generate_untyped();
+        let num = to_long(&id).unwrap();
+        let back = from_long(num);
         assert_eq!(id, back);
     }
 
     #[test]
+    fn test_tsid_generator_delegates() {
+        assert!(TsidGenerator::generate(EntityType::Role).starts_with("rol_"));
+        assert!(TsidGenerator::generate_with_prefix("ord").starts_with("ord_"));
+        let raw = TsidGenerator::generate_untyped();
+        assert_eq!(
+            TsidGenerator::from_long(TsidGenerator::to_long(&raw).unwrap()),
+            raw
+        );
+    }
+
+    #[test]
     fn test_sortability() {
-        let id1 = TsidGenerator::generate(EntityType::Client);
+        let id1 = generate(EntityType::Client);
         std::thread::sleep(std::time::Duration::from_millis(1));
-        let id2 = TsidGenerator::generate(EntityType::Client);
+        let id2 = generate(EntityType::Client);
         assert!(id1 < id2, "TSIDs should be lexicographically sortable");
     }
 }

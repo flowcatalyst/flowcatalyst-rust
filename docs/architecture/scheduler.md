@@ -244,17 +244,19 @@ None of the lifecycle transitions go through the UoW / domain-events pipeline �
 
 ## Environment variables
 
-Read by `bin/fc-server/src/main.rs::load_scheduler_config` (plus `fc-config::AppConfig` for TOML-side knobs):
+Read by `bin/fc-server/src/main.rs::load_scheduler_config`:
 
-| Variable | Default | Description |
-|---|---|---|
-| `FC_SCHEDULER_ENABLED` | `false` | Master toggle inside fc-server |
-| `FC_SCHEDULER_POLL_INTERVAL_MS` | `5000` | Pending-job poll cadence |
-| `FC_SCHEDULER_BATCH_SIZE` | `200` | Max jobs per poll |
-| `FC_SCHEDULER_STALE_THRESHOLD_MINUTES` | `15` | When a QUEUED job is considered stuck |
-| `FC_SCHEDULER_MAX_CONCURRENT_GROUPS` | `10` | Cap on parallel group dispatches |
-| `FC_SCHEDULER_DEFAULT_POOL_CODE` | `DISPATCH-POOL` | Pool used when a job has no `dispatch_pool_id` |
-| `FC_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:8080/api/dispatch/process` | Where the router should POST back |
+| Variable | Alias | Default | Description |
+|---|---|---|---|
+| `FC_SCHEDULER_ENABLED` | `DISPATCH_SCHEDULER_ENABLED` | `false` | Master toggle inside fc-server |
+| `FLOWCATALYST_SCHEDULER_ENABLED` | — | `true` | Scheduler-internal toggle (only `true`/`false` are understood; `FC_SCHEDULER_ENABLED` is the subsystem switch) |
+| `FLOWCATALYST_SCHEDULER_POLL_INTERVAL_MS` | — | `100` | Pending-job poll cadence |
+| `FLOWCATALYST_SCHEDULER_DISPATCH_MODE` | — | `immediate` | Default dispatch mode (case-insensitive; unknown values fall back to `NEXT_ON_ERROR`) |
+| `FC_SCHEDULER_MAX_CONCURRENT_GROUPS` | — | `10` | Cap on parallel group dispatch |
+| `FC_SCHEDULER_DEFAULT_POOL_CODE` | — | `DISPATCH-POOL` | Pool used when `dispatch_pool_id` is null |
+| `FC_SCHEDULER_PROCESSING_ENDPOINT` | `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:8080/api/dispatch/process` | Where the router calls back |
+
+Batch size (100) and the stale-job threshold (15 minutes) are fixed.
 
 Plus the cluster-level standby vars (`FC_STANDBY_ENABLED`, `FC_STANDBY_REDIS_URL`, `FC_STANDBY_LOCK_KEY`) — see [high-availability.md](../operations/high-availability.md).
 

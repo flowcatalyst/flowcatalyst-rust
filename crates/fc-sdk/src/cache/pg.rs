@@ -43,10 +43,7 @@ impl PgCache {
     /// Cheap thanks to the index on `expires_at`; safe to call repeatedly.
     pub async fn reap_expired(&self) -> Result<u64, CacheError> {
         let sql = format!("DELETE FROM {} WHERE expires_at <= NOW()", self.table);
-        let result = sqlx::query(&sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| CacheError::Backend(e.to_string()))?;
+        let result = sqlx::query(&sql).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 }
@@ -61,21 +58,14 @@ impl Cache for PgCache {
         let row: Option<(Vec<u8>,)> = sqlx::query_as(&sql)
             .bind(key)
             .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| CacheError::Backend(e.to_string()))?;
+            .await?;
         Ok(row.map(|(v,)| v))
     }
 
-    async fn set_bytes(
-        &self,
-        key: &str,
-        value: Vec<u8>,
-        ttl: Duration,
-    ) -> Result<(), CacheError> {
+    async fn set_bytes(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<(), CacheError> {
         ensure_positive_ttl(ttl)?;
         let expires_at = Utc::now()
-            + chrono::Duration::from_std(ttl)
-                .map_err(|e| CacheError::Backend(format!("TTL too large: {}", e)))?;
+            + chrono::Duration::from_std(ttl).map_err(|_| CacheError::TtlTooLarge(ttl))?;
 
         let sql = format!(
             "INSERT INTO {} (key, value, expires_at) VALUES ($1, $2, $3) \
@@ -87,18 +77,13 @@ impl Cache for PgCache {
             .bind(&value)
             .bind(expires_at)
             .execute(&self.pool)
-            .await
-            .map_err(|e| CacheError::Backend(e.to_string()))?;
+            .await?;
         Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<(), CacheError> {
         let sql = format!("DELETE FROM {} WHERE key = $1", self.table);
-        sqlx::query(&sql)
-            .bind(key)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| CacheError::Backend(e.to_string()))?;
+        sqlx::query(&sql).bind(key).execute(&self.pool).await?;
         Ok(())
     }
 }

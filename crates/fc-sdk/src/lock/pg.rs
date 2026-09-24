@@ -49,10 +49,7 @@ impl PgLockProvider {
     /// implicitly via the upsert.
     pub async fn reap_expired(&self) -> Result<u64, LockError> {
         let sql = format!("DELETE FROM {} WHERE expires_at <= NOW()", self.table);
-        let result = sqlx::query(&sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| LockError::Backend(e.to_string()))?;
+        let result = sqlx::query(&sql).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 }
@@ -91,16 +88,11 @@ impl LockHandleInner for PgLockHandle {
 
 #[async_trait]
 impl LockProvider for PgLockProvider {
-    async fn acquire(
-        &self,
-        key: &str,
-        ttl: Duration,
-    ) -> Result<Option<LockHandle>, LockError> {
+    async fn acquire(&self, key: &str, ttl: Duration) -> Result<Option<LockHandle>, LockError> {
         ensure_positive_ttl(ttl)?;
         let holder = Uuid::new_v4().to_string();
         let expires_at = Utc::now()
-            + chrono::Duration::from_std(ttl)
-                .map_err(|e| LockError::Backend(format!("TTL too large: {}", e)))?;
+            + chrono::Duration::from_std(ttl).map_err(|_| LockError::TtlTooLarge(ttl))?;
 
         // Upsert with WHERE so we only displace an expired holder. RETURNING
         // returns our holder iff we actually inserted or updated; the no-op
@@ -119,19 +111,18 @@ impl LockProvider for PgLockProvider {
             .bind(&holder)
             .bind(expires_at)
             .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| LockError::Backend(e.to_string()))?;
+            .await?;
 
         match result {
-            Some((winner,)) if winner == holder => Ok(Some(LockHandle::new(Box::new(
-                PgLockHandle {
+            Some((winner,)) if winner == holder => {
+                Ok(Some(LockHandle::new(Box::new(PgLockHandle {
                     pool: self.pool.clone(),
                     table: self.table.clone(),
                     key: key.to_string(),
                     holder,
                     released: false,
-                },
-            )))),
+                }))))
+            }
             // RETURNING gave nothing OR a different holder — we lost.
             _ => Ok(None),
         }

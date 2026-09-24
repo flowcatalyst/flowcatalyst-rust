@@ -164,12 +164,14 @@ Router architecture: [../architecture/message-router.md](../architecture/message
 
 | Variable | Alias | Default | Description |
 |---|---|---|---|
-| `FC_SCHEDULER_POLL_INTERVAL_MS` | — | `5000` | Pending-job poll cadence |
-| `FC_SCHEDULER_BATCH_SIZE` | — | `200` | Max jobs per poll |
-| `FC_SCHEDULER_STALE_THRESHOLD_MINUTES` | — | `15` | When QUEUED jobs are considered stuck |
+| `FLOWCATALYST_SCHEDULER_ENABLED` | — | `true` | Scheduler-internal toggle (only `true`/`false` are understood; `FC_SCHEDULER_ENABLED` is the subsystem switch) |
+| `FLOWCATALYST_SCHEDULER_POLL_INTERVAL_MS` | — | `100` | Pending-job poll cadence |
+| `FLOWCATALYST_SCHEDULER_DISPATCH_MODE` | — | `immediate` | Default dispatch mode (case-insensitive; unknown values fall back to `NEXT_ON_ERROR`) |
 | `FC_SCHEDULER_MAX_CONCURRENT_GROUPS` | — | `10` | Cap on parallel group dispatch |
 | `FC_SCHEDULER_DEFAULT_POOL_CODE` | — | `DISPATCH-POOL` | Pool used when `dispatch_pool_id` is null |
 | `FC_SCHEDULER_PROCESSING_ENDPOINT` | `DISPATCH_SCHEDULER_PROCESSING_ENDPOINT` | `http://localhost:8080/api/dispatch/process` | Where the router calls back |
+
+Batch size (100) and the stale-job threshold (15 minutes) are fixed.
 
 Scheduler architecture: [../architecture/scheduler.md](../architecture/scheduler.md).
 
@@ -212,25 +214,6 @@ Stream processor architecture: [../architecture/stream-processor.md](../architec
 | `FC_MAX_CONCURRENT_GROUPS` | `10` | Active groups dispatching simultaneously |
 
 Outbox architecture: [../architecture/outbox-processor.md](../architecture/outbox-processor.md).
-
----
-
-## Secrets resolution (`fc-secrets`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `FC_SECRETS_PROVIDER` | `env` | `env`, `encrypted`, `aws-sm`, `aws-ps`, `vault` |
-| `FC_SECRETS_ENCRYPTION_KEY` | — | base64 32-byte key (for `encrypted` provider) |
-| `FC_SECRETS_DATA_DIR` | `~/.flowcatalyst/secrets` | Encrypted file directory |
-| `AWS_REGION` | (AWS default chain) | AWS Secrets Manager / Parameter Store region |
-| `FC_AWS_SECRETS_PREFIX` | — | e.g. `/flowcatalyst/` — applied to all SM/SSM lookups |
-| `VAULT_ADDR` | — | e.g. `http://vault.internal:8200` |
-| `VAULT_TOKEN` | — | Token (or use Kubernetes auth, etc. — see fc-secrets) |
-| `FC_VAULT_PATH` | `secret` | KV v2 mount path |
-
-References within other env vars: `aws-sm://name`, `aws-ps://name`, `vault://path#key`, `encrypted:<base64>`.
-
-See [secrets-and-rotation.md](secrets-and-rotation.md).
 
 ---
 

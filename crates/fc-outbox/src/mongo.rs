@@ -1,7 +1,7 @@
 //! MongoDB Outbox Repository Implementation
 //!
 //! Implements the OutboxRepository trait for MongoDB with a single shared
-//! `outbox_messages` collection using a `type` field, matching Java/TypeScript.
+//! `outbox_messages` collection using a `type` field.
 
 use crate::repository::{OutboxRepository, OutboxTableConfig};
 use anyhow::Result;
@@ -64,13 +64,15 @@ impl MongoOutboxRepository {
             .map_err(|e| anyhow::anyhow!("Invalid updated_at: {}", e))?;
 
         let status_code = doc.get_i32("status").unwrap_or(0);
-        let status = OutboxStatus::from_code(status_code);
+        let id = doc.get_str("id")?.to_string();
+        let status = OutboxStatus::try_from(status_code)
+            .map_err(|e| anyhow::anyhow!("outbox row {id}: {e}"))?;
 
         let payload_str = doc.get_str("payload")?;
         let payload: serde_json::Value = serde_json::from_str(payload_str)?;
 
         Ok(OutboxItem {
-            id: doc.get_str("id")?.to_string(),
+            id,
             item_type,
             message_group: doc.get_str("message_group").ok().map(String::from),
             payload,
@@ -103,8 +105,8 @@ impl OutboxRepository for MongoOutboxRepository {
     ) -> Result<Vec<OutboxItem>> {
         let collection = self.collection_for_type(item_type);
         let filter = doc! {
-            "status": OutboxStatus::PENDING.code(),
-            "type": item_type.type_value()
+            "status": OutboxStatus::Pending.code(),
+            "type": item_type.as_str()
         };
         let find_options = FindOptions::builder()
             .sort(doc! { "message_group": 1, "created_at": 1 })
@@ -137,11 +139,11 @@ impl OutboxRepository for MongoOutboxRepository {
 
         let filter = doc! {
             "id": { "$in": &ids },
-            "type": item_type.type_value()
+            "type": item_type.as_str()
         };
         let update = doc! {
             "$set": {
-                "status": OutboxStatus::IN_PROGRESS.code(),
+                "status": OutboxStatus::InProgress.code(),
                 "updated_at": Self::now_iso()
             }
         };
@@ -172,13 +174,13 @@ impl OutboxRepository for MongoOutboxRepository {
 
         let filter = doc! {
             "id": { "$in": &ids },
-            "type": item_type.type_value()
+            "type": item_type.as_str()
         };
 
         // SUCCESS is terminal — the platform now owns the message. Delete the
         // outbox document instead of updating it; otherwise the customer's
         // outbox collection grows unbounded.
-        if matches!(status, OutboxStatus::SUCCESS) {
+        if matches!(status, OutboxStatus::Success) {
             collection.delete_many(filter).await?;
             debug!(
                 collection = %self.table_config.table_for_type(item_type),
@@ -223,12 +225,12 @@ impl OutboxRepository for MongoOutboxRepository {
 
         let filter = doc! {
             "id": { "$in": &ids },
-            "type": item_type.type_value()
+            "type": item_type.as_str()
         };
         let update = doc! {
             "$inc": { "retry_count": 1 },
             "$set": {
-                "status": OutboxStatus::PENDING.code(),
+                "status": OutboxStatus::Pending.code(),
                 "updated_at": Self::now_iso()
             }
         };
@@ -255,15 +257,15 @@ impl OutboxRepository for MongoOutboxRepository {
             (Utc::now() - chrono::Duration::from_std(timeout).unwrap_or_default()).to_rfc3339();
 
         let filter = doc! {
-            "type": item_type.type_value(),
+            "type": item_type.as_str(),
             "status": {
                 "$in": [
-                    OutboxStatus::IN_PROGRESS.code(),
-                    OutboxStatus::BAD_REQUEST.code(),
-                    OutboxStatus::INTERNAL_ERROR.code(),
-                    OutboxStatus::UNAUTHORIZED.code(),
-                    OutboxStatus::FORBIDDEN.code(),
-                    OutboxStatus::GATEWAY_ERROR.code(),
+                    OutboxStatus::InProgress.code(),
+                    OutboxStatus::BadRequest.code(),
+                    OutboxStatus::InternalError.code(),
+                    OutboxStatus::Unauthorized.code(),
+                    OutboxStatus::Forbidden.code(),
+                    OutboxStatus::GatewayError.code(),
                 ]
             },
             "updated_at": { "$lt": cutoff }
@@ -297,11 +299,11 @@ impl OutboxRepository for MongoOutboxRepository {
 
         let filter = doc! {
             "id": { "$in": &ids },
-            "type": item_type.type_value()
+            "type": item_type.as_str()
         };
         let update = doc! {
             "$set": {
-                "status": OutboxStatus::PENDING.code(),
+                "status": OutboxStatus::Pending.code(),
                 "updated_at": Self::now_iso()
             }
         };
@@ -328,8 +330,8 @@ impl OutboxRepository for MongoOutboxRepository {
             (Utc::now() - chrono::Duration::from_std(timeout).unwrap_or_default()).to_rfc3339();
 
         let filter = doc! {
-            "type": item_type.type_value(),
-            "status": OutboxStatus::IN_PROGRESS.code(),
+            "type": item_type.as_str(),
+            "status": OutboxStatus::InProgress.code(),
             "updated_at": { "$lt": cutoff }
         };
 

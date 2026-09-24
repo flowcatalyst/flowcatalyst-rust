@@ -8,7 +8,7 @@
 //! The SDK provides the same domain-driven design patterns used by the
 //! FlowCatalyst platform itself:
 //!
-//! - **Domain Events** — CloudEvents-compatible event trait with metadata builder
+//! - **Domain Events** — CloudEvents-compatible event trait with shared metadata
 //! - **Execution Context** — Distributed tracing with correlation/causation chains
 //! - **Use Case Result** — Categorized errors (validation, not found, business rule)
 //! - **Unit of Work** — Atomic commit of entity + event + audit log
@@ -90,7 +90,7 @@
 //! ```ignore
 //! use fc_sdk::usecase::{ExecutionContext, EventMetadata, DomainEvent};
 //! use fc_sdk::outbox::{OutboxUnitOfWork, UnitOfWork};
-//! use fc_sdk::tsid::{TsidGenerator, EntityType};
+//! use fc_sdk::tsid::{self, EntityType};
 //! use serde::Serialize;
 //!
 //! // 1. Define your domain event
@@ -118,14 +118,14 @@
 //!     let ctx = ExecutionContext::create("user-123");
 //!
 //!     let event = OrderCreated {
-//!         metadata: EventMetadata::builder()
-//!             .from(&ctx)
-//!             .event_type("shop:orders:order:created")
-//!             .spec_version("1.0")
-//!             .source("shop:orders")
-//!             .subject(format!("orders.order.{}", order.id()))
-//!             .message_group(format!("orders:order:{}", order.id()))
-//!             .build(),
+//!         metadata: EventMetadata::from_ctx(
+//!             &ctx,
+//!             "shop:orders:order:created",
+//!             "1.0",
+//!             "shop:orders",
+//!             format!("orders.order.{}", order.id()),
+//!             format!("orders:order:{}", order.id()),
+//!         ),
 //!         order_id: order.id().to_string(),
 //!         customer_id: cmd.customer_id.clone(),
 //!     };
@@ -170,6 +170,6 @@ pub mod scheduled_jobs;
 // Re-export key types at crate root
 pub use tsid::{EntityType, TsidGenerator};
 pub use usecase::{
-    DomainEvent, EventMetadata, EventMetadataBuilder, ExecutionContext, TracingContext, UseCase,
-    UseCaseError, UseCaseResult,
+    DomainEvent, EventMetadata, ExecutionContext, TracingContext, UseCase, UseCaseError,
+    UseCaseResult,
 };

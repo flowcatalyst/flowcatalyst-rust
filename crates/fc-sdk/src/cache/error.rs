@@ -14,15 +14,34 @@ pub enum CacheError {
     #[error("cache TTL must be greater than zero")]
     InvalidTtl,
 
-    /// Backend-level I/O failure (network, query, etc.).
+    /// TTL is larger than the backend (or the platform clock) can represent.
+    #[error("cache TTL {0:?} is too large for this backend")]
+    TtlTooLarge(std::time::Duration),
+
+    /// Backend-level I/O failure (network, query, etc.). Custom [`super::Cache`]
+    /// implementations box their native error into this variant.
     #[error("cache backend error: {0}")]
-    Backend(String),
+    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// Stored bytes could not be decoded into the requested type.
     #[error("cache value deserialization failed: {0}")]
-    Deserialize(String),
+    Deserialize(#[source] serde_json::Error),
 
     /// Caller value could not be JSON-encoded for storage.
     #[error("cache value serialization failed: {0}")]
-    Serialize(String),
+    Serialize(#[source] serde_json::Error),
+}
+
+#[cfg(feature = "cache-postgres")]
+impl From<sqlx::Error> for CacheError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Backend(Box::new(e))
+    }
+}
+
+#[cfg(feature = "cache-redis")]
+impl From<redis::RedisError> for CacheError {
+    fn from(e: redis::RedisError) -> Self {
+        Self::Backend(Box::new(e))
+    }
 }

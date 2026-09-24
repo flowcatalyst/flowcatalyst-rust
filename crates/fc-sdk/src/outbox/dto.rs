@@ -130,7 +130,8 @@ impl CreateEventDto {
         let mut payload = serde_json::json!({
             "specVersion": "1.0",
             "type": self.event_type,
-            "data": serde_json::to_string(&self.data).unwrap_or_else(|_| "{}".to_string()),
+            // `Value`'s Display is its compact JSON encoding and cannot fail.
+            "data": self.data.to_string(),
         });
 
         let obj = payload.as_object_mut().unwrap();
@@ -224,20 +225,22 @@ impl CreateDispatchJobDto {
     }
 
     /// Create from a JSON-serializable payload (auto-stringifies).
+    ///
+    /// Fails if `payload` cannot be serialized, rather than sending `{}`.
     pub fn from_json(
         source: impl Into<String>,
         code: impl Into<String>,
         target_url: impl Into<String>,
         payload: &impl Serialize,
         dispatch_pool_id: impl Into<String>,
-    ) -> Self {
-        Self::new(
+    ) -> Result<Self, serde_json::Error> {
+        Ok(Self::new(
             source,
             code,
             target_url,
-            serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string()),
+            serde_json::to_string(payload)?,
             dispatch_pool_id,
-        )
+        ))
     }
 
     pub fn subject(mut self, subject: impl Into<String>) -> Self {
@@ -474,10 +477,7 @@ impl CreateAuditLogDto {
 
         let obj = payload.as_object_mut().unwrap();
         if let Some(ref v) = self.operation_data {
-            obj.insert(
-                "operationData".into(),
-                serde_json::json!(serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string())),
-            );
+            obj.insert("operationData".into(), serde_json::json!(v.to_string()));
         }
         if let Some(ref v) = self.principal_id {
             obj.insert("principalId".into(), serde_json::json!(v));
@@ -667,11 +667,25 @@ mod tests {
     fn dispatch_job_dto_from_json_auto_stringifies() {
         let payload_obj = serde_json::json!({"orderId": "ord_123", "amount": 99.99});
         let dto =
-            CreateDispatchJobDto::from_json("svc", "evt", "https://x.com", &payload_obj, "pool_1");
+            CreateDispatchJobDto::from_json("svc", "evt", "https://x.com", &payload_obj, "pool_1")
+                .unwrap();
 
         let parsed: serde_json::Value = serde_json::from_str(&dto.payload).unwrap();
         assert_eq!(parsed["orderId"], "ord_123");
         assert_eq!(parsed["amount"], 99.99);
+    }
+
+    #[test]
+    fn dispatch_job_dto_from_json_propagates_serialization_errors() {
+        struct Unserializable;
+        impl Serialize for Unserializable {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("nope"))
+            }
+        }
+        let result =
+            CreateDispatchJobDto::from_json("svc", "evt", "https://x.com", &Unserializable, "p");
+        assert!(result.is_err(), "must not silently fall back to {{}}");
     }
 
     #[test]

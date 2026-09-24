@@ -40,15 +40,20 @@ macro_rules! details {
 
 /// Categorized error types for use case failures.
 ///
-/// - `ValidationError` → 400 Bad Request
+/// - `Validation` → 400 Bad Request
 /// - `BusinessRuleViolation` → 409 Conflict
-/// - `NotFoundError` → 404 Not Found
-/// - `ConcurrencyError` → 409 Conflict
-/// - `CommitError` → 500 Internal Server Error
+/// - `NotFound` → 404 Not Found
+/// - `Concurrency` → 409 Conflict
+/// - `Commit` → 500 Internal Server Error
+///
+/// The serialized `type` tag keeps the original names (`ValidationError`,
+/// `NotFoundError`, `ConcurrencyError`, `CommitError`), so the JSON shape is
+/// unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum UseCaseError {
-    ValidationError {
+    #[serde(rename = "ValidationError")]
+    Validation {
         code: String,
         message: String,
         #[serde(default)]
@@ -62,21 +67,24 @@ pub enum UseCaseError {
         details: HashMap<String, serde_json::Value>,
     },
 
-    NotFoundError {
+    #[serde(rename = "NotFoundError")]
+    NotFound {
         code: String,
         message: String,
         #[serde(default)]
         details: HashMap<String, serde_json::Value>,
     },
 
-    ConcurrencyError {
+    #[serde(rename = "ConcurrencyError")]
+    Concurrency {
         code: String,
         message: String,
         #[serde(default)]
         details: HashMap<String, serde_json::Value>,
     },
 
-    CommitError {
+    #[serde(rename = "CommitError")]
+    Commit {
         code: String,
         message: String,
         #[serde(default)]
@@ -86,7 +94,7 @@ pub enum UseCaseError {
 
 impl UseCaseError {
     pub fn validation(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::ValidationError {
+        Self::Validation {
             code: code.into(),
             message: message.into(),
             details: HashMap::new(),
@@ -98,7 +106,7 @@ impl UseCaseError {
         message: impl Into<String>,
         details: HashMap<String, serde_json::Value>,
     ) -> Self {
-        Self::ValidationError {
+        Self::Validation {
             code: code.into(),
             message: message.into(),
             details,
@@ -126,7 +134,7 @@ impl UseCaseError {
     }
 
     pub fn not_found(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::NotFoundError {
+        Self::NotFound {
             code: code.into(),
             message: message.into(),
             details: HashMap::new(),
@@ -138,7 +146,7 @@ impl UseCaseError {
         message: impl Into<String>,
         details: HashMap<String, serde_json::Value>,
     ) -> Self {
-        Self::NotFoundError {
+        Self::NotFound {
             code: code.into(),
             message: message.into(),
             details,
@@ -146,7 +154,7 @@ impl UseCaseError {
     }
 
     pub fn concurrency(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self::ConcurrencyError {
+        Self::Concurrency {
             code: code.into(),
             message: message.into(),
             details: HashMap::new(),
@@ -154,7 +162,7 @@ impl UseCaseError {
     }
 
     pub fn commit(message: impl Into<String>) -> Self {
-        Self::CommitError {
+        Self::Commit {
             code: "COMMIT_FAILED".to_string(),
             message: message.into(),
             details: HashMap::new(),
@@ -163,31 +171,31 @@ impl UseCaseError {
 
     pub fn code(&self) -> &str {
         match self {
-            Self::ValidationError { code, .. } => code,
+            Self::Validation { code, .. } => code,
             Self::BusinessRuleViolation { code, .. } => code,
-            Self::NotFoundError { code, .. } => code,
-            Self::ConcurrencyError { code, .. } => code,
-            Self::CommitError { code, .. } => code,
+            Self::NotFound { code, .. } => code,
+            Self::Concurrency { code, .. } => code,
+            Self::Commit { code, .. } => code,
         }
     }
 
     pub fn message(&self) -> &str {
         match self {
-            Self::ValidationError { message, .. } => message,
+            Self::Validation { message, .. } => message,
             Self::BusinessRuleViolation { message, .. } => message,
-            Self::NotFoundError { message, .. } => message,
-            Self::ConcurrencyError { message, .. } => message,
-            Self::CommitError { message, .. } => message,
+            Self::NotFound { message, .. } => message,
+            Self::Concurrency { message, .. } => message,
+            Self::Commit { message, .. } => message,
         }
     }
 
     pub fn http_status_code(&self) -> u16 {
         match self {
-            Self::ValidationError { .. } => 400,
+            Self::Validation { .. } => 400,
             Self::BusinessRuleViolation { .. } => 409,
-            Self::NotFoundError { .. } => 404,
-            Self::ConcurrencyError { .. } => 409,
-            Self::CommitError { .. } => 500,
+            Self::NotFound { .. } => 404,
+            Self::Concurrency { .. } => 409,
+            Self::Commit { .. } => 500,
         }
     }
 }
@@ -212,7 +220,7 @@ mod tests {
         assert_eq!(err.code(), "INVALID_EMAIL");
         assert_eq!(err.message(), "Email is invalid");
         assert_eq!(err.http_status_code(), 400);
-        assert!(matches!(err, UseCaseError::ValidationError { .. }));
+        assert!(matches!(err, UseCaseError::Validation { .. }));
     }
 
     #[test]
@@ -221,11 +229,11 @@ mod tests {
         let err = UseCaseError::validation_with_details("INVALID", "bad input", details);
         assert_eq!(err.code(), "INVALID");
         assert_eq!(err.http_status_code(), 400);
-        if let UseCaseError::ValidationError { details, .. } = &err {
+        if let UseCaseError::Validation { details, .. } = &err {
             assert_eq!(details["field"], "email");
             assert_eq!(details["value"], "bad@");
         } else {
-            panic!("expected ValidationError");
+            panic!("expected Validation");
         }
     }
 
@@ -256,7 +264,7 @@ mod tests {
         assert_eq!(err.code(), "CLIENT_NOT_FOUND");
         assert_eq!(err.message(), "Client not found");
         assert_eq!(err.http_status_code(), 404);
-        assert!(matches!(err, UseCaseError::NotFoundError { .. }));
+        assert!(matches!(err, UseCaseError::NotFound { .. }));
     }
 
     #[test]
@@ -264,10 +272,10 @@ mod tests {
         let details = crate::details! { "id" => "clt_missing" };
         let err = UseCaseError::not_found_with_details("NF", "not found", details);
         assert_eq!(err.http_status_code(), 404);
-        if let UseCaseError::NotFoundError { details, .. } = &err {
+        if let UseCaseError::NotFound { details, .. } = &err {
             assert_eq!(details["id"], "clt_missing");
         } else {
-            panic!("expected NotFoundError");
+            panic!("expected NotFound");
         }
     }
 
@@ -277,7 +285,7 @@ mod tests {
         assert_eq!(err.code(), "STALE");
         assert_eq!(err.message(), "Stale data");
         assert_eq!(err.http_status_code(), 409);
-        assert!(matches!(err, UseCaseError::ConcurrencyError { .. }));
+        assert!(matches!(err, UseCaseError::Concurrency { .. }));
     }
 
     #[test]
@@ -286,7 +294,7 @@ mod tests {
         assert_eq!(err.code(), "COMMIT_FAILED");
         assert_eq!(err.message(), "database connection lost");
         assert_eq!(err.http_status_code(), 500);
-        assert!(matches!(err, UseCaseError::CommitError { .. }));
+        assert!(matches!(err, UseCaseError::Commit { .. }));
     }
 
     // ─── Display / Error ────────────────────────────────────────────────
@@ -313,6 +321,26 @@ mod tests {
         assert_eq!(json["type"], "ValidationError");
         assert_eq!(json["code"], "V");
         assert_eq!(json["message"], "invalid");
+    }
+
+    #[test]
+    fn serialized_type_tags_are_unchanged_by_variant_renames() {
+        let cases = [
+            (UseCaseError::validation("C", "m"), "ValidationError"),
+            (
+                UseCaseError::business_rule("C", "m"),
+                "BusinessRuleViolation",
+            ),
+            (UseCaseError::not_found("C", "m"), "NotFoundError"),
+            (UseCaseError::concurrency("C", "m"), "ConcurrencyError"),
+            (UseCaseError::commit("m"), "CommitError"),
+        ];
+        for (err, tag) in cases {
+            let json = serde_json::to_value(&err).unwrap();
+            assert_eq!(json["type"], tag);
+            let back: UseCaseError = serde_json::from_value(json).unwrap();
+            assert_eq!(back.code(), err.code());
+        }
     }
 
     #[test]
