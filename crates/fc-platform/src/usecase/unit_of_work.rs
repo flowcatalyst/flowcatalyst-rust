@@ -177,15 +177,7 @@ impl PgUnitOfWork {
         txn: &mut Transaction<'_, Postgres>,
         event: &E,
     ) -> Result<(), UseCaseError> {
-        let data_json: serde_json::Value =
-            serde_json::from_str(&event.to_data_json()).unwrap_or(serde_json::json!({}));
-
-        let context_data = serde_json::json!([
-            {"key": "principalId", "value": event.principal_id()},
-            {"key": "aggregateType", "value": Self::extract_aggregate_type(event.subject())},
-        ]);
-
-        let deduplication_id = format!("{}-{}", event.event_type(), event.event_id());
+        let row = EventRow::from_event(event)?;
         let now = Utc::now();
 
         let result = sqlx::query(
@@ -196,19 +188,19 @@ impl PgUnitOfWork {
                  context_data, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
         )
-        .bind(event.event_id())
-        .bind(event.spec_version())
-        .bind(event.event_type())
-        .bind(event.source())
-        .bind(event.subject())
-        .bind(event.time())
-        .bind(&data_json)
-        .bind(event.correlation_id())
-        .bind(event.causation_id())
-        .bind(&deduplication_id)
-        .bind(event.message_group())
+        .bind(row.id)
+        .bind(row.spec_version)
+        .bind(row.event_type)
+        .bind(row.source)
+        .bind(row.subject)
+        .bind(row.time)
+        .bind(&row.data)
+        .bind(row.correlation_id)
+        .bind(row.causation_id)
+        .bind(&row.deduplication_id)
+        .bind(row.message_group)
         .bind(None::<String>) // client_id
-        .bind(&context_data)
+        .bind(&row.context_data)
         .bind(now)
         .execute(&mut **txn)
         .await;
@@ -229,13 +221,7 @@ impl PgUnitOfWork {
         event: &E,
         command: &C,
     ) -> Result<(), UseCaseError> {
-        let command_name = std::any::type_name::<C>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("Unknown")
-            .to_string();
-
-        let operation_json: Option<serde_json::Value> = serde_json::to_value(command).ok();
+        let row = AuditRow::from_event(event, command);
 
         let result = sqlx::query(
             r#"INSERT INTO aud_logs
@@ -245,14 +231,14 @@ impl PgUnitOfWork {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
         )
         .bind(crate::TsidGenerator::generate_untyped())
-        .bind(Self::extract_aggregate_type(event.subject()))
-        .bind(Self::extract_entity_id(event.subject()))
-        .bind(&command_name)
-        .bind(&operation_json)
-        .bind(event.principal_id())
+        .bind(&row.entity_type)
+        .bind(&row.entity_id)
+        .bind(&row.operation)
+        .bind(&row.operation_json)
+        .bind(row.principal_id)
         .bind(None::<String>) // application_id
         .bind(None::<String>) // client_id
-        .bind(event.time())
+        .bind(row.performed_at)
         .execute(&mut **txn)
         .await;
 
@@ -275,6 +261,91 @@ impl PgUnitOfWork {
         Self::persist_event(&mut *txn, event).await?;
         Self::persist_audit_log(&mut *txn, event, command).await?;
         Ok(())
+    }
+}
+
+// ─── Row projections ─────────────────────────────────────────────────────────
+//
+// The event- and command-derived column values a commit writes. Kept separate
+// from the INSERTs so the exact persisted shape can be pinned by tests.
+
+/// Column values of the `msg_events` row written for a domain event.
+///
+/// `client_id` (always NULL) and `created_at` (insert time) are not derived
+/// from the event and are bound by the INSERT itself.
+#[derive(Debug, Serialize)]
+pub(crate) struct EventRow<'a> {
+    pub id: &'a str,
+    pub spec_version: &'a str,
+    pub event_type: &'a str,
+    pub source: &'a str,
+    pub subject: &'a str,
+    pub time: chrono::DateTime<Utc>,
+    pub data: serde_json::Value,
+    pub correlation_id: &'a str,
+    pub causation_id: Option<&'a str>,
+    pub deduplication_id: String,
+    pub message_group: &'a str,
+    pub context_data: serde_json::Value,
+}
+
+impl<'a> EventRow<'a> {
+    pub(crate) fn from_event<E: DomainEvent>(event: &'a E) -> Result<Self, UseCaseError> {
+        let data: serde_json::Value =
+            serde_json::from_str(&event.to_data_json()).unwrap_or(serde_json::json!({}));
+
+        let context_data = serde_json::json!([
+            {"key": "principalId", "value": event.principal_id()},
+            {"key": "aggregateType", "value": PgUnitOfWork::extract_aggregate_type(event.subject())},
+        ]);
+
+        Ok(Self {
+            id: event.event_id(),
+            spec_version: event.spec_version(),
+            event_type: event.event_type(),
+            source: event.source(),
+            subject: event.subject(),
+            time: event.time(),
+            data,
+            correlation_id: event.correlation_id(),
+            causation_id: event.causation_id(),
+            deduplication_id: format!("{}-{}", event.event_type(), event.event_id()),
+            message_group: event.message_group(),
+            context_data,
+        })
+    }
+}
+
+/// Column values of the `aud_logs` row written for a command.
+///
+/// `id` (fresh TSID), `application_id` and `client_id` (always NULL) are bound
+/// by the INSERT itself.
+#[derive(Debug, Serialize)]
+pub(crate) struct AuditRow<'a> {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub operation: String,
+    pub operation_json: Option<serde_json::Value>,
+    pub principal_id: &'a str,
+    pub performed_at: chrono::DateTime<Utc>,
+}
+
+impl<'a> AuditRow<'a> {
+    pub(crate) fn from_event<E: DomainEvent, C: Serialize>(event: &'a E, command: &C) -> Self {
+        let operation = std::any::type_name::<C>()
+            .rsplit("::")
+            .next()
+            .unwrap_or("Unknown")
+            .to_string();
+
+        Self {
+            entity_type: PgUnitOfWork::extract_aggregate_type(event.subject()),
+            entity_id: PgUnitOfWork::extract_entity_id(event.subject()),
+            operation,
+            operation_json: serde_json::to_value(command).ok(),
+            principal_id: event.principal_id(),
+            performed_at: event.time(),
+        }
     }
 }
 

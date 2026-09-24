@@ -14,6 +14,9 @@ pub mod result;
 pub mod unit_of_work;
 pub mod use_case;
 
+#[cfg(test)]
+mod event_persistence_snapshot_tests;
+
 pub use domain_event::{DomainEvent, EventMetadata, EventMetadataBuilder};
 pub use error::{ErrorKind, OrNotFound, UseCaseError};
 pub use execution_context::ExecutionContext;
