@@ -119,11 +119,16 @@ impl ClientRepository {
         rows.into_iter().map(Client::try_from).collect()
     }
 
-    pub async fn find_by_status(&self, status: ClientStatus) -> Result<Vec<Client>> {
-        let rows = sqlx::query_as::<_, ClientRow>("SELECT * FROM tnt_clients WHERE status = $1")
-            .bind(status.as_str())
-            .fetch_all(&self.pool)
-            .await?;
+    /// The client list: every client, or only those with `status`, ordered
+    /// by identifier as Go's `ClientFindAll` is.
+    pub async fn list(&self, status: Option<ClientStatus>) -> Result<Vec<Client>> {
+        let rows = sqlx::query_as::<_, ClientRow>(
+            "SELECT * FROM tnt_clients WHERE ($1::text IS NULL OR status = $1) \
+             ORDER BY identifier",
+        )
+        .bind(status.map(|s| s.as_str()))
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(Client::try_from).collect()
     }
 
