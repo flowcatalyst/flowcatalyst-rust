@@ -302,7 +302,7 @@ impl TestApp {
     }
 
     /// Count rows in `msg_events` matching a given event `type` (e.g.
-    /// `platform:iam:oauth-client:created`).
+    /// `platform:admin:oauth-client:created`).
     pub async fn event_count_by_type(&self, event_type: &str) -> i64 {
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM msg_events WHERE type = $1")
             .bind(event_type)

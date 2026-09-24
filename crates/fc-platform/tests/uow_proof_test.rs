@@ -212,7 +212,7 @@ async fn create_public_oauth_client_emits_event_and_audit_log() {
     assert_eq!(app.event_count_for(&oauth_id).await, 1);
     assert_eq!(app.audit_count_for(&oauth_id).await, 1);
     assert_eq!(
-        app.event_count_by_type("platform:iam:oauth-client:created")
+        app.event_count_by_type("platform:admin:oauth-client:created")
             .await,
         1
     );
@@ -255,7 +255,7 @@ async fn update_oauth_client_emits_second_event_and_audit_log() {
     assert_eq!(app.event_count_for(&id).await, 2);
     assert_eq!(app.audit_count_for(&id).await, 2);
     assert_eq!(
-        app.event_count_by_type("platform:iam:oauth-client:updated")
+        app.event_count_by_type("platform:admin:oauth-client:updated")
             .await,
         1
     );
@@ -298,7 +298,7 @@ async fn deactivate_oauth_client_emits_event_and_audit_log() {
     assert_eq!(app.event_count_for(&id).await, 2);
     assert_eq!(app.audit_count_for(&id).await, 2);
     assert_eq!(
-        app.event_count_by_type("platform:iam:oauth-client:deactivated")
+        app.event_count_by_type("platform:admin:oauth-client:deactivated")
             .await,
         1
     );

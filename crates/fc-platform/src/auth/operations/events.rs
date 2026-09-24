@@ -298,7 +298,7 @@ macro_rules! oauth_client_event {
         impl $name {
             const EVENT_TYPE: &'static str = $event_type;
             const SPEC_VERSION: &'static str = "1.0";
-            const SOURCE: &'static str = "platform:iam";
+            const SOURCE: &'static str = "platform:admin";
 
             pub fn new(ctx: &ExecutionContext, id: &str, client_id: &str) -> Self {
                 Self {
@@ -318,17 +318,20 @@ macro_rules! oauth_client_event {
     };
 }
 
-oauth_client_event!(OAuthClientCreated, "platform:iam:oauth-client:created");
-oauth_client_event!(OAuthClientUpdated, "platform:iam:oauth-client:updated");
-oauth_client_event!(OAuthClientDeleted, "platform:iam:oauth-client:deleted");
-oauth_client_event!(OAuthClientActivated, "platform:iam:oauth-client:activated");
+oauth_client_event!(OAuthClientCreated, "platform:admin:oauth-client:created");
+oauth_client_event!(OAuthClientUpdated, "platform:admin:oauth-client:updated");
+oauth_client_event!(OAuthClientDeleted, "platform:admin:oauth-client:deleted");
+oauth_client_event!(
+    OAuthClientActivated,
+    "platform:admin:oauth-client:activated"
+);
 oauth_client_event!(
     OAuthClientDeactivated,
-    "platform:iam:oauth-client:deactivated"
+    "platform:admin:oauth-client:deactivated"
 );
 oauth_client_event!(
     OAuthClientPreviousSecretRevoked,
-    "platform:iam:oauth-client:previous-secret-revoked"
+    "platform:admin:oauth-client:previous-secret-revoked"
 );
 
 /// A client's secret was rotated. `previous_secret_expires_at` is when the
@@ -349,9 +352,9 @@ pub struct OAuthClientSecretRotated {
 impl_domain_event!(OAuthClientSecretRotated);
 
 impl OAuthClientSecretRotated {
-    const EVENT_TYPE: &'static str = "platform:iam:oauth-client:secret-rotated";
+    const EVENT_TYPE: &'static str = "platform:admin:oauth-client:secret-rotated";
     const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:iam";
+    const SOURCE: &'static str = "platform:admin";
 
     pub fn new(ctx: &ExecutionContext, id: &str, client_id: &str) -> Self {
         Self {
