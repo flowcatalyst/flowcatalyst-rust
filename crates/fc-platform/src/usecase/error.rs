@@ -70,6 +70,11 @@ pub enum ErrorKind {
     /// Entity not found. HTTP 404.
     #[serde(rename = "NotFoundError")]
     NotFound,
+    /// The caller may not do this (Java `UseCaseError.Authorization`: a
+    /// scope or application check made by the use case itself, after it has
+    /// loaded what it needs). HTTP 403.
+    #[serde(rename = "AuthorizationError")]
+    Forbidden,
     /// Optimistic locking conflict: the entity was modified by another
     /// transaction. HTTP 409.
     #[serde(rename = "ConcurrencyError")]
@@ -87,6 +92,7 @@ impl ErrorKind {
             Self::Validation => 400,
             Self::BusinessRule | Self::Concurrency => 409,
             Self::NotFound => 404,
+            Self::Forbidden => 403,
             Self::Internal => 500,
         }
     }
@@ -161,6 +167,12 @@ impl UseCaseError {
         Self::new(ErrorKind::NotFound, code, message, details)
     }
 
+    /// Create an authorization error (HTTP 403), as Java's
+    /// `UseCaseException.authorization(code, message)`.
+    pub fn forbidden(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Forbidden, code, message, HashMap::new())
+    }
+
     /// Create a concurrency error.
     pub fn concurrency(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Concurrency, code, message, HashMap::new())
@@ -226,7 +238,8 @@ impl std::error::Error for UseCaseError {}
 /// `Concurrency` and `Duplicate` the whole body. `UseCaseError` has no
 /// authentication kinds (those belong to handlers), so `Unauthorized`,
 /// `Forbidden` and the token errors become internal errors: a use case
-/// never receives them from a repository.
+/// never receives them from a repository. Its [`ErrorKind::Forbidden`] is
+/// for a use case's own reach checks.
 impl From<PlatformError> for UseCaseError {
     fn from(err: PlatformError) -> Self {
         match err {
@@ -246,6 +259,7 @@ impl From<PlatformError> for UseCaseError {
                 details,
             } => match status.as_u16() {
                 400 => Self::validation_with_details(code, message, details),
+                403 => Self::new(ErrorKind::Forbidden, code, message, details),
                 404 => Self::not_found_with_details(code, message, details),
                 409 => Self::business_rule_with_details(code, message, details),
                 _ => Self::internal(code, message),
@@ -290,6 +304,14 @@ impl From<UseCaseError> for PlatformError {
                 details,
             },
             ErrorKind::Concurrency => PlatformError::Concurrency { code, message },
+            // Java's envelope for an authorization error: its own code
+            // (`SCOPE_FORBIDDEN`, `FORBIDDEN`, …) and message.
+            ErrorKind::Forbidden => PlatformError::Coded {
+                status: axum::http::StatusCode::FORBIDDEN,
+                code,
+                message,
+                details,
+            },
             ErrorKind::Internal => PlatformError::Internal {
                 message: format!("{}: {}", code, message),
             },
@@ -445,6 +467,11 @@ mod tests {
                 UseCaseError::concurrency("STALE", "stale"),
                 409,
                 json!({"error": "STALE", "message": "stale"}),
+            ),
+            (
+                UseCaseError::forbidden("SCOPE_FORBIDDEN", "no access to this resource's client"),
+                403,
+                json!({"error": "SCOPE_FORBIDDEN", "message": "no access to this resource's client"}),
             ),
             (
                 UseCaseError::commit("tx failed"),

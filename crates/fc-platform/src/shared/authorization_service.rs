@@ -368,6 +368,41 @@ pub mod checks {
         }
     }
 
+    /// Require one permission, answering as Java's `Checks.require`
+    /// (shared/auth/Checks.java:53-57): 403 `PERMISSION_REQUIRED`,
+    /// `permission required: <code>`. Scope grants no bypass: an anchor
+    /// needs the permission too. The function API gates every route with
+    /// this.
+    pub fn require_permission(context: &AuthContext, permission: &str) -> Result<()> {
+        if context.has_permission(permission) {
+            Ok(())
+        } else {
+            Err(PlatformError::Coded {
+                status: axum::http::StatusCode::FORBIDDEN,
+                code: "PERMISSION_REQUIRED".to_string(),
+                message: format!("permission required: {permission}"),
+                details: Default::default(),
+            })
+        }
+    }
+
+    /// Require anchor scope, answering as Java's `Checks.requireAnchor`
+    /// (Checks.java:74-77): 403 `ANCHOR_REQUIRED`, `anchor scope required`.
+    /// [`require_anchor`] is the same check with the platform's older
+    /// `FORBIDDEN` body.
+    pub fn require_anchor_scope(context: &AuthContext) -> Result<()> {
+        if context.is_anchor() {
+            Ok(())
+        } else {
+            Err(PlatformError::Coded {
+                status: axum::http::StatusCode::FORBIDDEN,
+                code: "ANCHOR_REQUIRED".to_string(),
+                message: "anchor scope required".to_string(),
+                details: Default::default(),
+            })
+        }
+    }
+
     /// Platform-config access grants, read: anchor plus
     /// `platform:admin:config:view` (Go's `CanReadPlatformConfig`,
     /// shared/auth/auth.go:784).
@@ -1366,5 +1401,38 @@ mod tests {
         let nothing = ApplicationScope::from_binding(binding(false, &[]));
         let attached = app("app_a", "a", Some("sa_principal"));
         assert!(checks::require_application_access(&nothing, "a", Some(attached)).is_err());
+    }
+
+    /// Java `Checks.require` / `Checks.requireAnchor`: their own 403 codes.
+    #[test]
+    fn test_require_permission_and_anchor_scope_codes() {
+        let anchor =
+            create_test_context(vec!["platform:function:function:view"], "ANCHOR", vec!["*"]);
+        assert!(checks::require_permission(&anchor, "platform:function:function:view").is_ok());
+        match checks::require_permission(&anchor, "platform:function:function:manage") {
+            Err(PlatformError::Coded {
+                status,
+                code,
+                message,
+                ..
+            }) => {
+                assert_eq!(status.as_u16(), 403);
+                assert_eq!(code, "PERMISSION_REQUIRED");
+                assert_eq!(
+                    message,
+                    "permission required: platform:function:function:manage"
+                );
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(checks::require_anchor_scope(&anchor).is_ok());
+        let client = create_test_context(vec![], "CLIENT", vec!["client1"]);
+        match checks::require_anchor_scope(&client) {
+            Err(PlatformError::Coded { status, code, .. }) => {
+                assert_eq!(status.as_u16(), 403);
+                assert_eq!(code, "ANCHOR_REQUIRED");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }
