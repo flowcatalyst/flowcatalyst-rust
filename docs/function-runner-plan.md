@@ -14,6 +14,17 @@ A Rust function runner that is a **drop-in for the Java one**: the same HTTP API
 and heartbeat wire formats, artifact refs and WASM guest ABI. Anything published to the Java platform then runs on
 Rust unchanged, and the Java and Rust hosts can serve one pool side by side.
 
+> **Owner ruling (2026-09-24): two different parity bars.**
+> - **Management interface: as close to Java as possible.** That covers the function API, manifest, versions,
+>   aliases, promote wiring, domains, policies, config and secrets, and the control plane's desired-state and
+>   heartbeat. The only exception is where copying Java would compromise the underlying assets.
+> - **Functions themselves: whatever makes the most sense, with no Java compromises.** The guest contract,
+>   engine and ABI are free: WASI 0.2 components with `wasi:http`, typed WIT host interfaces, and so on. Rust
+>   does **not** need to run Java's Extism artifacts. JVM jars stay on Java hosts.
+>
+> This supersedes the "WASM guest ABI" and "Guest types" rows of §3 and decision 2 in §4. F0 recommends the
+> guest contract, H4 implements it, and G1 targets it.
+
 The owner's aim for functions is **density and fine-grained deployment**: many small, independently deployable
 units per host (adapters, edge endpoints, customer custom code), at low cost.
 
@@ -81,7 +92,7 @@ Where the Java spec and code disagree, **the code wins**. The known differences 
 ## 4. Decisions for the owner before or during execution
 
 1. **~~Customer code WASM-only~~ — resolved (owner, 2026-09-24): functions are *our* code, not tenants'.** JVM jars in class-loader isolation are therefore an acceptable trust model and stay a first-class runtime on Java hosts. WASM is chosen for **density and fine-grained deployment**, not as a security boundary. (Should tenant-authored code ever be admitted, it must be WASM-only — JVM class loaders are not a boundary.)
-2. **Extism ABI now, Component Model later?** The Extism ABI is what Java ships, so matching it is required for
+2. **~~Extism ABI now, Component Model later?~~ Resolved by the ruling in §1: the guest contract is free; F0 recommends it (components + `wasi:http` are the leading candidate).** The Extism ABI is what Java ships, so matching it is required for
    drop-in. WASI 0.2 components (WIT) are the standard that edge runtimes are converging on, and they give typed,
    versioned host interfaces. *Recommended:* ship Extism for parity now, and decide on components before customers
    build on the ABI in volume. Moving later means every guest must be republished.
