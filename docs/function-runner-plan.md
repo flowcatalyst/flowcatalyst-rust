@@ -101,10 +101,41 @@ Where the Java spec and code disagree, **the code wins**. The known differences 
    mediated by the host.
 4. **Fuel and memory metering.** wasmtime can meter per call, which enables cost attribution and fair shares per
    customer. It goes beyond Java, so it's an extension (§7).
-5. **HTTP egress parity (resolved by F0).** Java's host allowlist rules are: https only, no redirects, a cap tied
+5. **HTTP egress parity: resolved by F0 (§4a).** With components, egress policy lives in the host's `wasi:http` outgoing-handler, and a denial is a typed error. Java's host allowlist rules are: https only, no redirects, a cap tied
    to the deadline, and a denial returned as status 0 with a body rather than a trap. The Rust `extism` crate can't
    express these. Either vendor or fork the crate (Java did the same with `extism-endive`), or run the Extism
    kernel on plain wasmtime.
+
+## 4a. F0 outcome and runtime decisions (2026-09-25)
+
+The measurements are in `docs/function-runner-density.md` (macOS M4 Pro; redo on Linux in H7).
+
+- **Chosen guest contract:** plain **wasmtime** + **WASI 0.2 components** + **`wasi:http/proxy`**, plus a typed
+  **`flowcatalyst:function` WIT package** (`wit/flowcatalyst-function/`) for config, secrets, emit, log and the
+  invocation context. The package is an optional import, so a pure `wasi:http` component also runs on
+  `wasmtime serve`, Spin and wasmCloud.
+  - The extism crate was rejected on merit: 3.0 vs 0.64–0.75 MB per function, and no per-function WASI log routing.
+  - Measured: about 0.75 MB per function compiled, sub-MB from `.cwasm`, first-call p99 under 1 ms, steady call
+    about 10 µs pooled or about 35 µs instance-per-request.
+- **Runtime value:** the manifest keeps `runtime: wasm`, so Java's management interface is unchanged. The Rust host
+  sniffs the artifact: a **component** loads, and a **core module** (Java/Extism style) is refused with
+  `WASM_CORE_MODULE_UNSUPPORTED`. `entrypoint` names `wasi:http/incoming-handler`. Pools separate the Java hosts
+  (jars and Extism) from the Rust hosts (components).
+  *Owner decision (open):* adopt an explicit runtime value (e.g. `component`) in Java's schema and DB CHECK
+  instead of sniffing.
+- **Instance per request** (the standard `wasi:http` model; stateless), made cheap by the pooling allocator.
+  This deliberately differs from Java, which reuses instances.
+- **Noisy neighbours:** contained with a host-wide executing-guests cap below the core count (`FC_FN_MAX_EXECUTING`)
+  plus per-function `maxConcurrency`. No engine meets the +30% p99 bar under saturation without the cap.
+- **JS/TS guests: open owner decision.**
+  - componentize-js (StarlingMonkey) works but is heavy: 14 MB artifact, 26 MB per function, 0.6 ms per request.
+  - The QuickJS component backend didn't build.
+  - V8 isolates (`deno_core`) are best for JS (1.65 MB, 2.3 µs), but they are a second engine with a different
+    sandbox.
+  - Options: wait for or invest in QuickJS components (Javy, componentize-qjs); use componentize-js as is; or add a
+    V8 isolate pool for JS.
+  - This matters because JSON mapping and transform adapters are natural in TS.
+  - H4 ships Rust components first.
 
 ## 5. Workstreams
 
