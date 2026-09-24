@@ -2,11 +2,10 @@
 //! LoadOutcome,LoadedFunction}.java`).
 //!
 //! A [`FunctionLoader`] turns one fetched, verified artifact into a running
-//! [`FunctionInstance`], selected by the manifest's `runtime`. The Rust host
-//! registers none yet: the engine is being chosen by the density spike
-//! (plan §5 F0) and lands in H4. A runtime with no registered loader (for
-//! example `jvm`, which stays on JVM hosts) is reported `FAILED` with
-//! `RUNTIME_UNSUPPORTED` and never fetched or loaded.
+//! [`FunctionInstance`], selected by the manifest's `runtime`. The host
+//! registers [`crate::wasm::WasmLoader`] for `wasm`. A runtime with no
+//! registered loader (`jvm`, which stays on JVM hosts) is reported `FAILED`
+//! with `RUNTIME_UNSUPPORTED` and never fetched or loaded.
 
 use std::collections::HashMap;
 use std::path::Path;
