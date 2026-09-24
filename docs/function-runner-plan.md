@@ -200,18 +200,76 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - JVM entries → FAILED `RUNTIME_UNSUPPORTED`.
 - Heartbeat (ACTIVE / DRAINING). A platform outage never unloads anything.
 
-**H4: WASM runtime** (about 1,500; engine per F0)
-- Compile once per version, with a per-version instance pool (a borrow never waits; lazy up to `maxConcurrency`).
-- Memory cap = min(`wasmMemoryMb`, the module's max), applied to the guest and the kernel.
-- Deadline via epoch interruption. A failed or trapped instance is discarded.
-- The import allowlist, and the refusal codes `WASM_INVALID`, `WASM_ENTRYPOINT_NOT_EXPORTED`, `WASM_IMPORT_NOT_ALLOWED`, `WASM_MEMORY_OVER_CAP`.
-- Host functions:
-  - `config_get` (declared keys only)
-  - `fc_secret_get` (offset 0 when missing)
-  - `fc_emit_event` → the control plane `events` route, with Java's error codes
-  - `http_request` through the host allowlist (a denial is status 0 with `{"error"}`; https only; no redirects; timeout = min(call, remaining deadline, 30 s); flat headers joined with `", "`)
-  - `log_*` → logger `fn.<address>`
-  - WASI: clock, random, stdout at INFO and stderr at WARN split at 8 KiB, no preopens, no environment, no arguments.
+**H4: WASM runtime** (done; engine and guest contract per F0, `docs/function-runner-density.md` §5-§8)
+
+As built, in `crates/fc-fnhost-core/src/wasm/`. Functions are **WASI 0.2 components that export
+`wasi:http/incoming-handler`** (the `wasi:http/proxy` world), on plain wasmtime 49.0.1. The management
+interface is Java's, unchanged: no new manifest runtime value, desired state, or heartbeat field.
+
+- **Loading (`runtime: wasm`).** The artifact is inspected with `wasmparser` before anything is compiled,
+  in Java's order (imports, entrypoint, memory). Each refusal is a heartbeat `LOAD:<code>`:
+  - a core module (the Extism / Java guest shape): `WASM_CORE_MODULE_UNSUPPORTED`;
+  - not wasm, or does not compile: `WASM_INVALID`;
+  - an import outside the WASI 0.2 proxy and CLI sets the host links, or `flowcatalyst:function/*@0.1.x`:
+    `WASM_IMPORT_NOT_ALLOWED`;
+  - an `entrypoint` other than `wasi:http/incoming-handler[@0.2.x]`, or a component that does not export it
+    with the handler's shape: `WASM_ENTRYPOINT_NOT_EXPORTED`;
+  - a memory whose declared minimum is over `limits.wasmMemoryMb`: `WASM_MEMORY_OVER_CAP`.
+  `jvm` stays `RUNTIME_UNSUPPORTED`.
+- **One `Engine`**: the pooling allocator (slots = `FC_FN_MAX_CONCURRENCY` + 16), epoch interruption with a
+  1 ms ticker thread.
+- **`.cwasm` cache**: `<FC_FN_CACHE_DIR>/cwasm/<engine fingerprint>/<artifact sha256>.cwasm`. It is compiled on
+  first sight and loaded with `deserialize_file` (mmap) afterwards. The fingerprint is the wasmtime version
+  plus wasmtime's precompile-compatibility hash, so an upgrade or a codegen setting change never reads a
+  stale file. Only files this host wrote from a verified artifact are deserialized. A sidecar sha256 is
+  checked before every load, and a corrupt file is recompiled. The directory is `0700`. The invariant is
+  in `wasm/cwasm.rs`.
+- **Instance per request**: a `ProxyPre` per version, a fresh store per invocation, dropped afterwards (the
+  `wasi:http` model). This deliberately differs from Java, which pools instances per version: no state
+  survives between calls, and there's never a tainted instance to discard.
+- **Where guests run**: on a dedicated tokio runtime of `FC_FN_MAX_EXECUTING` threads (new env var; default
+  cores − 1, at least 1). This is on top of the listener's permits, and never on the listener's workers.
+  A running guest yields at every epoch tick, so guests share those threads round-robin. A guest waiting on
+  I/O holds no thread.
+- **Deadline** (the endpoint's `timeoutMs`): the epoch callback interrupts a running guest, and a guest
+  blocked in host I/O is dropped. The call answers 504, and the listener's permits are held until the guest
+  is really gone.
+- **Memory**: `StoreLimits` per memory = `wasmMemoryMb` (default 64). Growing past it fails the allocation,
+  which is a trap in Rust, and the call answers 500.
+- **The call**: the listener's request becomes a `wasi:http` incoming request: the method; the function path
+  plus the raw query (a new `InvocationContext::raw_query`); the headers; the body; and the original `Host`
+  as authority. The handler runs in its own task, and the host awaits the response outparam, as the F0
+  spike found necessary. Bodies are fully buffered. The request is capped by the endpoint's
+  `maxBodyBytes`, and the response by `wasmMemoryMb`.
+- **Outcomes**:
+  - A response is passed through verbatim.
+  - These are all Java's `500 {"error":"the function failed"}`, with the detail only on the host's WARN
+    line: a trap, no response, an error-code response, or a body over the cap.
+  - No free pool slot is `503 FUNCTION_UNAVAILABLE`.
+- **WASI**: no preopens, no environment, no arguments, and no sockets. Clocks and random work. Stdout goes to
+  logger `fn.<address>` at INFO and stderr at WARN, one line per `\n`, split at 8 KiB. The lines carry the
+  invocation's log fields.
+- **Outbound `wasi:http`**: the manifest's `httpAllow` (exact, or `*.suffix` for subdomains only). HTTPS only,
+  except loopback. Redirects are never followed. Timeout = min(the guest's request options, remaining
+  deadline, 30 s). A denial is the typed error `HTTP-request-denied`, not Java's status 0.
+- **`flowcatalyst:function@0.1.0`** (`wit/flowcatalyst-function/`, published for G1). Every interface is
+  optional: a pure `wasi:http/proxy` component runs unchanged.
+  - `config.get` and `secrets.get`: declared keys only; secret values are never logged.
+  - `log.log(level, message)`.
+  - `events.emit(outbound-event) -> result<_, emit-error>`: through `POST /control/functions/events`, with
+    Java's defaults for correlation and causation ids. `emit-error` is one of:
+    - `invalid(code)`: `INVALID_EVENT: …` or `DEDUP_ID_REQUIRED`, and the event never reaches the platform;
+    - `refused({code, status})`: the platform's own code;
+    - `unavailable`.
+  - `invocation.context()`: the invocation id, address, version, caller (platform / anonymous / principal),
+    correlation and causation ids, original host and path, remote address, and path parameters.
+- **Tests**: `tests/wasm_{listener,loading,logging,neighbour}.rs`, end to end through the real listener,
+  against ten committed Rust guests (`tests/fixtures/wasm/`, pinned by `SHA256SUMS`; rebuild with
+  `tests/guests/build.sh`).
+- **Measured** (release, M4 Pro, loopback HTTP included; `wasm_neighbour.rs`'s ignored tests):
+  - steady per call: p50 ≈ 0.1 ms, p99 ≈ 0.15-0.2 ms;
+  - lazy first call: ≈ 20 ms when compiling, ≈ 1.2-1.5 ms from `.cwasm`;
+  - noisy neighbour: A's p99 is ≈ 3 ms while 8 spinning neighbours saturate 3 guest threads.
 
 **H5: listeners** (about 1,600)
 - axum/hyper, with HTTP/1.1 and h2c on `:8080` and `:8081`.
@@ -234,6 +292,9 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - A black-box harness: a fake `/control/functions` (desired state, emit sink, artifact server), log capture, and fixtures from `fc_test_guest.wasm` (hash pinned).
 - Port `WasmFunctionListenerTest` (12 cases), `WasmFunctionLoaderTest` (inline WAT through the `wat` crate), `ReconcilerWasmTest` (3) and `WasmFixturesTest`.
 - **A differential mode:** run the Java host and the Rust host against the same fake control plane and guests, and compare responses byte for byte (except `invocationId`). This is the drop-in acceptance test.
+- *Since H4:* the two hosts run different guest contracts (Extism modules vs WASI 0.2 components), so no
+  guest runs on both. The differential mode can compare only the management interface and the listener's own
+  answers. H4 already ports `WasmFunctionListenerTest` and the loader tests to components.
 
 **H7: benchmarks**
 - B1–B5 from Java's `docs/spec/function-host-benchmark.md`, measured on the Rust host and the Java host with the same WASM guests on the same machine. Record them in `docs/function-runner-density.md`.
@@ -245,6 +306,9 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 ### Track G: guests
 
 **G1: `crates/fc-function-pdk`** (about 900)
+- *Since H4:* target the `wit/flowcatalyst-function` package (world `imports`) plus `wasi:http` on
+  `wasm32-wasip2`, not `extism-pdk`. The list below is the Java-era scope. The helpers carry over; the
+  transport changes.
 - A Rust guest SDK over `extism-pdk` 1.4, built for `wasm32-unknown-unknown` and `wasm32-wasip1`, kept out of the default workspace build.
 - It covers:
   - request helpers (body, text, json, case-insensitive headers)
@@ -291,8 +355,9 @@ G1 (after H1) ─ G2
 
 ## 9. Risks and known differences to preserve
 
-- **Extism crate parity:** HTTP egress semantics, kernel memory cap, WASI stdout routing and header flattening
-  (decision 5 / F0). Fall back to a vendored fork, as Java did.
+- **Extism crate parity:** moot since F0. The Rust host runs WASI 0.2 components, not Extism modules
+  (owner ruling 2026-09-24: functions need no Java compatibility), so a Java-built Extism guest does not run on
+  it (`WASM_CORE_MODULE_UNSUPPORTED`). The management interface stays Java's.
 - **Sigstore parity:** Java's verifier is JDK-only (Rekor v1, no SCT check). Rust must accept and reject exactly
   the same bundles, so test against Java's fixtures.
 - **Byte-level JSON:** the ABI input key order, the desired-state bytes (the ETag depends on them), query parsing
