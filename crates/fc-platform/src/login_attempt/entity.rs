@@ -8,11 +8,15 @@ use serde::{Deserialize, Serialize};
 pub enum AttemptType {
     UserLogin,
     ServiceAccountToken,
+    /// A developer's self-service client_credentials exchange. Go writes it
+    /// (auth/oauthapi/token.go:623) and Rust must read those rows.
+    DeveloperToken,
 }
 
 crate::shared::enum_str::str_enum!(AttemptType, "attempt type", {
     UserLogin => "USER_LOGIN",
     ServiceAccountToken => "SERVICE_ACCOUNT_TOKEN",
+    DeveloperToken => "DEVELOPER_TOKEN",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

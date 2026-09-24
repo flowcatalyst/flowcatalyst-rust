@@ -206,6 +206,8 @@ pub struct RegenerateSecretResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RoleAssignmentResponse {
     pub role_name: String,
+    /// Omitted when not recorded, as in Go (serviceaccount/api/dto.go:51).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub assignment_source: Option<String>,
     pub assigned_at: String,
 }

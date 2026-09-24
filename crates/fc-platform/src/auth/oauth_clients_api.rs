@@ -31,7 +31,7 @@ pub struct CreateOAuthClientRequest {
     /// Human-readable name
     pub client_name: String,
 
-    /// Client type (PUBLIC or CONFIDENTIAL)
+    /// Client type (PUBLIC or CONFIDENTIAL). Required; absent is a 400.
     #[serde(default)]
     pub client_type: Option<String>,
 
@@ -246,8 +246,12 @@ pub async fn create_oauth_client(
         .client_id
         .unwrap_or_else(|| crate::shared::tsid::generate(crate::EntityType::OAuthClient));
     // Absent means PUBLIC; anything present must be an exact client type.
-    let client_type: OAuthClientType =
-        crate::shared::enum_str::parse_opt(req.client_type.as_deref())?.unwrap_or_default();
+    // Required, as in Go (auth/operations/oauth_client.go:50): an absent or
+    // empty type is a 400, never a silent PUBLIC.
+    let client_type: OAuthClientType = crate::shared::enum_str::parse_opt(
+        crate::shared::enum_str::non_empty(req.client_type.as_deref()),
+    )?
+    .ok_or_else(|| PlatformError::validation("clientType is required: PUBLIC or CONFIDENTIAL"))?;
 
     // For CONFIDENTIAL clients, generate a secret at the edge. The plaintext
     // is returned once; only its keyed hash (`hashed:v1:`) is passed into the
