@@ -79,34 +79,10 @@ impl AuthorizationCode {
         }
     }
 
-    /// Set the scope.
-    pub fn with_scope(mut self, scope: Option<String>) -> Self {
-        self.scope = scope;
-        self
-    }
-
     /// Set PKCE challenge.
     pub fn with_pkce(mut self, challenge: String, method: String) -> Self {
         self.code_challenge = Some(challenge);
         self.code_challenge_method = Some(method);
-        self
-    }
-
-    /// Set OIDC nonce.
-    pub fn with_nonce(mut self, nonce: Option<String>) -> Self {
-        self.nonce = nonce;
-        self
-    }
-
-    /// Set state.
-    pub fn with_state(mut self, state: Option<String>) -> Self {
-        self.state = state;
-        self
-    }
-
-    /// Set context client ID.
-    pub fn with_context_client(mut self, client_id: Option<String>) -> Self {
-        self.context_client_id = client_id;
         self
     }
 

@@ -13,6 +13,7 @@ pub mod auth_api;
 pub mod auth_service;
 pub mod login_backoff;
 pub mod password_service;
+pub mod session_cookie;
 
 // OAuth
 pub mod oauth_api;

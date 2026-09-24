@@ -191,37 +191,6 @@ pub struct OAuthState {
     pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
 }
 
-impl OAuthState {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        oauth_client_repo: Arc<OAuthClientRepository>,
-        principal_repo: Arc<PrincipalRepository>,
-        auth_service: Arc<AuthService>,
-        auth_code_repo: Arc<AuthorizationCodeRepository>,
-        refresh_token_repo: Arc<RefreshTokenRepository>,
-        pending_auth_repo: Arc<PendingAuthRepository>,
-        password_service: Arc<PasswordService>,
-        login_attempt_repo: Arc<LoginAttemptRepository>,
-        client_token_rate_limit: crate::shared::rate_limit_middleware::IpRateLimiterState,
-        rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
-        rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
-    ) -> Self {
-        Self {
-            oauth_client_repo,
-            principal_repo,
-            auth_service,
-            auth_code_repo,
-            refresh_token_repo,
-            pending_auth_repo,
-            password_service,
-            login_attempt_repo,
-            client_token_rate_limit,
-            rate_limit_store,
-            rate_limit_policies,
-        }
-    }
-}
-
 /// Authorization endpoint - initiates the OAuth2 flow
 #[utoipa::path(
     get,
@@ -426,15 +395,17 @@ pub async fn authorize(
                 if !session_too_old {
                     // User is authenticated — issue authorization code immediately
                     let auth_code_str = generate_random_string(64);
-                    let mut auth_code = AuthorizationCode::new(
-                        auth_code_str.clone(),
-                        req.client_id.clone(),
-                        claims.sub.clone(),
-                        req.redirect_uri.clone(),
-                    )
-                    .with_scope(req.scope.clone())
-                    .with_nonce(req.nonce.clone())
-                    .with_state(req.state.clone());
+                    let mut auth_code = AuthorizationCode {
+                        scope: req.scope.clone(),
+                        nonce: req.nonce.clone(),
+                        state: req.state.clone(),
+                        ..AuthorizationCode::new(
+                            auth_code_str.clone(),
+                            req.client_id.clone(),
+                            claims.sub.clone(),
+                            req.redirect_uri.clone(),
+                        )
+                    };
 
                     if let (Some(challenge), Some(method)) =
                         (&req.code_challenge, &req.code_challenge_method)
@@ -1593,14 +1564,16 @@ pub async fn issue_code(
     let auth_code_str = generate_random_string(64);
 
     // Build authorization code using domain model
-    let mut auth_code = AuthorizationCode::new(
-        auth_code_str.clone(),
-        pending.client_id,
-        principal_id.to_string(),
-        pending.redirect_uri,
-    )
-    .with_scope(pending.scope)
-    .with_nonce(pending.nonce);
+    let mut auth_code = AuthorizationCode {
+        scope: pending.scope,
+        nonce: pending.nonce,
+        ..AuthorizationCode::new(
+            auth_code_str.clone(),
+            pending.client_id,
+            principal_id.to_string(),
+            pending.redirect_uri,
+        )
+    };
 
     if let (Some(challenge), Some(method)) = (pending.code_challenge, pending.code_challenge_method)
     {

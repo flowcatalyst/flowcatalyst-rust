@@ -16,6 +16,7 @@
 //! password-reset endpoints are passed directly so each binary can read
 //! them from env in whatever style it prefers.
 
+use axum_extra::extract::cookie::SameSite;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -31,6 +32,7 @@ use crate::api::{
     ServiceAccountsState, SubscriptionsState, WellKnownState,
 };
 use crate::audit::service::AuditService;
+use crate::auth::session_cookie::SessionCookieConfig;
 use crate::operations::{
     ActivateApplicationUseCase, ArchiveDispatchPoolUseCase, AssignRolesUseCase,
     CreateApplicationUseCase, CreateDispatchPoolUseCase, CreateServiceAccountUseCase,
@@ -525,62 +527,69 @@ pub fn build_platform_routes(
     };
 
     // ── OIDC login, OAuth, Auth states ────────────────────────────────────
-    let oidc_login_state = OidcLoginApiState::new(
-        repos.anchor_domain_repo.clone(),
-        repos.idp_repo.clone(),
-        repos.edm_repo.clone(),
-        repos.oidc_login_state_repo.clone(),
-        auth.oidc_sync.clone(),
-        auth.auth.clone(),
-        unit_of_work.clone(),
-        repos.oauth_client_repo.clone(),
-    )
-    .with_session_cookie_settings(
-        "fc_session",
-        config.session_cookie_secure,
-        &config.session_cookie_same_site,
-        config.session_token_expiry_secs,
-    );
-    let encryption_service = EncryptionService::from_env().map(Arc::new);
-    let oidc_login_state = if let Some(enc_svc) = encryption_service {
-        oidc_login_state.with_encryption_service(enc_svc)
-    } else {
-        warn!("FLOWCATALYST_APP_KEY not set — OIDC client secrets cannot be decrypted");
-        oidc_login_state
+    // Parsed once here; every handler that sets or clears the session cookie
+    // shares it.
+    let session_cookie = SessionCookieConfig {
+        name: "fc_session".to_string(),
+        secure: config.session_cookie_secure,
+        same_site: SessionCookieConfig::parse_same_site(&config.session_cookie_same_site),
+        ttl: time::Duration::seconds(config.session_token_expiry_secs),
     };
-    let oidc_login_state = if let Some(url) = config.oidc_login_external_base_url {
-        oidc_login_state.with_external_base_url(url)
-    } else {
-        oidc_login_state
+    let encryption_service = EncryptionService::from_env().map(Arc::new);
+    if encryption_service.is_none() {
+        warn!("FLOWCATALYST_APP_KEY not set — OIDC client secrets cannot be decrypted");
+    }
+    let oidc_login_state = OidcLoginApiState {
+        anchor_domain_repo: repos.anchor_domain_repo.clone(),
+        identity_provider_repo: repos.idp_repo.clone(),
+        email_domain_mapping_repo: repos.edm_repo.clone(),
+        oidc_login_state_repo: repos.oidc_login_state_repo.clone(),
+        oidc_sync_service: auth.oidc_sync.clone(),
+        auth_service: auth.auth.clone(),
+        jwks_cache: Arc::new(crate::auth::jwks_cache::JwksCache::default()),
+        unit_of_work: unit_of_work.clone(),
+        oauth_client_repo: repos.oauth_client_repo.clone(),
+        external_base_url: config.oidc_login_external_base_url,
+        session_cookie: session_cookie.clone(),
+        encryption_service,
     };
 
     let backoff_policy = Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env());
-    let embedded_auth_state = AuthState::new(
-        auth.auth.clone(),
-        repos.principal_repo.clone(),
-        auth.password.clone(),
-        repos.refresh_token_repo.clone(),
-        repos.edm_repo.clone(),
-        repos.idp_repo.clone(),
-        repos.login_attempt_repo.clone(),
-        backoff_policy.clone(),
-    );
-    let client_token_rate_limit = crate::shared::rate_limit_middleware::IpRateLimiterState::new(
-        &crate::shared::rate_limit_middleware::RateLimitConfig::oauth_token_per_client_from_env(),
-    );
-    let oauth_state = OAuthState::new(
-        repos.oauth_client_repo.clone(),
-        repos.principal_repo.clone(),
-        auth.auth.clone(),
-        repos.auth_code_repo.clone(),
-        repos.refresh_token_repo.clone(),
-        repos.pending_auth_repo.clone(),
-        auth.password.clone(),
-        repos.login_attempt_repo.clone(),
-        client_token_rate_limit,
-        config.rate_limit_store.clone(),
-        config.rate_limit_policies.clone(),
-    );
+    let embedded_auth_state = AuthState {
+        auth_service: auth.auth.clone(),
+        principal_repo: repos.principal_repo.clone(),
+        password_service: auth.password.clone(),
+        refresh_token_repo: repos.refresh_token_repo.clone(),
+        email_domain_mapping_repo: repos.edm_repo.clone(),
+        identity_provider_repo: repos.idp_repo.clone(),
+        login_attempt_repo: repos.login_attempt_repo.clone(),
+        backoff_policy: backoff_policy.clone(),
+        // Password login has always issued its cookie with these fixed
+        // values rather than the configured Secure/SameSite/expiry above.
+        // Kept as-is; aligning it is a deliberate behaviour change.
+        session_cookie: SessionCookieConfig {
+            name: "fc_session".to_string(),
+            secure: false,
+            same_site: SameSite::Lax,
+            ttl: time::Duration::seconds(86400),
+        },
+    };
+    let oauth_state = OAuthState {
+        oauth_client_repo: repos.oauth_client_repo.clone(),
+        principal_repo: repos.principal_repo.clone(),
+        auth_service: auth.auth.clone(),
+        auth_code_repo: repos.auth_code_repo.clone(),
+        refresh_token_repo: repos.refresh_token_repo.clone(),
+        pending_auth_repo: repos.pending_auth_repo.clone(),
+        password_service: auth.password.clone(),
+        login_attempt_repo: repos.login_attempt_repo.clone(),
+        client_token_rate_limit: crate::shared::rate_limit_middleware::IpRateLimiterState::new(
+            &crate::shared::rate_limit_middleware::RateLimitConfig::oauth_token_per_client_from_env(
+            ),
+        ),
+        rate_limit_store: config.rate_limit_store.clone(),
+        rate_limit_policies: config.rate_limit_policies.clone(),
+    };
 
     let audit_logs_state = AuditLogsState {
         audit_log_repo: repos.audit_log_repo.clone(),
@@ -981,10 +990,7 @@ pub fn build_platform_routes(
         auth_service: auth.auth.clone(),
         backoff_policy: backoff_policy.clone(),
         unit_of_work: unit_of_work.clone(),
-        session_cookie_name: "fc_session".to_string(),
-        session_cookie_secure: config.session_cookie_secure,
-        session_cookie_same_site: config.session_cookie_same_site.clone(),
-        session_token_expiry_secs: config.session_token_expiry_secs,
+        session_cookie,
     };
 
     PlatformRoutes {

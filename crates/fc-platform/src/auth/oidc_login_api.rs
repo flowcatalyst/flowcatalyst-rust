@@ -9,6 +9,7 @@
 //! 3. User authenticates at external IDP
 //! 4. GET /auth/oidc/callback?code=...&state=... - Handles callback, creates session
 
+use crate::auth::session_cookie::SessionCookieConfig;
 use axum::{
     extract::{Query, State},
     http::{header, StatusCode, Uri},
@@ -16,7 +17,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use axum_extra::extract::Host;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::Rng;
@@ -58,69 +59,9 @@ pub struct OidcLoginApiState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
     /// External base URL for callbacks (e.g., "https://platform.example.com")
     pub external_base_url: Option<String>,
-    /// Session cookie settings
-    pub session_cookie_name: String,
-    pub session_cookie_secure: bool,
-    pub session_cookie_same_site: String,
-    pub session_token_expiry_secs: i64,
+    pub session_cookie: SessionCookieConfig,
     /// Encryption service for decrypting stored secrets (OIDC client secrets, etc.)
     pub encryption_service: Option<Arc<EncryptionService>>,
-}
-
-impl OidcLoginApiState {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        anchor_domain_repo: Arc<AnchorDomainRepository>,
-        identity_provider_repo: Arc<IdentityProviderRepository>,
-        email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
-        oidc_login_state_repo: Arc<OidcLoginStateRepository>,
-        oidc_sync_service: Arc<OidcSyncService>,
-        auth_service: Arc<AuthService>,
-        unit_of_work: Arc<PgUnitOfWork>,
-        oauth_client_repo: Arc<OAuthClientRepository>,
-    ) -> Self {
-        Self {
-            anchor_domain_repo,
-            identity_provider_repo,
-            email_domain_mapping_repo,
-            oidc_login_state_repo,
-            oidc_sync_service,
-            auth_service,
-            jwks_cache: Arc::new(JwksCache::default()),
-            unit_of_work,
-            oauth_client_repo,
-            external_base_url: None,
-            session_cookie_name: "fc_session".to_string(),
-            session_cookie_secure: true,
-            session_cookie_same_site: "Lax".to_string(),
-            session_token_expiry_secs: 86400, // 24 hours
-            encryption_service: None,
-        }
-    }
-
-    pub fn with_encryption_service(mut self, svc: Arc<EncryptionService>) -> Self {
-        self.encryption_service = Some(svc);
-        self
-    }
-
-    pub fn with_external_base_url(mut self, url: impl Into<String>) -> Self {
-        self.external_base_url = Some(url.into());
-        self
-    }
-
-    pub fn with_session_cookie_settings(
-        mut self,
-        name: impl Into<String>,
-        secure: bool,
-        same_site: impl Into<String>,
-        expiry_secs: i64,
-    ) -> Self {
-        self.session_cookie_name = name.into();
-        self.session_cookie_secure = secure;
-        self.session_cookie_same_site = same_site.into();
-        self.session_token_expiry_secs = expiry_secs;
-        self
-    }
 }
 
 // ==================== Request/Response Types ====================
@@ -686,22 +627,7 @@ pub async fn oidc_callback(
         }
     };
 
-    // Build session cookie with same settings as regular login
-    let same_site = match state.session_cookie_same_site.to_lowercase().as_str() {
-        "strict" => SameSite::Strict,
-        "none" => SameSite::None,
-        _ => SameSite::Lax,
-    };
-
-    let cookie = Cookie::build((state.session_cookie_name.clone(), session_token))
-        .path("/")
-        .http_only(true)
-        .secure(state.session_cookie_secure)
-        .same_site(same_site)
-        .max_age(time::Duration::seconds(state.session_token_expiry_secs))
-        .build();
-
-    let jar = jar.add(cookie);
+    let jar = jar.add(state.session_cookie.build_cookie(session_token));
 
     // Determine redirect URL
     let redirect_url = determine_redirect_url(&state, &host, &uri, &login_state);
@@ -828,7 +754,7 @@ fn generate_code_challenge(verifier: &str) -> String {
 fn get_external_base_url(state: &OidcLoginApiState, host: &str, _uri: &Uri) -> String {
     state.external_base_url.clone().unwrap_or_else(|| {
         // Fall back to request host
-        let scheme = if state.session_cookie_secure {
+        let scheme = if state.session_cookie.secure {
             "https"
         } else {
             "http"
@@ -1560,13 +1486,7 @@ pub async fn session_end(
     Query(params): Query<SessionEndParams>,
 ) -> Response {
     // Clear the session cookie
-    let cookie = Cookie::build((state.session_cookie_name.clone(), ""))
-        .path("/")
-        .http_only(true)
-        .max_age(time::Duration::ZERO)
-        .build();
-
-    let jar = jar.add(cookie);
+    let jar = jar.add(state.session_cookie.clear_cookie());
 
     // If id_token_hint is provided, validate it to extract the subject
     // (best-effort — don't fail logout if token is invalid/expired)

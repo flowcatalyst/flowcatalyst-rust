@@ -6,13 +6,14 @@
 //! - GET /auth/check-domain - Check if email domain requires external IDP
 //! - GET /auth/me - Get current user info
 
+use crate::auth::session_cookie::SessionCookieConfig;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -145,58 +146,7 @@ pub struct AuthState {
     /// Layered failed-login backoff policy. Loaded from env in
     /// `build_platform_routes` so all binaries share the same defaults.
     pub backoff_policy: Arc<BackoffPolicy>,
-    /// Session cookie name (default: "fc_session")
-    pub session_cookie_name: String,
-    /// Whether to set Secure flag on cookie
-    pub session_cookie_secure: bool,
-    /// SameSite policy for cookie
-    pub session_cookie_same_site: String,
-    /// Session token expiry in seconds
-    pub session_token_expiry_secs: i64,
-}
-
-impl AuthState {
-    /// Create with default cookie settings
-    pub fn new(
-        auth_service: Arc<AuthService>,
-        principal_repo: Arc<PrincipalRepository>,
-        password_service: Arc<PasswordService>,
-        refresh_token_repo: Arc<RefreshTokenRepository>,
-        email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
-        identity_provider_repo: Arc<IdentityProviderRepository>,
-        login_attempt_repo: Arc<LoginAttemptRepository>,
-        backoff_policy: Arc<BackoffPolicy>,
-    ) -> Self {
-        Self {
-            auth_service,
-            principal_repo,
-            password_service,
-            refresh_token_repo,
-            email_domain_mapping_repo,
-            identity_provider_repo,
-            login_attempt_repo,
-            backoff_policy,
-            session_cookie_name: "fc_session".to_string(),
-            session_cookie_secure: false,
-            session_cookie_same_site: "Lax".to_string(),
-            session_token_expiry_secs: 86400, // 24 hours (parity with TS default)
-        }
-    }
-
-    /// Configure session cookie settings
-    pub fn with_session_cookie_settings(
-        mut self,
-        name: &str,
-        secure: bool,
-        same_site: &str,
-        expiry_secs: i64,
-    ) -> Self {
-        self.session_cookie_name = name.to_string();
-        self.session_cookie_secure = secure;
-        self.session_cookie_same_site = same_site.to_string();
-        self.session_token_expiry_secs = expiry_secs;
-        self
-    }
+    pub session_cookie: SessionCookieConfig,
 }
 
 /// Login with email and password
@@ -307,22 +257,7 @@ pub async fn login(
     // Generate session token (uses session_token_expiry_secs, not access_token_expiry_secs)
     let session_token = state.auth_service.generate_session_token(&principal)?;
 
-    // Build session cookie
-    let same_site = match state.session_cookie_same_site.to_lowercase().as_str() {
-        "strict" => SameSite::Strict,
-        "none" => SameSite::None,
-        _ => SameSite::Lax,
-    };
-
-    let cookie = Cookie::build((state.session_cookie_name.clone(), session_token))
-        .path("/")
-        .http_only(true)
-        .secure(state.session_cookie_secure)
-        .same_site(same_site)
-        .max_age(time::Duration::seconds(state.session_token_expiry_secs))
-        .build();
-
-    let jar = jar.add(cookie);
+    let jar = jar.add(state.session_cookie.build_cookie(session_token));
 
     // Record successful login attempt (fire-and-forget)
     record_user_login_attempt(
@@ -369,13 +304,7 @@ pub async fn logout(
     let _ctx = &auth.0;
 
     // Clear the session cookie by setting it to expire immediately
-    let cookie = Cookie::build((state.session_cookie_name.clone(), ""))
-        .path("/")
-        .http_only(true)
-        .max_age(time::Duration::ZERO)
-        .build();
-
-    let jar = jar.add(cookie);
+    let jar = jar.add(state.session_cookie.clear_cookie());
 
     (jar, StatusCode::NO_CONTENT)
 }

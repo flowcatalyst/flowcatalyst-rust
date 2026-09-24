@@ -130,13 +130,6 @@ impl RefreshToken {
         self
     }
 
-    /// Set client info (IP and user agent)
-    pub fn with_client_info(mut self, ip: Option<String>, user_agent: Option<String>) -> Self {
-        self.created_from_ip = ip;
-        self.user_agent = user_agent;
-        self
-    }
-
     /// Set the token family ID.
     /// All tokens in a rotation chain share the same family ID.
     pub fn with_token_family(mut self, family: impl Into<String>) -> Self {

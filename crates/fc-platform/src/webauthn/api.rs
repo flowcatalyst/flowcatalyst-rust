@@ -3,16 +3,16 @@
 //! Six endpoints: register/begin, register/complete, authenticate/begin,
 //! authenticate/complete, list credentials, delete credential.
 
+use crate::auth::session_cookie::SessionCookieConfig;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use axum_extra::extract::cookie::CookieJar;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use time::Duration as TimeDuration;
 use tracing::warn;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -48,10 +48,7 @@ pub struct WebauthnApiState {
     pub auth_service: Arc<AuthService>,
     pub backoff_policy: Arc<BackoffPolicy>,
     pub unit_of_work: Arc<PgUnitOfWork>,
-    pub session_cookie_name: String,
-    pub session_cookie_secure: bool,
-    pub session_cookie_same_site: String,
-    pub session_token_expiry_secs: i64,
+    pub session_cookie: SessionCookieConfig,
 }
 
 // ── Request/response shapes ──────────────────────────────────────────────────
@@ -148,21 +145,6 @@ fn invalid_credentials() -> Response {
         })),
     )
         .into_response()
-}
-
-fn build_session_cookie(state: &WebauthnApiState, token: String) -> Cookie<'static> {
-    let same_site = match state.session_cookie_same_site.to_lowercase().as_str() {
-        "strict" => SameSite::Strict,
-        "none" => SameSite::None,
-        _ => SameSite::Lax,
-    };
-    Cookie::build((state.session_cookie_name.clone(), token))
-        .path("/")
-        .http_only(true)
-        .secure(state.session_cookie_secure)
-        .same_site(same_site)
-        .max_age(TimeDuration::seconds(state.session_token_expiry_secs))
-        .build()
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
@@ -522,8 +504,7 @@ pub async fn authenticate_complete(
         }
     };
 
-    let cookie = build_session_cookie(&state, token);
-    let jar = jar.add(cookie);
+    let jar = jar.add(state.session_cookie.build_cookie(token));
 
     record_user_login_attempt(
         &state.login_attempt_repo,
