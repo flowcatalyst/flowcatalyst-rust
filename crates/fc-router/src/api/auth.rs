@@ -112,16 +112,16 @@ impl AuthConfig {
     /// here would silently leave auth off for a drop-in deployment. An explicit
     /// `AUTH_MODE=OIDC`/`OIDC_FLOW` still wins over inferred Basic.
     pub fn from_env() -> Self {
-        let basic_username = fc_common::config::env_first_opt(&[
-            "FC_ROUTER_AUTH_USER",
-            "AUTH_BASIC_USERNAME",
-        ]);
-        let basic_password = fc_common::config::env_first_opt(&[
-            "FC_ROUTER_AUTH_PASS",
-            "AUTH_BASIC_PASSWORD",
-        ]);
+        let basic_username =
+            fc_common::config::env_first_opt(&["FC_ROUTER_AUTH_USER", "AUTH_BASIC_USERNAME"]);
+        let basic_password =
+            fc_common::config::env_first_opt(&["FC_ROUTER_AUTH_PASS", "AUTH_BASIC_PASSWORD"]);
 
-        let mode = match std::env::var("AUTH_MODE").ok().as_deref().map(str::to_uppercase) {
+        let mode = match std::env::var("AUTH_MODE")
+            .ok()
+            .as_deref()
+            .map(str::to_uppercase)
+        {
             Some(ref m) if m == "NONE" => AuthMode::None,
             Some(ref m) if m == "BASIC" => AuthMode::Basic,
             Some(ref m) if m == "OIDC" => AuthMode::Oidc,
@@ -180,6 +180,61 @@ struct CachedJwks {
     fetched_at: Instant,
 }
 
+/// Why [`OidcValidator::validate_token`] (or a JWKS fetch) failed.
+///
+/// The `Display` text is returned verbatim as the `message` of the 401
+/// body, so each variant's message is part of the HTTP contract.
+#[derive(Debug, thiserror::Error)]
+pub enum TokenValidationError {
+    #[error("Failed to fetch OIDC discovery: {0}")]
+    DiscoveryFetch(#[source] reqwest::Error),
+    #[error("OIDC discovery returned status: {0}")]
+    DiscoveryStatus(reqwest::StatusCode),
+    #[error("Failed to parse OIDC discovery: {0}")]
+    DiscoveryParse(#[source] reqwest::Error),
+    #[error("Failed to fetch JWKS: {0}")]
+    JwksFetch(#[source] reqwest::Error),
+    #[error("JWKS fetch returned status: {0}")]
+    JwksStatus(reqwest::StatusCode),
+    #[error("Failed to parse JWKS: {0}")]
+    JwksParse(#[source] reqwest::Error),
+    #[error("{kty} key missing '{component}' component")]
+    MissingKeyComponent {
+        kty: &'static str,
+        component: &'static str,
+    },
+    #[error("Failed to create {kty} decoding key: {source}")]
+    DecodingKey {
+        kty: &'static str,
+        #[source]
+        source: jsonwebtoken::errors::Error,
+    },
+    #[error("Unsupported key type: {0}")]
+    UnsupportedKeyType(String),
+    #[error("Failed to decode token header: {0}")]
+    Header(#[source] jsonwebtoken::errors::Error),
+    #[error("No matching key found for kid: {0:?}")]
+    NoMatchingKey(Option<String>),
+    #[error("Token validation failed: {0}")]
+    Invalid(#[source] jsonwebtoken::errors::Error),
+}
+
+impl TokenValidationError {
+    /// Whether the failure concerns the signing key, so a JWKS refresh and
+    /// one retry might succeed (key rotation).
+    pub fn is_key_error(&self) -> bool {
+        use jsonwebtoken::errors::ErrorKind;
+        match self {
+            Self::MissingKeyComponent { .. }
+            | Self::DecodingKey { .. }
+            | Self::UnsupportedKeyType(_)
+            | Self::NoMatchingKey(_) => true,
+            Self::Header(e) | Self::Invalid(e) => matches!(e.kind(), ErrorKind::InvalidRsaKey(_)),
+            _ => false,
+        }
+    }
+}
+
 /// OIDC validator with JWKS caching
 pub struct OidcValidator {
     issuer: String,
@@ -210,7 +265,7 @@ impl OidcValidator {
     }
 
     /// Fetch OIDC discovery document
-    async fn fetch_discovery(&self) -> Result<OidcDiscovery, String> {
+    async fn fetch_discovery(&self) -> Result<OidcDiscovery, TokenValidationError> {
         let discovery_url = format!(
             "{}/.well-known/openid-configuration",
             self.issuer.trim_end_matches('/')
@@ -223,23 +278,20 @@ impl OidcValidator {
             .get(&discovery_url)
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch OIDC discovery: {}", e))?;
+            .map_err(TokenValidationError::DiscoveryFetch)?;
 
         if !response.status().is_success() {
-            return Err(format!(
-                "OIDC discovery returned status: {}",
-                response.status()
-            ));
+            return Err(TokenValidationError::DiscoveryStatus(response.status()));
         }
 
         response
             .json::<OidcDiscovery>()
             .await
-            .map_err(|e| format!("Failed to parse OIDC discovery: {}", e))
+            .map_err(TokenValidationError::DiscoveryParse)
     }
 
     /// Fetch JWKS from the issuer
-    async fn fetch_jwks(&self) -> Result<Jwks, String> {
+    async fn fetch_jwks(&self) -> Result<Jwks, TokenValidationError> {
         let discovery = self.fetch_discovery().await?;
 
         debug!(jwks_uri = %discovery.jwks_uri, "Fetching JWKS");
@@ -249,20 +301,20 @@ impl OidcValidator {
             .get(&discovery.jwks_uri)
             .send()
             .await
-            .map_err(|e| format!("Failed to fetch JWKS: {}", e))?;
+            .map_err(TokenValidationError::JwksFetch)?;
 
         if !response.status().is_success() {
-            return Err(format!("JWKS fetch returned status: {}", response.status()));
+            return Err(TokenValidationError::JwksStatus(response.status()));
         }
 
         response
             .json::<Jwks>()
             .await
-            .map_err(|e| format!("Failed to parse JWKS: {}", e))
+            .map_err(TokenValidationError::JwksParse)
     }
 
     /// Get JWKS, using cache if valid
-    async fn get_jwks(&self) -> Result<Jwks, String> {
+    async fn get_jwks(&self) -> Result<Jwks, TokenValidationError> {
         // Check cache first
         {
             let cache = self.jwks_cache.read().await;
@@ -298,29 +350,41 @@ impl OidcValidator {
     }
 
     /// Create a DecodingKey from a JWK
-    fn jwk_to_decoding_key(&self, jwk: &Jwk) -> Result<DecodingKey, String> {
+    fn jwk_to_decoding_key(&self, jwk: &Jwk) -> Result<DecodingKey, TokenValidationError> {
+        fn component<'a>(
+            value: &'a Option<String>,
+            kty: &'static str,
+            component: &'static str,
+        ) -> Result<&'a str, TokenValidationError> {
+            value
+                .as_deref()
+                .ok_or(TokenValidationError::MissingKeyComponent { kty, component })
+        }
+        fn decoding_key(
+            kty: &'static str,
+        ) -> impl FnOnce(jsonwebtoken::errors::Error) -> TokenValidationError {
+            move |source| TokenValidationError::DecodingKey { kty, source }
+        }
+
         match jwk.kty.as_str() {
             "RSA" => {
-                let n = jwk.n.as_ref().ok_or("RSA key missing 'n' component")?;
-                let e = jwk.e.as_ref().ok_or("RSA key missing 'e' component")?;
-                DecodingKey::from_rsa_components(n, e)
-                    .map_err(|e| format!("Failed to create RSA decoding key: {}", e))
+                let n = component(&jwk.n, "RSA", "n")?;
+                let e = component(&jwk.e, "RSA", "e")?;
+                DecodingKey::from_rsa_components(n, e).map_err(decoding_key("RSA"))
             }
             "EC" => {
-                let x = jwk.x.as_ref().ok_or("EC key missing 'x' component")?;
-                let y = jwk.y.as_ref().ok_or("EC key missing 'y' component")?;
-                DecodingKey::from_ec_components(x, y)
-                    .map_err(|e| format!("Failed to create EC decoding key: {}", e))
+                let x = component(&jwk.x, "EC", "x")?;
+                let y = component(&jwk.y, "EC", "y")?;
+                DecodingKey::from_ec_components(x, y).map_err(decoding_key("EC"))
             }
-            other => Err(format!("Unsupported key type: {}", other)),
+            other => Err(TokenValidationError::UnsupportedKeyType(other.to_string())),
         }
     }
 
     /// Validate a JWT token
-    pub async fn validate_token(&self, token: &str) -> Result<TokenClaims, String> {
+    pub async fn validate_token(&self, token: &str) -> Result<TokenClaims, TokenValidationError> {
         // Decode the header to get the key ID
-        let header =
-            decode_header(token).map_err(|e| format!("Failed to decode token header: {}", e))?;
+        let header = decode_header(token).map_err(TokenValidationError::Header)?;
 
         // Get JWKS and find the matching key. On `kid`-miss, force-refresh
         // the cache once and retry — this is the standard pattern for key
@@ -338,9 +402,7 @@ impl OidcValidator {
                 self.refresh_jwks().await?;
                 let jwks = self.get_jwks().await?;
                 self.find_key(&jwks, header.kid.as_deref())
-                    .ok_or_else(|| {
-                        format!("No matching key found for kid: {:?}", header.kid)
-                    })?
+                    .ok_or_else(|| TokenValidationError::NoMatchingKey(header.kid.clone()))?
                     .clone()
             }
         };
@@ -362,7 +424,7 @@ impl OidcValidator {
 
         // Decode and validate
         let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)
-            .map_err(|e| format!("Token validation failed: {}", e))?;
+            .map_err(TokenValidationError::Invalid)?;
 
         debug!(
             sub = %token_data.claims.sub,
@@ -373,7 +435,7 @@ impl OidcValidator {
     }
 
     /// Force refresh the JWKS cache (e.g., on signature verification failure)
-    pub async fn refresh_jwks(&self) -> Result<(), String> {
+    pub async fn refresh_jwks(&self) -> Result<(), TokenValidationError> {
         let jwks = self.fetch_jwks().await?;
 
         let mut cache = self.jwks_cache.write().await;
@@ -639,7 +701,7 @@ async fn oidc_auth(state: &AuthState, request: Request, next: Next) -> Response 
                             warn!(error = %e, "OIDC token validation failed");
 
                             // If signature verification failed, try refreshing JWKS once
-                            if e.contains("signature") || e.contains("key") {
+                            if e.is_key_error() {
                                 debug!("Attempting JWKS refresh due to potential key rotation");
                                 if validator.refresh_jwks().await.is_ok() {
                                     // Retry validation with fresh keys
@@ -653,7 +715,7 @@ async fn oidc_auth(state: &AuthState, request: Request, next: Next) -> Response 
                                 }
                             }
 
-                            return unauthorized_response(&e);
+                            return unauthorized_response(&e.to_string());
                         }
                     }
                 }
@@ -719,9 +781,7 @@ async fn oidc_flow_auth(state: &AuthState, request: Request, next: Next) -> Resp
                         }
                         Err(e) => {
                             // Try JWKS refresh on signature/key errors
-                            if (e.contains("signature") || e.contains("key"))
-                                && validator.refresh_jwks().await.is_ok()
-                            {
+                            if e.is_key_error() && validator.refresh_jwks().await.is_ok() {
                                 if let Ok(claims) = validator.validate_token(token).await {
                                     debug!(
                                         sub = %claims.sub,

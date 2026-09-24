@@ -80,10 +80,7 @@ impl NatsConfig {
     /// replicas 1, max-age 7d).
     pub fn from_uri(uri: &str) -> Result<Self> {
         if !uri.starts_with("nats://") {
-            return Err(QueueError::Config(format!(
-                "not a nats:// URI: {}",
-                uri
-            )));
+            return Err(QueueError::Config(format!("not a nats:// URI: {}", uri)));
         }
 
         let mut config = NatsConfig::default();
@@ -256,7 +253,7 @@ impl NatsQueueConsumer {
             .reconnect_delay_callback(|_attempts| Duration::from_secs(2))
             .connect(&config.servers)
             .await
-            .map_err(|e| QueueError::Nats(format!("Failed to connect to NATS: {}", e)))?;
+            .map_err(|e| QueueError::nats("Failed to connect to NATS", e))?;
 
         info!(servers = %config.servers, "Connected to NATS");
 
@@ -290,10 +287,10 @@ impl NatsQueueConsumer {
             })
             .await
             .map_err(|e| {
-                QueueError::Nats(format!(
-                    "Failed to get/create stream '{}': {}",
-                    config.stream_name, e
-                ))
+                QueueError::nats(
+                    format!("Failed to get/create stream '{}'", config.stream_name),
+                    e,
+                )
             })?;
 
         info!(
@@ -318,10 +315,10 @@ impl NatsQueueConsumer {
             )
             .await
             .map_err(|e| {
-                QueueError::Nats(format!(
-                    "Failed to get/create consumer '{}': {}",
-                    config.consumer_name, e
-                ))
+                QueueError::nats(
+                    format!("Failed to get/create consumer '{}'", config.consumer_name),
+                    e,
+                )
             })?;
 
         info!(
@@ -354,10 +351,13 @@ impl NatsQueueConsumer {
             .messages()
             .await
             .map_err(|e| {
-                QueueError::Nats(format!(
-                    "Failed to open standing pull subscription for consumer '{}': {}",
-                    config.consumer_name, e
-                ))
+                QueueError::nats(
+                    format!(
+                        "Failed to open standing pull subscription for consumer '{}'",
+                        config.consumer_name
+                    ),
+                    e,
+                )
             })?;
 
         {
@@ -578,7 +578,7 @@ impl QueueConsumer for NatsQueueConsumer {
         js_msg
             .ack()
             .await
-            .map_err(|e| QueueError::Nats(format!("Failed to ACK message: {}", e)))?;
+            .map_err(|e| QueueError::nats("Failed to ACK message", e))?;
 
         self.total_acked.fetch_add(1, Ordering::Relaxed);
         debug!(
@@ -609,7 +609,7 @@ impl QueueConsumer for NatsQueueConsumer {
         js_msg
             .ack_with(ack_kind)
             .await
-            .map_err(|e| QueueError::Nats(format!("Failed to NAK message: {}", e)))?;
+            .map_err(|e| QueueError::nats("Failed to NAK message", e))?;
 
         self.total_nacked.fetch_add(1, Ordering::Relaxed);
         debug!(
@@ -641,7 +641,7 @@ impl QueueConsumer for NatsQueueConsumer {
         js_msg
             .ack_with(ack_kind)
             .await
-            .map_err(|e| QueueError::Nats(format!("Failed to defer message: {}", e)))?;
+            .map_err(|e| QueueError::nats("Failed to defer message", e))?;
 
         self.total_deferred.fetch_add(1, Ordering::Relaxed);
         debug!(
@@ -668,9 +668,7 @@ impl QueueConsumer for NatsQueueConsumer {
             .value()
             .ack_with(AckKind::Progress)
             .await
-            .map_err(|e| {
-                QueueError::Nats(format!("Failed to extend visibility (in-progress): {}", e))
-            })?;
+            .map_err(|e| QueueError::nats("Failed to extend visibility (in-progress)", e))?;
 
         debug!(
             receipt_handle = %receipt_handle,
@@ -750,7 +748,7 @@ impl QueueConsumer for NatsQueueConsumer {
         let info = consumer
             .info()
             .await
-            .map_err(|e| QueueError::Nats(format!("Failed to get consumer info: {}", e)))?;
+            .map_err(|e| QueueError::nats("Failed to get consumer info", e))?;
 
         let pending_messages = info.num_pending;
         let in_flight_messages = info.num_ack_pending as u64;
@@ -897,7 +895,8 @@ mod tests {
         // A malformed value must not poison the whole parse — it falls back
         // to the default for that one field, same tolerance the other
         // fields get when a param is absent altogether.
-        let config = NatsConfig::from_uri("nats://localhost:4222?max-messages=not-a-number").unwrap();
+        let config =
+            NatsConfig::from_uri("nats://localhost:4222?max-messages=not-a-number").unwrap();
         assert_eq!(
             config.max_messages_per_poll,
             NatsConfig::default().max_messages_per_poll

@@ -356,9 +356,8 @@ async fn main() -> Result<()> {
     // startup, then handed to the platform router builder.
     let rate_limit_store =
         fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
-    let rate_limit_policies = Arc::new(
-        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
-    );
+    let rate_limit_policies =
+        Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
 
     // Hourly prune of the Postgres rate-limit table (no-op for Redis — TTLs
     // age keys out automatically). Keeps row count bounded at peak-QPS ×
@@ -1284,10 +1283,10 @@ impl fc_router::ConsumerFactory for SchemeConsumerFactory {
     async fn create_consumer(
         &self,
         config: &fc_common::QueueConfig,
-    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError>
-    {
-        let scheme = fc_queue::resolve_scheme(&config.uri)
-            .map_err(|e| fc_router::RouterError::Consumer(format!("queue [{}]: {}", config.name, e)))?;
+    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
+        let scheme = fc_queue::resolve_scheme(&config.uri).map_err(
+            fc_router::RouterError::consumer(&config.name, "resolve queue scheme"),
+        )?;
 
         match scheme {
             fc_queue::QueueScheme::Sqs => {
@@ -1316,9 +1315,9 @@ impl fc_router::ConsumerFactory for SchemeConsumerFactory {
 async fn build_nats_consumer(
     config: &fc_common::QueueConfig,
 ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(|e| {
-        fc_router::RouterError::Consumer(format!("queue [{}]: invalid NATS URI: {}", config.name, e))
-    })?;
+    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(
+        fc_router::RouterError::consumer(&config.name, "invalid NATS URI"),
+    )?;
     info!(
         queue_name = %config.name,
         stream = %nats_config.stream_name,
@@ -1328,12 +1327,10 @@ async fn build_nats_consumer(
     );
     let consumer = fc_queue::nats::NatsQueueConsumer::new(nats_config)
         .await
-        .map_err(|e| {
-            fc_router::RouterError::Consumer(format!(
-                "queue [{}]: NATS consumer setup failed: {}",
-                config.name, e
-            ))
-        })?;
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "NATS consumer setup failed",
+        ))?;
     Ok(Arc::new(consumer))
 }
 
@@ -1359,12 +1356,10 @@ async fn build_postgres_consumer(
         .acquire_timeout(Duration::from_secs(10))
         .connect(&config.uri)
         .await
-        .map_err(|e| {
-            fc_router::RouterError::Consumer(format!(
-                "queue [{}]: Postgres pool connect failed: {}",
-                config.name, e
-            ))
-        })?;
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "Postgres pool connect failed",
+        ))?;
 
     let visibility = if config.visibility_timeout == 0 {
         30
@@ -1374,12 +1369,13 @@ async fn build_postgres_consumer(
     let consumer = fc_queue::postgres::PostgresQueue::new(pool, config.name.clone(), visibility);
 
     use fc_queue::EmbeddedQueue;
-    consumer.init_schema().await.map_err(|e| {
-        fc_router::RouterError::Consumer(format!(
-            "queue [{}]: Postgres schema init failed: {}",
-            config.name, e
-        ))
-    })?;
+    consumer
+        .init_schema()
+        .await
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "Postgres schema init failed",
+        ))?;
 
     Ok(Arc::new(consumer))
 }

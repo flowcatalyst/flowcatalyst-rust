@@ -93,13 +93,13 @@ impl SqsQueueConsumer {
     fn parse_sqs_message(&self, sqs_msg: &SqsMessage) -> Result<(Message, String, Option<String>)> {
         let body = sqs_msg
             .body()
-            .ok_or_else(|| QueueError::Sqs("Message body is empty".to_string()))?;
+            .ok_or_else(|| QueueError::InvalidMessage("SQS message body is empty"))?;
 
         let message: Message = serde_json::from_str(body)?;
 
         let receipt_handle = sqs_msg
             .receipt_handle()
-            .ok_or_else(|| QueueError::Sqs("Missing receipt handle".to_string()))?
+            .ok_or_else(|| QueueError::InvalidMessage("SQS message is missing its receipt handle"))?
             .to_string();
 
         let message_id = sqs_msg.message_id().map(|s| s.to_string());
@@ -139,7 +139,7 @@ impl QueueConsumer for SqsQueueConsumer {
             .config_override(aws_sdk_sqs::config::Builder::default().timeout_config(timeout_config))
             .send()
             .await
-            .map_err(|e| QueueError::Sqs(e.to_string()))?;
+            .map_err(QueueError::sqs)?;
 
         let sqs_messages = result.messages.unwrap_or_default();
         let sqs_messages_count = sqs_messages.len();
@@ -268,7 +268,7 @@ impl QueueConsumer for SqsQueueConsumer {
                     error = %e,
                     "ACK failed — pending-delete guard will short-circuit redeliveries"
                 );
-                Err(QueueError::Sqs(e.to_string()))
+                Err(QueueError::sqs(e))
             }
         }
     }
@@ -285,7 +285,7 @@ impl QueueConsumer for SqsQueueConsumer {
             .visibility_timeout(visibility_timeout)
             .send()
             .await
-            .map_err(|e| QueueError::Sqs(e.to_string()))?;
+            .map_err(QueueError::sqs)?;
 
         self.total_nacked.fetch_add(1, Ordering::Relaxed);
         debug!(
@@ -308,7 +308,7 @@ impl QueueConsumer for SqsQueueConsumer {
             .visibility_timeout(visibility_timeout)
             .send()
             .await
-            .map_err(|e| QueueError::Sqs(e.to_string()))?;
+            .map_err(QueueError::sqs)?;
 
         self.total_deferred.fetch_add(1, Ordering::Relaxed);
         debug!(
@@ -328,7 +328,7 @@ impl QueueConsumer for SqsQueueConsumer {
             .visibility_timeout(seconds as i32)
             .send()
             .await
-            .map_err(|e| QueueError::Sqs(e.to_string()))?;
+            .map_err(QueueError::sqs)?;
 
         debug!(
             receipt_handle = %receipt_handle,
@@ -369,7 +369,7 @@ impl QueueConsumer for SqsQueueConsumer {
             .attribute_names(QueueAttributeName::ApproximateNumberOfMessagesNotVisible)
             .send()
             .await
-            .map_err(|e| QueueError::Sqs(e.to_string()))?;
+            .map_err(QueueError::sqs)?;
 
         let attributes = result.attributes();
 

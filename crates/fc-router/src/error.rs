@@ -37,6 +37,29 @@ pub enum RouterError {
     /// a queue — unrecognised URI scheme (item 1: `fc_queue::scheme`), or
     /// the backend-specific connect/provisioning step itself errored (NATS
     /// stream/consumer provisioning, the Postgres schema/pool bootstrap).
-    #[error("Consumer factory error: {0}")]
-    Consumer(String),
+    #[error("Consumer factory error: queue [{queue}]: {context}: {source}")]
+    Consumer {
+        /// The queue config's name.
+        queue: String,
+        /// Which step of building the consumer failed.
+        context: &'static str,
+        #[source]
+        source: fc_queue::QueueError,
+    },
+}
+
+impl RouterError {
+    /// `map_err` adapter for a consumer factory step:
+    /// `.map_err(RouterError::consumer(&config.name, "invalid NATS URI"))`.
+    pub fn consumer<E: Into<fc_queue::QueueError>>(
+        queue: &str,
+        context: &'static str,
+    ) -> impl FnOnce(E) -> Self {
+        let queue = queue.to_string();
+        move |e| RouterError::Consumer {
+            queue,
+            context,
+            source: e.into(),
+        }
+    }
 }

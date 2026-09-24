@@ -489,7 +489,7 @@ async fn callback_handler(
             Ok(claims) => claims,
             Err(e) => {
                 // Try refreshing JWKS once (key rotation)
-                if e.contains("signature") || e.contains("key") {
+                if e.is_key_error() {
                     debug!("Attempting JWKS refresh for callback token validation");
                     if validator.refresh_jwks().await.is_ok() {
                         match validator.validate_token(&id_token).await {
@@ -500,7 +500,7 @@ async fn callback_handler(
                                     StatusCode::UNAUTHORIZED,
                                     Json(serde_json::json!({
                                         "error": "token_validation_failed",
-                                        "message": e2,
+                                        "message": e2.to_string(),
                                     })),
                                 )
                                     .into_response();
@@ -512,7 +512,7 @@ async fn callback_handler(
                             StatusCode::UNAUTHORIZED,
                             Json(serde_json::json!({
                                 "error": "token_validation_failed",
-                                "message": e,
+                                "message": e.to_string(),
                             })),
                         )
                             .into_response();
@@ -523,7 +523,7 @@ async fn callback_handler(
                         StatusCode::UNAUTHORIZED,
                         Json(serde_json::json!({
                             "error": "token_validation_failed",
-                            "message": e,
+                            "message": e.to_string(),
                         })),
                     )
                         .into_response();

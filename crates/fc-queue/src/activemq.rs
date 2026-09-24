@@ -99,18 +99,18 @@ impl ActiveMqConsumer {
             ConnectionProperties::default().with_connection_name("flowcatalyst-router".into()),
         )
         .await
-        .map_err(|e| QueueError::Database(format!("AMQP connection failed: {}", e)))?;
+        .map_err(|e| QueueError::amqp("connection failed", e))?;
 
         let channel = connection
             .create_channel()
             .await
-            .map_err(|e| QueueError::Database(format!("Failed to create channel: {}", e)))?;
+            .map_err(|e| QueueError::amqp("create channel", e))?;
 
         // Set prefetch count (QoS)
         channel
             .basic_qos(self.config.prefetch_count, BasicQosOptions::default())
             .await
-            .map_err(|e| QueueError::Database(format!("Failed to set QoS: {}", e)))?;
+            .map_err(|e| QueueError::amqp("set QoS", e))?;
 
         // Declare queue if auto-create is enabled
         if self.config.auto_create_queue {
@@ -124,7 +124,7 @@ impl ActiveMqConsumer {
                     FieldTable::default(),
                 )
                 .await
-                .map_err(|e| QueueError::Database(format!("Failed to declare queue: {}", e)))?;
+                .map_err(|e| QueueError::amqp("declare queue", e))?;
         }
 
         // Create consumer
@@ -139,7 +139,7 @@ impl ActiveMqConsumer {
                 FieldTable::default(),
             )
             .await
-            .map_err(|e| QueueError::Database(format!("Failed to create consumer: {}", e)))?;
+            .map_err(|e| QueueError::amqp("create consumer", e))?;
 
         // Store connection state
         *self.connection.write().await = Some(connection);
@@ -288,14 +288,12 @@ impl QueueConsumer for ActiveMqConsumer {
             .ok_or_else(|| QueueError::NotFound(receipt_handle.to_string()))?;
 
         let channel_guard = self.channel.read().await;
-        let channel = channel_guard
-            .as_ref()
-            .ok_or_else(|| QueueError::Database("Not connected".to_string()))?;
+        let channel = channel_guard.as_ref().ok_or(QueueError::NotConnected)?;
 
         channel
             .basic_ack(delivery_tag, BasicAckOptions::default())
             .await
-            .map_err(|e| QueueError::Database(format!("ACK failed: {}", e)))?;
+            .map_err(|e| QueueError::amqp("ack", e))?;
 
         self.remove_receipt_handle(receipt_handle);
 
@@ -315,9 +313,7 @@ impl QueueConsumer for ActiveMqConsumer {
             .ok_or_else(|| QueueError::NotFound(receipt_handle.to_string()))?;
 
         let channel_guard = self.channel.read().await;
-        let channel = channel_guard
-            .as_ref()
-            .ok_or_else(|| QueueError::Database("Not connected".to_string()))?;
+        let channel = channel_guard.as_ref().ok_or(QueueError::NotConnected)?;
 
         // For delayed retry, we could use dead-letter exchanges or message TTL
         // For simplicity, we just reject with requeue
@@ -333,7 +329,7 @@ impl QueueConsumer for ActiveMqConsumer {
                 },
             )
             .await
-            .map_err(|e| QueueError::Database(format!("NACK failed: {}", e)))?;
+            .map_err(|e| QueueError::amqp("nack", e))?;
 
         self.remove_receipt_handle(receipt_handle);
 
@@ -431,12 +427,12 @@ impl ActiveMqPublisher {
             ConnectionProperties::default().with_connection_name("flowcatalyst-publisher".into()),
         )
         .await
-        .map_err(|e| QueueError::Database(format!("AMQP connection failed: {}", e)))?;
+        .map_err(|e| QueueError::amqp("connection failed", e))?;
 
         let channel = connection
             .create_channel()
             .await
-            .map_err(|e| QueueError::Database(format!("Failed to create channel: {}", e)))?;
+            .map_err(|e| QueueError::amqp("create channel", e))?;
 
         // Declare queue if auto-create is enabled
         if self.config.auto_create_queue {
@@ -450,7 +446,7 @@ impl ActiveMqPublisher {
                     FieldTable::default(),
                 )
                 .await
-                .map_err(|e| QueueError::Database(format!("Failed to declare queue: {}", e)))?;
+                .map_err(|e| QueueError::amqp("declare queue", e))?;
         }
 
         *self.connection.write().await = Some(connection);
@@ -462,9 +458,7 @@ impl ActiveMqPublisher {
     /// Publish a message to the queue
     pub async fn publish(&self, message: &Message) -> Result<String> {
         let channel_guard = self.channel.read().await;
-        let channel = channel_guard
-            .as_ref()
-            .ok_or_else(|| QueueError::Database("Not connected".to_string()))?;
+        let channel = channel_guard.as_ref().ok_or(QueueError::NotConnected)?;
 
         let body = serde_json::to_vec(message)?;
         let message_id = message.id.clone();
@@ -481,9 +475,9 @@ impl ActiveMqPublisher {
                     .with_content_type("application/json".into()),
             )
             .await
-            .map_err(|e| QueueError::Database(format!("Publish failed: {}", e)))?
+            .map_err(|e| QueueError::amqp("publish", e))?
             .await
-            .map_err(|e| QueueError::Database(format!("Publish confirm failed: {}", e)))?;
+            .map_err(|e| QueueError::amqp("publish confirm", e))?;
 
         debug!(
             message_id = %message_id,

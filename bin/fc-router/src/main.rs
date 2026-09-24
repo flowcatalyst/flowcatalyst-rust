@@ -23,10 +23,10 @@ use fc_common::{PoolConfig, QueueConfig, RouterConfig, WarningSeverity};
 use fc_queue::sqs::SqsQueueConsumer;
 use fc_queue::QueueScheme;
 use fc_router::{
-    api::create_router_with_options, create_notification_service_with_scheduler,
-    ConfigSyncConfig, ConfigSyncService, ConsumerFactory, HealthService,
-    HealthServiceConfig, HttpMediatorConfig, LifecycleConfig, LifecycleManager, NotificationConfig,
-    QueueManager, StandbyProcessor, StandbyRouterConfig, WarningService, WarningServiceConfig,
+    api::create_router_with_options, create_notification_service_with_scheduler, ConfigSyncConfig,
+    ConfigSyncService, ConsumerFactory, HealthService, HealthServiceConfig, HttpMediatorConfig,
+    LifecycleConfig, LifecycleManager, NotificationConfig, QueueManager, StandbyProcessor,
+    StandbyRouterConfig, WarningService, WarningServiceConfig,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -248,10 +248,7 @@ async fn main() -> Result<()> {
         // Consumers already exist (and are already polling) courtesy of
         // initial_sync() above — just find the first queue URL for the
         // publisher.
-        first_queue_url = router_config
-            .queues
-            .first()
-            .map(|q| q.uri.clone());
+        first_queue_url = router_config.queues.first().map(|q| q.uri.clone());
     }
 
     if router_config.queues.is_empty() {
@@ -302,8 +299,7 @@ async fn main() -> Result<()> {
     // FC_API_PORT is the canonical Go-dialect name (internal/server/envcfg.go
     // EnvCfg.APIPort); API_PORT is this binary's historical name and stays a
     // fallback so nothing already deployed against it breaks.
-    let api_port: u16 =
-        fc_common::config::env_first_parse(&["FC_API_PORT", "API_PORT"], 8080u16);
+    let api_port: u16 = fc_common::config::env_first_parse(&["FC_API_PORT", "API_PORT"], 8080u16);
 
     // FC_METRICS_PORT: Go's unified fc-server can bind metrics on a separate
     // listener, but this binary always serves Prometheus metrics on the same
@@ -475,7 +471,11 @@ fn load_standby_config() -> StandbyRouterConfig {
     // STANDBY_ENABLED / REDIS_URL are honoured too so every previously-working
     // name keeps working.
     let enabled = fc_common::config::env_first_bool(
-        &["FC_STANDBY_ENABLED", "FLOWCATALYST_STANDBY_ENABLED", "STANDBY_ENABLED"],
+        &[
+            "FC_STANDBY_ENABLED",
+            "FLOWCATALYST_STANDBY_ENABLED",
+            "STANDBY_ENABLED",
+        ],
         false,
     );
 
@@ -527,8 +527,10 @@ fn load_notification_config() -> NotificationConfig {
     // alone means notify — so teams_enabled is derived the same way here;
     // the legacy NOTIFICATION_TEAMS_ENABLED flag is still honoured too (it
     // can only ever widen — not narrow — whether a configured URL fires).
-    let teams_webhook_url =
-        fc_common::config::env_first_opt(&["FC_NOTIFY_WEBHOOK_URL", "NOTIFICATION_TEAMS_WEBHOOK_URL"]);
+    let teams_webhook_url = fc_common::config::env_first_opt(&[
+        "FC_NOTIFY_WEBHOOK_URL",
+        "NOTIFICATION_TEAMS_WEBHOOK_URL",
+    ]);
     let teams_enabled = teams_webhook_url.as_deref().is_some_and(|u| !u.is_empty())
         || fc_common::config::env_first_bool(&["NOTIFICATION_TEAMS_ENABLED"], false);
 
@@ -538,9 +540,7 @@ fn load_notification_config() -> NotificationConfig {
     let min_severity_raw = std::env::var("FC_NOTIFY_MIN_SEVERITY").or_else(|_| {
         let legacy = std::env::var("NOTIFICATION_MIN_SEVERITY");
         if legacy.is_ok() {
-            warn!(
-                "NOTIFICATION_MIN_SEVERITY is deprecated — set FC_NOTIFY_MIN_SEVERITY instead"
-            );
+            warn!("NOTIFICATION_MIN_SEVERITY is deprecated — set FC_NOTIFY_MIN_SEVERITY instead");
         }
         legacy
     });
@@ -697,14 +697,10 @@ impl ConsumerFactory for SchemeConsumerFactory {
     async fn create_consumer(
         &self,
         config: &QueueConfig,
-    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError>
-    {
-        let scheme = fc_queue::resolve_scheme(&config.uri).map_err(|e| {
-            fc_router::RouterError::Consumer(format!(
-                "queue [{}]: {}",
-                config.name, e
-            ))
-        })?;
+    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
+        let scheme = fc_queue::resolve_scheme(&config.uri).map_err(
+            fc_router::RouterError::consumer(&config.name, "resolve queue scheme"),
+        )?;
 
         match scheme {
             QueueScheme::Sqs => {
@@ -735,12 +731,9 @@ impl ConsumerFactory for SchemeConsumerFactory {
 async fn build_nats_consumer(
     config: &QueueConfig,
 ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(|e| {
-        fc_router::RouterError::Consumer(format!(
-            "queue [{}]: invalid NATS URI: {}",
-            config.name, e
-        ))
-    })?;
+    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(
+        fc_router::RouterError::consumer(&config.name, "invalid NATS URI"),
+    )?;
     info!(
         queue_name = %config.name,
         stream = %nats_config.stream_name,
@@ -750,12 +743,10 @@ async fn build_nats_consumer(
     );
     let consumer = fc_queue::nats::NatsQueueConsumer::new(nats_config)
         .await
-        .map_err(|e| {
-            fc_router::RouterError::Consumer(format!(
-                "queue [{}]: NATS consumer setup failed: {}",
-                config.name, e
-            ))
-        })?;
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "NATS consumer setup failed",
+        ))?;
     Ok(Arc::new(consumer))
 }
 
@@ -790,12 +781,10 @@ async fn build_postgres_consumer(
         .acquire_timeout(Duration::from_secs(10))
         .connect(&config.uri)
         .await
-        .map_err(|e| {
-            fc_router::RouterError::Consumer(format!(
-                "queue [{}]: Postgres pool connect failed: {}",
-                config.name, e
-            ))
-        })?;
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "Postgres pool connect failed",
+        ))?;
 
     let visibility = if config.visibility_timeout == 0 {
         30
@@ -805,12 +794,13 @@ async fn build_postgres_consumer(
     let consumer = fc_queue::postgres::PostgresQueue::new(pool, config.name.clone(), visibility);
 
     use fc_queue::EmbeddedQueue;
-    consumer.init_schema().await.map_err(|e| {
-        fc_router::RouterError::Consumer(format!(
-            "queue [{}]: Postgres schema init failed: {}",
-            config.name, e
-        ))
-    })?;
+    consumer
+        .init_schema()
+        .await
+        .map_err(fc_router::RouterError::consumer(
+            &config.name,
+            "Postgres schema init failed",
+        ))?;
 
     Ok(Arc::new(consumer))
 }
@@ -858,10 +848,7 @@ impl QueuePublisher for SqsPublisher {
                 .message_deduplication_id(&message_id);
         }
 
-        request
-            .send()
-            .await
-            .map_err(|e| QueueError::Sqs(e.to_string()))?;
+        request.send().await.map_err(QueueError::sqs)?;
 
         Ok(message_id)
     }
