@@ -238,17 +238,26 @@ impl AuthorizationService {
 }
 
 /// Which applications a principal may act on. Application access is its own
-/// axis, orthogonal to the client tier: every service account is ANCHOR
-/// scope, so tier cannot say "only its own application".
+/// axis, orthogonal to the client tier: an ANCHOR service account can still
+/// be confined to one application.
 ///
-/// Derived from existing data, matching Go's defaults (Go stores an
-/// `all_applications` flag, default true, cleared only when an application's
-/// service account is provisioned):
+/// Mirrors Go's `CanAccessApplication` (a principal reaches an application
+/// iff `all_applications` is true or it holds an
+/// `iam_principal_application_access` grant for it), with one Rust rule kept
+/// from before the flag existed:
 /// - a principal bound to an application (`iam_principals.application_id`,
-///   set for an application's service account) may act on that application
-///   plus its explicit `iam_principal_application_access` grants, even at
-///   anchor tier;
-/// - an unbound principal may act on every application.
+///   set for an application's service account) reaches that application
+///   plus its grants, and never every application, whatever its flag says.
+///   The column defaults to true, so without this every service account
+///   provisioned before the flag (and every one Rust provisioned against a
+///   Go-migrated database) would widen from its own application to all of
+///   them;
+/// - an unbound principal reaches every application when `all_applications`
+///   is true, otherwise only its grants. A new service account starts with
+///   the flag off and no grants, so it reaches none until granted.
+///
+/// The application's own attached service account is let through separately
+/// (see [`checks::require_application_access`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplicationScope {
     /// Every application, present and future.
@@ -264,15 +273,17 @@ impl ApplicationScope {
         match binding {
             None => Self::Only(HashSet::new()),
             Some(PrincipalApplicationBinding {
+                all_applications: true,
                 application_id: None,
                 ..
             }) => Self::All,
             Some(PrincipalApplicationBinding {
-                application_id: Some(own),
+                application_id,
                 granted_application_ids,
+                ..
             }) => {
                 let mut ids: HashSet<String> = granted_application_ids.into_iter().collect();
-                ids.insert(own);
+                ids.extend(application_id);
                 Self::Only(ids)
             }
         }
@@ -335,6 +346,11 @@ impl ApplicationAccessService {
             },
         );
         Ok(scope)
+    }
+
+    /// Drop a principal's cached scope, after its application access changed.
+    pub fn forget(&self, principal_id: &str) {
+        self.scope_cache.remove(principal_id);
     }
 
     /// Resolve the application named by `app_code` and require the caller
@@ -1244,26 +1260,47 @@ mod tests {
 
     // ── Application scope ─────────────────────────────────────────────
 
-    fn binding(own: Option<&str>, granted: &[&str]) -> Option<PrincipalApplicationBinding> {
+    fn binding_with(
+        all_applications: bool,
+        own: Option<&str>,
+        granted: &[&str],
+    ) -> Option<PrincipalApplicationBinding> {
         Some(PrincipalApplicationBinding {
+            all_applications,
             application_id: own.map(String::from),
             granted_application_ids: granted.iter().map(|s| s.to_string()).collect(),
         })
     }
 
+    /// A principal with the flag at its column default (true).
+    fn binding(own: Option<&str>, granted: &[&str]) -> Option<PrincipalApplicationBinding> {
+        binding_with(true, own, granted)
+    }
+
     #[test]
     fn test_application_scope_from_binding() {
-        // Unbound principal: every application.
+        // Unbound principal with all-applications: every application.
         let all = ApplicationScope::from_binding(binding(None, &[]));
         assert_eq!(all, ApplicationScope::All);
         assert!(all.allows("app_any"));
-        // Grants don't narrow an unbound principal.
+        // Grants don't narrow it.
         assert!(ApplicationScope::from_binding(binding(None, &["app_1"])).allows("app_2"));
 
-        // Bound principal: its own application.
-        let own = ApplicationScope::from_binding(binding(Some("app_own"), &[]));
-        assert!(own.allows("app_own"));
-        assert!(!own.allows("app_other"));
+        // Unbound without all-applications (a new service account): nothing
+        // until granted, then only the grants.
+        let none = ApplicationScope::from_binding(binding_with(false, None, &[]));
+        assert_eq!(none, ApplicationScope::Only(HashSet::new()));
+        assert!(!none.allows("app_any"));
+        let granted = ApplicationScope::from_binding(binding_with(false, None, &["app_1"]));
+        assert!(granted.allows("app_1"));
+        assert!(!granted.allows("app_2"));
+
+        // Bound principal: its own application, whatever the flag says.
+        for flag in [true, false] {
+            let own = ApplicationScope::from_binding(binding_with(flag, Some("app_own"), &[]));
+            assert!(own.allows("app_own"));
+            assert!(!own.allows("app_other"), "flag {flag}");
+        }
 
         // Bound principal with grants: own plus each grant, nothing else.
         let many = ApplicationScope::from_binding(binding(Some("app_own"), &["app_1", "app_2"]));

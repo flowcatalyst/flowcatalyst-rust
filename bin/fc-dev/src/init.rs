@@ -285,7 +285,12 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ServiceAccount.id is the principal id (CLAUDE.md note); insert a
     // matching Principal::new_service row first so the SA's FK is valid.
-    let sa_principal = Principal::new_service(sa.id.clone(), sa_name.clone(), UserScope::Anchor);
+    // Bound to and granted its own application only, as provisioning does
+    // (Go: all_applications false plus one access row).
+    let mut sa_principal =
+        Principal::new_service(sa.id.clone(), sa_name.clone(), UserScope::Anchor)
+            .with_application_id(&app_id);
+    sa_principal.accessible_application_ids = vec![app_id.clone()];
     principal_repo
         .insert(&sa_principal)
         .await
@@ -295,8 +300,10 @@ pub async fn run(args: InitArgs) -> Result<()> {
         .await
         .context("insert service account")?;
 
-    // Attach SA to Application (sets application.service_account_id).
-    application.service_account_id = Some(sa.id.clone());
+    // Attach SA to Application (sets application.service_account_id). The
+    // column references iam_principals (migration 028), so it takes the
+    // principal id, as Go's fcdev init stores it.
+    application.service_account_id = Some(sa_principal.id.clone());
     application.updated_at = Utc::now();
     application_repo
         .update(&application)
@@ -318,7 +325,8 @@ pub async fn run(args: InitArgs) -> Result<()> {
     oauth_client.client_secret_ref = Some(client_secret_ref);
     oauth_client.grant_types = vec![GrantType::ClientCredentials];
     oauth_client.application_ids = vec![app_id.clone()];
-    oauth_client.service_account_principal_id = Some(sa.id.clone());
+    // References iam_principals (migration 027): the principal id.
+    oauth_client.service_account_principal_id = Some(sa_principal.id.clone());
     oauth_client_repo
         .insert(&oauth_client)
         .await
@@ -340,7 +348,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     println!("\n✓ Application scaffolded.\n");
     println!("  Application:     {} (code={})", name, code);
-    println!("  Service account: {}", sa.id);
+    println!("  Service account: {}", sa_principal.id);
     println!(
         "  OAuth client:    {} (clientId={})",
         oauth_client.id, public_client_id

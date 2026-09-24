@@ -272,6 +272,16 @@ pub struct ServiceAccount {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application_id: Option<String>,
 
+    /// Access to every application (`iam_principals.all_applications` on the
+    /// linked principal). Off for a new account.
+    #[serde(default)]
+    pub all_applications: bool,
+
+    /// Applications the linked principal is granted
+    /// (`iam_principal_application_access`).
+    #[serde(default)]
+    pub accessible_application_ids: Vec<String>,
+
     /// Webhook credentials for outbound calls
     #[serde(default)]
     pub webhook_credentials: WebhookCredentials,
@@ -309,6 +319,9 @@ impl ServiceAccount {
             client_ids: vec![],
             scope,
             application_id: None,
+            // No application access until it is granted (owner ruling).
+            all_applications: false,
+            accessible_application_ids: vec![],
             webhook_credentials: WebhookCredentials::none(),
             service_account_table_id: None,
             roles: vec![],
@@ -405,6 +418,8 @@ mod tests {
         assert!(sa.client_ids.is_empty());
         assert_eq!(sa.scope, UserScope::Client);
         assert!(sa.application_id.is_none());
+        assert!(!sa.all_applications);
+        assert!(sa.accessible_application_ids.is_empty());
         assert_eq!(sa.webhook_credentials.auth_type, WebhookAuthType::None);
         assert!(sa.roles.is_empty());
         assert!(sa.last_used_at.is_none());

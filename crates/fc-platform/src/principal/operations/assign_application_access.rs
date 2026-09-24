@@ -1,6 +1,6 @@
 //! Assign Application Access Use Case
 //!
-//! Sets which applications a user can access.
+//! Sets which applications a user or service account can access.
 //! Computes delta (added/removed) and persists via UnitOfWork.
 
 use async_trait::async_trait;
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ApplicationAccessAssigned;
-use crate::principal::entity::{Principal, PrincipalType};
+use crate::principal::entity::Principal;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
@@ -99,13 +99,9 @@ impl<U: UnitOfWork> AssignApplicationAccessUseCase<U> {
                 format!("User not found: {}", command.user_id),
             )?;
 
-        // Must be a USER type
-        if principal.principal_type != PrincipalType::User {
-            return Err(UseCaseError::business_rule(
-                "NOT_A_USER",
-                "Principal is not a user",
-            ));
-        }
+        // Users and service accounts both carry application access (Go
+        // assigns to both); a new service account has none until it is
+        // granted here.
 
         // Validate all requested applications exist
         for app_id in &command.application_ids {

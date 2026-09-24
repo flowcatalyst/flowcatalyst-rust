@@ -343,6 +343,13 @@ pub fn build_platform_routes(
         ),
     );
 
+    // One instance so every `/{appCode}` route shares the scope cache, and
+    // the application-access endpoint can drop a principal's entry when it
+    // changes.
+    let app_access = Arc::new(ApplicationAccessService::new(
+        repos.principal_repo.clone(),
+        repos.application_repo.clone(),
+    ));
     let principals_state = PrincipalsState {
         principal_repo: repos.principal_repo.clone(),
         audit_service,
@@ -362,6 +369,7 @@ pub fn build_platform_routes(
         assign_roles_use_case: assign_user_roles_use_case,
         revoke_client_access_use_case,
         assign_app_access_use_case,
+        app_access: app_access.clone(),
         unit_of_work: unit_of_work.clone(),
     };
     let create_role_use_case = Arc::new(crate::role::operations::CreateRoleUseCase::new(
@@ -796,11 +804,6 @@ pub fn build_platform_routes(
             unit_of_work.clone(),
         ),
     );
-    // One instance so every `/{appCode}` route shares the scope cache.
-    let app_access = Arc::new(ApplicationAccessService::new(
-        repos.principal_repo.clone(),
-        repos.application_repo.clone(),
-    ));
     let platform_config_state = PlatformConfigState {
         config_repo: repos.platform_config_repo.clone(),
         app_access: app_access.clone(),

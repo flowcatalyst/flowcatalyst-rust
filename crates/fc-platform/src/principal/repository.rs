@@ -33,6 +33,7 @@ struct PrincipalRow {
     password_hash: Option<String>,
     last_login_at: Option<DateTime<Utc>>,
     service_account_id: Option<String>,
+    all_applications: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -81,6 +82,7 @@ impl TryFrom<PrincipalRow> for Principal {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            all_applications: r.all_applications,
             created_at: r.created_at,
             updated_at: r.updated_at,
             external_identity,
@@ -134,10 +136,12 @@ struct PrincipalApplicationAccessRow {
 }
 
 /// The application-access facts for one principal, without hydrating the
-/// rest of it: the application it is bound to (an application's service
-/// account) and its explicit `iam_principal_application_access` grants.
+/// rest of it: its `all_applications` flag, the application it is bound to
+/// (an application's service account) and its explicit
+/// `iam_principal_application_access` grants.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PrincipalApplicationBinding {
+    pub all_applications: bool,
     pub application_id: Option<String>,
     pub granted_application_ids: Vec<String>,
 }
@@ -188,8 +192,8 @@ impl PrincipalRepository {
             "INSERT INTO iam_principals
                 (id, type, scope, client_id, application_id, name, active, email, email_domain,
                  idp_type, external_idp_id, password_hash, last_login_at, service_account_id,
-                 created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+                 created_at, updated_at, all_applications)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
         .bind(&principal.id)
         .bind(principal.principal_type.as_str())
@@ -207,11 +211,25 @@ impl PrincipalRepository {
         .bind(&principal.service_account_id)
         .bind(now)
         .bind(now)
+        .bind(principal.all_applications)
         .execute(&self.pool)
         .await?;
 
         // Insert roles into junction table
         self.insert_roles(&principal.id, &principal.roles).await?;
+
+        // Insert application access grants
+        if !principal.accessible_application_ids.is_empty() {
+            sqlx::query(
+                "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
+                 SELECT $1, a, $3 FROM UNNEST($2::varchar[]) AS a",
+            )
+            .bind(&principal.id)
+            .bind(&principal.accessible_application_ids)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
 
         Ok(())
     }
@@ -250,7 +268,7 @@ impl PrincipalRepository {
         principal_id: &str,
     ) -> Result<Option<PrincipalApplicationBinding>> {
         let row = sqlx::query_as::<_, PrincipalApplicationBinding>(
-            "SELECT p.application_id,
+            "SELECT p.all_applications, p.application_id,
                     ARRAY(SELECT a.application_id FROM iam_principal_application_access a
                           WHERE a.principal_id = p.id) AS granted_application_ids
              FROM iam_principals p WHERE p.id = $1",
@@ -470,7 +488,7 @@ impl PrincipalRepository {
                 type = $2, scope = $3, client_id = $4, application_id = $5, name = $6,
                 active = $7, email = $8, email_domain = $9, idp_type = $10,
                 external_idp_id = $11, password_hash = $12, last_login_at = $13,
-                service_account_id = $14, updated_at = $15
+                service_account_id = $14, updated_at = $15, all_applications = $16
              WHERE id = $1",
         )
         .bind(&principal.id)
@@ -488,6 +506,7 @@ impl PrincipalRepository {
         .bind(last_login_at)
         .bind(&principal.service_account_id)
         .bind(now)
+        .bind(principal.all_applications)
         .execute(&self.pool)
         .await?;
 
@@ -872,8 +891,8 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
 
         // 1. Upsert main row
         sqlx::query(
-            "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at, all_applications)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
              ON CONFLICT (id) DO UPDATE SET
                 type = EXCLUDED.type,
                 scope = EXCLUDED.scope,
@@ -888,7 +907,8 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
                 password_hash = EXCLUDED.password_hash,
                 last_login_at = EXCLUDED.last_login_at,
                 service_account_id = EXCLUDED.service_account_id,
-                updated_at = EXCLUDED.updated_at"
+                updated_at = EXCLUDED.updated_at,
+                all_applications = EXCLUDED.all_applications"
         )
         .bind(&p.id)
         .bind(p.principal_type.as_str())
@@ -906,6 +926,7 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
         .bind(&p.service_account_id)
         .bind(now)
         .bind(now)
+        .bind(p.all_applications)
         .execute(&mut **tx.inner).await?;
 
         // 2. Sync roles: delete then re-insert

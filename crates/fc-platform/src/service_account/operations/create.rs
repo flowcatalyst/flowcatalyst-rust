@@ -57,7 +57,9 @@ pub struct CreateServiceAccountCommand {
     #[serde(default)]
     pub client_ids: Vec<String>,
 
-    /// Application ID (if created for an application)
+    /// Application ID, set only by application provisioning. The account is
+    /// bound to it and granted it; otherwise it starts with no application
+    /// access at all (owner ruling).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application_id: Option<String>,
 }
@@ -201,6 +203,12 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         service_account.description = command.description.clone();
         service_account.client_ids = client_ids;
         service_account.application_id = command.application_id.clone();
+        // No application access unless the account is made for one
+        // application, which it then reaches alone (Go: all_applications
+        // false plus a single access row).
+        service_account.all_applications = false;
+        service_account.accessible_application_ids =
+            command.application_id.clone().into_iter().collect();
         service_account.webhook_credentials = WebhookCredentials::bearer_token(&auth_token_ref);
         service_account.webhook_credentials.signing_secret = Some(signing_secret_ref);
 

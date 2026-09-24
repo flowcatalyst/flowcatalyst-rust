@@ -200,6 +200,13 @@ pub struct Principal {
     #[serde(default)]
     pub accessible_application_ids: Vec<String>,
 
+    /// Access to every application, present and future
+    /// (`iam_principals.all_applications`): the application-axis analogue of
+    /// the anchor tier. When false the principal reaches only
+    /// `accessible_application_ids`.
+    #[serde(default = "default_active")]
+    pub all_applications: bool,
+
     /// Audit fields
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -244,6 +251,7 @@ impl Principal {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            all_applications: true,
             created_at: now,
             updated_at: now,
             external_identity: None,
@@ -251,7 +259,10 @@ impl Principal {
     }
 
     /// Create a new service principal. The scope is the caller's choice:
-    /// a service account is not anchor unless something decides it is.
+    /// a service account is not anchor unless something decides it is. It
+    /// starts with no application access (owner ruling; Go defaults to all
+    /// applications): grant applications, or set `all_applications`,
+    /// explicitly.
     pub fn new_service(
         service_account_id: impl Into<String>,
         name: impl Into<String>,
@@ -272,6 +283,7 @@ impl Principal {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            all_applications: false,
             created_at: now,
             updated_at: now,
             external_identity: None,
@@ -505,6 +517,8 @@ mod tests {
         assert_eq!(p.email(), Some("alice@example.com"));
         assert!(p.is_user());
         assert!(!p.is_service());
+        // Users keep today's behaviour: every application.
+        assert!(p.all_applications);
     }
 
     #[test]
@@ -515,6 +529,9 @@ mod tests {
         for scope in [UserScope::Anchor, UserScope::Partner] {
             assert_eq!(Principal::new_service("svc_123", "x", scope).scope, scope);
         }
+        // No application access until something grants it.
+        assert!(!p.all_applications);
+        assert!(p.accessible_application_ids.is_empty());
         assert!(p.user_identity.is_none());
         assert_eq!(p.service_account_id, Some("svc_123".to_string()));
         assert_eq!(p.name, "Outbox Processor");

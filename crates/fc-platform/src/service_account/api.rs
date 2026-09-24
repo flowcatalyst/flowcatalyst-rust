@@ -56,7 +56,11 @@ pub struct CreateServiceAccountRequest {
     #[serde(default)]
     pub client_ids: Vec<String>,
 
-    /// Application ID (if created for an application)
+    /// Not accepted: an account made here starts with no application access
+    /// and is granted applications afterwards
+    /// (`PUT /api/principals/{id}/application-access`). Only application
+    /// provisioning binds an account to an application. Present, it is a 400
+    /// rather than silently ignored.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application_id: Option<String>,
 }
@@ -367,13 +371,19 @@ pub async fn create_service_account<U: UnitOfWork>(
     Json(req): Json<CreateServiceAccountRequest>,
 ) -> Result<Json<CreateServiceAccountResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    if req.application_id.is_some() {
+        return Err(PlatformError::validation(
+            "applicationId is not accepted: a new service account has no application \
+             access; grant applications afterwards, or provision one from the application",
+        ));
+    }
     let command = CreateServiceAccountCommand {
         code: req.code,
         name: req.name,
         description: req.description,
         scope: parse_opt(req.scope.as_deref())?,
         client_ids: req.client_ids,
-        application_id: req.application_id,
+        application_id: None,
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());

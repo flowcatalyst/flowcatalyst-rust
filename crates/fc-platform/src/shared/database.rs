@@ -393,6 +393,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "030_rate_limit_events",
             include_str!("../../../../migrations/030_rate_limit_events.sql"),
         ),
+        // Go's 034: the stored all-applications flag on principals.
+        (
+            "031_principal_all_applications",
+            include_str!("../../../../migrations/031_principal_all_applications.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -479,6 +484,15 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "030_rate_limit_events",
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
              WHERE table_schema = 'public' AND table_name = 'iam_rate_limit_events')",
+        ),
+        // Column additions: probe `information_schema.columns`. A database
+        // Go has migrated already has it.
+        (
+            "031_principal_all_applications",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' \
+               AND table_name = 'iam_principals' \
+               AND column_name = 'all_applications')",
         ),
     ];
 

@@ -101,6 +101,9 @@ pub async fn run(repos: &Repositories) -> Result<()> {
     // Anchor matches the super-admin role's reach (Go's fcdev does the same).
     let mut principal =
         Principal::new_service(service_account_id, PRINCIPAL_NAME, UserScope::Anchor);
+    // Every application too: the local MCP server reads across all of them
+    // (Go's fcdev leaves its MCP principal at all-applications).
+    principal.all_applications = true;
     principal.roles = vec![RoleAssignment::new(SUPER_ADMIN_ROLE)];
 
     // The `{:?}` formatter on the source error shows the full sqlx error

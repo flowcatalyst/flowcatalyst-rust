@@ -470,6 +470,76 @@ async fn test_migrations_are_idempotent() {
         .expect("Third migration run should succeed");
 }
 
+/// Migration 031 (Go's 034) adds `all_applications` with IF NOT EXISTS:
+/// re-running it, or meeting a database Go already migrated (tracker without
+/// the entry), changes nothing, and stored values survive.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_all_applications_migration_is_idempotent() {
+    let (pool, _container) = setup_test_db().await;
+    let repo = PrincipalRepository::new(&pool);
+    let service = Principal::new_service("svc-flag", "Flag", UserScope::Anchor);
+    repo.insert(&service).await.unwrap();
+    let user = Principal::new_user("flag@example.com", UserScope::Client);
+    repo.insert(&user).await.unwrap();
+
+    // The SQL itself, again.
+    sqlx::query(include_str!(
+        "../../../migrations/031_principal_all_applications.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("re-running 031 is a no-op");
+
+    // A tracker that predates it: the backfill probe finds the column.
+    sqlx::query("DELETE FROM _schema_migrations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    run_migrations(&pool, MigrationProfile::Production)
+        .await
+        .expect("migrations over an existing column");
+    let (tracked,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM _schema_migrations \
+         WHERE migration_id = '031_principal_all_applications')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(tracked);
+
+    assert!(
+        !repo
+            .find_by_id(&service.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .all_applications
+    );
+    assert!(
+        repo.find_by_id(&user.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .all_applications
+    );
+
+    // A row written without the column gets the column default (true).
+    sqlx::query(
+        "INSERT INTO iam_principals (id, type, scope, name) \
+         VALUES ('prn_0DEFAULTFLAG', 'USER', 'CLIENT', 'Default')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (flag,): (bool,) =
+        sqlx::query_as("SELECT all_applications FROM iam_principals WHERE id = 'prn_0DEFAULTFLAG'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(flag);
+}
+
 // ─── Cross-Repository Transaction Test ────────────────────────────────────
 
 #[tokio::test]

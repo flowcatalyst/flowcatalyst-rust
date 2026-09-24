@@ -29,6 +29,7 @@ struct PrincipalRow {
     name: String,
     active: bool,
     service_account_id: Option<String>,
+    all_applications: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -61,6 +62,21 @@ struct ServiceAccountRow {
 struct ClientGrantRow {
     principal_id: String,
     client_id: String,
+}
+
+/// Row mapping for iam_principal_application_access
+#[derive(sqlx::FromRow)]
+struct ApplicationGrantRow {
+    principal_id: String,
+    application_id: String,
+}
+
+/// What hydration loads per principal besides the row itself.
+#[derive(Default)]
+struct Grants {
+    roles: Vec<RoleAssignment>,
+    clients: Vec<String>,
+    applications: Vec<String>,
 }
 
 /// Row mapping for iam_principal_roles junction table
@@ -139,7 +155,7 @@ impl ServiceAccountRepository {
     pub async fn find_by_id(&self, id: &str) -> Result<Option<ServiceAccount>> {
         let principal = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, created_at, updated_at \
+             service_account_id, all_applications, created_at, updated_at \
              FROM iam_principals WHERE id = $1",
         )
         .bind(id)
@@ -169,7 +185,7 @@ impl ServiceAccountRepository {
             Some(sa_row) => {
                 let principal = sqlx::query_as::<_, PrincipalRow>(
                     "SELECT id, type, scope, client_id, application_id, name, active, \
-                     service_account_id, created_at, updated_at \
+                     service_account_id, all_applications, created_at, updated_at \
                      FROM iam_principals WHERE service_account_id = $1",
                 )
                 .bind(&sa_row.id)
@@ -188,7 +204,7 @@ impl ServiceAccountRepository {
     pub async fn find_active(&self) -> Result<Vec<ServiceAccount>> {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, created_at, updated_at \
+             service_account_id, all_applications, created_at, updated_at \
              FROM iam_principals WHERE type = 'SERVICE' AND active = true",
         )
         .fetch_all(&self.pool)
@@ -200,7 +216,7 @@ impl ServiceAccountRepository {
     pub async fn find_by_application(&self, application_id: &str) -> Result<Vec<ServiceAccount>> {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, created_at, updated_at \
+             service_account_id, all_applications, created_at, updated_at \
              FROM iam_principals WHERE type = 'SERVICE' AND application_id = $1",
         )
         .bind(application_id)
@@ -213,7 +229,7 @@ impl ServiceAccountRepository {
     pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<ServiceAccount>> {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT id, type, scope, client_id, application_id, name, active, \
-             service_account_id, created_at, updated_at \
+             service_account_id, all_applications, created_at, updated_at \
              FROM iam_principals WHERE type = 'SERVICE' AND client_id = $1 AND active = true",
         )
         .bind(client_id)
@@ -226,7 +242,7 @@ impl ServiceAccountRepository {
     pub async fn find_with_role(&self, role: &str) -> Result<Vec<ServiceAccount>> {
         let principals = sqlx::query_as::<_, PrincipalRow>(
             "SELECT p.id, p.type, p.scope, p.client_id, p.application_id, p.name, p.active, \
-             p.service_account_id, p.created_at, p.updated_at \
+             p.service_account_id, p.all_applications, p.created_at, p.updated_at \
              FROM iam_principals p
              INNER JOIN iam_principal_roles pr ON pr.principal_id = p.id
              WHERE p.type = 'SERVICE' AND p.active = true AND pr.role_name = $1",
@@ -279,7 +295,7 @@ impl ServiceAccountRepository {
     // ── Hydration ──────────────────────────────────────────────
 
     /// Hydrate a single principal into a ServiceAccount by loading
-    /// webhook credentials from iam_service_accounts and roles from iam_principal_roles.
+    /// webhook credentials from iam_service_accounts and its grants.
     async fn hydrate(&self, principal: PrincipalRow) -> Result<ServiceAccount> {
         let sa_row = if let Some(ref sa_id) = principal.service_account_id {
             sqlx::query_as::<_, ServiceAccountRow>(
@@ -294,11 +310,8 @@ impl ServiceAccountRepository {
         } else {
             None
         };
-        let (roles, granted) = tokio::try_join!(
-            self.load_roles(&principal.id),
-            self.load_granted_clients(&principal.id),
-        )?;
-        Self::build_service_account_sync(principal, sa_row.as_ref(), roles, granted)
+        let grants = self.load_one(&principal.id).await?;
+        Self::build_service_account_sync(principal, sa_row.as_ref(), grants)
     }
 
     /// Hydrate when we already have both rows.
@@ -307,11 +320,8 @@ impl ServiceAccountRepository {
         principal: PrincipalRow,
         sa_row: ServiceAccountRow,
     ) -> Result<ServiceAccount> {
-        let (roles, granted) = tokio::try_join!(
-            self.load_roles(&principal.id),
-            self.load_granted_clients(&principal.id),
-        )?;
-        Self::build_service_account_sync(principal, Some(&sa_row), roles, granted)
+        let grants = self.load_one(&principal.id).await?;
+        Self::build_service_account_sync(principal, Some(&sa_row), grants)
     }
 
     /// Hydrate multiple principals into ServiceAccounts (batch).
@@ -345,54 +355,18 @@ impl ServiceAccountRepository {
             std::collections::HashMap::new()
         };
 
-        // Batch-load roles
-        let all_roles = sqlx::query_as::<_, PrincipalRoleRow>(
-            "SELECT principal_id, role_name, assignment_source, assigned_at \
-             FROM iam_principal_roles WHERE principal_id = ANY($1)",
-        )
-        .bind(&principal_ids)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut role_map: std::collections::HashMap<String, Vec<RoleAssignment>> =
-            std::collections::HashMap::new();
-        for r in all_roles {
-            role_map
-                .entry(r.principal_id.clone())
-                .or_default()
-                .push(RoleAssignment::try_from(r)?);
-        }
-
-        // Batch-load client grants
-        let all_grants = sqlx::query_as::<_, ClientGrantRow>(
-            "SELECT principal_id, client_id FROM iam_client_access_grants \
-             WHERE principal_id = ANY($1) ORDER BY granted_at, client_id",
-        )
-        .bind(&principal_ids)
-        .fetch_all(&self.pool)
-        .await?;
-        let mut grant_map: std::collections::HashMap<String, Vec<String>> =
-            std::collections::HashMap::new();
-        for g in all_grants {
-            grant_map
-                .entry(g.principal_id)
-                .or_default()
-                .push(g.client_id);
-        }
+        let mut grants = self.load_grants(&principal_ids).await?;
 
         // Build ServiceAccount entities
         principals
             .into_iter()
             .map(|p| {
-                let id = p.id.clone();
                 let sa_row = p
                     .service_account_id
                     .as_ref()
                     .and_then(|sa_id| sa_rows.get(sa_id));
-                let roles = role_map.remove(&id).unwrap_or_default();
-                let granted = grant_map.remove(&id).unwrap_or_default();
-
-                Self::build_service_account_sync(p, sa_row, roles, granted)
+                let g = grants.remove(&p.id).unwrap_or_default();
+                Self::build_service_account_sync(p, sa_row, g)
             })
             .collect()
     }
@@ -401,8 +375,7 @@ impl ServiceAccountRepository {
     fn build_service_account_sync(
         principal: PrincipalRow,
         sa_row: Option<&ServiceAccountRow>,
-        roles: Vec<RoleAssignment>,
-        granted_clients: Vec<String>,
+        grants: Grants,
     ) -> Result<ServiceAccount> {
         // Read exactly as the principal repository (and Go) read the column:
         // NULL is an unscoped row, read as CLIENT, the narrowest; anything
@@ -420,7 +393,7 @@ impl ServiceAccountRepository {
         let client_ids = match scope {
             UserScope::Anchor => vec![],
             UserScope::Client => principal.client_id.clone().into_iter().collect(),
-            UserScope::Partner => granted_clients,
+            UserScope::Partner => grants.clients,
         };
 
         let webhook_credentials = match sa_row {
@@ -466,9 +439,11 @@ impl ServiceAccountRepository {
             active: principal.active,
             client_ids,
             application_id: principal.application_id,
+            all_applications: principal.all_applications,
+            accessible_application_ids: grants.applications,
             scope,
             webhook_credentials,
-            roles,
+            roles: grants.roles,
             service_account_table_id: principal.service_account_id,
             last_used_at: sa_row.and_then(|sa| sa.last_used_at),
             created_at: principal.created_at,
@@ -476,29 +451,58 @@ impl ServiceAccountRepository {
         })
     }
 
-    /// Load roles for a principal from the junction table.
-    async fn load_roles(&self, principal_id: &str) -> Result<Vec<RoleAssignment>> {
-        let rows = sqlx::query_as::<_, PrincipalRoleRow>(
-            "SELECT principal_id, role_name, assignment_source, assigned_at \
-             FROM iam_principal_roles WHERE principal_id = $1",
-        )
-        .bind(principal_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        rows.into_iter().map(RoleAssignment::try_from).collect()
+    async fn load_one(&self, principal_id: &str) -> Result<Grants> {
+        let mut grants = self.load_grants(&[principal_id.to_string()]).await?;
+        Ok(grants.remove(principal_id).unwrap_or_default())
     }
 
-    /// Clients granted to a principal (a PARTNER account's clients).
-    async fn load_granted_clients(&self, principal_id: &str) -> Result<Vec<String>> {
-        let rows = sqlx::query_as::<_, ClientGrantRow>(
-            "SELECT principal_id, client_id FROM iam_client_access_grants \
-             WHERE principal_id = $1 ORDER BY granted_at, client_id",
-        )
-        .bind(principal_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows.into_iter().map(|g| g.client_id).collect())
+    /// Batch-load roles, client grants and application grants for
+    /// principals, one query per junction table.
+    async fn load_grants(
+        &self,
+        principal_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, Grants>> {
+        let (roles, clients, applications) = tokio::try_join!(
+            sqlx::query_as::<_, PrincipalRoleRow>(
+                "SELECT principal_id, role_name, assignment_source, assigned_at \
+                 FROM iam_principal_roles WHERE principal_id = ANY($1)",
+            )
+            .bind(principal_ids)
+            .fetch_all(&self.pool),
+            sqlx::query_as::<_, ClientGrantRow>(
+                "SELECT principal_id, client_id FROM iam_client_access_grants \
+                 WHERE principal_id = ANY($1) ORDER BY granted_at, client_id",
+            )
+            .bind(principal_ids)
+            .fetch_all(&self.pool),
+            sqlx::query_as::<_, ApplicationGrantRow>(
+                "SELECT principal_id, application_id FROM iam_principal_application_access \
+                 WHERE principal_id = ANY($1) ORDER BY granted_at, application_id",
+            )
+            .bind(principal_ids)
+            .fetch_all(&self.pool),
+        )?;
+
+        let mut map: std::collections::HashMap<String, Grants> = std::collections::HashMap::new();
+        for r in roles {
+            map.entry(r.principal_id.clone())
+                .or_default()
+                .roles
+                .push(RoleAssignment::try_from(r)?);
+        }
+        for g in clients {
+            map.entry(g.principal_id)
+                .or_default()
+                .clients
+                .push(g.client_id);
+        }
+        for a in applications {
+            map.entry(a.principal_id)
+                .or_default()
+                .applications
+                .push(a.application_id);
+        }
+        Ok(map)
     }
 }
 
@@ -533,10 +537,11 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
 
         // 1. Upsert iam_principals (SERVICE type principal)
         sqlx::query(
-            "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at)
-             VALUES ($1, 'SERVICE', $2, $3, $4, $5, $6, NULL, NULL, NULL, NULL, NULL, NULL, $7, $8, $9)
+            "INSERT INTO iam_principals (id, type, scope, client_id, application_id, name, active, email, email_domain, idp_type, external_idp_id, password_hash, last_login_at, service_account_id, created_at, updated_at, all_applications)
+             VALUES ($1, 'SERVICE', $2, $3, $4, $5, $6, NULL, NULL, NULL, NULL, NULL, NULL, $7, $8, $9, $10)
              ON CONFLICT (id) DO UPDATE SET
                 scope = EXCLUDED.scope,
+                all_applications = EXCLUDED.all_applications,
                 name = EXCLUDED.name,
                 active = EXCLUDED.active,
                 client_id = EXCLUDED.client_id,
@@ -552,6 +557,7 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
         .bind(Some(&sa.id))
         .bind(sa.created_at)
         .bind(now)
+        .bind(sa.all_applications)
         .execute(&mut **tx.inner).await?;
 
         // 2. Upsert iam_service_accounts (webhook credentials)
@@ -611,7 +617,24 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
             .await?;
         }
 
-        // 4. Sync roles to iam_principal_roles using the principal ID
+        // 4. Sync application grants.
+        sqlx::query("DELETE FROM iam_principal_application_access WHERE principal_id = $1")
+            .bind(&sa.id)
+            .execute(&mut **tx.inner)
+            .await?;
+        if !sa.accessible_application_ids.is_empty() {
+            sqlx::query(
+                "INSERT INTO iam_principal_application_access (principal_id, application_id, granted_at)
+                 SELECT $1, a, $3 FROM UNNEST($2::varchar[]) AS a",
+            )
+            .bind(&sa.id)
+            .bind(&sa.accessible_application_ids)
+            .bind(now)
+            .execute(&mut **tx.inner)
+            .await?;
+        }
+
+        // 5. Sync roles to iam_principal_roles using the principal ID
         sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = $1")
             .bind(&sa.id)
             .execute(&mut **tx.inner)
@@ -684,6 +707,7 @@ mod tests {
             name: "svc".to_string(),
             active: true,
             service_account_id: Some("sac_1".to_string()),
+            all_applications: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -713,8 +737,7 @@ mod tests {
         let err = ServiceAccountRepository::build_service_account_sync(
             principal_row(),
             Some(&row),
-            vec![],
-            vec![],
+            Grants::default(),
         )
         .unwrap_err()
         .to_string();
@@ -730,8 +753,7 @@ mod tests {
             let sa = ServiceAccountRepository::build_service_account_sync(
                 principal_row(),
                 Some(&row),
-                vec![],
-                vec![],
+                Grants::default(),
             )
             .unwrap();
             assert_eq!(
@@ -749,8 +771,10 @@ mod tests {
         ServiceAccountRepository::build_service_account_sync(
             principal,
             Some(&sa_row(Some("BEARER_TOKEN"), None)),
-            vec![],
-            granted.iter().map(|s| s.to_string()).collect(),
+            Grants {
+                clients: granted.iter().map(|s| s.to_string()).collect(),
+                ..Grants::default()
+            },
         )
     }
 

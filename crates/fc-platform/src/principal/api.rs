@@ -428,6 +428,9 @@ pub struct PrincipalsQuery {
 #[derive(Clone)]
 pub struct PrincipalsState {
     pub principal_repo: Arc<PrincipalRepository>,
+    /// Resolved application scopes, cached per principal; dropped when a
+    /// principal's application access changes so the change applies at once.
+    pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
     pub audit_service: Arc<AuditService>,
     pub anchor_domain_repo: Arc<crate::AnchorDomainRepository>,
     pub email_domain_mapping_repo: Arc<crate::EmailDomainMappingRepository>,
@@ -1794,6 +1797,7 @@ pub async fn set_application_access(
         .run(cmd, ctx)
         .await
         .into_result()?;
+    state.app_access.forget(&id);
 
     let mut applications = Vec::new();
     for app_id in &req.application_ids {
@@ -1945,6 +1949,7 @@ mod tests {
             assigned_clients: vec!["clt_CLIENT1234567".to_string()],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            all_applications: true,
             created_at: now,
             updated_at: now,
             external_identity: None,
@@ -1999,6 +2004,7 @@ mod tests {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            all_applications: false,
             created_at: now,
             updated_at: now,
             external_identity: None,

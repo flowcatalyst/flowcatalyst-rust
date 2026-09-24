@@ -2,8 +2,10 @@
 //!
 //! A service account bound to an application may act on that application
 //! and on any application it holds an explicit access grant for. An unbound
-//! principal may act on every application. Everything else answers the same
-//! 404 as an application that doesn't exist. Requires Docker.
+//! principal may act on every application only when its `all_applications`
+//! flag is set (users, by default); a new service account has it off and
+//! reaches only what it is granted. Everything else answers the same 404 as
+//! an application that doesn't exist. Requires Docker.
 
 #[path = "support/mod.rs"]
 mod support;
@@ -159,13 +161,45 @@ async fn service_account_is_confined_to_its_applications() {
         StatusCode::NOT_FOUND
     );
 
-    // An unbound service account has access to every application.
-    let sa_all = token_for(
+    // An unbound service account starts with no application access: the
+    // same 404 on every application, anchor tier or not.
+    let sa_none = token_for(
         &app,
-        Principal::new_service("sa_all", "SA All", UserScope::Anchor),
+        Principal::new_service("sa_unbound", "SA Unbound", UserScope::Anchor),
         &[],
     )
     .await;
+    for code in ["scope-a", "scope-b", "scope-c", "scope-zz"] {
+        assert_eq!(
+            sync_roles(&app, &sa_none, code).await.0,
+            StatusCode::NOT_FOUND,
+            "{code}"
+        );
+    }
+
+    // With an explicit grant it reaches only the granted application.
+    let sa_granted = token_for(
+        &app,
+        Principal::new_service("sa_granted", "SA Granted", UserScope::Anchor),
+        &[&app_c],
+    )
+    .await;
+    assert_eq!(
+        sync_roles(&app, &sa_granted, "scope-c").await.0,
+        StatusCode::OK
+    );
+    for code in ["scope-a", "scope-b"] {
+        assert_eq!(
+            sync_roles(&app, &sa_granted, code).await.0,
+            StatusCode::NOT_FOUND,
+            "{code}"
+        );
+    }
+
+    // Only the stored all-applications flag reaches every application.
+    let mut all = Principal::new_service("sa_all", "SA All", UserScope::Anchor);
+    all.all_applications = true;
+    let sa_all = token_for(&app, all, &[]).await;
     for code in ["scope-a", "scope-b", "scope-c"] {
         assert_eq!(sync_roles(&app, &sa_all, code).await.0, StatusCode::OK);
     }
@@ -175,7 +209,21 @@ async fn service_account_is_confined_to_its_applications() {
         StatusCode::NOT_FOUND
     );
 
-    // So does an anchor user.
+    // The flag doesn't widen an account bound to an application.
+    let mut bound_all = Principal::new_service("sa_bound_all", "SA Bound All", UserScope::Anchor)
+        .with_application_id(&app_a.id);
+    bound_all.all_applications = true;
+    let sa_bound_all = token_for(&app, bound_all, &[]).await;
+    assert_eq!(
+        sync_roles(&app, &sa_bound_all, "scope-a").await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        sync_roles(&app, &sa_bound_all, "scope-b").await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    // An anchor user (all applications by default) reaches every one.
     let admin = token_for(
         &app,
         Principal::new_user("scope-admin@flowcatalyst.test", UserScope::Anchor),
@@ -264,6 +312,10 @@ async fn provisioned_service_account_reaches_only_its_application() {
         .await
         .expect("find principal")
         .expect("provisioned principal");
+    // Stored as Go provisions it: no all-applications, one access row.
+    assert!(!principal.all_applications);
+    assert_eq!(principal.accessible_application_ids, vec![app_a.id.clone()]);
+
     principal.roles = vec![RoleAssignment::new(application_service_role(&app).await)];
     let token = app
         .auth_service
@@ -322,4 +374,94 @@ async fn platform_config_is_confined_to_the_callers_applications() {
         .put("/api/config/cfg-b/general/colour", &admin, body)
         .await;
     assert_eq!(as_admin.status(), StatusCode::CREATED);
+}
+
+/// Give the stored principal `role` and mint a token for it, returning the
+/// token and the principal's stored application access.
+async fn mint_with_role(app: &TestApp, id: &str, role: &str) -> (String, bool, Vec<String>) {
+    let mut p = app
+        .repos
+        .principal_repo
+        .find_by_id(id)
+        .await
+        .unwrap()
+        .unwrap();
+    p.roles = vec![RoleAssignment::new(role)];
+    app.repos.principal_repo.update(&p).await.unwrap();
+    (
+        app.auth_service.generate_access_token(&p).unwrap(),
+        p.all_applications,
+        p.accessible_application_ids,
+    )
+}
+
+/// A service account made through `POST /api/service-accounts` starts with
+/// no application access at all, and reaches exactly what it is granted
+/// afterwards.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn created_service_account_reaches_only_granted_applications() {
+    // Creation encrypts the generated credentials; any 32-byte key will do.
+    std::env::set_var(
+        "FLOWCATALYST_APP_KEY",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    );
+    let app = TestApp::setup().await;
+    let app_x = create_app(&app, "new-x").await;
+    create_app(&app, "new-y").await;
+    let admin = app.anchor_token();
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/service-accounts",
+            &admin,
+            json!({ "code": "fresh-bot", "name": "Fresh bot", "scope": "ANCHOR" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["serviceAccount"]["id"].as_str().unwrap().to_string();
+
+    // Binding an application on create isn't accepted.
+    let (status, _) = read_json(
+        app.post(
+            "/api/service-accounts",
+            &admin,
+            json!({ "code": "bound-bot", "name": "x", "applicationId": app_x.id }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let role = application_service_role(&app).await;
+    let (sa, all_apps, granted) = mint_with_role(&app, &id, &role).await;
+    assert!(!all_apps);
+    assert!(granted.is_empty());
+    for code in ["new-x", "new-y"] {
+        assert_eq!(
+            sync_roles(&app, &sa, code).await.0,
+            StatusCode::NOT_FOUND,
+            "{code}"
+        );
+    }
+
+    // Grant X through the application-access endpoint.
+    let resp = app
+        .put(
+            &format!("/api/principals/{id}/application-access"),
+            &admin,
+            json!({ "applicationIds": [app_x.id] }),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    // The endpoint drops the cached scope, so the grant applies at once.
+    let (sa, _, granted) = mint_with_role(&app, &id, &role).await;
+    assert_eq!(granted, vec![app_x.id.clone()]);
+    assert_eq!(sync_roles(&app, &sa, "new-x").await.0, StatusCode::OK);
+    assert_eq!(
+        sync_roles(&app, &sa, "new-y").await.0,
+        StatusCode::NOT_FOUND
+    );
 }
