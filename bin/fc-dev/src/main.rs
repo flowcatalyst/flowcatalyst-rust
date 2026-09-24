@@ -469,12 +469,32 @@ async fn main() -> Result<()> {
 
     // Dev databases may hold secrets (e.g. IDP client secrets) stored in
     // plaintext before encrypt-on-write; reads now refuse those. Encrypt
-    // them with the dev key. Idempotent, counts only, non-fatal.
+    // them with the dev key — but only in the embedded Postgres fc-dev
+    // started itself. The default --database-url (localhost:5432) is also
+    // where an SSH tunnel to a real database usually lands, and encrypting
+    // its secrets with the dev key would make them unreadable to the real
+    // server. Anywhere else this is a dry run that only reports counts.
+    #[cfg(feature = "embedded-db")]
+    let own_database = embedded_db.is_some();
+    #[cfg(not(feature = "embedded-db"))]
+    let own_database = false;
     if let Some(enc) = fc_platform::shared::encryption_service::EncryptionService::from_env() {
-        match fc_platform::shared::secret_backfill::backfill_secrets(&pg_pool, &enc, true).await {
-            Ok(reports) => {
+        match fc_platform::shared::secret_backfill::backfill_secrets(&pg_pool, &enc, own_database)
+            .await
+        {
+            Ok(reports) if own_database => {
                 for r in reports.iter().filter(|r| r.encrypted > 0) {
                     info!(column = %r.column, encrypted = r.encrypted, "Encrypted plaintext secrets");
+                }
+            }
+            Ok(reports) => {
+                for r in reports.iter().filter(|r| r.unencrypted > 0) {
+                    warn!(
+                        column = %r.column,
+                        unencrypted = r.unencrypted,
+                        "Plaintext secrets in an external database; not touching them from fc-dev \
+                         (run `fc-server backfill-secrets` with that deployment's key)"
+                    );
                 }
             }
             Err(e) => {
