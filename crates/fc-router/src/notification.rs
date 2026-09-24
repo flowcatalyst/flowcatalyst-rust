@@ -61,19 +61,6 @@ impl Default for NotificationConfig {
     }
 }
 
-/// No-op notification service for when notifications are disabled
-pub struct NoOpNotificationService;
-
-#[async_trait]
-impl NotificationService for NoOpNotificationService {
-    async fn notify_warning(&self, _warning: &Warning) {}
-    async fn notify_critical_error(&self, _message: &str, _source: &str) {}
-    async fn notify_system_event(&self, _event_type: &str, _message: &str) {}
-    fn is_enabled(&self) -> bool {
-        false
-    }
-}
-
 /// Microsoft Teams webhook notification service
 pub struct TeamsWebhookNotificationService {
     client: reqwest::Client,
@@ -832,8 +819,11 @@ impl NotificationService for BatchingNotificationService {
     }
 }
 
-/// Create notification service based on configuration
-pub fn create_notification_service(config: &NotificationConfig) -> Arc<dyn NotificationService> {
+/// Create notification service based on configuration. `None` when no
+/// notification channel is configured.
+pub fn create_notification_service(
+    config: &NotificationConfig,
+) -> Option<Arc<dyn NotificationService>> {
     let mut delegates: Vec<Arc<dyn NotificationService>> = Vec::new();
 
     if config.teams_enabled {
@@ -866,27 +856,18 @@ pub fn create_notification_service(config: &NotificationConfig) -> Arc<dyn Notif
     }
 
     if delegates.is_empty() {
-        info!("No notification channels configured - using NoOpNotificationService");
-        return Arc::new(NoOpNotificationService);
+        info!("No notification channels configured");
+        return None;
     }
 
-    if config.batch_interval_seconds > 0 {
-        Arc::new(BatchingNotificationService::new(
-            delegates,
-            config.min_severity,
-        ))
-    } else {
-        // If only one delegate and no batching, return it directly
-        if delegates.len() == 1 {
-            delegates.remove(0)
-        } else {
-            // Multiple delegates but no batching - wrap anyway
-            Arc::new(BatchingNotificationService::new(
-                delegates,
-                config.min_severity,
-            ))
-        }
+    if config.batch_interval_seconds == 0 && delegates.len() == 1 {
+        // One delegate and no batching: return it directly
+        return delegates.pop();
     }
+    Some(Arc::new(BatchingNotificationService::new(
+        delegates,
+        config.min_severity,
+    )))
 }
 
 /// Result of creating a notification service with scheduler
@@ -993,12 +974,6 @@ mod tests {
     }
 
     #[test]
-    fn test_no_op_service() {
-        let service = NoOpNotificationService;
-        assert!(!service.is_enabled());
-    }
-
-    #[test]
     fn test_teams_service_disabled() {
         let service =
             TeamsWebhookNotificationService::new("https://example.com/webhook".to_string(), false);
@@ -1008,8 +983,7 @@ mod tests {
     #[test]
     fn test_create_notification_service_disabled() {
         let config = NotificationConfig::default();
-        let service = create_notification_service(&config);
-        assert!(!service.is_enabled());
+        assert!(create_notification_service(&config).is_none());
     }
 
     #[test]
@@ -1019,7 +993,7 @@ mod tests {
             teams_webhook_url: Some("https://example.com/webhook".to_string()),
             ..Default::default()
         };
-        let service = create_notification_service(&config);
+        let service = create_notification_service(&config).expect("teams channel configured");
         assert!(service.is_enabled());
     }
 }

@@ -71,7 +71,7 @@ impl Default for WarningServiceConfig {
 pub struct WarningService {
     warnings: RwLock<HashMap<String, Warning>>,
     config: WarningServiceConfig,
-    notification_service: RwLock<Option<Arc<dyn NotificationService>>>,
+    notification_service: Option<Arc<dyn NotificationService>>,
 }
 
 impl WarningService {
@@ -79,14 +79,8 @@ impl WarningService {
         Self {
             warnings: RwLock::new(HashMap::new()),
             config,
-            notification_service: RwLock::new(None),
+            notification_service: None,
         }
-    }
-
-    /// Set the notification service for sending alerts
-    pub fn set_notification_service(&self, service: Arc<dyn NotificationService>) {
-        *self.notification_service.write() = Some(service);
-        info!("Notification service attached to WarningService");
     }
 
     /// Create a new warning service with notification support
@@ -97,7 +91,7 @@ impl WarningService {
         Self {
             warnings: RwLock::new(HashMap::new()),
             config,
-            notification_service: RwLock::new(Some(notification)),
+            notification_service: Some(notification),
         }
     }
 
@@ -136,8 +130,7 @@ impl WarningService {
         // **Joined by:** nobody — we don't block `add_warning` on
         // notification delivery, since notification failures (Teams /
         // email transient errors) must not stall warning ingestion.
-        if let Some(ref notification_service) = *self.notification_service.read() {
-            let ns = notification_service.clone();
+        if let Some(ns) = self.notification_service.clone() {
             tokio::spawn(async move {
                 ns.notify_warning(&warning).await;
             });
@@ -389,7 +382,7 @@ impl WarningService {
         Self {
             warnings: RwLock::new(HashMap::new()),
             config: WarningServiceConfig::default(),
-            notification_service: RwLock::new(None),
+            notification_service: None,
         }
     }
 }

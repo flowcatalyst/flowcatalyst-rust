@@ -25,7 +25,7 @@ use fc_queue::QueueScheme;
 use fc_router::{
     api::create_router_with_options, create_notification_service_with_scheduler, ConfigSyncConfig,
     ConfigSyncService, ConsumerFactory, HealthService, HealthServiceConfig, HttpMediatorConfig,
-    LifecycleConfig, LifecycleManager, NotificationConfig, QueueManager, StandbyProcessor,
+    LifecycleConfig, LifecycleManager, NotificationConfig, QueueManager, StandbyAwareProcessor,
     StandbyRouterConfig, WarningService, WarningServiceConfig,
 };
 use std::sync::Arc;
@@ -68,28 +68,38 @@ async fn main() -> Result<()> {
         aws_sdk_sqs::Client::new(&config)
     };
 
-    // 2. Initialize Warning and Health Services
-    let warning_service = Arc::new(WarningService::new(WarningServiceConfig::default()));
+    // 2. Initialize Notification Service (Teams webhooks), then the Warning
+    //    Service that feeds it, and the Health Service.
+    let notification_config = load_notification_config();
+    let notification_scheduler = create_notification_service_with_scheduler(&notification_config);
+    let warning_service = Arc::new(match notification_scheduler {
+        Some(ref ns) => {
+            info!(
+                batch_interval = notification_config.batch_interval_seconds,
+                "Notification service enabled (Teams webhook with batching)"
+            );
+            WarningService::with_notification(WarningServiceConfig::default(), ns.service.clone())
+        }
+        None => {
+            info!("Notification service disabled - no channels configured");
+            WarningService::new(WarningServiceConfig::default())
+        }
+    });
     let health_service = Arc::new(HealthService::new(
         HealthServiceConfig::default(),
         warning_service.clone(),
     ));
 
-    // 2b. Initialize Notification Service (Teams webhooks)
-    let notification_config = load_notification_config();
-    let notification_scheduler = create_notification_service_with_scheduler(&notification_config);
-    if let Some(ref ns) = notification_scheduler {
-        info!(
-            batch_interval = notification_config.batch_interval_seconds,
-            "Notification service enabled (Teams webhook with batching)"
-        );
-        // Wire up notification service to warning service
-        warning_service.set_notification_service(ns.service.clone());
-    } else {
-        info!("Notification service disabled - no channels configured");
-    }
+    // 3. R-13/R-16: FC_ROUTER_STRICT_ROUTING (default false). Operational
+    // decision, not a code change — flip on once every producer is
+    // confirmed to send poolCode/dispatchMode/messageGroupId on every
+    // message.
+    let strict_routing = std::env::var("FC_ROUTER_STRICT_ROUTING")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    info!(strict_routing, "Strict routing gate set");
 
-    // 3. Create QueueManager. Mediator *config* is passed (not a singleton);
+    // 4. Create QueueManager. Mediator *config* is passed (not a singleton);
     //    each pool gets its own HttpMediator + connection pool.
     let queue_manager = Arc::new(
         QueueManager::builder(HttpMediatorConfig::production())
@@ -98,17 +108,9 @@ async fn main() -> Result<()> {
             .consumer_factory(Arc::new(SchemeConsumerFactory {
                 sqs_client: sqs_client.clone(),
             }))
+            .strict_routing(strict_routing)
             .build(),
     );
-
-    // 4b. R-13/R-16: FC_ROUTER_STRICT_ROUTING (default false). Operational
-    // decision, not a code change — flip on once every producer is
-    // confirmed to send poolCode/dispatchMode/messageGroupId on every
-    // message.
-    let strict_routing = std::env::var("FC_ROUTER_STRICT_ROUTING")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
-    queue_manager.set_strict_routing(strict_routing);
 
     // 5. Initialize Standby Processor (Active/Passive HA)
     let standby_config = load_standby_config();
@@ -118,7 +120,7 @@ async fn main() -> Result<()> {
             lock_key = %standby_config.lock_key,
             "Initializing standby mode (Active/Passive HA)"
         );
-        match StandbyProcessor::new(standby_config).await {
+        match StandbyAwareProcessor::new(standby_config).await {
             Ok(processor) => {
                 if let Err(e) = processor.start().await {
                     error!(error = %e, "Failed to start standby processor");
@@ -290,7 +292,7 @@ async fn main() -> Result<()> {
     // Wire periodic idle-eviction against the manager's shared breaker registry.
     // Without this the eviction task never runs and shared breakers (PR1) grow
     // unbounded; the registry here is the same one the pools record into.
-    lifecycle.set_circuit_breaker_registry(
+    lifecycle.spawn_circuit_breaker_eviction(
         queue_manager.circuit_breaker_registry().clone(),
         cb_max_idle,
     );

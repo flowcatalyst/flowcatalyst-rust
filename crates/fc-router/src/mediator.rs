@@ -226,17 +226,6 @@ impl HttpMediator {
         )
     }
 
-    /// Replace the warning service post-construction. Rebuilds the
-    /// per-host pool registry; existing slots and their open connections
-    /// are dropped, so prefer `with_warning_service` at construction time.
-    pub fn set_warning_service(&mut self, warning_service: Arc<WarningService>) {
-        *self = Self::build(
-            self.inner.config.clone(),
-            warning_service,
-            self.inner.breakers.clone(),
-        );
-    }
-
     /// Attach the shared circuit breaker registry every pool's mediator
     /// must record into (ledger: breaker admission/recording centralised
     /// here rather than at the pool call site — see [`Mediator::mediate`]'s

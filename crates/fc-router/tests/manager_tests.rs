@@ -367,10 +367,7 @@ async fn route_batch_reports_pool_at_capacity_warning_once_per_transition() {
         vec![create_queued_message("over-1", "SATURATED", "over-queue")],
     ));
     let batch = consumer.poll(10).await.unwrap();
-    manager
-        .route_batch(batch, consumer.clone())
-        .await
-        .unwrap();
+    manager.route_batch(batch, consumer.clone()).await.unwrap();
 
     let warnings_after_first = manager
         .warning_service()
@@ -523,18 +520,13 @@ async fn strict_routing_off_by_default() {
 #[tokio::test]
 async fn strict_routing_acks_empty_pool_code_without_delivery() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
-        mediator.clone(),
-    ));
-    manager.set_strict_routing(true);
-
-    let msg = message_with(
-        "m1",
-        "",
-        fc_common::DispatchMode::Immediate,
-        true,
-        None,
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator.clone())
+            .strict_routing(true)
+            .build(),
     );
+
+    let msg = message_with("m1", "", fc_common::DispatchMode::Immediate, true, None);
     let consumer = Arc::new(MockQueueConsumer::with_messages(
         "q",
         vec![queued_with(msg)],
@@ -547,9 +539,21 @@ async fn strict_routing_acks_empty_pool_code_without_delivery() {
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    assert_eq!(mediator.call_count(), 0, "malformed message must never be delivered");
-    assert_eq!(consumer.acked.lock().len(), 1, "malformed message must be ACKed");
-    assert_eq!(consumer.nacked.lock().len(), 0, "malformed message must never be NACKed");
+    assert_eq!(
+        mediator.call_count(),
+        0,
+        "malformed message must never be delivered"
+    );
+    assert_eq!(
+        consumer.acked.lock().len(),
+        1,
+        "malformed message must be ACKed"
+    );
+    assert_eq!(
+        consumer.nacked.lock().len(),
+        0,
+        "malformed message must never be NACKed"
+    );
 }
 
 /// Strict on: a message with no wire dispatchMode (unspecified) is ACKed,
@@ -558,10 +562,11 @@ async fn strict_routing_acks_empty_pool_code_without_delivery() {
 #[tokio::test]
 async fn strict_routing_acks_unspecified_dispatch_mode_without_delivery() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
-        mediator.clone(),
-    ));
-    manager.set_strict_routing(true);
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator.clone())
+            .strict_routing(true)
+            .build(),
+    );
     manager
         .apply_config(RouterConfig {
             processing_pools: vec![PoolConfig {
@@ -603,10 +608,11 @@ async fn strict_routing_acks_unspecified_dispatch_mode_without_delivery() {
 #[tokio::test]
 async fn strict_routing_acks_ordered_mode_without_group_id() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
-        mediator.clone(),
-    ));
-    manager.set_strict_routing(true);
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator.clone())
+            .strict_routing(true)
+            .build(),
+    );
     manager
         .apply_config(RouterConfig {
             processing_pools: vec![PoolConfig {
@@ -649,10 +655,11 @@ async fn strict_routing_acks_ordered_mode_without_group_id() {
 #[tokio::test]
 async fn strict_routing_delivers_well_formed_message() {
     let mediator = Arc::new(MockMediator::new());
-    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
-        mediator.clone(),
-    ));
-    manager.set_strict_routing(true);
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator.clone())
+            .strict_routing(true)
+            .build(),
+    );
     manager
         .apply_config(RouterConfig {
             processing_pools: vec![PoolConfig {
@@ -684,7 +691,11 @@ async fn strict_routing_delivers_well_formed_message() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    assert_eq!(mediator.call_count(), 1, "well-formed message must be delivered");
+    assert_eq!(
+        mediator.call_count(),
+        1,
+        "well-formed message must be delivered"
+    );
     assert_eq!(consumer.acked.lock().len(), 1);
 }
 
@@ -1264,7 +1275,10 @@ async fn restart_consumer_serialises_against_in_flight_reload() {
     let restarted = manager.restart_consumer("q1").await;
     let elapsed = start.elapsed();
 
-    assert!(restarted, "restart should succeed once the reload releases the lock");
+    assert!(
+        restarted,
+        "restart should succeed once the reload releases the lock"
+    );
     assert!(
         elapsed >= Duration::from_millis(800),
         "restart_consumer should have waited for the in-flight reload, took {:?}",
@@ -1346,8 +1360,7 @@ impl ConsumerFactory for FlakyConsumerFactory {
     ) -> fc_router::Result<Arc<dyn QueueConsumer>> {
         let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
         if call_index != 1 {
-            Ok(Arc::new(MockQueueConsumer::new(&config.name))
-                as Arc<dyn QueueConsumer>)
+            Ok(Arc::new(MockQueueConsumer::new(&config.name)) as Arc<dyn QueueConsumer>)
         } else {
             // Cheapest way to manufacture a `RouterError` from outside the
             // crate: `RouterError::Serialization` has a `#[from]` conversion
@@ -1975,10 +1988,7 @@ async fn displaced_draining_predecessor_stays_visible_and_gets_released_at_shutd
         vec![queued_with(m3)],
     ));
     let poll3 = consumer3.poll(10).await.unwrap();
-    manager
-        .route_batch(poll3, consumer3.clone())
-        .await
-        .unwrap();
+    manager.route_batch(poll3, consumer3.clone()).await.unwrap();
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert!(
         manager

@@ -6,8 +6,10 @@
 //!
 //! # Strategies
 //!
-//! - `NoopTrafficStrategy`: No-op, always considers itself registered (default)
 //! - `AwsAlbTrafficStrategy`: Manages AWS ALB target group registration (requires `alb` feature)
+//!
+//! With no strategy configured (`AppState::traffic_strategy` is `None`) the
+//! instance is treated as always registered.
 
 use async_trait::async_trait;
 #[cfg(feature = "alb")]
@@ -50,33 +52,6 @@ pub trait TrafficStrategy: Send + Sync {
 
     /// Get the name of this strategy type (e.g., "NONE", "AWS_ALB").
     fn strategy_type(&self) -> &str;
-}
-
-/// No-op traffic strategy for when traffic management is disabled.
-///
-/// Always considers itself registered and all operations succeed immediately.
-/// This is the default strategy when no ALB integration is configured.
-pub struct NoopTrafficStrategy;
-
-#[async_trait]
-impl TrafficStrategy for NoopTrafficStrategy {
-    async fn register(&self) -> Result<(), TrafficError> {
-        debug!("NoopTrafficStrategy: register (no-op)");
-        Ok(())
-    }
-
-    async fn deregister(&self) -> Result<(), TrafficError> {
-        debug!("NoopTrafficStrategy: deregister (no-op)");
-        Ok(())
-    }
-
-    fn is_registered(&self) -> bool {
-        true
-    }
-
-    fn strategy_type(&self) -> &str {
-        "NONE"
-    }
 }
 
 // ============================================================================

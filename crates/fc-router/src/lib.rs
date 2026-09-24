@@ -55,7 +55,7 @@ pub use mediator::{HttpMediator, HttpMediatorConfig, HttpVersion, Mediator, Retr
 pub use metrics::{MetricsConfig, PoolMetricsCollector};
 pub use notification::{
     create_notification_service, create_notification_service_with_scheduler,
-    BatchingNotificationService, NoOpNotificationService, NotificationConfig, NotificationService,
+    BatchingNotificationService, NotificationConfig, NotificationService,
     NotificationServiceWithScheduler, TeamsWebhookNotificationService,
 };
 #[cfg(feature = "email")]
@@ -66,10 +66,9 @@ pub use pool::{
 };
 pub use queue_health_monitor::{spawn_queue_health_monitor, QueueHealthConfig, QueueHealthMonitor};
 pub use standby::{
-    spawn_leadership_monitor, LeadershipStatus, StandbyAwareProcessor, StandbyProcessor,
-    StandbyRouterConfig,
+    spawn_leadership_monitor, LeadershipStatus, StandbyAwareProcessor, StandbyRouterConfig,
 };
-pub use traffic::{spawn_traffic_watcher, NoopTrafficStrategy, TrafficError, TrafficStrategy};
+pub use traffic::{spawn_traffic_watcher, TrafficError, TrafficStrategy};
 #[cfg(feature = "alb")]
 pub use traffic::{AlbTrafficConfig, AwsAlbTrafficStrategy};
 pub use warning::{WarningService, WarningServiceConfig};

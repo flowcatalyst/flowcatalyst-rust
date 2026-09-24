@@ -523,7 +523,7 @@ async fn main() -> Result<()> {
     );
     // Wire periodic idle-eviction against the manager's shared breaker registry
     // (see fc-router main.rs) — otherwise shared breakers grow unbounded.
-    lifecycle.set_circuit_breaker_registry(
+    lifecycle.spawn_circuit_breaker_eviction(
         queue_manager.circuit_breaker_registry().clone(),
         cb_max_idle,
     );
