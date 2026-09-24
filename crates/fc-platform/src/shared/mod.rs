@@ -48,6 +48,7 @@ pub mod encryption_service;
 pub mod integrity_scan;
 pub mod projections_service;
 pub mod role_sync_service;
+pub mod secret_backfill;
 
 // Re-export commonly used items
 pub use api_common::{PaginatedResponse, PaginationParams};

@@ -4,6 +4,12 @@
 //! Background processors (router, scheduler, stream, outbox) can optionally
 //! run in standby mode with Redis leader election — only the leader processes.
 //!
+//! ## Subcommands
+//!
+//! `fc-server backfill-secrets [--apply]` encrypts stored secrets written
+//! before encrypt-on-write, then exits. Dry run (counts only) unless
+//! `--apply` is given.
+//!
 //! ## Environment Variables
 //!
 //! ### Core
@@ -128,11 +134,51 @@ async fn resolve_database_url() -> Result<(
     Ok((url, None))
 }
 
+// ── Maintenance ──────────────────────────────────────────────────────────────
+
+/// `fc-server backfill-secrets [--apply]`: encrypt stored secrets that
+/// predate encrypt-on-write (see `fc_platform::shared::secret_backfill`).
+/// Dry run by default; prints counts per column, never values. Needs the
+/// same `FLOWCATALYST_APP_KEY` as the server and connects with the server's
+/// database settings. It does not run migrations.
+async fn backfill_secrets(args: &[String]) -> Result<()> {
+    use fc_platform::shared::encryption_service::EncryptionService;
+    use fc_platform::shared::secret_backfill;
+
+    let apply = match args {
+        [] => false,
+        [flag] if flag == "--apply" => true,
+        _ => anyhow::bail!("usage: fc-server backfill-secrets [--apply]"),
+    };
+    let enc = EncryptionService::from_env().ok_or_else(|| {
+        anyhow::anyhow!("FLOWCATALYST_APP_KEY is not set (or invalid); it is required to encrypt")
+    })?;
+
+    let (database_url, _) = resolve_database_url().await?;
+    let pool = fc_platform::shared::database::create_pool(&database_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {}", e))?;
+
+    let reports = secret_backfill::backfill_secrets(&pool, &enc, apply)
+        .await
+        .map_err(|e| anyhow::anyhow!("Secret backfill failed: {}", e))?;
+    for line in secret_backfill::format_report(&reports, apply) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<()> {
     fc_common::logging::init_logging("fc-server");
+
+    // Maintenance subcommands run instead of the server.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("backfill-secrets") {
+        return backfill_secrets(&args[1..]).await;
+    }
 
     info!("Starting FlowCatalyst Unified Server");
 

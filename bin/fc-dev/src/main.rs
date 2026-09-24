@@ -467,6 +467,22 @@ async fn main() -> Result<()> {
     // left orphan junction rows behind. Non-fatal; operator-visible.
     fc_platform::shared::integrity_scan::run(&pg_pool).await;
 
+    // Dev databases may hold secrets (e.g. IDP client secrets) stored in
+    // plaintext before encrypt-on-write; reads now refuse those. Encrypt
+    // them with the dev key. Idempotent, counts only, non-fatal.
+    if let Some(enc) = fc_platform::shared::encryption_service::EncryptionService::from_env() {
+        match fc_platform::shared::secret_backfill::backfill_secrets(&pg_pool, &enc, true).await {
+            Ok(reports) => {
+                for r in reports.iter().filter(|r| r.encrypted > 0) {
+                    info!(column = %r.column, encrypted = r.encrypted, "Encrypted plaintext secrets");
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Secret backfill failed; plaintext secrets stay unreadable")
+            }
+        }
+    }
+
     // 2. Initialise the embedded queue on the same Postgres pool. Queue
     //    tables live alongside the control-plane tables — one DB to back
     //    up, one dialect to reason about.

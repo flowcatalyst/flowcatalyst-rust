@@ -808,3 +808,139 @@ async fn test_subscription_with_event_types() {
     assert_eq!(found.event_types.len(), 1);
     assert_eq!(found.event_types[0].event_type_code, "order:created");
 }
+
+// ─── Secret Backfill ──────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_secret_backfill_encrypts_plaintext_idempotently() {
+    use fc_platform::shared::encryption_service::EncryptionService;
+    use fc_platform::shared::secret_backfill::backfill_secrets;
+    use fc_platform::{
+        ConfigValueType, IdentityProvider, IdentityProviderRepository, IdentityProviderType,
+        PlatformConfig, PlatformConfigRepository, WebhookCredentials,
+    };
+
+    let (pool, _container) = setup_test_db().await;
+    let enc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+
+    // Legacy plaintext rows, plus rows the backfill must leave alone.
+    let mut idp = IdentityProvider::new("okta", "Okta", IdentityProviderType::Oidc);
+    idp.oidc_client_secret_ref = Some("idp-plain".to_string());
+    IdentityProviderRepository::new(&pool)
+        .insert(&idp)
+        .await
+        .unwrap();
+    let mut idp_done = IdentityProvider::new("entra", "Entra", IdentityProviderType::Oidc);
+    let already = enc.encrypt_ref("idp-done").unwrap();
+    idp_done.oidc_client_secret_ref = Some(already.clone());
+    IdentityProviderRepository::new(&pool)
+        .insert(&idp_done)
+        .await
+        .unwrap();
+
+    let mut sa = ServiceAccount::new("legacy-svc", "Legacy");
+    sa.webhook_credentials = WebhookCredentials::bearer_token("fc_plaintoken");
+    sa.webhook_credentials.signing_secret = Some("plain-signing".to_string());
+    ServiceAccountRepository::new(&pool)
+        .insert(&sa)
+        .await
+        .unwrap();
+
+    let config_repo = PlatformConfigRepository::new(&pool);
+    let mut secret = PlatformConfig::new("orders", "email", "smtp_password", "cfg-plain");
+    secret.value_type = ConfigValueType::Secret;
+    config_repo.insert(&secret).await.unwrap();
+    let plain = PlatformConfig::new("orders", "email", "smtp_host", "smtp.example.com");
+    config_repo.insert(&plain).await.unwrap();
+
+    let counts = |reports: &[fc_platform::shared::secret_backfill::ColumnReport]| {
+        reports
+            .iter()
+            .map(|r| (r.column.clone(), r.unencrypted, r.encrypted))
+            .collect::<Vec<_>>()
+    };
+    let expected_found = |encrypted: u64| {
+        vec![
+            (
+                "oauth_identity_providers.oidc_client_secret_ref".to_string(),
+                1,
+                encrypted,
+            ),
+            (
+                "iam_service_accounts.wh_auth_token_ref".to_string(),
+                1,
+                encrypted,
+            ),
+            (
+                "iam_service_accounts.wh_signing_secret_ref".to_string(),
+                1,
+                encrypted,
+            ),
+            ("app_platform_configs.value".to_string(), 1, encrypted),
+        ]
+    };
+
+    // Dry run: counts, writes nothing.
+    let dry = backfill_secrets(&pool, &enc, false).await.unwrap();
+    assert_eq!(counts(&dry), expected_found(0));
+    let dry_again = backfill_secrets(&pool, &enc, false).await.unwrap();
+    assert_eq!(counts(&dry_again), expected_found(0));
+
+    // Apply: one rewrite per plaintext value.
+    let applied = backfill_secrets(&pool, &enc, true).await.unwrap();
+    assert_eq!(counts(&applied), expected_found(1));
+
+    let stored = |sql: &'static str, id: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (Option<String>,)>(sql)
+                .bind(id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+                .and_then(|(v,)| v)
+                .unwrap()
+        }
+    };
+    let idp_secret = stored(
+        "SELECT oidc_client_secret_ref FROM oauth_identity_providers WHERE id = $1",
+        idp.id.clone(),
+    )
+    .await;
+    assert_eq!(enc.decrypt_ref(&idp_secret).unwrap(), "idp-plain");
+    let idp_done_secret = stored(
+        "SELECT oidc_client_secret_ref FROM oauth_identity_providers WHERE id = $1",
+        idp_done.id.clone(),
+    )
+    .await;
+    assert_eq!(idp_done_secret, already, "encrypted rows are untouched");
+    let token = stored(
+        "SELECT wh_auth_token_ref FROM iam_service_accounts WHERE id = $1",
+        sa.id.clone(),
+    )
+    .await;
+    assert_eq!(enc.decrypt_ref(&token).unwrap(), "fc_plaintoken");
+    let signing = stored(
+        "SELECT wh_signing_secret_ref FROM iam_service_accounts WHERE id = $1",
+        sa.id.clone(),
+    )
+    .await;
+    assert_eq!(enc.decrypt_ref(&signing).unwrap(), "plain-signing");
+    let cfg = stored(
+        "SELECT value FROM app_platform_configs WHERE id = $1",
+        secret.id.clone(),
+    )
+    .await;
+    assert_eq!(enc.decrypt_ref(&cfg).unwrap(), "cfg-plain");
+    let plain_cfg = stored(
+        "SELECT value FROM app_platform_configs WHERE id = $1",
+        plain.id.clone(),
+    )
+    .await;
+    assert_eq!(plain_cfg, "smtp.example.com", "PLAIN config is untouched");
+
+    // Idempotent: nothing left.
+    let again = backfill_secrets(&pool, &enc, true).await.unwrap();
+    assert!(again.iter().all(|r| r.unencrypted == 0 && r.encrypted == 0));
+}
