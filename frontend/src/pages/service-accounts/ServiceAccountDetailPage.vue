@@ -14,6 +14,7 @@ import type { PrincipalScope } from "@/api/users";
 import { rolesApi, type Role } from "@/api/roles";
 import { clientsApi, type Client } from "@/api/clients";
 import { useReturnTo } from "@/composables/useReturnTo";
+import { assignmentSourceSeverity } from "@/utils/roleAssignment";
 
 const route = useRoute();
 const { returnTo } = useReturnTo();
@@ -548,7 +549,7 @@ async function deleteServiceAccount() {
             <template #body="{ data }">
               <Tag
                 :value="data.assignmentSource"
-                :severity="data.assignmentSource === 'MANUAL' ? 'info' : 'secondary'"
+                :severity="assignmentSourceSeverity(data.assignmentSource)"
               />
             </template>
           </Column>

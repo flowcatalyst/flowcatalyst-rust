@@ -15,6 +15,7 @@ import {
 import { clientsApi, type Client } from "@/api/clients";
 import { rolesApi, type Role } from "@/api/roles";
 import { getErrorMessage } from "@/utils/errors";
+import { assignmentSourceSeverity } from "@/utils/roleAssignment";
 import { useReturnTo } from "@/composables/useReturnTo";
 
 const route = useRoute();
@@ -856,7 +857,7 @@ function goBack() {
             <template #body="{ data }">
               <Tag
                 :value="data.assignmentSource"
-                :severity="data.assignmentSource === 'MANUAL' ? 'info' : 'secondary'"
+                :severity="assignmentSourceSeverity(data.assignmentSource)"
               />
             </template>
           </Column>
