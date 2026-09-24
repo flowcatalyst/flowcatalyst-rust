@@ -19,6 +19,7 @@ use fc_function_abi::FunctionAddress;
 use tokio::sync::Notify;
 
 use crate::desired::Entry;
+use crate::invoke::Invoker;
 
 /// The heartbeat error for a runtime with no loader on this host.
 pub const RUNTIME_UNSUPPORTED: &str = "RUNTIME_UNSUPPORTED";
@@ -26,10 +27,10 @@ pub const RUNTIME_UNSUPPORTED: &str = "RUNTIME_UNSUPPORTED";
 /// How long [`LoadedFunction::close`] waits for in-flight calls.
 pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// One loaded version, as its runtime sees it. Invocation is the runtime's
-/// own business (H4/H5); the reconciler only ever closes it.
+/// One loaded version, as its runtime sees it. The listeners call it
+/// through [`Invoker`]; the reconciler only ever closes it.
 #[async_trait]
-pub trait FunctionInstance: Send + Sync + 'static {
+pub trait FunctionInstance: Invoker + Send + Sync + 'static {
     /// Releases everything the runtime holds for this version. Called once,
     /// after every in-flight call has drained or the drain timed out.
     async fn close(&self);
@@ -220,6 +221,16 @@ mod tests {
     use super::*;
 
     struct Probe(AtomicBool);
+
+    #[async_trait]
+    impl crate::invoke::Invoker for Probe {
+        async fn invoke(
+            &self,
+            _context: crate::invoke::InvocationContext,
+        ) -> Result<fc_function_abi::Response, crate::invoke::InvokeError> {
+            Ok(fc_function_abi::Response::ack())
+        }
+    }
 
     #[async_trait]
     impl FunctionInstance for Probe {

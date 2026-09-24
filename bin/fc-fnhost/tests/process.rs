@@ -62,6 +62,8 @@ fn base_env(command: &mut Command, url: &str, cache: &std::path::Path) {
         .env("FC_FN_SIGNATURES", "off")
         .env("FLOWCATALYST_DEV_MODE", "true")
         .env("FC_METRICS_PORT", "0")
+        .env("FC_FN_PORT", "0")
+        .env("FC_FN_PUBLIC_PORT", "0")
         .env("FC_FN_CACHE_DIR", cache)
         .env("FC_LOG_FORMAT", "json");
 }
@@ -101,6 +103,11 @@ async fn exit_after_start_runs_a_real_reconcile_then_exits_0() {
         .find(|l| l["msg"] == "function host started")
         .expect("a started line");
     assert_eq!(started["host_id"], "proc-host");
+    assert!(started["port"].as_u64().is_some_and(|p| p > 0), "{started}");
+    assert!(
+        started["public_port"].as_u64().is_some_and(|p| p > 0),
+        "{started}"
+    );
     assert_eq!(started["level"], "INFO");
     assert_eq!(started["logger"], "fc_fnhost_core::host");
 }
@@ -114,11 +121,14 @@ async fn sigterm_drains_and_exits_0() {
     base_env(&mut command, &url, cache.path());
     let mut child = command.stderr(Stdio::piped()).spawn().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let port = tokio::task::spawn_blocking(move || {
+    let (port, function_port) = tokio::task::spawn_blocking(move || {
         for line in BufReader::new(stderr).lines() {
             let line: serde_json::Value = serde_json::from_str(&line.unwrap()).unwrap();
             if line["msg"] == "function host started" {
-                return line["metrics_port"].as_u64().unwrap();
+                return (
+                    line["metrics_port"].as_u64().unwrap(),
+                    line["port"].as_u64().unwrap(),
+                );
             }
         }
         panic!("no started line");
@@ -129,6 +139,17 @@ async fn sigterm_drains_and_exits_0() {
         .await
         .unwrap();
     assert_eq!(ready.status(), 200);
+    // the function listener answers with Java's contract
+    let unknown = reqwest::get(format!(
+        "http://127.0.0.1:{function_port}/functions/app.svc.nope/x"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(unknown.status(), 404);
+    assert_eq!(
+        unknown.text().await.unwrap(),
+        r#"{"error":"FUNCTION_NOT_FOUND","message":"no such function"}"#
+    );
     Command::new("kill")
         .arg("-TERM")
         .arg(child.id().to_string())

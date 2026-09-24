@@ -179,6 +179,16 @@ mod tests {
     struct Nothing;
 
     #[async_trait]
+    impl crate::invoke::Invoker for Nothing {
+        async fn invoke(
+            &self,
+            _context: crate::invoke::InvocationContext,
+        ) -> Result<fc_function_abi::Response, crate::invoke::InvokeError> {
+            Ok(fc_function_abi::Response::ack())
+        }
+    }
+
+    #[async_trait]
     impl FunctionInstance for Nothing {
         async fn close(&self) {}
         fn as_any(&self) -> &dyn std::any::Any {

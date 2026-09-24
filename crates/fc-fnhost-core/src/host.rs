@@ -37,9 +37,9 @@ use crate::reconciler::Reconciler;
 use crate::registry::FunctionRegistry;
 use crate::token::TokenSource;
 
-/// The function listeners' hook (H5 implements the private `:8080` and
-/// public `:8081` listeners behind it). A host with no listener is fine:
-/// it reconciles and heartbeats, and counts as bound.
+/// The function listeners' hook ([`crate::listener::FnListener`] is the
+/// private `:8080` and public `:8081` listeners behind it). A host with no
+/// listener is fine: it reconciles and heartbeats, and counts as bound.
 #[async_trait]
 pub trait Listener: Send + Sync {
     /// Binds and starts serving; returns once listening.
@@ -50,10 +50,19 @@ pub trait Listener: Send + Sync {
     ) -> std::io::Result<()>;
     /// The bound private port, once started.
     fn port(&self) -> Option<u16>;
+    /// Whether every socket is still accepting; `/ready` reports
+    /// `LISTENER_DOWN` otherwise.
+    fn is_serving(&self) -> bool {
+        true
+    }
     /// Stops accepting new calls.
     async fn drain(&self);
     /// Waits up to `timeout` for in-flight calls, then closes.
     async fn close(&self, timeout: Duration);
+    /// The bound public port, when there is a public listener.
+    fn public_port(&self) -> Option<u16> {
+        None
+    }
 }
 
 /// Everything [`FnHost`] needs, built by [`FnHost::new`] from the
@@ -190,6 +199,11 @@ impl FnHost {
         self.listener.as_ref().and_then(|l| l.port())
     }
 
+    /// The public listener's bound port, if there is one.
+    pub fn public_port(&self) -> Option<u16> {
+        self.listener.as_ref().and_then(|l| l.public_port())
+    }
+
     /// Asks the loop for a reconcile now (coalesced).
     pub fn trigger_reconcile(&self) {
         self.reconcile_loop.trigger();
@@ -198,13 +212,17 @@ impl FnHost {
     pub async fn start(&mut self) -> std::io::Result<()> {
         let loop_for_probe = self.reconcile_loop.clone();
         let bound = self.listener_bound.clone();
+        let listener_for_probe = self.listener.clone();
         let started = self.startup_complete.clone();
         self.observability = Some(Observability::start(
             self.env.metrics_port,
             Probes {
                 reconciler: self.reconciler.clone(),
                 metrics: self.metrics.clone(),
-                listener_bound: Arc::new(move || bound.load(Ordering::SeqCst)),
+                listener_bound: Arc::new(move || {
+                    bound.load(Ordering::SeqCst)
+                        && listener_for_probe.as_ref().is_none_or(|l| l.is_serving())
+                }),
                 reconcile_loop_alive: Arc::new(move || loop_for_probe.is_alive()),
                 startup_complete: Arc::new(move || started.load(Ordering::SeqCst)),
             },
@@ -255,11 +273,12 @@ impl FnHost {
 /// The process: logging, environment (exit 2 with one line naming every
 /// bad variable), start, then run until `shutdown` resolves, or exit right
 /// after start with `FC_EXIT_AFTER_START`. Returns the exit code.
+/// `listener` builds the function listener from the loaded environment.
 pub async fn run(
     env_reader: EnvReader,
     err: &mut (dyn Write + Send),
     loaders: Loaders,
-    listener: Option<Arc<dyn Listener>>,
+    listener: impl FnOnce(&HostEnv) -> Option<Arc<dyn Listener>>,
     shutdown: impl Future<Output = ()>,
 ) -> i32 {
     crate::logging::init(&env_reader);
@@ -271,6 +290,7 @@ pub async fn run(
         }
     };
     let exit_after_start = env.exit_after_start;
+    let listener = listener(&env);
     let mut host = match FnHost::new(env, loaders, listener) {
         Ok(host) => host,
         Err(e) => {
@@ -287,6 +307,7 @@ pub async fn run(
         pool = %host.env().pool,
         host_id = %host.env().host_id,
         port = host.port(),
+        public_port = host.public_port(),
         metrics_port = host.metrics_port(),
         "function host started"
     );

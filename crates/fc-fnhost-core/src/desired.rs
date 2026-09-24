@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use crate::digest::{Digest, SignerIdentity};
 use crate::java;
+use crate::manifest::{self, Endpoint, EndpointAuth, Limits};
 
 /// Java `FunctionAddress.parse`'s `UseCaseException` message, as
 /// `getMessage()` renders it.
@@ -42,6 +43,9 @@ pub struct StoredManifest {
     /// case-insensitively, as Java's `Runtime.parseStrict`).
     pub runtime: String,
     pub entrypoint: String,
+    /// The endpoints Java's `readStored` keeps (a malformed one is dropped).
+    pub endpoints: Vec<Endpoint>,
+    pub limits: Limits,
     pub raw: Value,
 }
 
@@ -61,6 +65,8 @@ impl StoredManifest {
             return Err("manifest entrypoint is unreadable".into());
         }
         Ok(Self {
+            endpoints: manifest::read_endpoints(root),
+            limits: manifest::read_limits(root, &runtime),
             runtime,
             entrypoint,
             raw: root.clone(),
@@ -68,18 +74,12 @@ impl StoredManifest {
     }
 
     /// Whether any endpoint authenticates with `webhook` (Java
-    /// `Reconciler.hasWebhookEndpoint`). An endpoint entry is considered
-    /// when it is an object with a string `path` and a string `auth`; the
-    /// route-pattern validity check Java's reader also applies arrives with
-    /// the listener's route parser (H5).
+    /// `Reconciler.hasWebhookEndpoint`), over the endpoints Java's reader
+    /// keeps.
     pub fn has_webhook_endpoint(&self) -> bool {
-        match self.raw.get("endpoints") {
-            Some(Value::Array(endpoints)) => endpoints.iter().any(|endpoint| {
-                matches!(endpoint.get("path"), Some(Value::String(_)))
-                    && matches!(endpoint.get("auth"), Some(Value::String(auth)) if auth.eq_ignore_ascii_case("webhook"))
-            }),
-            _ => false,
-        }
+        self.endpoints
+            .iter()
+            .any(|endpoint| endpoint.auth == EndpointAuth::Webhook)
     }
 }
 
