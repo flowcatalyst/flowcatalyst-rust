@@ -20,6 +20,8 @@ members = [
     "bin/fc-server",
     "bin/fc-fnhost",
 ]
+# Their own Cargo workspaces, built for wasm targets.
+exclude = ["crates/fc-fnhost-core/tests/guests", "spikes"]
 resolver = "2"
 
 [workspace.package]

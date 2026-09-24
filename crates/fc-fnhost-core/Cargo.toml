@@ -49,8 +49,21 @@ p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8
 p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
 x509-cert = { version = "0.2", default-features = false, features = ["std"] }
 der = { version = "0.7", features = ["std"] }
+# The WASM runtime (H4): WASI 0.2 components on plain wasmtime, the engine the
+# F0 density spike chose (docs/function-runner-density.md §6). Pinned exactly:
+# a `.cwasm` is only valid for the wasmtime that wrote it, and the spike's
+# numbers were measured on this release. Default features off: no wasm GC,
+# threads, on-disk cache (the host keeps its own `.cwasm` cache) or profiling.
+wasmtime = { version = "=49.0.1", default-features = false, features = ["std", "runtime", "async", "cranelift", "pooling-allocator", "component-model", "parallel-compilation", "addr2line", "demangle"] }
+wasmtime-wasi = { version = "=49.0.1", default-features = false, features = ["p2"] }
+wasmtime-wasi-http = { version = "=49.0.1", default-features = false, features = ["p2", "default-send-request"] }
+# Load-time inspection of an artifact before compiling it (component or core
+# module, imports, exports, declared memory); the version wasmtime 49 uses.
+wasmparser = { version = "0.258", default-features = false, features = ["std", "component-model"] }
 
 [dev-dependencies]
+# Test-only: hand-written components (WAT) for the load-refusal tests.
+wat = "1"
 tempfile = { workspace = true }
 rand_core = { version = "0.6", features = ["getrandom"] }
 # Test-only: SPKI encoding for the TestSigstore port's generated keys.
