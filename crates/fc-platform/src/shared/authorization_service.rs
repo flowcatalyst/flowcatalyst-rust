@@ -368,6 +368,34 @@ pub mod checks {
         }
     }
 
+    /// Platform-config access grants, read: anchor plus
+    /// `platform:admin:config:view` (Go's `CanReadPlatformConfig`,
+    /// shared/auth/auth.go:784).
+    pub fn can_read_platform_config(context: &AuthContext) -> Result<()> {
+        require_anchor(context)?;
+        if context.has_permission(permissions::admin::CONFIG_READ) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden(
+                "Cannot read platform config access",
+            ))
+        }
+    }
+
+    /// Platform-config access grants, write: anchor plus
+    /// `platform:admin:config:update` (Go's `CanUpdatePlatformConfig`,
+    /// shared/auth/auth.go:785).
+    pub fn can_update_platform_config(context: &AuthContext) -> Result<()> {
+        require_anchor(context)?;
+        if context.has_permission(permissions::admin::CONFIG_UPDATE) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden(
+                "Cannot update platform config access",
+            ))
+        }
+    }
+
     /// Developer portal: read an application's OpenAPI document.
     /// Resource scoping (which application the principal can see) is handled
     /// in the handler against `iam_principal_application_access`.

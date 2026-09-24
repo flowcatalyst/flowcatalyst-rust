@@ -353,9 +353,11 @@ async fn provisioned_service_account_reaches_only_its_application() {
     );
 }
 
-/// Platform config is addressed by `{appCode}` too, and every service
-/// account is anchor scope, so `require_anchor` alone let one application's
-/// service account rewrite another's config.
+/// Platform config is addressed by `{appCode}` too, and a service account can
+/// be anchor scope, so anchor alone would let one application's service
+/// account rewrite another's config. On top of that, Go's rules apply:
+/// anchor or a role access grant for properties, anchor plus the config
+/// permission for access grants.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn platform_config_is_confined_to_the_callers_applications() {
@@ -383,9 +385,11 @@ async fn platform_config_is_confined_to_the_callers_applications() {
         app.get("/api/config/cfg-b", &sa_a).await.status(),
         StatusCode::NOT_FOUND
     );
+    // Access grants need anchor plus platform:admin:config:view, as in Go's
+    // CanReadPlatformConfig; the application service role has neither.
     assert_eq!(
         app.get("/api/config-access/cfg-b", &sa_a).await.status(),
-        StatusCode::NOT_FOUND
+        StatusCode::FORBIDDEN
     );
 
     let admin = token_for(
@@ -398,6 +402,63 @@ async fn platform_config_is_confined_to_the_callers_applications() {
         .put("/api/config/cfg-b/general/colour", &admin, body)
         .await;
     assert_eq!(as_admin.status(), StatusCode::CREATED);
+    // An anchor admin holding every permission (a stored principal, so its
+    // application scope resolves).
+    app.anchor_admin_token().await; // seeds the platform:test-admin role
+    let mut full = Principal::new_user("cfg-full@flowcatalyst.test", UserScope::Anchor);
+    full.roles = vec![RoleAssignment::new("platform:test-admin")];
+    app.repos
+        .principal_repo
+        .insert(&full)
+        .await
+        .expect("insert admin");
+    let full_admin = token(&app, &full);
+    assert_eq!(
+        app.get("/api/config-access/cfg-b", &full_admin)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    // Below anchor, a property needs a role access grant, as in Go: none is a
+    // 403; a read grant allows reads but not writes.
+    let mut reader = Principal::new_user("cfg-reader@flowcatalyst.test", UserScope::Client);
+    reader.all_applications = true;
+    reader.roles = vec![RoleAssignment::new("cfg-b:reader")];
+    app.repos
+        .principal_repo
+        .insert(&reader)
+        .await
+        .expect("insert reader");
+    let reader_token = token(&app, &reader);
+    assert_eq!(
+        app.get("/api/config/cfg-b", &reader_token).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    let (status, grant) = read_json(
+        app.post(
+            "/api/config-access/cfg-b",
+            &full_admin,
+            json!({ "roleCode": "cfg-b:reader", "canRead": true, "canWrite": false }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{grant}");
+    assert_eq!(
+        app.get("/api/config/cfg-b", &reader_token).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.put(
+            "/api/config/cfg-b/general/colour",
+            &reader_token,
+            json!({ "value": "y" })
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
 }
 
 /// Give the stored principal `role` and mint a token for it, returning the
@@ -606,4 +667,58 @@ fn token(app: &TestApp, principal: &Principal) -> String {
     app.auth_service
         .generate_access_token(principal)
         .expect("token")
+}
+
+/// Dispatch pools are platform-global, so a removeUnlisted sweep needs anchor
+/// (or the super-admin wildcard) on top of the sync permission, as in Go.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn dispatch_pool_sweep_needs_anchor() {
+    use fc_platform::role::entity::{permissions, AuthRole};
+
+    let app = TestApp::setup().await;
+    create_app(&app, "sweep-a").await;
+    let role = AuthRole::new("test", "pool-sync", "Pool Sync")
+        .with_permission(permissions::admin::DISPATCH_POOL_SYNC);
+    app.repos
+        .role_repo
+        .insert(&role)
+        .await
+        .expect("insert role");
+
+    let mut syncer = Principal::new_user("sweeper@flowcatalyst.test", UserScope::Client);
+    syncer.all_applications = true;
+    syncer.roles = vec![RoleAssignment::new(role.name.clone())];
+    app.repos
+        .principal_repo
+        .insert(&syncer)
+        .await
+        .expect("insert principal");
+    let syncer_token = token(&app, &syncer);
+
+    let body = json!({ "pools": [{ "code": "sweep-pool", "name": "Sweep", "concurrency": 1 }] });
+    let sync = |token: String, sweep: bool| {
+        let body = body.clone();
+        let app = &app;
+        async move {
+            let path = if sweep {
+                "/api/applications/sweep-a/dispatch-pools/sync?removeUnlisted=true"
+            } else {
+                "/api/applications/sweep-a/dispatch-pools/sync"
+            };
+            app.post(path, &token, body).await.status()
+        }
+    };
+
+    assert_eq!(sync(syncer_token.clone(), false).await, StatusCode::OK);
+    assert_eq!(sync(syncer_token, true).await, StatusCode::FORBIDDEN);
+
+    let mut anchor = Principal::new_user("sweep-anchor@flowcatalyst.test", UserScope::Anchor);
+    anchor.roles = vec![RoleAssignment::new(role.name.clone())];
+    app.repos
+        .principal_repo
+        .insert(&anchor)
+        .await
+        .expect("insert anchor");
+    assert_eq!(sync(token(&app, &anchor), true).await, StatusCode::OK);
 }

@@ -560,6 +560,17 @@ async fn sync_dispatch_pools(
         .app_access
         .require_application_access(&auth.0, &app_code)
         .await?;
+    // Dispatch pools are platform-global, so removeUnlisted is a
+    // platform-wide sweep: anchor or super-admin only, as in Go
+    // (dispatchpool/operations/sync.go:96-108).
+    if query.remove_unlisted
+        && !auth.0.is_anchor()
+        && !auth.0.has_permission(crate::permissions::ADMIN_ALL)
+    {
+        return Err(PlatformError::forbidden(
+            "Only anchor users may sweep (removeUnlisted) dispatch pools — they are platform-global",
+        ));
+    }
 
     let command = SyncDispatchPoolsCommand {
         application_code: app_code,

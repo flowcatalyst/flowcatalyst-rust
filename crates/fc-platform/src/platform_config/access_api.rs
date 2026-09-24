@@ -90,6 +90,7 @@ pub async fn list_access(
     auth: Authenticated,
     Path(app_code): Path<String>,
 ) -> Result<Json<AccessListResponse>, PlatformError> {
+    crate::checks::can_read_platform_config(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -125,7 +126,7 @@ pub async fn create_access(
     use crate::platform_config::operations::GrantPlatformConfigAccessCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_platform_config(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -189,7 +190,7 @@ pub async fn update_access(
     use crate::platform_config::operations::GrantPlatformConfigAccessCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_platform_config(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -251,7 +252,7 @@ pub async fn delete_access(
     use crate::platform_config::operations::RevokePlatformConfigAccessCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_platform_config(&auth.0)?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
