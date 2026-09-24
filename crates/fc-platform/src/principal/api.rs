@@ -153,6 +153,13 @@ pub struct CheckEmailDomainResponse {
 pub struct SetApplicationAccessRequest {
     /// Application IDs to grant access to (replaces existing)
     pub application_ids: Vec<String>,
+
+    /// Access to every application, present and future. Omitted leaves it
+    /// unchanged, so a caller that only edits the list never flips it. Only
+    /// a caller that itself has all-applications access may set it true, and
+    /// not on a principal bound to an application (Go's endpoint shape).
+    #[serde(default)]
+    pub all_applications: Option<bool>,
 }
 
 /// Application access response
@@ -170,6 +177,9 @@ pub struct ApplicationAccessResponse {
 pub struct ApplicationAccessListResponse {
     pub applications: Vec<ApplicationAccessResponse>,
     pub total: usize,
+    /// Whether the principal reaches every application; when true the list
+    /// is moot.
+    pub all_applications: bool,
 }
 
 /// Set application access result response
@@ -179,6 +189,8 @@ pub struct SetApplicationAccessResponse {
     pub applications: Vec<ApplicationAccessResponse>,
     pub added: usize,
     pub removed: usize,
+    /// The principal's all-applications flag after the change.
+    pub all_applications: bool,
 }
 
 /// Available application response (slim DTO)
@@ -1717,6 +1729,7 @@ pub async fn get_application_access(
     Ok(Json(ApplicationAccessListResponse {
         applications,
         total,
+        all_applications: principal.all_applications,
     }))
 }
 
@@ -1755,6 +1768,25 @@ pub async fn set_application_access(
         .await?
         .or_not_found("Principal", &id)?;
 
+    if req.all_applications == Some(true) {
+        // Granting every application exceeds what the caller may itself
+        // reach unless it has every application too (Go's rule).
+        if state.app_access.scope_for(&auth.0.principal_id).await?
+            != crate::shared::authorization_service::ApplicationScope::All
+        {
+            return Err(PlatformError::forbidden(
+                "Only an all-applications administrator may grant all-applications access",
+            ));
+        }
+        // A principal bound to an application is confined to it whatever the
+        // flag says, so setting it would be a no-op that reads as a grant.
+        if principal.application_id.is_some() {
+            return Err(PlatformError::validation(
+                "allApplications cannot be set on a principal bound to an application",
+            ));
+        }
+    }
+
     let app_repo = &state.application_repo;
 
     // Validate applications exist and are active (kept in handler for 400 mapping).
@@ -1790,6 +1822,7 @@ pub async fn set_application_access(
     let cmd = AssignApplicationAccessCommand {
         user_id: id.clone(),
         application_ids: req.application_ids.clone(),
+        all_applications: req.all_applications,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state
@@ -1814,6 +1847,7 @@ pub async fn set_application_access(
         applications,
         added: added_count,
         removed: removed_count,
+        all_applications: req.all_applications.unwrap_or(principal.all_applications),
     }))
 }
 

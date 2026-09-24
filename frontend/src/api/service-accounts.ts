@@ -8,7 +8,9 @@ export interface ServiceAccount {
 	code: string;
 	name: string;
 	description: string | null;
-	scope: PrincipalScope | null;
+	/** Client tier of the linked principal (what its tokens carry). */
+	scope: PrincipalScope;
+	/** Clients reached: none for ANCHOR, the home client for CLIENT, the grants for PARTNER. */
 	clientIds: string[];
 	applicationId: string | null;
 	active: boolean;
@@ -24,12 +26,16 @@ export interface ServiceAccountListResponse {
 	total: number;
 }
 
+/**
+ * A new service account has no application access; grant applications
+ * afterwards on its detail page. `scope` must agree with `clientIds`:
+ * ANCHOR none, CLIENT exactly one, PARTNER at least one.
+ */
 export interface CreateServiceAccountRequest {
 	code: string;
 	name: string;
 	description?: string;
 	clientIds?: string[];
-	applicationId?: string;
 	scope?: PrincipalScope;
 }
 
@@ -131,12 +137,9 @@ export const serviceAccountsApi = {
 	},
 
 	/**
-	 * Update a service account's metadata.
+	 * Update a service account's metadata. Responds 204 — refetch afterwards.
 	 */
-	update(
-		id: string,
-		data: UpdateServiceAccountRequest,
-	): Promise<ServiceAccount> {
+	update(id: string, data: UpdateServiceAccountRequest): Promise<void> {
 		return apiFetch(`/service-accounts/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),

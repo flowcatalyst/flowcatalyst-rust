@@ -10,7 +10,12 @@ import {
 	type RolesAssignedResponse,
 } from "@/api/service-accounts";
 import { connectionsApi, type Connection } from "@/api/connections";
-import type { PrincipalScope } from "@/api/users";
+import {
+	usersApi,
+	type PrincipalScope,
+	type ApplicationAccessGrant,
+	type AvailableApplication,
+} from "@/api/users";
 import { rolesApi, type Role } from "@/api/roles";
 import { clientsApi, type Client } from "@/api/clients";
 import { useReturnTo } from "@/composables/useReturnTo";
@@ -61,6 +66,23 @@ const roleSearchQuery = ref("");
 const selectedRoleNames = ref<Set<string>>(new Set());
 const savingRoles = ref(false);
 
+// Application access (on the linked principal; the service account id is
+// the principal id). A new account has none until granted here.
+const appAccessGrants = ref<ApplicationAccessGrant[]>([]);
+const allApplications = ref(false);
+const availableApplications = ref<AvailableApplication[]>([]);
+const appEditMode = ref(false);
+const editAppIds = ref<string[]>([]);
+const editAllApplications = ref(false);
+const savingApps = ref(false);
+
+const appOptions = computed(() =>
+	availableApplications.value.map((a) => ({
+		label: `${a.name} (${a.code})`,
+		value: a.id,
+	})),
+);
+
 // Connections
 const connections = ref<Connection[]>([]);
 const loadingConnections = ref(false);
@@ -95,7 +117,11 @@ onMounted(async () => {
 		loadAvailableRoles(),
 	]);
 	if (serviceAccount.value) {
-		await Promise.all([loadRoleAssignments(), loadConnections()]);
+		await Promise.all([
+			loadRoleAssignments(),
+			loadConnections(),
+			loadApplicationAccess(),
+		]);
 		if (route.query['edit'] === "true") {
 			startEdit();
 		}
@@ -140,6 +166,52 @@ async function loadRoleAssignments() {
 		roleAssignments.value = response.roles;
 	} catch (error) {
 		console.error("Failed to fetch role assignments:", error);
+	}
+}
+
+async function loadApplicationAccess() {
+	try {
+		const response = await usersApi.getApplicationAccess(serviceAccountId);
+		appAccessGrants.value = response.applications;
+		allApplications.value = response.allApplications;
+	} catch (error) {
+		console.error("Failed to fetch application access:", error);
+	}
+}
+
+async function startAppEdit() {
+	if (availableApplications.value.length === 0) {
+		try {
+			const response =
+				await usersApi.getAvailableApplications(serviceAccountId);
+			availableApplications.value = response.applications;
+		} catch (error) {
+			console.error("Failed to fetch available applications:", error);
+		}
+	}
+	editAppIds.value = appAccessGrants.value.map((g) => g.applicationId);
+	editAllApplications.value = allApplications.value;
+	appEditMode.value = true;
+}
+
+async function saveApplicationAccess() {
+	savingApps.value = true;
+	try {
+		// Only send the flag when it changed: turning it on needs an
+		// all-applications caller, and leaving it out keeps it as is.
+		await usersApi.assignApplicationAccess(
+			serviceAccountId,
+			editAppIds.value,
+			editAllApplications.value !== allApplications.value
+				? editAllApplications.value
+				: undefined,
+		);
+		await loadApplicationAccess();
+		appEditMode.value = false;
+		toast.success("Success", "Application access updated");
+	} catch (e: unknown) {
+	} finally {
+		savingApps.value = false;
 	}
 }
 
@@ -220,12 +292,11 @@ async function saveServiceAccount() {
 			name: editName.value,
 			description: editDescription.value || undefined,
 			scope: editScope.value,
-			clientIds: editClientIds.value,
+			// An ANCHOR account takes no clients; don't send a hidden selection.
+			clientIds: editScope.value === "ANCHOR" ? [] : editClientIds.value,
 		});
-		serviceAccount.value!.name = editName.value;
-		serviceAccount.value!.description = editDescription.value;
-		serviceAccount.value!.scope = editScope.value;
-		serviceAccount.value!.clientIds = editClientIds.value;
+		// 204: refetch the stored state (the scope and links as saved).
+		await loadServiceAccount();
 		editMode.value = false;
 		toast.success("Success", "Service account updated successfully");
 	} catch (e: unknown) {
@@ -332,8 +403,8 @@ function getClientName(clientId: string): string {
 }
 
 function getClientNames(clientIds: string[]): string {
-	if (!clientIds || clientIds.length === 0)
-		return "All clients (no restriction)";
+	// Only shown below ANCHOR, where no links means no client at all.
+	if (!clientIds || clientIds.length === 0) return "No client";
 	return clientIds.map((id) => getClientName(id)).join(", ");
 }
 
@@ -559,6 +630,83 @@ async function deleteServiceAccount() {
             </template>
           </Column>
         </DataTable>
+      </div>
+
+      <!-- Application Access Card -->
+      <div class="fc-card">
+        <div class="card-header">
+          <h2 class="card-title">Application Access</h2>
+          <Button
+            v-if="!appEditMode"
+            label="Edit"
+            icon="pi pi-pencil"
+            text
+            @click="startAppEdit"
+          />
+          <div v-else class="edit-actions">
+            <Button label="Cancel" text @click="appEditMode = false" />
+            <Button
+              label="Save"
+              icon="pi pi-check"
+              :loading="savingApps"
+              @click="saveApplicationAccess"
+            />
+          </div>
+        </div>
+
+        <div class="app-access">
+          <div class="all-apps-row">
+            <template v-if="appEditMode">
+              <ToggleSwitch
+                v-model="editAllApplications"
+                inputId="allApplications"
+                :disabled="!!serviceAccount.applicationId"
+              />
+              <label for="allApplications">All applications</label>
+            </template>
+            <Tag
+              v-else
+              :value="allApplications ? 'All applications' : 'Granted applications only'"
+              :severity="allApplications ? 'warn' : 'secondary'"
+            />
+          </div>
+          <small class="help-text">
+            <template v-if="serviceAccount.applicationId">
+              Provisioned for an application: it always reaches that application, plus any
+              granted here. All applications doesn't apply.
+            </template>
+            <template v-else>
+              All applications reaches every application, including future ones. Off, the
+              service account reaches only the applications granted here.
+            </template>
+          </small>
+
+          <MultiSelect
+            v-if="appEditMode"
+            v-model="editAppIds"
+            :options="appOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select applications..."
+            display="chip"
+            filter
+            :disabled="editAllApplications"
+            class="app-select"
+          />
+          <template v-else-if="!allApplications">
+            <p v-if="appAccessGrants.length === 0" class="no-apps-notice">
+              No applications granted: this service account reaches no application.
+            </p>
+            <DataTable v-else :value="appAccessGrants" size="small">
+              <Column field="applicationName" header="Application" />
+              <Column field="applicationCode" header="Code">
+                <template #body="{ data }">
+                  <code>{{ data.applicationCode }}</code>
+                </template>
+              </Column>
+            </DataTable>
+          </template>
+        </div>
       </div>
 
       <!-- Connections Card -->
@@ -976,6 +1124,31 @@ async function deleteServiceAccount() {
 
 .w-full {
   width: 100%;
+}
+
+.app-access {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.all-apps-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.help-text {
+  color: var(--text-color-secondary);
+}
+
+.app-select {
+  width: 100%;
+}
+
+.no-apps-notice {
+  margin: 0;
+  color: var(--text-color-secondary);
 }
 
 .no-connections-notice {

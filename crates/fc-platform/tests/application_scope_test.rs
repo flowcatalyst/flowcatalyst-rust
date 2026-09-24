@@ -465,3 +465,120 @@ async fn created_service_account_reaches_only_granted_applications() {
         StatusCode::NOT_FOUND
     );
 }
+
+/// The all-applications toggle on the application-access endpoint: only an
+/// all-applications caller may turn it on, never on an account bound to an
+/// application, and it applies at once.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn all_applications_toggle() {
+    let app = TestApp::setup().await;
+    let app_a = create_app(&app, "tog-a").await;
+    create_app(&app, "tog-b").await;
+
+    // A persisted anchor admin (users default to all applications) and one
+    // confined to its grants.
+    let admin_principal = Principal::new_user("tog-admin@flowcatalyst.test", UserScope::Anchor);
+    app.repos
+        .principal_repo
+        .insert(&admin_principal)
+        .await
+        .unwrap();
+    let admin = token(&app, &admin_principal);
+    let mut narrow_principal =
+        Principal::new_user("tog-narrow@flowcatalyst.test", UserScope::Anchor);
+    narrow_principal.all_applications = false;
+    app.repos
+        .principal_repo
+        .insert(&narrow_principal)
+        .await
+        .unwrap();
+    let narrow = token(&app, &narrow_principal);
+
+    let sa = Principal::new_service("sa_toggle", "SA Toggle", UserScope::Anchor);
+    let sa_id = sa.id.clone();
+    let sa_token = token_for(&app, sa, &[]).await;
+    let path = format!("/api/principals/{sa_id}/application-access");
+
+    // Off: nothing, and the read says so.
+    assert_eq!(
+        sync_roles(&app, &sa_token, "tog-b").await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, read) = read_json(app.get(&path, &admin).await).await;
+    assert_eq!(read["allApplications"], false);
+
+    // Only an all-applications caller may turn it on.
+    let resp = app
+        .put(
+            &path,
+            &narrow,
+            json!({ "applicationIds": [], "allApplications": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let (status, body) = read_json(
+        app.put(
+            &path,
+            &admin,
+            json!({ "applicationIds": [], "allApplications": true }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["allApplications"], true);
+    for code in ["tog-a", "tog-b"] {
+        assert_eq!(
+            sync_roles(&app, &sa_token, code).await.0,
+            StatusCode::OK,
+            "{code}"
+        );
+    }
+
+    // Editing only the list leaves the flag alone.
+    let (_, body) = read_json(
+        app.put(&path, &admin, json!({ "applicationIds": [app_a.id] }))
+            .await,
+    )
+    .await;
+    assert_eq!(body["allApplications"], true);
+
+    // Off again: back to the grants only.
+    let (_, body) = read_json(
+        app.put(
+            &path,
+            &admin,
+            json!({ "applicationIds": [app_a.id], "allApplications": false }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(body["allApplications"], false);
+    assert_eq!(sync_roles(&app, &sa_token, "tog-a").await.0, StatusCode::OK);
+    assert_eq!(
+        sync_roles(&app, &sa_token, "tog-b").await.0,
+        StatusCode::NOT_FOUND
+    );
+
+    // Not on an account bound to an application.
+    let bound = Principal::new_service("sa_tog_bound", "SA Bound", UserScope::Anchor)
+        .with_application_id(&app_a.id);
+    let bound_id = bound.id.clone();
+    token_for(&app, bound, &[]).await;
+    let resp = app
+        .put(
+            &format!("/api/principals/{bound_id}/application-access"),
+            &admin,
+            json!({ "applicationIds": [], "allApplications": true }),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+fn token(app: &TestApp, principal: &Principal) -> String {
+    app.auth_service
+        .generate_access_token(principal)
+        .expect("token")
+}

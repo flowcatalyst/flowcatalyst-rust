@@ -36,7 +36,11 @@ const createdCredentials = ref<{
 const createdServiceAccountId = ref<string | null>(null);
 
 const isValid = computed(() => {
-	return code.value.trim() && name.value.trim();
+	if (!code.value.trim() || !name.value.trim()) return false;
+	// The scope must agree with the client links (the API rejects otherwise).
+	if (scope.value === "CLIENT") return selectedClientIds.value.length === 1;
+	if (scope.value === "PARTNER") return selectedClientIds.value.length > 0;
+	return true;
 });
 
 const clientOptions = computed(() => {
@@ -73,7 +77,10 @@ function generateCode() {
 
 async function createServiceAccount() {
 	if (!isValid.value) {
-		toast.error("Error", "Code and name are required");
+		toast.error(
+			"Error",
+			"Code and name are required; a Client account needs exactly one client, a Partner account at least one",
+		);
 		return;
 	}
 
@@ -85,8 +92,10 @@ async function createServiceAccount() {
 				name: name.value,
 				description: description.value || undefined,
 				scope: scope.value,
+				// An ANCHOR account reaches every client and takes none; a
+				// selection left over from another scope isn't sent.
 				clientIds:
-					selectedClientIds.value.length > 0
+					scope.value !== "ANCHOR" && selectedClientIds.value.length > 0
 						? selectedClientIds.value
 						: undefined,
 			});
@@ -209,9 +218,20 @@ function goBack() {
             filter
             class="w-full"
           />
-          <small class="help-text"> Select which clients this service account can access. </small>
+          <small class="help-text">
+            {{
+              scope === "CLIENT"
+                ? "Select the one client this service account can access."
+                : "Select which clients this service account can access."
+            }}
+          </small>
         </div>
       </div>
+
+      <p class="help-text">
+        A new service account has no application access. Grant applications on its detail
+        page once it is created.
+      </p>
 
       <div class="form-actions">
         <Button label="Cancel" text severity="secondary" @click="goBack" />

@@ -67,12 +67,16 @@ export interface ApplicationAccessGrant {
 export interface ApplicationAccessListResponse {
 	applications: ApplicationAccessGrant[];
 	total: number;
+	/** Access to every application, present and future; the list is moot when true. */
+	allApplications: boolean;
 }
 
 export interface ApplicationAccessAssignedResponse {
 	applications: ApplicationAccessGrant[];
 	added: number;
 	removed: number;
+	/** The principal's all-applications flag after the change. */
+	allApplications: boolean;
 }
 
 export interface AvailableApplication {
@@ -266,17 +270,20 @@ export const usersApi = {
 	},
 
 	/**
-	 * Batch assign application access to a user.
+	 * Batch assign application access to a user or service account.
 	 * This is a declarative operation - sets the complete application access list.
 	 * Applications not in the list will be removed, new applications will be added.
+	 * `allApplications`, when given, sets access to every application; omitted
+	 * leaves it unchanged.
 	 */
 	assignApplicationAccess(
 		id: string,
 		applicationIds: string[],
+		allApplications?: boolean,
 	): Promise<ApplicationAccessAssignedResponse> {
 		return apiFetch(`/principals/${id}/application-access`, {
 			method: "PUT",
-			body: JSON.stringify({ applicationIds }),
+			body: JSON.stringify({ applicationIds, allApplications }),
 		});
 	},
 };

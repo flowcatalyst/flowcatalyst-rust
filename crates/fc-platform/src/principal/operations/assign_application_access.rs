@@ -21,6 +21,9 @@ use crate::PrincipalRepository;
 pub struct AssignApplicationAccessCommand {
     pub user_id: String,
     pub application_ids: Vec<String>,
+    /// Sets the all-applications flag; `None` leaves it unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_applications: Option<bool>,
 }
 
 pub struct AssignApplicationAccessUseCase<U: UnitOfWork> {
@@ -143,6 +146,9 @@ impl<U: UnitOfWork> AssignApplicationAccessUseCase<U> {
 
         // Update principal
         principal.accessible_application_ids = command.application_ids.clone();
+        if let Some(all) = command.all_applications {
+            principal.all_applications = all;
+        }
         principal.updated_at = chrono::Utc::now();
 
         let event = ApplicationAccessAssigned::new(
@@ -165,9 +171,11 @@ mod tests {
         let cmd = AssignApplicationAccessCommand {
             user_id: "user-123".to_string(),
             application_ids: vec!["app-1".to_string(), "app-2".to_string()],
+            all_applications: Some(false),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("userId"));
         assert!(json.contains("applicationIds"));
+        assert!(json.contains(r#""allApplications":false"#));
     }
 }
