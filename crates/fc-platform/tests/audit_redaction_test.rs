@@ -76,7 +76,8 @@ async fn service_account_credentials_never_reach_the_audit_log() {
             json!({ "code": "audit-bot", "name": "Audit bot" }),
         )
         .await;
-    let body = assert_status(resp, StatusCode::OK).await;
+    // Service-account create answers 201, as Go does.
+    let body = assert_status(resp, StatusCode::CREATED).await;
     let secrets = [
         body["webhook"]["authToken"].as_str().expect("auth token"),
         body["webhook"]["signingSecret"]
