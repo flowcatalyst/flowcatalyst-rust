@@ -18,6 +18,11 @@ crate::shared::enum_str::str_enum!(SubscriptionStatus, "subscription status", {
     Paused => "PAUSED",
 });
 
+/// Who created a subscription (Java `subscription/SubscriptionSource.java`).
+/// An application SDK sync only ever updates or removes `CODE` and `API`
+/// rows; `UI` rows are an admin's, and `FUNCTION` rows are created at promote
+/// for a function's manifest subscriptions (`fn-<fid>-<hash8>`) and belong to
+/// that function's wiring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[derive(Default)]
@@ -26,12 +31,14 @@ pub enum SubscriptionSource {
     Api,
     #[default]
     Ui,
+    Function,
 }
 
 crate::shared::enum_str::str_enum!(SubscriptionSource, "subscription source", {
     Code => "CODE",
     Api => "API",
     Ui => "UI",
+    Function => "FUNCTION",
 });
 
 /// Event type binding stored in msg_subscription_event_types
@@ -394,6 +401,7 @@ mod tests {
         assert_eq!(SubscriptionSource::Code.as_str(), "CODE");
         assert_eq!(SubscriptionSource::Api.as_str(), "API");
         assert_eq!(SubscriptionSource::Ui.as_str(), "UI");
+        assert_eq!(SubscriptionSource::Function.as_str(), "FUNCTION");
     }
 
     #[test]
@@ -410,7 +418,26 @@ mod tests {
             SubscriptionSource::from_str("UI"),
             Ok(SubscriptionSource::Ui)
         );
+        assert_eq!(
+            SubscriptionSource::from_str("FUNCTION"),
+            Ok(SubscriptionSource::Function)
+        );
         assert!(SubscriptionSource::from_str("unknown").is_err());
+    }
+
+    /// A row Java wrote for a function's subscription (`source = 'FUNCTION'`)
+    /// reads back through the repository's strict decoder rather than failing
+    /// the read (X-06).
+    #[test]
+    fn a_function_sourced_row_decodes() {
+        let source: SubscriptionSource =
+            crate::shared::enum_str::decode("FUNCTION", "msg_subscriptions", "source", "sub_1")
+                .expect("FUNCTION decodes");
+        assert_eq!(source, SubscriptionSource::Function);
+        assert_eq!(
+            serde_json::to_value(source).unwrap(),
+            serde_json::json!("FUNCTION")
+        );
     }
 
     #[test]
