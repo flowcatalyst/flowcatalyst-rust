@@ -30,6 +30,7 @@ use utoipa::{IntoParams, ToSchema};
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 
 use crate::auth::jwks_cache::{JwksCache, JwksError};
+use crate::auth::oidc_sync_service::OidcIdentity;
 use crate::email_domain_mapping::entity::ScopeType;
 use crate::identity_provider::entity::{IdentityProvider, IdentityProviderType};
 use crate::principal::operations::events::UserLoggedIn;
@@ -386,23 +387,23 @@ pub async fn oidc_login(
     let code_challenge = generate_code_challenge(&code_verifier);
 
     // Build login state with actual IDP and mapping IDs
-    let login_state = crate::OidcLoginState::new(
-        &oidc_state,
-        &domain,
-        &idp.id,
-        &mapping.id,
-        &nonce,
-        &code_verifier,
-    )
-    .with_oauth_params(
-        params.oauth_client_id,
-        params.oauth_redirect_uri,
-        params.oauth_scope,
-        params.oauth_state,
-        params.oauth_code_challenge,
-        params.oauth_code_challenge_method,
-        params.oauth_nonce,
-    );
+    let login_state = crate::OidcLoginState {
+        oauth_client_id: params.oauth_client_id,
+        oauth_redirect_uri: params.oauth_redirect_uri,
+        oauth_scope: params.oauth_scope,
+        oauth_state: params.oauth_state,
+        oauth_code_challenge: params.oauth_code_challenge,
+        oauth_code_challenge_method: params.oauth_code_challenge_method,
+        oauth_nonce: params.oauth_nonce,
+        ..crate::OidcLoginState::new(
+            &oidc_state,
+            &domain,
+            &idp.id,
+            &mapping.id,
+            &nonce,
+            &code_verifier,
+        )
+    };
 
     // Store state
     if let Err(e) = state.oidc_login_state_repo.insert(&login_state).await {
@@ -599,13 +600,15 @@ pub async fn oidc_callback(
     };
     let principal = match state
         .oidc_sync_service
-        .sync_oidc_login_with_allowed_roles(
-            &claims.email,
-            claims.name.as_deref().unwrap_or(&claims.email),
-            &claims.subject,
-            idp.oidc_issuer_url.as_deref().unwrap_or("unknown"),
-            mapping.primary_client_id.as_deref(),
-            user_scope,
+        .sync_oidc_login(
+            &OidcIdentity {
+                email: &claims.email,
+                name: claims.name.as_deref().unwrap_or(&claims.email),
+                external_idp_id: &claims.subject,
+                provider_id: idp.oidc_issuer_url.as_deref().unwrap_or("unknown"),
+                client_id: mapping.primary_client_id.as_deref(),
+                scope: user_scope,
+            },
             &claims.roles.unwrap_or_default(),
             allowed_roles,
         )

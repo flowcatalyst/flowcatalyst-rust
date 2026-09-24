@@ -123,27 +123,6 @@ impl OidcLoginState {
         self
     }
 
-    /// Set OAuth flow chaining parameters
-    pub fn with_oauth_params(
-        mut self,
-        client_id: Option<String>,
-        redirect_uri: Option<String>,
-        scope: Option<String>,
-        state: Option<String>,
-        code_challenge: Option<String>,
-        code_challenge_method: Option<String>,
-        nonce: Option<String>,
-    ) -> Self {
-        self.oauth_client_id = client_id;
-        self.oauth_redirect_uri = redirect_uri;
-        self.oauth_scope = scope;
-        self.oauth_state = state;
-        self.oauth_code_challenge = code_challenge;
-        self.oauth_code_challenge_method = code_challenge_method;
-        self.oauth_nonce = nonce;
-        self
-    }
-
     /// Check if this state has expired
     pub fn is_expired(&self) -> bool {
         Utc::now() > self.expires_at
@@ -189,23 +168,20 @@ mod tests {
 
     #[test]
     fn test_with_oauth_params() {
-        let state = OidcLoginState::new(
-            "state",
-            "example.com",
-            "idp-id",
-            "edm-id",
-            "nonce",
-            "verifier",
-        )
-        .with_oauth_params(
-            Some("client123".to_string()),
-            Some("https://app.example.com/callback".to_string()),
-            Some("openid profile".to_string()),
-            Some("client-state".to_string()),
-            None,
-            None,
-            None,
-        );
+        let state = OidcLoginState {
+            oauth_client_id: Some("client123".to_string()),
+            oauth_redirect_uri: Some("https://app.example.com/callback".to_string()),
+            oauth_scope: Some("openid profile".to_string()),
+            oauth_state: Some("client-state".to_string()),
+            ..OidcLoginState::new(
+                "state",
+                "example.com",
+                "idp-id",
+                "edm-id",
+                "nonce",
+                "verifier",
+            )
+        };
 
         assert!(state.is_oauth_flow());
         assert_eq!(state.oauth_client_id, Some("client123".to_string()));

@@ -18,7 +18,7 @@ use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use crate::dispatch_job::entity::DispatchStatus;
-use crate::dispatch_job::repository::DispatchJobRepository;
+use crate::dispatch_job::repository::{DispatchJobRepository, NewDispatchAttempt};
 use crate::shared::error::PlatformError;
 
 // ── Request / Response ───────────────────────────────────────────────────
@@ -252,17 +252,17 @@ async fn process_dispatch(
     };
     if let Err(e) = state
         .dispatch_job_repo
-        .insert_attempt(
-            job_id,
+        .insert_attempt(&NewDispatchAttempt {
+            dispatch_job_id: job_id,
             attempt_number,
-            attempt_status,
-            outcome.response_code,
-            outcome.response_body.as_deref(),
-            outcome.error_message.as_deref(),
-            outcome.error_type,
-            None, // error_stack_trace — not applicable for HTTP delivery
-            duration_ms,
-        )
+            status: attempt_status,
+            response_code: outcome.response_code,
+            response_body: outcome.response_body.as_deref(),
+            error_message: outcome.error_message.as_deref(),
+            error_type: outcome.error_type,
+            error_stack_trace: None, // not applicable for HTTP delivery
+            duration_millis: duration_ms,
+        })
         .await
     {
         error!(job_id = %job_id, error = %e, "Failed to record dispatch attempt");

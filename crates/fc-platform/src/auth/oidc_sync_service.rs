@@ -24,6 +24,19 @@ use crate::{IdpRoleMappingRepository, PrincipalRepository};
 /// Assignment source for IDP-synced roles
 pub const IDP_SYNC_SOURCE: &str = "IDP_SYNC";
 
+/// The identity an IdP asserted at OIDC login, to be synced into a principal.
+#[derive(Debug, Clone, Copy)]
+pub struct OidcIdentity<'a> {
+    pub email: &'a str,
+    pub name: &'a str,
+    /// The token's subject (the IdP's user ID).
+    pub external_idp_id: &'a str,
+    pub provider_id: &'a str,
+    /// Home tenant; `None` for anchor-domain users.
+    pub client_id: Option<&'a str>,
+    pub scope: UserScope,
+}
+
 /// OIDC User and Role Synchronization Service
 pub struct OidcSyncService {
     principal_repo: Arc<PrincipalRepository>,
@@ -43,18 +56,15 @@ impl OidcSyncService {
 
     /// Synchronize user information from OIDC token.
     /// Creates or updates the user principal based on OIDC claims.
-    ///
-    /// `external_idp_id` is the token's subject (the IDP's user ID);
-    /// `client_id` is the home tenant, `None` for anchor-domain users.
-    pub async fn sync_oidc_user(
-        &self,
-        email: &str,
-        name: &str,
-        external_idp_id: &str,
-        provider_id: &str,
-        client_id: Option<&str>,
-        scope: UserScope,
-    ) -> Result<Principal> {
+    pub async fn sync_oidc_user(&self, identity: &OidcIdentity<'_>) -> Result<Principal> {
+        let OidcIdentity {
+            email,
+            name,
+            external_idp_id,
+            provider_id,
+            client_id,
+            scope,
+        } = *identity;
         // Try to find existing user by email
         let existing = self.principal_repo.find_by_email(email).await?;
 
@@ -307,51 +317,21 @@ impl OidcSyncService {
         Ok(authorized_role_names)
     }
 
-    /// Full OIDC sync: sync both user info and roles.
-    /// This is the main method called during OIDC login callback.
-    /// Arguments are as for [`Self::sync_oidc_user`], plus the token's
-    /// `idp_role_names` (see [`Self::sync_idp_roles`]).
+    /// Full OIDC sync: sync both user info and roles. This is the main method
+    /// called during the OIDC login callback.
+    ///
+    /// `idp_role_names` are the token's roles (see [`Self::sync_idp_roles`]).
+    /// When `allowed_role_ids` (from the EmailDomainMapping) is provided and
+    /// non-empty, only mapped roles whose internal role ID is in the
+    /// allow-list will be assigned.
     pub async fn sync_oidc_login(
         &self,
-        email: &str,
-        name: &str,
-        external_idp_id: &str,
-        provider_id: &str,
-        client_id: Option<&str>,
-        scope: UserScope,
-        idp_role_names: &[String],
-    ) -> Result<Principal> {
-        self.sync_oidc_login_with_allowed_roles(
-            email,
-            name,
-            external_idp_id,
-            provider_id,
-            client_id,
-            scope,
-            idp_role_names,
-            None,
-        )
-        .await
-    }
-
-    /// Full OIDC sync with optional allowed_role_ids filter from EmailDomainMapping.
-    /// When allowed_role_ids is provided and non-empty, only mapped roles whose
-    /// internal role ID is in the allow-list will be assigned.
-    pub async fn sync_oidc_login_with_allowed_roles(
-        &self,
-        email: &str,
-        name: &str,
-        external_idp_id: &str,
-        provider_id: &str,
-        client_id: Option<&str>,
-        scope: UserScope,
+        identity: &OidcIdentity<'_>,
         idp_role_names: &[String],
         allowed_role_ids: Option<&[String]>,
     ) -> Result<Principal> {
         // Sync user information
-        let mut principal = self
-            .sync_oidc_user(email, name, external_idp_id, provider_id, client_id, scope)
-            .await?;
+        let mut principal = self.sync_oidc_user(identity).await?;
 
         // CRITICAL SECURITY: Sync IDP roles with authorization check
         self.sync_idp_roles_filtered(&mut principal, idp_role_names, allowed_role_ids)

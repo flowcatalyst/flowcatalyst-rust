@@ -257,23 +257,22 @@ fn test_oidc_login_state_expiry() {
 fn test_oidc_login_state_oauth_flow() {
     use fc_platform::OidcLoginState;
 
-    let state = OidcLoginState::new(
-        "test-state",
-        "example.com",
-        "idp-123",
-        "edm-456",
-        "nonce-789",
-        "verifier-abc",
-    )
-    .with_oauth_params(
-        Some("client-id".to_string()),
-        Some("https://app.example.com/callback".to_string()),
-        Some("openid profile".to_string()),
-        Some("oauth-state".to_string()),
-        Some("code-challenge".to_string()),
-        Some("S256".to_string()),
-        None,
-    );
+    let state = OidcLoginState {
+        oauth_client_id: Some("client-id".to_string()),
+        oauth_redirect_uri: Some("https://app.example.com/callback".to_string()),
+        oauth_scope: Some("openid profile".to_string()),
+        oauth_state: Some("oauth-state".to_string()),
+        oauth_code_challenge: Some("code-challenge".to_string()),
+        oauth_code_challenge_method: Some("S256".to_string()),
+        ..OidcLoginState::new(
+            "test-state",
+            "example.com",
+            "idp-123",
+            "edm-456",
+            "nonce-789",
+            "verifier-abc",
+        )
+    };
 
     assert!(state.is_oauth_flow());
     assert_eq!(state.oauth_client_id, Some("client-id".to_string()));

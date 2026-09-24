@@ -184,6 +184,20 @@ impl From<DispatchJobReadRow> for DispatchJobRead {
 
 // ─── Repository ──────────────────────────────────────────────────────────────
 
+/// One webhook delivery attempt, as recorded in `msg_dispatch_job_attempts`.
+#[derive(Debug, Clone, Copy)]
+pub struct NewDispatchAttempt<'a> {
+    pub dispatch_job_id: &'a str,
+    pub attempt_number: u32,
+    pub status: &'a str,
+    pub response_code: Option<u16>,
+    pub response_body: Option<&'a str>,
+    pub error_message: Option<&'a str>,
+    pub error_type: Option<&'a str>,
+    pub error_stack_trace: Option<&'a str>,
+    pub duration_millis: i64,
+}
+
 pub struct DispatchJobRepository {
     pool: PgPool,
 }
@@ -1061,18 +1075,18 @@ impl DispatchJobRepository {
     // ── Attempt tracking ─────────────────────────────────────────────────
 
     /// Insert a delivery attempt record into msg_dispatch_job_attempts.
-    pub async fn insert_attempt(
-        &self,
-        dispatch_job_id: &str,
-        attempt_number: u32,
-        status: &str,
-        response_code: Option<u16>,
-        response_body: Option<&str>,
-        error_message: Option<&str>,
-        error_type: Option<&str>,
-        error_stack_trace: Option<&str>,
-        duration_millis: i64,
-    ) -> Result<()> {
+    pub async fn insert_attempt(&self, attempt: &NewDispatchAttempt<'_>) -> Result<()> {
+        let NewDispatchAttempt {
+            dispatch_job_id,
+            attempt_number,
+            status,
+            response_code,
+            response_body,
+            error_message,
+            error_type,
+            error_stack_trace,
+            duration_millis,
+        } = *attempt;
         let id = crate::TsidGenerator::generate_untyped();
         let now = Utc::now();
 
