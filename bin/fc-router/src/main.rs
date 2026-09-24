@@ -232,7 +232,9 @@ async fn main() -> Result<()> {
     // all, so `initial_sync` never runs and `self.consumers` starts empty
     // — this loop is still the only thing that ever creates a consumer
     // there, so it still needs to run in full for that branch.
-    let mut first_queue_url: Option<String> = None;
+    //
+    // In production the consumers already exist (and are already polling)
+    // courtesy of initial_sync() above.
     if config_sync.is_none() {
         let scheme_factory = SchemeConsumerFactory {
             sqs_client: sqs_client.clone(),
@@ -240,19 +242,11 @@ async fn main() -> Result<()> {
         for queue_config in &router_config.queues {
             let consumer = scheme_factory.create_consumer(queue_config).await?;
             queue_manager.add_consumer(consumer).await;
-
-            // Track first queue URL for the publisher (still SQS-only —
-            // see SqsPublisher's doc comment).
-            if first_queue_url.is_none() {
-                first_queue_url = Some(queue_config.uri.clone());
-            }
         }
-    } else {
-        // Consumers already exist (and are already polling) courtesy of
-        // initial_sync() above — just find the first queue URL for the
-        // publisher.
-        first_queue_url = router_config.queues.first().map(|q| q.uri.clone());
     }
+    // The first queue's URL is the publisher's target (still SQS-only — see
+    // SqsPublisher's doc comment).
+    let first_queue_url = router_config.queues.first().map(|q| q.uri.clone());
 
     if router_config.queues.is_empty() {
         error!("No queues configured - cannot start router");

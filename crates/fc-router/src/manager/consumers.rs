@@ -573,16 +573,12 @@ impl QueueManager {
 
     /// Get counter metrics only (no SQS API call — instant atomic reads)
     pub async fn get_queue_metrics_counters_only(&self) -> Vec<QueueMetrics> {
-        let consumers = self.consumers.read().await;
-        let mut metrics = Vec::with_capacity(consumers.len());
-
-        for consumer in consumers.values() {
-            if let Some(m) = consumer.get_counters() {
-                metrics.push(m);
-            }
-        }
-
-        metrics
+        self.consumers
+            .read()
+            .await
+            .values()
+            .filter_map(|consumer| consumer.get_counters())
+            .collect()
     }
 }
 
@@ -658,7 +654,9 @@ mod consumer_liveness_tests {
             "a leadership-paused consumer is deliberately idle, not stalled"
         );
         assert!(
-            !health_service.get_stalled_consumers().contains(&"paused".to_string()),
+            !health_service
+                .get_stalled_consumers()
+                .contains(&"paused".to_string()),
             "a leadership-paused consumer must not show up as stalled"
         );
 
@@ -708,7 +706,8 @@ mod consumer_liveness_tests {
             self.id
         }
         async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
-            self.poll_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.poll_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             // A real broker poll never returns instantly forever — avoid
             // spinning this test's runtime hot while still polling
             // repeatedly enough to prove liveness within the test's own
@@ -774,9 +773,11 @@ mod consumer_liveness_tests {
         // own.
         tokio::time::timeout(Duration::from_millis(200), handle_b)
             .await
-            .expect("the second spawn_consumer_poll_task call for an id \
+            .expect(
+                "the second spawn_consumer_poll_task call for an id \
                      already being polled must return promptly, not run \
-                     forever like a real poller")
+                     forever like a real poller",
+            )
             .expect("the no-op task must not panic");
 
         // Give consumer A's real poll loop several iterations.
@@ -910,7 +911,10 @@ mod g12_capacity_gate_tests {
         let cancelled = wait_for_capacity_or_cancel(&manager, &token).await;
         let elapsed = start.elapsed();
 
-        assert!(!cancelled, "must not report cancelled — the token was never cancelled");
+        assert!(
+            !cancelled,
+            "must not report cancelled — the token was never cancelled"
+        );
         assert!(
             elapsed < Duration::from_millis(100),
             "wait_for_capacity_or_cancel took {:?} — expected within 100ms \
@@ -933,7 +937,10 @@ mod g12_capacity_gate_tests {
         let cancelled = wait_for_capacity_or_cancel(&manager, &token).await;
         let elapsed = start.elapsed();
 
-        assert!(cancelled, "a pre-cancelled token must be reported as cancelled");
+        assert!(
+            cancelled,
+            "a pre-cancelled token must be reported as cancelled"
+        );
         assert!(
             elapsed < Duration::from_millis(100),
             "cancellation took {:?} to be observed — expected well under 100ms",

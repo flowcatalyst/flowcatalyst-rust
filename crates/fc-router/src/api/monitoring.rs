@@ -126,7 +126,7 @@ pub(crate) async fn queue_metrics_handler(
     )
 }
 
-/// Dashboard health response matching Java format
+/// Dashboard health response
 #[derive(Serialize, ToSchema)]
 pub(crate) struct DashboardHealthResponse {
     status: String,

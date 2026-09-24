@@ -87,12 +87,8 @@ pub struct AwsAlbTrafficStrategy {
 
 #[cfg(feature = "alb")]
 impl AwsAlbTrafficStrategy {
-    /// Create a new ALB traffic strategy.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - ALB target group configuration
-    /// * `aws_config` - AWS SDK configuration (region, credentials, etc.)
+    /// Create a new ALB traffic strategy for the target group in `config`,
+    /// using `aws_config` for region and credentials.
     pub fn new(config: AlbTrafficConfig, aws_config: &aws_config::SdkConfig) -> Self {
         let client = aws_sdk_elasticloadbalancingv2::Client::new(aws_config);
         info!(
@@ -279,15 +275,6 @@ impl TrafficStrategy for AwsAlbTrafficStrategy {
 /// returns `Err`). The sender lives in `LeaderElection`, so dropping the
 /// election (e.g. graceful shutdown) closes this watcher.
 /// **Joined by:** the caller via the returned `JoinHandle`.
-///
-/// # Arguments
-///
-/// * `strategy` - The traffic strategy to manage
-/// * `status_rx` - A watch receiver for leadership status changes
-///
-/// # Returns
-///
-/// A `JoinHandle` for the spawned background task.
 pub fn spawn_traffic_watcher(
     strategy: Arc<dyn TrafficStrategy>,
     mut status_rx: tokio::sync::watch::Receiver<fc_standby::LeadershipStatus>,

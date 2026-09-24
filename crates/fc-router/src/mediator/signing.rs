@@ -14,9 +14,9 @@ use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
 
-/// FlowCatalyst webhook signature header (matches Java: X-FLOWCATALYST-SIGNATURE).
+/// FlowCatalyst webhook signature header.
 pub const SIGNATURE_HEADER: &str = "X-FLOWCATALYST-SIGNATURE";
-/// FlowCatalyst webhook timestamp header (matches Java: X-FLOWCATALYST-TIMESTAMP).
+/// FlowCatalyst webhook timestamp header.
 pub const TIMESTAMP_HEADER: &str = "X-FLOWCATALYST-TIMESTAMP";
 
 type HmacSha256 = Hmac<Sha256>;

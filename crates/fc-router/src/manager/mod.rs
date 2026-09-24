@@ -88,7 +88,7 @@ type NewConsumerEntry = (String, Arc<dyn QueueConsumer>, fc_common::QueueConfig)
 /// Factory trait for creating queue consumers
 /// Implementations can create SQS, ActiveMQ, or other consumer types
 #[async_trait::async_trait]
-pub trait ConsumerFactory {
+pub trait ConsumerFactory: Send + Sync {
     /// Create a consumer for the given queue configuration
     async fn create_consumer(
         &self,
@@ -257,7 +257,7 @@ pub struct QueueManager {
 
     /// Consumer factory for creating new queue consumers during config sync
     /// If None, new queues in config will be logged but not auto-created
-    consumer_factory: Option<Arc<dyn ConsumerFactory + Send + Sync>>,
+    consumer_factory: Option<Arc<dyn ConsumerFactory>>,
 
     /// How to build a mediator for each new pool. See [`MediatorFactory`].
     mediator_factory: MediatorFactory,
@@ -447,7 +447,7 @@ pub struct QueueManagerBuilder {
     warning_service: Arc<WarningService>,
     circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
     health_service: Option<Arc<crate::health::HealthService>>,
-    consumer_factory: Option<Arc<dyn ConsumerFactory + Send + Sync>>,
+    consumer_factory: Option<Arc<dyn ConsumerFactory>>,
     max_pools: usize,
     pool_warning_threshold: usize,
     stall_config: StallConfig,
@@ -491,7 +491,7 @@ impl QueueManagerBuilder {
     }
 
     /// Consumer factory for hot-creating queues during config sync.
-    pub fn consumer_factory(mut self, factory: Arc<dyn ConsumerFactory + Send + Sync>) -> Self {
+    pub fn consumer_factory(mut self, factory: Arc<dyn ConsumerFactory>) -> Self {
         self.consumer_factory = Some(factory);
         self
     }

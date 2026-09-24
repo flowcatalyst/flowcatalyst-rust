@@ -89,7 +89,7 @@ pub struct HttpMediatorConfig {
 impl Default for HttpMediatorConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(900), // 15 minutes — matches Java default.
+            timeout: Duration::from_secs(900), // 15 minutes
             http_version: HttpVersion::Http2,  // Production default.
             max_retries: 3,
             retry_delays: vec![

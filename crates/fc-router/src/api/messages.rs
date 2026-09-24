@@ -101,7 +101,7 @@ pub(crate) async fn simple_publish_message(
     }
 }
 
-/// Message seed request (matches Java format)
+/// Message seed request
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct SeedMessageRequest {
     count: Option<u32>,

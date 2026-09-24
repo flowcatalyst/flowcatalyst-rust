@@ -110,8 +110,8 @@ impl PoolMetricsCollector {
     }
 
     /// Record a transient error (ERROR_PROCESS — message will be retried, not a permanent failure).
-    /// Matches Java's poolMetrics.recordProcessingTransient() which does NOT increment the failure counter.
-    /// The message will reappear from the queue, so success rate should not be penalised.
+    /// Does NOT increment the failure counter: the message will reappear from
+    /// the queue, so success rate should not be penalised.
     pub fn record_transient(&self, duration_ms: u64) {
         // Do not increment total_failure — transient errors are retried and not counted against success rate.
         // Still add the sample as a non-success so windowed success-rate reflects current processing state.

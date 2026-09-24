@@ -52,11 +52,7 @@ pub(crate) async fn update_pool_config(
         Some(stats) => PoolConfig {
             code: pool_code.clone(),
             concurrency: req.concurrency.unwrap_or(stats.concurrency),
-            rate_limit_per_minute: if req.rate_limit_per_minute.is_some() {
-                req.rate_limit_per_minute
-            } else {
-                stats.rate_limit_per_minute
-            },
+            rate_limit_per_minute: req.rate_limit_per_minute.or(stats.rate_limit_per_minute),
         },
         None => PoolConfig {
             code: pool_code.clone(),

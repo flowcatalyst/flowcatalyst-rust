@@ -486,7 +486,7 @@ impl NatsQueueConsumer {
     }
 
     /// Extract receipt handle from a JetStream message.
-    /// Format matches Java: `streamName:streamSequence`
+    /// Format: `streamName:streamSequence`
     fn receipt_handle_from_message(
         msg: &async_nats::jetstream::Message,
         stream_name: &str,

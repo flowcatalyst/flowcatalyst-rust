@@ -48,7 +48,7 @@ pub fn breaker_key(url: &str) -> String {
     }
 }
 
-/// Circuit breaker state (matches Java Resilience4j states)
+/// Circuit breaker state (the Resilience4j state names)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[derive(Default)]
@@ -62,7 +62,7 @@ pub enum CircuitBreakerState {
     HalfOpen,
 }
 
-/// Statistics for a single circuit breaker (matches Java format)
+/// Statistics for a single circuit breaker
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CircuitBreakerStats {
     /// Name/identifier of the circuit breaker (usually the endpoint URL)
