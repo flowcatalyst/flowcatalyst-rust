@@ -129,12 +129,23 @@ async fn batch_audit_logs(
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
 
+        // Backstop (owner spec docs/spec/audit-redaction.md, Java repo): SDKs
+        // redact at the source, but SDK versions that predate that and apps
+        // writing their own outbox rows do not, so the ingested document is
+        // redacted by the name rule before it is stored. There is no live
+        // command here to declare masked fields. The SDK DTOs send
+        // `operationData` as a JSON-encoded string, which redact_document
+        // reaches into as well.
+        let operation_data = item
+            .operation_data
+            .map(|data| fc_common::audit_redaction::redact_document(&data, &[]));
+
         // Build audit log
         let mut log = AuditLog::new(
             &item.entity_type,
             &item.entity_id,
             &item.operation,
-            item.operation_data,
+            operation_data,
             item.principal_id,
         );
         log.performed_at = performed_at;

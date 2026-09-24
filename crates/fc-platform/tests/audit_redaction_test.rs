@@ -156,3 +156,64 @@ async fn a_secret_config_value_never_reaches_the_audit_log() {
         "a PLAIN value is still recorded: {set_rows:?}"
     );
 }
+
+/// The ingest backstop: an SDK-posted audit item is redacted by the name
+/// rule before it is stored, whether `operationData` arrives as an object
+/// or — as the TypeScript, Laravel and fc-sdk DTOs send it — as a
+/// JSON-encoded string.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn ingested_audit_logs_are_redacted_before_they_are_stored() {
+    let app = setup().await;
+    let token = app.anchor_admin_token().await;
+
+    let resp = app
+        .post(
+            "/api/audit-logs/batch",
+            &token,
+            json!({ "items": [
+                {
+                    "entityType": "Order",
+                    "entityId": "ord_1",
+                    "operation": "CREATE",
+                    "principalId": "prn_sdk",
+                    "operationData": { "password": "x", "name": "kept" },
+                },
+                {
+                    "entityType": "Order",
+                    "entityId": "ord_2",
+                    "operation": "CREATE",
+                    "principalId": "prn_sdk",
+                    "operationData": "{\"apiKey\":\"sk_live_9\",\"name\":\"kept\"}",
+                },
+            ]}),
+        )
+        .await;
+    let body = assert_status(resp, StatusCode::OK).await;
+    assert_eq!(body["results"][0]["status"], "SUCCESS", "{body}");
+    assert_eq!(body["results"][1]["status"], "SUCCESS", "{body}");
+
+    let stored = |entity_id: &'static str| {
+        let pool = app.pool.clone();
+        async move {
+            sqlx::query_as::<_, (serde_json::Value,)>(
+                "SELECT operation_json FROM aud_logs WHERE entity_id = $1",
+            )
+            .bind(entity_id)
+            .fetch_all(&pool)
+            .await
+            .expect("read aud_logs")
+        }
+    };
+
+    let rows = stored("ord_1").await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, json!({ "password": "***", "name": "kept" }));
+
+    let rows = stored("ord_2").await;
+    assert_eq!(rows.len(), 1);
+    let inner: serde_json::Value =
+        serde_json::from_str(rows[0].0.as_str().expect("stored as a JSON string"))
+            .expect("inner JSON");
+    assert_eq!(inner, json!({ "apiKey": "***", "name": "kept" }));
+}

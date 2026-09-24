@@ -64,6 +64,28 @@ pub fn redact(value: &Value, masked: &[&str]) -> Value {
     redact_node(value, masked, true)
 }
 
+/// [`redact`] for a stored or ingested audit document, which may also be a
+/// JSON *string* whose text is itself a JSON object or array: the
+/// TypeScript, Laravel and fc-sdk outbox DTOs send `operationData` that way,
+/// and the platform stores it as a JSONB string. Such a string is parsed,
+/// redacted and re-encoded — only when redaction changed something, so an
+/// unaffected document comes back exactly as it went in.
+pub fn redact_document(value: &Value, masked: &[&str]) -> Value {
+    if let Value::String(text) = value {
+        let trimmed = text.trim_start();
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            if let Ok(inner) = serde_json::from_str::<Value>(text) {
+                let redacted = redact(&inner, masked);
+                if redacted != inner {
+                    return Value::String(redacted.to_string());
+                }
+            }
+        }
+        return value.clone();
+    }
+    redact(value, masked)
+}
+
 /// Serialise `command` for an audit row and redact it, including the
 /// command's own [`AuditMasked`] fields.
 pub fn redacted_command_json<C>(command: &C) -> Result<Value, serde_json::Error>
@@ -218,6 +240,37 @@ mod tests {
         ] {
             assert!(!is_secret_key(key), "{key} should not be secret");
         }
+    }
+
+    #[test]
+    fn redact_document_reaches_into_a_json_encoded_string() {
+        let stored = Value::String(r#"{"email":"a@b.c","password":"hunter2"}"#.to_string());
+        let out = redact_document(&stored, &[]);
+        let inner: Value = serde_json::from_str(out.as_str().expect("still a string")).unwrap();
+        assert_eq!(inner, json!({"email": "a@b.c", "password": "***"}));
+
+        let masked = Value::String(r#"{"value":"sk","valueType":"SECRET"}"#.to_string());
+        let inner: Value =
+            serde_json::from_str(redact_document(&masked, &["value"]).as_str().unwrap()).unwrap();
+        assert_eq!(inner["value"], "***");
+    }
+
+    #[test]
+    fn redact_document_leaves_an_unaffected_document_exactly_as_it_was() {
+        for doc in [
+            Value::String("{ \"b\": 1,  \"a\": [true] }".to_string()),
+            Value::String("not json {".to_string()),
+            Value::String("{not json".to_string()),
+            Value::String("password".to_string()),
+            json!({"name": "kept"}),
+            Value::Null,
+        ] {
+            assert_eq!(redact_document(&doc, &[]), doc);
+        }
+        assert_eq!(
+            redact_document(&json!({"token": "t"}), &[]),
+            json!({"token": "***"})
+        );
     }
 
     #[derive(Serialize)]
