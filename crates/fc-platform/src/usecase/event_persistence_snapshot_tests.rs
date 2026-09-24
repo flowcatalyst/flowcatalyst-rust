@@ -216,14 +216,14 @@ fn cors_origin_added() {
 
 #[test]
 fn dispatch_pools_synced() {
-    let e = fixed!(DispatchPoolsSynced::new(
-        &ctx(),
-        "orders",
-        2,
-        1,
-        0,
-        s(&["default", "bulk"])
-    ));
+    let e = fixed!(DispatchPoolsSynced {
+        metadata: DispatchPoolsSynced::metadata_for(&ctx(), "orders"),
+        application_code: "orders".to_string(),
+        created: 2,
+        updated: 1,
+        deleted: 0,
+        synced_codes: s(&["default", "bulk"]),
+    });
     check(&e, EXPECTED_DISPATCH_POOLS_SYNCED);
 }
 
@@ -533,53 +533,53 @@ fn passkey_registered() {
 
 #[test]
 fn roles_synced() {
-    let e = fixed!(RolesSynced::new(
-        &ctx(),
-        "orders",
-        3,
-        2,
-        1,
-        s(&["orders:viewer"])
-    ));
+    let e = fixed!(RolesSynced {
+        metadata: RolesSynced::metadata_for(&ctx(), "orders"),
+        application_code: "orders".to_string(),
+        created: 3,
+        updated: 2,
+        deleted: 1,
+        synced_names: s(&["orders:viewer"]),
+    });
     check(&e, EXPECTED_ROLES_SYNCED);
 }
 
 #[test]
 fn subscriptions_synced() {
-    let e = fixed!(SubscriptionsSynced::new(
-        &ctx(),
-        "orders",
-        3,
-        2,
-        1,
-        s(&["orders-webhook"])
-    ));
+    let e = fixed!(SubscriptionsSynced {
+        metadata: SubscriptionsSynced::metadata_for(&ctx(), "orders"),
+        application_code: "orders".to_string(),
+        created: 3,
+        updated: 2,
+        deleted: 1,
+        synced_codes: s(&["orders-webhook"]),
+    });
     check(&e, EXPECTED_SUBSCRIPTIONS_SYNCED);
 }
 
 #[test]
 fn principals_synced() {
-    let e = fixed!(PrincipalsSynced::new(
-        &ctx(),
-        "orders",
-        3,
-        2,
-        1,
-        s(&["a@example.com"])
-    ));
+    let e = fixed!(PrincipalsSynced {
+        metadata: PrincipalsSynced::metadata_for(&ctx(), "orders"),
+        application_code: "orders".to_string(),
+        created: 3,
+        updated: 2,
+        deactivated: 1,
+        synced_emails: s(&["a@example.com"]),
+    });
     check(&e, EXPECTED_PRINCIPALS_SYNCED);
 }
 
 #[test]
 fn processes_synced() {
-    let e = fixed!(ProcessesSynced::new(
-        &ctx(),
-        "orders",
-        3,
-        2,
-        1,
-        s(&["orders:fulfillment:ship"])
-    ));
+    let e = fixed!(ProcessesSynced {
+        metadata: ProcessesSynced::metadata_for(&ctx(), "orders"),
+        application_code: "orders".to_string(),
+        created: 3,
+        updated: 2,
+        deleted: 1,
+        synced_codes: s(&["orders:fulfillment:ship"]),
+    });
     check(&e, EXPECTED_PROCESSES_SYNCED);
 }
 

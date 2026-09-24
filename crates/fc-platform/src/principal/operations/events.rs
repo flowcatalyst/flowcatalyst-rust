@@ -418,29 +418,17 @@ impl PrincipalsSynced {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:iam";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        application_code: &str,
-        created: u32,
-        updated: u32,
-        deactivated: u32,
-        synced_emails: Vec<String>,
-    ) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.application.{}", application_code),
-                format!("platform:application:{}", application_code),
-            ),
-            application_code: application_code.to_string(),
-            created,
-            updated,
-            deactivated,
-            synced_emails,
-        }
+    /// Metadata for this event, raised inside `ctx` for a sync of
+    /// `application_code`.
+    pub fn metadata_for(ctx: &ExecutionContext, application_code: &str) -> EventMetadata {
+        EventMetadata::from_ctx(
+            ctx,
+            Self::EVENT_TYPE,
+            Self::SPEC_VERSION,
+            Self::SOURCE,
+            format!("platform.application.{}", application_code),
+            format!("platform:application:{}", application_code),
+        )
     }
 }
 

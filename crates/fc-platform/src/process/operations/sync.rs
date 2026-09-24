@@ -170,14 +170,14 @@ impl<U: UnitOfWork> SyncProcessesUseCase<U> {
             }
         }
 
-        let event = ProcessesSynced::new(
-            ctx,
-            &command.application_code,
+        let event = ProcessesSynced {
+            metadata: ProcessesSynced::metadata_for(ctx, &command.application_code),
+            application_code: command.application_code.clone(),
             created,
             updated,
             deleted,
             synced_codes,
-        );
+        };
         Ok(event)
     }
 }

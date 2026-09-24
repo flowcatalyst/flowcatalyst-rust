@@ -166,28 +166,16 @@ impl ProcessesSynced {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:admin";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        application_code: &str,
-        created: u32,
-        updated: u32,
-        deleted: u32,
-        synced_codes: Vec<String>,
-    ) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.application.{}", application_code),
-                format!("platform:application:{}", application_code),
-            ),
-            application_code: application_code.to_string(),
-            created,
-            updated,
-            deleted,
-            synced_codes,
-        }
+    /// Metadata for this event, raised inside `ctx` for a sync of
+    /// `application_code`.
+    pub fn metadata_for(ctx: &ExecutionContext, application_code: &str) -> EventMetadata {
+        EventMetadata::from_ctx(
+            ctx,
+            Self::EVENT_TYPE,
+            Self::SPEC_VERSION,
+            Self::SOURCE,
+            format!("platform.application.{}", application_code),
+            format!("platform:application:{}", application_code),
+        )
     }
 }

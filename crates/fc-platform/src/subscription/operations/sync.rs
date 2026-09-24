@@ -274,14 +274,14 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
             }
         }
 
-        let event = SubscriptionsSynced::new(
-            ctx,
-            &command.application_code,
-            created_count,
-            updated_count,
-            deleted_count,
+        let event = SubscriptionsSynced {
+            metadata: SubscriptionsSynced::metadata_for(ctx, &command.application_code),
+            application_code: command.application_code.clone(),
+            created: created_count,
+            updated: updated_count,
+            deleted: deleted_count,
             synced_codes,
-        );
+        };
         Ok(event)
     }
 }

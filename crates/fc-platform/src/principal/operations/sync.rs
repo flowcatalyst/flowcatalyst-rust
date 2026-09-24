@@ -226,14 +226,14 @@ impl<U: UnitOfWork> SyncPrincipalsUseCase<U> {
             }
         }
 
-        let event = PrincipalsSynced::new(
-            ctx,
-            &command.application_code,
-            created_count,
-            updated_count,
-            deactivated_count,
+        let event = PrincipalsSynced {
+            metadata: PrincipalsSynced::metadata_for(ctx, &command.application_code),
+            application_code: command.application_code.clone(),
+            created: created_count,
+            updated: updated_count,
+            deactivated: deactivated_count,
             synced_emails,
-        );
+        };
         Ok(event)
     }
 }
