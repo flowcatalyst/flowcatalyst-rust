@@ -50,6 +50,41 @@ pub enum EncryptionError {
     InvalidUtf8PreviousKey { key: usize, source: FromUtf8Error },
     #[error("Decryption failed with all available keys")]
     NoKeyMatched,
+    #[error("Stored secret is not an `encrypted:` reference")]
+    MissingPrefix,
+    #[error("FLOWCATALYST_APP_KEY is not configured; secrets cannot be encrypted or decrypted")]
+    NotConfigured,
+}
+
+/// The service, or [`EncryptionError::NotConfigured`] when no key is set.
+/// Secrets are never stored or used in plaintext as a fallback.
+pub fn require_configured(
+    enc: Option<&EncryptionService>,
+) -> Result<&EncryptionService, EncryptionError> {
+    enc.ok_or(EncryptionError::NotConfigured)
+}
+
+impl From<EncryptionError> for crate::shared::error::PlatformError {
+    fn from(e: EncryptionError) -> Self {
+        Self::internal(e.to_string())
+    }
+}
+
+impl From<EncryptionError> for crate::usecase::UseCaseError {
+    fn from(e: EncryptionError) -> Self {
+        Self::internal("ENCRYPTION_ERROR", e.to_string())
+    }
+}
+
+/// Marks a stored value as ciphertext from [`EncryptionService`]. Every
+/// secret the platform stores carries it; a stored secret without it is
+/// plaintext at rest and is refused on read.
+pub const ENCRYPTED_PREFIX: &str = "encrypted:";
+
+/// Whether `stored` is an `encrypted:` reference (says nothing about whether
+/// it decrypts).
+pub fn is_encrypted_ref(stored: &str) -> bool {
+    stored.starts_with(ENCRYPTED_PREFIX)
 }
 
 /// Current encryption format version.
@@ -142,6 +177,23 @@ impl EncryptionService {
         output.extend_from_slice(&nonce_bytes);
         output.extend(ciphertext);
         Ok(BASE64.encode(output))
+    }
+
+    /// Encrypt `plaintext` into the stored form: `encrypted:` followed by
+    /// [`encrypt`](Self::encrypt)'s output. Use this for every secret
+    /// written to the database.
+    pub fn encrypt_ref(&self, plaintext: &str) -> Result<String, EncryptionError> {
+        Ok(format!("{ENCRYPTED_PREFIX}{}", self.encrypt(plaintext)?))
+    }
+
+    /// Decrypt a stored secret written by [`encrypt_ref`](Self::encrypt_ref).
+    /// A value without the `encrypted:` prefix is plaintext at rest and is
+    /// refused with [`EncryptionError::MissingPrefix`], never passed through.
+    pub fn decrypt_ref(&self, stored: &str) -> Result<String, EncryptionError> {
+        let raw = stored
+            .strip_prefix(ENCRYPTED_PREFIX)
+            .ok_or(EncryptionError::MissingPrefix)?;
+        self.decrypt(raw)
     }
 
     /// Decrypt a value. Tries current key first, then falls back to previous keys.
@@ -289,6 +341,52 @@ mod tests {
         let other = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
         let err = svc.decrypt(&other.encrypt("x").unwrap()).unwrap_err();
         assert!(matches!(err, EncryptionError::NoKeyMatched));
+    }
+
+    #[test]
+    fn test_encrypt_ref_roundtrip() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let stored = svc.encrypt_ref("idp-client-secret").unwrap();
+        assert!(stored.starts_with("encrypted:"));
+        assert!(is_encrypted_ref(&stored));
+        assert!(!stored.contains("idp-client-secret"));
+        assert_eq!(svc.decrypt_ref(&stored).unwrap(), "idp-client-secret");
+    }
+
+    #[test]
+    fn test_decrypt_ref_requires_prefix() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        // Plaintext at rest is refused, not passed through.
+        let err = svc.decrypt_ref("plain-secret").unwrap_err();
+        assert!(matches!(err, EncryptionError::MissingPrefix));
+        // So is bare ciphertext without the prefix.
+        let bare = svc.encrypt("x").unwrap();
+        assert!(matches!(
+            svc.decrypt_ref(&bare).unwrap_err(),
+            EncryptionError::MissingPrefix
+        ));
+        assert!(!is_encrypted_ref(&bare));
+    }
+
+    #[test]
+    fn test_require_configured() {
+        assert!(matches!(
+            require_configured(None).err(),
+            Some(EncryptionError::NotConfigured)
+        ));
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        assert!(require_configured(Some(&svc)).is_ok());
+    }
+
+    #[test]
+    fn test_decrypt_ref_wrong_key_fails() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let other = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let stored = other.encrypt_ref("x").unwrap();
+        assert!(matches!(
+            svc.decrypt_ref(&stored).unwrap_err(),
+            EncryptionError::NoKeyMatched
+        ));
     }
 
     #[test]
