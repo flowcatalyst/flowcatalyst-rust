@@ -134,6 +134,24 @@ fn walk_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Parse write handlers out of a file. Each returned entry is
 /// (fn_name, body_text, line_number).
 fn extract_write_handlers(content: &str) -> Vec<(String, String, usize)> {
+    extract_handlers(content, |attr| {
+        // Check if first positional arg is a write method.
+        let args_inside = attr
+            .trim_start()
+            .strip_prefix("#[utoipa::path(")
+            .unwrap_or(attr)
+            .trim();
+        let first_token = args_inside
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .find(|t| !t.is_empty())
+            .unwrap_or("");
+        matches!(first_token, "post" | "put" | "patch" | "delete")
+    })
+}
+
+/// Parse the `#[utoipa::path(...)]` handlers whose attribute text passes
+/// `wanted`. Each returned entry is (fn_name, body_text, line_number).
+fn extract_handlers(content: &str, wanted: impl Fn(&str) -> bool) -> Vec<(String, String, usize)> {
     let lines: Vec<&str> = content.lines().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -168,18 +186,7 @@ fn extract_write_handlers(content: &str) -> Vec<(String, String, usize)> {
                 continue;
             }
 
-            // Check if first positional arg is a write method.
-            let args_inside = attr
-                .trim_start()
-                .strip_prefix("#[utoipa::path(")
-                .unwrap_or(&attr)
-                .trim();
-            let first_token = args_inside
-                .split(|c: char| c == ',' || c.is_whitespace())
-                .find(|t| !t.is_empty())
-                .unwrap_or("");
-            let is_write = matches!(first_token, "post" | "put" | "patch" | "delete");
-            if !is_write {
+            if !wanted(&attr) {
                 continue;
             }
 
@@ -298,4 +305,60 @@ fn every_write_handler_calls_an_auth_check() {
         }
         panic!("{}", msg);
     }
+}
+
+/// Every handler addressed by `{appCode}` must confine the caller to its
+/// applications (`require_application_access`), after its permission check
+/// when it has one. A permission alone lets one application's service
+/// account act on another application.
+#[test]
+fn every_app_code_handler_checks_application_access() {
+    let mut files = Vec::new();
+    walk_rs_files(&src_root(), &mut files);
+
+    let mut checked = 0;
+    let mut violations: Vec<String> = Vec::new();
+    for file in &files {
+        let Ok(content) = fs::read_to_string(file) else {
+            continue;
+        };
+        let rel = file
+            .strip_prefix(src_root())
+            .unwrap_or(file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (fn_name, body, line_no) in
+            extract_handlers(&content, |attr| attr.contains("{appCode}"))
+        {
+            checked += 1;
+            let Some(scope_at) = body.find("require_application_access") else {
+                violations.push(format!(
+                    "{}:{} fn {} (no application check)",
+                    rel, line_no, fn_name
+                ));
+                continue;
+            };
+            let permission_at = AUTH_CHECK_PATTERNS
+                .iter()
+                .filter_map(|p| body.find(p))
+                .min();
+            if permission_at.is_some_and(|at| at > scope_at) {
+                violations.push(format!(
+                    "{}:{} fn {} (application check before the permission check)",
+                    rel, line_no, fn_name
+                ));
+            }
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "found no {{appCode}} handlers — has the path spelling changed?"
+    );
+    assert!(
+        violations.is_empty(),
+        "\n\n`{{appCode}}` handlers must call `require_application_access` after their \
+         permission check:\n  - {}\n",
+        violations.join("\n  - ")
+    );
 }

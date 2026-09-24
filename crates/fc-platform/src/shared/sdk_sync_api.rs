@@ -13,7 +13,6 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::application::repository::ApplicationRepository;
 use crate::application_openapi_spec::operations::{SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase};
 use crate::dispatch_pool::operations::{
     SyncDispatchPoolInput, SyncDispatchPoolsCommand, SyncDispatchPoolsUseCase,
@@ -29,6 +28,7 @@ use crate::role::operations::{SyncRoleInput, SyncRolesCommand, SyncRolesUseCase}
 use crate::scheduled_job::operations::{
     ScheduledJobSyncEntry, SyncScheduledJobsCommand, SyncScheduledJobsUseCase,
 };
+use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::subscription::operations::{
@@ -258,7 +258,8 @@ pub struct SdkSyncState {
     pub sync_processes_use_case: Arc<SyncProcessesUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_scheduled_jobs_use_case: Arc<SyncScheduledJobsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<crate::usecase::PgUnitOfWork>>,
-    pub application_repo: Arc<ApplicationRepository>,
+    /// Resolves `{appCode}` and confines the caller to its applications.
+    pub app_access: Arc<ApplicationAccessService>,
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +346,10 @@ async fn sync_roles(
     Json(req): Json<SyncRolesRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_sync_roles(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let command = SyncRolesCommand {
         application_code: app_code,
@@ -394,7 +399,8 @@ async fn sync_roles(
     request_body = SyncEventTypesRequest,
     responses(
         (status = 200, description = "Event types synced", body = SyncResultResponse),
-        (status = 400, description = "Validation error")
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Application not found")
     ),
     security(("bearer_auth" = []))
 )]
@@ -406,6 +412,10 @@ async fn sync_event_types(
     Json(req): Json<SyncEventTypesRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_sync_event_types(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let command = SyncEventTypesCommand {
         application_code: app_code,
@@ -455,7 +465,7 @@ async fn sync_event_types(
     responses(
         (status = 200, description = "Subscriptions synced", body = SyncResultResponse),
         (status = 400, description = "Validation error"),
-        (status = 404, description = "Connection not found")
+        (status = 404, description = "Application or connection not found")
     ),
     security(("bearer_auth" = []))
 )]
@@ -467,6 +477,10 @@ async fn sync_subscriptions(
     Json(req): Json<SyncSubscriptionsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_sync_subscriptions(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let command = SyncSubscriptionsCommand {
         application_code: app_code,
@@ -529,7 +543,8 @@ async fn sync_subscriptions(
     request_body = SyncDispatchPoolsRequest,
     responses(
         (status = 200, description = "Dispatch pools synced", body = SyncResultResponse),
-        (status = 400, description = "Validation error")
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Application not found")
     ),
     security(("bearer_auth" = []))
 )]
@@ -541,6 +556,10 @@ async fn sync_dispatch_pools(
     Json(req): Json<SyncDispatchPoolsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_sync_dispatch_pools(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let command = SyncDispatchPoolsCommand {
         application_code: app_code,
@@ -603,6 +622,10 @@ async fn sync_principals(
     Json(req): Json<SyncPrincipalsRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_sync_principals(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let command = SyncPrincipalsCommand {
         application_code: app_code,
@@ -652,7 +675,8 @@ async fn sync_principals(
     responses(
         (status = 200, description = "Scheduled jobs synced", body = SyncScheduledJobsResultResponse),
         (status = 400, description = "Validation error"),
-        (status = 403, description = "Forbidden")
+        (status = 403, description = "Forbidden"),
+        (status = 404, description = "Application not found")
     ),
     security(("bearer_auth" = []))
 )]
@@ -663,6 +687,10 @@ async fn sync_scheduled_jobs(
     Json(req): Json<SyncScheduledJobsRequest>,
 ) -> Result<Json<SyncScheduledJobsResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_sync_scheduled_jobs_app(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     // Resource-level scope check: caller must have access to the target client
     // (or be anchor when targeting platform-scoped jobs).
@@ -738,7 +766,8 @@ async fn sync_scheduled_jobs(
     request_body = SyncProcessesRequest,
     responses(
         (status = 200, description = "Processes synced", body = SyncResultResponse),
-        (status = 400, description = "Validation error")
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Application not found")
     ),
     security(("bearer_auth" = []))
 )]
@@ -750,6 +779,10 @@ async fn sync_processes(
     Json(req): Json<SyncProcessesRequest>,
 ) -> Result<Json<SyncResultResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_sync_processes(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let command = SyncProcessesCommand {
         application_code: app_code,
@@ -844,27 +877,9 @@ async fn sync_openapi(
     crate::shared::authorization_service::checks::can_sync_application_openapi(&auth.0)?;
 
     let app = state
-        .application_repo
-        .find_by_code(&app_code)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Application", format!("code={}", app_code)))?;
-
-    // Resource-level guard: anchor users may sync any application; otherwise
-    // the caller must BE this application's bound service account (matches the
-    // way other SDK ingest paths gate per-application writes).
-    let is_app_service_account = app
-        .service_account_id
-        .as_deref()
-        .is_some_and(|sa| sa == auth.0.principal_id);
-    let permitted = auth.0.is_anchor()
-        || auth.0.has_permission(crate::permissions::ADMIN_ALL)
-        || is_app_service_account;
-    if !permitted {
-        return Err(PlatformError::forbidden(format!(
-            "Service account is not authorised for application '{}'",
-            app.code
-        )));
-    }
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let command = SyncOpenApiSpecCommand {
         application_id: app.id.clone(),

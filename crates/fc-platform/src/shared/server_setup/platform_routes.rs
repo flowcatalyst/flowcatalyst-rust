@@ -42,6 +42,7 @@ use crate::operations::{
 };
 use crate::repository::Repositories;
 use crate::router::PlatformRoutes;
+use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::encryption_service::EncryptionService;
 use crate::usecase::PgUnitOfWork;
 
@@ -793,12 +794,19 @@ pub fn build_platform_routes(
             unit_of_work.clone(),
         ),
     );
+    // One instance so every `/{appCode}` route shares the scope cache.
+    let app_access = Arc::new(ApplicationAccessService::new(
+        repos.principal_repo.clone(),
+        repos.application_repo.clone(),
+    ));
     let platform_config_state = PlatformConfigState {
         config_repo: repos.platform_config_repo.clone(),
+        app_access: app_access.clone(),
         set_property_use_case: set_platform_config_property_use_case,
     };
     let config_access_state = ConfigAccessState {
         access_repo: repos.platform_config_access_repo.clone(),
+        app_access: app_access.clone(),
         grant_access_use_case: grant_platform_config_access_use_case,
         revoke_access_use_case: revoke_platform_config_access_use_case,
     };
@@ -831,7 +839,7 @@ pub fn build_platform_routes(
         unit_of_work.clone(),
     ));
     let application_roles_sdk_state = ApplicationRolesSdkState {
-        application_repo: repos.application_repo.clone(),
+        app_access: app_access.clone(),
         role_repo: repos.role_repo.clone(),
         create_use_case: create_role_use_case,
         delete_use_case: delete_role_use_case,
@@ -923,7 +931,7 @@ pub fn build_platform_routes(
         sync_processes_use_case: sync_processes_use_case.clone(),
         sync_scheduled_jobs_use_case,
         sync_openapi_use_case: sync_openapi_use_case.clone(),
-        application_repo: repos.application_repo.clone(),
+        app_access: app_access.clone(),
     };
 
     let sdk_audit_batch_state = SdkAuditBatchState {

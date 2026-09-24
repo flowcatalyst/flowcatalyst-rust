@@ -15,10 +15,11 @@ use utoipa::ToSchema;
 use crate::role::operations::{
     CreateRoleCommand, CreateRoleUseCase, DeleteRoleCommand, DeleteRoleUseCase,
 };
+use crate::shared::authorization_service::ApplicationAccessService;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, PgUnitOfWork, UseCase};
-use crate::{ApplicationRepository, RoleRepository};
+use crate::RoleRepository;
 use crate::{AuthRole, RoleSource};
 
 /// Role DTO for SDK response
@@ -100,7 +101,8 @@ pub struct ListRolesQuery {
 /// Application Roles SDK state
 #[derive(Clone)]
 pub struct ApplicationRolesSdkState {
-    pub application_repo: Arc<ApplicationRepository>,
+    /// Resolves `{appCode}` and confines the caller to its applications.
+    pub app_access: Arc<ApplicationAccessService>,
     pub role_repo: Arc<RoleRepository>,
     pub create_use_case: Arc<CreateRoleUseCase<PgUnitOfWork>>,
     pub delete_use_case: Arc<DeleteRoleUseCase<PgUnitOfWork>>,
@@ -128,13 +130,10 @@ pub async fn list_roles(
     Query(query): Query<ListRolesQuery>,
 ) -> Result<Json<ListRolesResponse>, PlatformError> {
     crate::shared::authorization_service::checks::can_read_roles(&auth.0)?;
-
-    // Verify application exists
     state
-        .application_repo
-        .find_by_code(&app_code)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Application", &app_code))?;
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     // Get roles for this application
     let mut roles = state.role_repo.find_by_application(&app_code).await?;
@@ -178,14 +177,12 @@ pub async fn create_role(
     Json(req): Json<CreateRoleRequest>,
 ) -> Result<Json<RoleDto>, PlatformError> {
     crate::shared::authorization_service::checks::can_create_roles(&auth.0)?;
-
-    // Verify application exists (the use case doesn't load the app row,
-    // so we keep this pre-check to surface a 404 cleanly).
+    // Also the 404 for an unknown application: the use case doesn't load
+    // the app row.
     state
-        .application_repo
-        .find_by_code(&app_code)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Application", &app_code))?;
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let display_name = req.display_name.clone().unwrap_or_else(|| req.name.clone());
     let cmd = CreateRoleCommand {
@@ -223,7 +220,7 @@ pub async fn create_role(
     responses(
         (status = 204, description = "Role deleted"),
         (status = 400, description = "Cannot delete non-SDK role"),
-        (status = 404, description = "Role not found")
+        (status = 404, description = "Application or role not found")
     ),
     security(("bearer_auth" = []))
 )]
@@ -233,6 +230,10 @@ pub async fn delete_role(
     Path((app_code, role_name)): Path<(String, String)>,
 ) -> Result<(), PlatformError> {
     crate::shared::authorization_service::checks::can_delete_roles(&auth.0)?;
+    state
+        .app_access
+        .require_application_access(&auth.0, &app_code)
+        .await?;
 
     let role_code = format!("{}:{}", app_code, role_name);
 
