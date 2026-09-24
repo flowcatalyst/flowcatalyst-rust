@@ -1,7 +1,7 @@
 //! SQLite Outbox Repository Implementation
 //!
 //! Implements the OutboxRepository trait for SQLite with a single shared
-//! `outbox_messages` table using a `type` column, matching Java/TypeScript.
+//! `outbox_messages` table using a `type` column.
 //! Timestamps stored as ISO 8601 TEXT strings.
 
 use crate::repository::{OutboxRepository, OutboxTableConfig};

@@ -1,7 +1,7 @@
 //! MongoDB Outbox Repository Implementation
 //!
 //! Implements the OutboxRepository trait for MongoDB with a single shared
-//! `outbox_messages` collection using a `type` field, matching Java/TypeScript.
+//! `outbox_messages` collection using a `type` field.
 
 use crate::repository::{OutboxRepository, OutboxTableConfig};
 use anyhow::Result;

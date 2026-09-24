@@ -1,7 +1,8 @@
 //! TSID Generator
 //!
 //! Generates Time-Sorted IDs as Crockford Base32 strings.
-//! Compatible with Java's TsidGenerator for cross-platform ID consistency.
+//! The encoding matches the other FlowCatalyst implementations, so IDs are
+//! interchangeable across them.
 //!
 //! Typed IDs follow the format `{prefix}_{tsid}` (e.g., `clt_0HZXEQ5Y8JY5Z`).
 

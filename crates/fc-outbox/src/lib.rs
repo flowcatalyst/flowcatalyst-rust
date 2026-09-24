@@ -25,11 +25,10 @@ pub use http_dispatcher::{
 };
 pub use message_group_processor::{
     BatchDispatchResult, BatchItemResult, BatchMessageDispatcher, DispatchResult,
-    MessageDispatcher, MessageGroupProcessor, MessageGroupProcessorConfig, ProcessorState,
-    TrackedMessage,
+    MessageGroupProcessor, MessageGroupProcessorConfig, ProcessorState, TrackedMessage,
 };
 pub use recovery::{RecoveryConfig, RecoveryTask};
-pub use repository::{OutboxRepository, OutboxRepositoryExt, OutboxTableConfig};
+pub use repository::{OutboxRepository, OutboxTableConfig};
 
 /// Leader election configuration. Re-exported from `fc_common` — a single
 /// unified type replacing the previous per-crate duplicates in fc-outbox and fc-standby.

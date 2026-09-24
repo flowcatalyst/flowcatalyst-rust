@@ -1,7 +1,7 @@
 //! MySQL Outbox Repository Implementation
 //!
 //! Implements the OutboxRepository trait for MySQL with a single shared
-//! `outbox_messages` table using a `type` column, matching Java/TypeScript.
+//! `outbox_messages` table using a `type` column.
 
 use crate::repository::{OutboxRepository, OutboxTableConfig};
 use anyhow::Result;

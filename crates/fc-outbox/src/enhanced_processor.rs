@@ -1,6 +1,6 @@
 //! Enhanced Outbox Processor
 //!
-//! Matches the Java outbox processor architecture:
+//! Architecture:
 //! - Polls database for pending items
 //! - Routes through GlobalBuffer and GroupDistributor
 //! - Sends to FlowCatalyst HTTP API (not directly to SQS)
@@ -86,7 +86,7 @@ pub struct ProcessorMetrics {
     pub blocked_groups: usize,
 }
 
-/// Enhanced outbox processor with Java-like architecture
+/// Outbox processor: poll → global buffer → per-group FIFO → batched HTTP dispatch.
 pub struct EnhancedOutboxProcessor {
     config: EnhancedProcessorConfig,
     repository: Arc<dyn OutboxRepository>,

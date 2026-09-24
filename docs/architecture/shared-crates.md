@@ -26,8 +26,6 @@ FlowCatalyst is a workspace of focused crates. This document maps what each one 
              ▼              ▼              ▼
        ┌──────────┐   ┌──────────┐   ┌──────────┐
        │fc-common │   │fc-queue  │   │fc-standby│
-       │fc-config │   │          │   │          │
-       │fc-secrets│   │          │   │          │
        └──────────┘   └──────────┘   └──────────┘
 
        fc-sdk: standalone — for consumer apps, depends on fc-common only.
@@ -79,27 +77,9 @@ Other essentials:
 - `MessageCallback` trait — `ack() / nack(delay_seconds)`. Implemented by each queue backend.
 - `InFlightMessage` — internal router bookkeeping.
 - `PoolConfig`, `QueueConfig`, `RouterConfig` — what the platform's config endpoint returns to the router.
-- `StandbyConfig` — leader election parameters.
+- `LeaderElectionConfig` — leader election parameters.
 - `EntityType` enum + `TsidGenerator` — 30 entity types, prefixed Crockford-Base32 IDs (`clt_0HZXEQ5Y8JY5Z`, `usr_…`, `evt_…`, `sub_…`, etc.).
 - `config::env_or`, `env_bool`, `env_or_alias`, `env_or_parse` — the env-var helpers every binary uses. `_alias` variants accept a legacy TS name for ECS-task-def compatibility.
-
----
-
-## fc-config — TOML + env
-
-`crates/fc-config/src/`. Layered config: defaults < TOML file (`config.toml` or `config.yaml`) < environment variables.
-
-```rust
-let config = AppConfig::load()?;   // checks $FC_CONFIG_PATH, then ./config.toml
-```
-
-Three sub-configs:
-
-- `HttpConfig { port, metrics_port }`.
-- `SchedulerConfig { enabled, poll_interval_ms, batch_size, stale_threshold_minutes, default_dispatch_mode, app_key }`.
-- `QueueConfig` (when set, overrides what the router fetches from the config service).
-
-The `MongoConfig` field still exists; it's only consumed by `fc-outbox` when the `mongo` feature is on. Phasing it out is contingent on the last remaining MongoDB outbox consumers migrating.
 
 ---
 
@@ -181,36 +161,6 @@ Trade-offs:
 
 ---
 
-## fc-secrets — multi-backend secrets
-
-`crates/fc-secrets/src/lib.rs`. Single trait, several backends.
-
-```rust
-#[async_trait]
-pub trait Provider: Send + Sync {
-    async fn get(&self, key: &str) -> Result<String, SecretsError>;
-    async fn set(&self, key: &str, value: &str) -> Result<(), SecretsError>;
-    async fn delete(&self, key: &str) -> Result<(), SecretsError>;
-    fn name(&self) -> &str;
-}
-
-pub async fn create_provider(config: &SecretsConfig) -> Result<Arc<dyn Provider>>;
-```
-
-Backends:
-
-| Backend | Feature | URI prefix | Notes |
-|---|---|---|---|
-| Env variables | — (default) | — | Just reads `std::env`. |
-| Encrypted file | — | `encrypted:` | AES-256-GCM with `FC_SECRETS_ENCRYPTION_KEY`. |
-| AWS Secrets Manager | `aws` | `aws-sm://` | Production primary. |
-| AWS Parameter Store | `aws-ssm` | `aws-ps://` | SSM SecureString. |
-| HashiCorp Vault | `vault` | `vault://path#key` | KV v2 mounts. |
-
-Usage in `fc-server` is mostly indirect: the DB credential resolution path uses `AwsSecretProvider` (in `fc-platform/src/shared/database.rs`) directly. The general-purpose provider abstraction is mostly used by application-side code that wants to read its own secrets through the same interface as FlowCatalyst's.
-
----
-
 ## fc-platform — control plane
 
 The big one (40+ KLoC). Owns aggregates, repositories, use cases, the UoW seal, every API router, the OIDC bridge, the scheduler, all the auth machinery. Full architecture in [platform-control-plane.md](platform-control-plane.md).
@@ -259,7 +209,7 @@ Standalone binary (`bin/fc-router/`) and embedded usage (`bin/fc-server/src/main
 - `HttpDispatcher`, `HttpDispatcherConfig` — POSTs to platform endpoints.
 - `RecoveryTask` — stuck-item recovery.
 
-Note: this crate is the **only** workspace member where MongoDB support is still wired in. Everywhere else (fc-platform, fc-config core, fc-stream, fc-router) MongoDB was removed during the great Postgres consolidation.
+Note: this crate is the **only** workspace member where MongoDB support is still wired in. Everywhere else (fc-platform, fc-stream, fc-router) MongoDB was removed during the great Postgres consolidation.
 
 ---
 

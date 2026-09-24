@@ -47,7 +47,7 @@ Measured by reading and comparing the three implementations:
   Each one is a comprehension tax for readers who must reason about
   why the indirection exists.
 - Module-level `//!` documentation is patchy. Crates intended as library
-  APIs (`fc-sdk`, `fc-common`, `fc-secrets`) deserve a self-contained
+  APIs (`fc-sdk`, `fc-common`) deserve a self-contained
   module doc on `lib.rs` that's the first thing `cargo doc` surfaces.
 - Per-task lifecycles are documented inconsistently. Some `tokio::spawn`
   sites carry a comment explaining when the task exits; many don't.
@@ -241,8 +241,8 @@ In each crate's `lib.rs`, add:
 #![warn(rustdoc::broken_intra_doc_links)]
 ```
 
-(For long-lived public-API crates only: `fc-sdk`, `fc-common`,
-`fc-secrets`, `fc-config`. The platform / router crates don't need this —
+(For long-lived public-API crates only: `fc-sdk`, `fc-common`.
+The platform / router crates don't need this —
 they're applications, not libraries.)
 
 This converts "I'll document it later" into a compiler warning. Treat

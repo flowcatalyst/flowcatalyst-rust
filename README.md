@@ -94,7 +94,7 @@ Organised by audience:
 - [Outbox processor](docs/architecture/outbox-processor.md) — application-side outbox pattern
 - [Platform control plane](docs/architecture/platform-control-plane.md) — DDD layout, UoW seal, BFF vs API
 - [Auth and OIDC](docs/architecture/auth-and-oidc.md) — token shape, OIDC bridge, tenancy
-- [Shared crates](docs/architecture/shared-crates.md) — fc-common, fc-queue, fc-secrets, fc-standby, fc-sdk, fc-mcp
+- [Shared crates](docs/architecture/shared-crates.md) — fc-common, fc-queue, fc-standby, fc-sdk, fc-mcp
 - [Partitioning](docs/architecture/partitioning.md) — monthly RANGE partitioning, in-Rust manager
 - [Adaptive concurrency](docs/architecture/adaptive-concurrency.md) — design notes (not yet shipped)
 - [Architecture direction](docs/architecture/architecture-direction.md) — long-term shape

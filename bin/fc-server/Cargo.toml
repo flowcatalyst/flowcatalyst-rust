@@ -17,7 +17,6 @@ fc-queue = { path = "../../crates/fc-queue", features = ["sqs", "postgres", "nat
 fc-standby = { path = "../../crates/fc-standby" }
 fc-stream = { path = "../../crates/fc-stream" }
 fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres"] }
-fc-config = { path = "../../crates/fc-config" }
 
 tokio = { workspace = true }
 axum = { workspace = true }

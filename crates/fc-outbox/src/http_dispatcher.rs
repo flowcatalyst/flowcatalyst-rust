@@ -1,7 +1,6 @@
 //! HTTP Dispatcher for FlowCatalyst API
 //!
 //! Sends outbox items to the FlowCatalyst REST API endpoints.
-//! Matches the Java FlowCatalystApiClient behavior.
 //!
 //! Routes items to the correct endpoint based on type:
 //! - `/api/events/batch` for EVENT items
@@ -16,7 +15,7 @@ use std::time::Duration;
 use tracing::{debug, error, warn};
 
 use crate::message_group_processor::{
-    BatchDispatchResult, BatchItemResult, BatchMessageDispatcher, DispatchResult, MessageDispatcher,
+    BatchDispatchResult, BatchItemResult, BatchMessageDispatcher, DispatchResult,
 };
 
 /// HTTP dispatcher configuration
@@ -229,33 +228,6 @@ impl HttpDispatcher {
                     })
                     .collect()
             }
-        }
-    }
-}
-
-#[async_trait]
-impl MessageDispatcher for HttpDispatcher {
-    async fn dispatch(&self, item: &OutboxItem) -> DispatchResult {
-        let results = self.send_outbox_batch(std::slice::from_ref(item)).await;
-
-        match results.first() {
-            Some(result) => {
-                if matches!(result.status, OutboxStatus::SUCCESS) {
-                    DispatchResult::Success
-                } else {
-                    DispatchResult::Failure {
-                        error: result
-                            .error_message
-                            .clone()
-                            .unwrap_or_else(|| "Unknown error".to_string()),
-                        retryable: result.status.is_retryable(),
-                    }
-                }
-            }
-            None => DispatchResult::Failure {
-                error: "No result returned".to_string(),
-                retryable: true,
-            },
         }
     }
 }

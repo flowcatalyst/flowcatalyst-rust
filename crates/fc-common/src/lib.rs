@@ -8,8 +8,8 @@
 //! ## Mental model
 //!
 //! - **`Message` / `QueuedMessage`** — the message envelope that flows
-//!   between consumers, pools, and mediators. Wire-compatible with the
-//!   Java port via camelCase serde.
+//!   between consumers, pools, and mediators. Serialized as camelCase
+//!   JSON (the shared wire contract).
 //! - **`MediationOutcome` / `MediationResult`** — what mediation returned;
 //!   drives ack/nack and retry decisions.
 //! - **`PoolConfig` / `QueueConfig` / `RouterConfig`** — runtime
@@ -52,7 +52,7 @@ pub use tsid::{EntityType, TsidGenerator};
 
 /// The core message structure that flows through the system.
 ///
-/// This struct is compatible with Java's MessagePointer using camelCase field names.
+/// Field names are camelCase on the wire.
 ///
 /// `Serialize` is derived (wire output is unchanged), but `Deserialize` is
 /// hand-written below so it can capture whether the wire payload actually
@@ -64,7 +64,7 @@ pub struct Message {
     #[serde(default)]
     pub pool_code: String,
     pub auth_token: Option<String>,
-    /// Signing secret for HMAC-SHA256 webhook signatures (Rust extension, not in Java)
+    /// Signing secret for HMAC-SHA256 webhook signatures (Rust-only extension to the shared wire contract)
     #[serde(default)]
     pub signing_secret: Option<String>,
     pub mediation_type: MediationType,
@@ -386,29 +386,6 @@ pub struct RouterConfig {
     pub queues: Vec<QueueConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StandbyConfig {
-    pub enabled: bool,
-    pub redis_url: String,
-    pub lock_key: String,
-    pub instance_id: String,
-    pub lock_ttl_seconds: u64,
-    pub refresh_interval_seconds: u64,
-}
-
-impl Default for StandbyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            redis_url: "redis://127.0.0.1:6379".to_string(),
-            lock_key: "flowcatalyst:leader".to_string(),
-            instance_id: uuid::Uuid::new_v4().to_string(),
-            lock_ttl_seconds: 30,
-            refresh_interval_seconds: 10,
-        }
-    }
-}
-
 /// Unified leader election configuration used by fc-outbox and fc-standby.
 ///
 /// Union of the fields previously duplicated across those crates:
@@ -640,7 +617,7 @@ impl MediationOutcome {
     pub fn error_connection(message: String) -> Self {
         Self {
             result: MediationResult::ErrorConnection,
-            delay_seconds: Some(30), // Java default: 30 seconds
+            delay_seconds: Some(30),
             status_code: None,
             error_message: Some(message),
             flush_group: false,
@@ -695,11 +672,10 @@ impl MediationOutcome {
 }
 
 // ============================================================================
-// Outbox Types (Java-compatible)
+// Outbox Types
 // ============================================================================
 
-/// Outbox status codes matching Java implementation
-/// These are stored as integers in the database for Java compatibility
+/// Outbox row status. Stored as an integer code; every SDK writes these codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[allow(non_camel_case_types)]
@@ -788,7 +764,7 @@ impl OutboxStatus {
     }
 }
 
-/// Outbox item type matching Java implementation
+/// Outbox item type, stored as the row's `type` string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[allow(non_camel_case_types)]
@@ -854,7 +830,7 @@ impl std::fmt::Display for OutboxItemType {
     }
 }
 
-/// Outbox item matching Java/TypeScript implementation
+/// One row of the outbox table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutboxItem {
     /// Unique identifier (TSID Crockford Base32)
@@ -1125,39 +1101,6 @@ pub struct InfrastructureHealth {
     pub message: String,
     pub issues: Vec<String>,
 }
-
-// ============================================================================
-// Error Types
-// ============================================================================
-
-#[derive(Debug, thiserror::Error)]
-pub enum FlowCatalystError {
-    #[error("Queue error: {0}")]
-    Queue(String),
-
-    #[error("Pool error: {0}")]
-    Pool(String),
-
-    #[error("Mediation error: {0}")]
-    Mediation(String),
-
-    #[error("Configuration error: {0}")]
-    Config(String),
-
-    #[error("Redis error: {0}")]
-    Redis(String),
-
-    #[error("Database error: {0}")]
-    Database(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
-    #[error("Shutdown in progress")]
-    ShutdownInProgress,
-}
-
-pub type Result<T> = std::result::Result<T, FlowCatalystError>;
 
 #[cfg(test)]
 mod message_tests {

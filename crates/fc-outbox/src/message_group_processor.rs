@@ -48,12 +48,6 @@ impl BatchDispatchResult {
     }
 }
 
-/// Single item dispatcher trait
-#[async_trait]
-pub trait MessageDispatcher: Send + Sync {
-    async fn dispatch(&self, item: &OutboxItem) -> DispatchResult;
-}
-
 /// Batch dispatcher trait - dispatches multiple outbox items in one API call
 #[async_trait]
 pub trait BatchMessageDispatcher: Send + Sync {
@@ -69,7 +63,7 @@ pub struct MessageGroupProcessorConfig {
     pub block_on_error: bool,
     /// Maximum retry attempts before giving up
     pub max_retries: u32,
-    /// Batch size for API calls (like Java's apiBatchSize)
+    /// Batch size for API calls
     pub batch_size: usize,
 }
 
