@@ -18,7 +18,7 @@ Scope (owner, 2026-09-24): track C plus the enum and secret bugs (A1–A3, A5–
 | Platform P3 | C2 events (`from_ctx`, `DomainEvent::metadata`, snapshot tests) | done |
 | Platform P6 | C4 null injection and sentinels, C5 constructors, drop `too_many_arguments` allow | done |
 | Platform P4 | C3 + A1–A3 enums under X-06/X-01 | done (value set verified against the prod DB audit, 2026-09-24) |
-| Platform P5 | A13 secrets at rest + backfill | waiting on secret-shape audit (fc-audit-2) |
+| Platform P5 | A13 secrets at rest + backfill | done for IDP, service-account and config secrets, plus `fc-server backfill-secrets`; OAuth client secrets wait on fc-audit-2 |
 | Platform P7 | fc-platform `tsid::` migration, remove `TsidGenerator`, drop `should_implement_trait` allow | done |
 
 ## Summary
