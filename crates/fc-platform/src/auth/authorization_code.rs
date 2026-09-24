@@ -8,10 +8,13 @@ use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 use crate::shared::enum_str::UnknownEnumValue;
 
-/// PKCE code challenge method (RFC 7636 §4.2).
+/// PKCE code challenge method (RFC 7636 §4.2). `plain` parses so it can be
+/// named in an error, but it is refused everywhere (as in the Go platform):
+/// `/oauth/authorize` rejects it and a code bound to it never verifies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PkceMethod {
     #[serde(rename = "S256")]
@@ -52,13 +55,16 @@ impl Pkce {
         Ok(Some(Self { challenge, method }))
     }
 
-    /// Whether `verifier` produces this challenge.
+    /// Whether `verifier` produces this challenge. Only S256 is supported:
+    /// a `plain` binding never verifies. Constant-time compare.
     pub fn verify(&self, verifier: &str) -> bool {
-        let computed = match self.method {
-            PkceMethod::S256 => URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())),
-            PkceMethod::Plain => verifier.to_string(),
-        };
-        computed == self.challenge
+        match self.method {
+            PkceMethod::S256 => {
+                let computed = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+                computed.as_bytes().ct_eq(self.challenge.as_bytes()).into()
+            }
+            PkceMethod::Plain => false,
+        }
     }
 }
 
@@ -227,11 +233,12 @@ mod tests {
         };
         assert!(s256.verify(verifier));
         assert!(!s256.verify("wrong"));
+        // `plain` is refused: even the verifier itself doesn't match.
         let plain = Pkce {
             challenge: verifier.to_string(),
             method: PkceMethod::Plain,
         };
-        assert!(plain.verify(verifier));
+        assert!(!plain.verify(verifier));
     }
 
     #[test]

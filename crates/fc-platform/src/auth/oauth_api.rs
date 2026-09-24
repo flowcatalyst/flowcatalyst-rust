@@ -310,7 +310,9 @@ pub async fn authorize(
         );
     }
 
-    // Validate code_challenge_method
+    // Validate code_challenge_method. Only S256 is supported; `plain` is
+    // refused like any unknown method (as in the Go platform). Absent means
+    // S256 (see `Pkce::from_parts`).
     if let Some(ref method) = req.code_challenge_method {
         match method.parse::<PkceMethod>() {
             Err(_) => {
@@ -322,7 +324,12 @@ pub async fn authorize(
                 );
             }
             Ok(PkceMethod::Plain) => {
-                warn!(client_id = %req.client_id, "PKCE plain method used — S256 is strongly recommended");
+                return error_redirect(
+                    &req.redirect_uri,
+                    "invalid_request",
+                    "Only the S256 code_challenge_method is supported",
+                    req.state.as_deref(),
+                );
             }
             Ok(PkceMethod::S256) => {}
         }
@@ -945,6 +952,20 @@ async fn handle_authorization_code_grant(
 
     // Validate PKCE if code_challenge was provided
     if let Some(ref pkce) = auth_code.pkce {
+        // Only S256 is supported. A `plain` binding can only come from a
+        // code minted before `/oauth/authorize` refused it.
+        if pkce.method != PkceMethod::S256 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "invalid_request".to_string(),
+                    error_description: Some(
+                        "Only the S256 code_challenge_method is supported".to_string(),
+                    ),
+                }),
+            )
+                .into_response();
+        }
         let verifier = match req.code_verifier {
             Some(v) => v,
             None => {

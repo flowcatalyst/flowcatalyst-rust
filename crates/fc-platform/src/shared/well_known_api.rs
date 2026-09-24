@@ -191,7 +191,8 @@ pub async fn get_openid_configuration(
             "applications".to_string(),
             "clients".to_string(),
         ],
-        code_challenge_methods_supported: vec!["S256".to_string(), "plain".to_string()],
+        // `plain` is refused by /oauth/authorize (as in the Go platform).
+        code_challenge_methods_supported: vec!["S256".to_string()],
         request_parameter_supported: false,
         request_uri_parameter_supported: false,
     })
