@@ -198,7 +198,8 @@ impl UseCaseError {
         &self.message
     }
 
-    /// Structured details (not part of the HTTP body today).
+    /// Structured details; sent as the body's `details` for validation
+    /// and not-found errors.
     pub fn details(&self) -> &HashMap<String, serde_json::Value> {
         &self.details
     }
@@ -229,11 +230,26 @@ impl std::error::Error for UseCaseError {}
 impl From<PlatformError> for UseCaseError {
     fn from(err: PlatformError) -> Self {
         match err {
-            PlatformError::NotFound { entity_type, id } => Self::not_found(entity_type, id),
+            // Code and message are the direct response's, so the round trip
+            // back to a PlatformError renders the same body.
+            e @ PlatformError::NotFound { .. } => Self::not_found("NOT_FOUND", e.to_string()),
             PlatformError::BusinessRule { code, message } => Self::business_rule(code, message),
             PlatformError::Concurrency { code, message } => Self::concurrency(code, message),
             e @ PlatformError::Duplicate { .. } => Self::business_rule("DUPLICATE", e.to_string()),
-            PlatformError::Validation { message } => Self::validation("VALIDATION_ERROR", message),
+            e @ PlatformError::Validation { .. } => {
+                Self::validation("VALIDATION_ERROR", e.to_string())
+            }
+            PlatformError::Coded {
+                status,
+                code,
+                message,
+                details,
+            } => match status.as_u16() {
+                400 => Self::validation_with_details(code, message, details),
+                404 => Self::not_found_with_details(code, message, details),
+                409 => Self::business_rule_with_details(code, message, details),
+                _ => Self::internal(code, message),
+            },
             e @ (PlatformError::EventTypeNotFound { .. }
             | PlatformError::SubscriptionNotFound { .. }
             | PlatformError::ClientNotFound { .. }
@@ -254,16 +270,24 @@ impl From<UseCaseError> for PlatformError {
             kind,
             code,
             message,
-            ..
+            details,
         } = err;
+        // Validation and not-found keep their specific code in `error` and
+        // their message as written, with any details, as Java's envelope
+        // does (shared/httperror/HttpError.java:47-49).
         match kind {
-            ErrorKind::Validation => PlatformError::Validation {
-                message: format!("{}: {}", code, message),
+            ErrorKind::Validation => PlatformError::Coded {
+                status: axum::http::StatusCode::BAD_REQUEST,
+                code,
+                message,
+                details,
             },
             ErrorKind::BusinessRule => PlatformError::BusinessRule { code, message },
-            ErrorKind::NotFound => PlatformError::NotFound {
-                entity_type: code,
-                id: message,
+            ErrorKind::NotFound => PlatformError::Coded {
+                status: axum::http::StatusCode::NOT_FOUND,
+                code,
+                message,
+                details,
             },
             ErrorKind::Concurrency => PlatformError::Concurrency { code, message },
             ErrorKind::Internal => PlatformError::Internal {
@@ -361,6 +385,8 @@ mod tests {
                 },
                 PlatformError::duplicate("Client", "identifier", "acme"),
                 PlatformError::conflict("already there"),
+                PlatformError::validation("bad"),
+                PlatformError::bad_request_code("SOME_CODE", "bad"),
             ]
         };
         for (direct, via) in cases().into_iter().zip(cases()) {
@@ -393,15 +419,17 @@ mod tests {
     async fn test_use_case_error_http_responses() {
         use serde_json::json;
         let cases = vec![
+            // Java's envelope (HttpError.java): the specific code in
+            // `error`, the message as written, details when there are any.
             (
                 UseCaseError::validation("NAME_REQUIRED", "Name is required"),
                 400,
-                json!({"error": "VALIDATION_ERROR", "message": "Validation error: NAME_REQUIRED: Name is required"}),
+                json!({"error": "NAME_REQUIRED", "message": "Name is required"}),
             ),
             (
                 UseCaseError::validation_with_details("BAD", "bad", details! { "field" => "name" }),
                 400,
-                json!({"error": "VALIDATION_ERROR", "message": "Validation error: BAD: bad"}),
+                json!({"error": "BAD", "message": "bad", "details": {"field": "name"}}),
             ),
             (
                 UseCaseError::business_rule("ROLE_IN_USE", "in use"),
@@ -411,7 +439,7 @@ mod tests {
             (
                 UseCaseError::not_found("ROLE_NOT_FOUND", "Role 'r1' not found"),
                 404,
-                json!({"error": "NOT_FOUND", "message": "Entity not found: ROLE_NOT_FOUND with id Role 'r1' not found"}),
+                json!({"error": "ROLE_NOT_FOUND", "message": "Role 'r1' not found"}),
             ),
             (
                 UseCaseError::concurrency("STALE", "stale"),

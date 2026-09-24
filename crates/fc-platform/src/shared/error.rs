@@ -75,6 +75,20 @@ pub enum PlatformError {
         retry_after_secs: u32,
         message: String,
     },
+
+    /// An error that carries its own code, rendered as Java's envelope
+    /// `{"error": code, "message": message, "details"?: {...}}`
+    /// (flowcatalyst-javalin shared/httperror/HttpError.java): `error` is
+    /// the specific code, `message` is sent as written, and `details` only
+    /// when there are any. Use-case validation and not-found errors arrive
+    /// here.
+    #[error("{message}")]
+    Coded {
+        status: StatusCode,
+        code: String,
+        message: String,
+        details: std::collections::HashMap<String, serde_json::Value>,
+    },
 }
 
 impl PlatformError {
@@ -94,6 +108,16 @@ impl PlatformError {
             entity_type: entity_type.into(),
             field: field.into(),
             value: value.into(),
+        }
+    }
+
+    /// A 400 with a specific code (Java's `HttpError.badRequest`).
+    pub fn bad_request_code(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Coded {
+            status: StatusCode::BAD_REQUEST,
+            code: code.into(),
+            message: message.into(),
+            details: Default::default(),
         }
     }
 
@@ -171,6 +195,11 @@ impl<T> NotFoundExt<T> for Option<T> {
 pub struct ErrorResponse {
     pub error: String,
     pub message: String,
+    /// Structured details, only when the error has some (Java's
+    /// `@JsonInclude(NON_EMPTY)` on `HttpError.details`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 impl IntoResponse for PlatformError {
@@ -218,6 +247,7 @@ impl IntoResponse for PlatformError {
                 StatusCode::TOO_MANY_REQUESTS,
                 "TOO_MANY_REQUESTS".to_string(),
             ),
+            PlatformError::Coded { status, code, .. } => (*status, code.clone()),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR".to_string(),
@@ -236,6 +266,7 @@ impl IntoResponse for PlatformError {
             let body = ErrorResponse {
                 error: error_code,
                 message: self.to_string(),
+                details: None,
             };
             return (
                 status,
@@ -257,9 +288,14 @@ impl IntoResponse for PlatformError {
         } else {
             self.to_string()
         };
+        let details = match self {
+            PlatformError::Coded { details, .. } if !details.is_empty() => Some(details),
+            _ => None,
+        };
         let body = ErrorResponse {
             error: error_code,
             message,
+            details,
         };
 
         (status, Json(body)).into_response()

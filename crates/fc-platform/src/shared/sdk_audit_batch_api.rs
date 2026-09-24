@@ -20,7 +20,6 @@ use std::collections::{BTreeSet, HashMap};
 use axum::{
     body::Bytes,
     extract::State,
-    http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -36,7 +35,7 @@ use crate::audit::entity::AuditLog;
 use crate::audit::repository::AuditLogRepository;
 use crate::client::repository::ClientRepository;
 use crate::shared::authorization_service::AuthContext;
-use crate::shared::error::{ErrorResponse, PlatformError};
+use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
 /// Largest batch accepted, as in Go.
@@ -129,16 +128,10 @@ pub struct SdkAuditBatchState {
 
 // ── Handler ─────────────────────────────────────────────────────────────
 
-/// A 400 with Go's error code (`httperror.BadRequest`).
+/// A 400 with a specific error code (Go's `httperror.BadRequest`, Java's
+/// `HttpError.badRequest`).
 fn bad_request(code: &str, message: impl Into<String>) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(ErrorResponse {
-            error: code.to_string(),
-            message: message.into(),
-        }),
-    )
-        .into_response()
+    PlatformError::bad_request_code(code, message).into_response()
 }
 
 /// Decode the body the way Go's `json.NewDecoder(r.Body).Decode` does: the
