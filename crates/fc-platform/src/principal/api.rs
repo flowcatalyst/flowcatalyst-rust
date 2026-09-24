@@ -1494,13 +1494,13 @@ pub async fn send_password_reset(
         "Admin triggered password reset email"
     );
 
-    let _ = state
+    state
         .audit_service
-        .log_update(
+        .log(
             &auth.0,
             "Principal",
             &id,
-            "Password reset email sent by admin".to_string(),
+            "Password reset email sent by admin",
         )
         .await;
 
