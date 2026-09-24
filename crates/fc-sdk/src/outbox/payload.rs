@@ -7,7 +7,7 @@
 use serde::Serialize;
 use sqlx::{PgPool, Postgres, Transaction};
 
-use crate::tsid::TsidGenerator;
+use crate::tsid;
 use crate::usecase::DomainEvent;
 
 use super::error::OutboxError;
@@ -43,7 +43,7 @@ pub async fn write_dispatch_job(
     job: &DispatchJobPayload,
     client_id: Option<&str>,
 ) -> Result<(), OutboxError> {
-    let id = TsidGenerator::generate_untyped();
+    let id = tsid::generate_untyped();
     let payload = serde_json::to_value(job)?;
     let payload_size = payload.to_string().len() as i32;
 
@@ -74,7 +74,7 @@ pub async fn write_event<E: DomainEvent>(
     event: &E,
     client_id: Option<&str>,
 ) -> Result<(), OutboxError> {
-    let id = TsidGenerator::generate_untyped();
+    let id = tsid::generate_untyped();
     let data_json = serde_json::to_value(event)?;
     let m = event.metadata();
 
@@ -120,7 +120,7 @@ pub async fn write_audit_log(
     audit: &AuditLogPayload,
     client_id: Option<&str>,
 ) -> Result<(), OutboxError> {
-    let id = TsidGenerator::generate_untyped();
+    let id = tsid::generate_untyped();
     let payload = serde_json::to_value(audit)?;
     let payload_size = payload.to_string().len() as i32;
 

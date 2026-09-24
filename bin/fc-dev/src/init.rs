@@ -57,7 +57,7 @@ use fc_platform::principal::repository::PrincipalRepository;
 use fc_platform::service_account::entity::ServiceAccount;
 use fc_platform::service_account::repository::ServiceAccountRepository;
 use fc_platform::shared::encryption_service::EncryptionService;
-use fc_platform::{EntityType, TsidGenerator};
+use fc_common::tsid::{self, EntityType};
 
 #[derive(clap::Args, Debug)]
 pub struct InitArgs {
@@ -304,8 +304,8 @@ pub async fn run(args: InitArgs) -> Result<()> {
 
     // ── 5. OAuth client for the SA (client_credentials grant) ────────
     let (client_secret_plaintext, client_secret_ref) = generate_and_encrypt_secret()?;
-    let oauth_row_id = TsidGenerator::generate(EntityType::OAuthClient);
-    let public_client_id = TsidGenerator::generate(EntityType::OAuthClient);
+    let oauth_row_id = tsid::generate(EntityType::OAuthClient);
+    let public_client_id = tsid::generate(EntityType::OAuthClient);
 
     let mut oauth_client = OAuthClient::new(&public_client_id, format!("{} Service Account Client", name));
     oauth_client.id = oauth_row_id;

@@ -25,7 +25,7 @@
 //! let job_ids = outbox.create_dispatch_jobs(vec![job1, job2]).await?;
 //! ```
 
-use crate::tsid::TsidGenerator;
+use crate::tsid;
 
 use super::driver::{MessageType, OutboxDriver, OutboxMessage, OutboxStatus};
 use super::dto::{CreateAuditLogDto, CreateDispatchJobDto, CreateEventDto};
@@ -49,7 +49,7 @@ impl OutboxManager {
     pub async fn create_event(&self, event: CreateEventDto) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
-        let id = TsidGenerator::generate_untyped();
+        let id = tsid::generate_untyped();
         let payload = serde_json::to_string(&event.to_payload())?;
         let headers = if event.headers.is_empty() {
             None
@@ -83,7 +83,7 @@ impl OutboxManager {
         let mut messages = Vec::with_capacity(events.len());
 
         for event in &events {
-            let id = TsidGenerator::generate_untyped();
+            let id = tsid::generate_untyped();
             ids.push(id.clone());
             let payload = serde_json::to_string(&event.to_payload())?;
             let headers = if event.headers.is_empty() {
@@ -112,7 +112,7 @@ impl OutboxManager {
     ) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
-        let id = TsidGenerator::generate_untyped();
+        let id = tsid::generate_untyped();
         let payload = serde_json::to_string(&job.to_payload())?;
 
         let message = self.build_message(
@@ -141,7 +141,7 @@ impl OutboxManager {
         let mut messages = Vec::with_capacity(jobs.len());
 
         for job in &jobs {
-            let id = TsidGenerator::generate_untyped();
+            let id = tsid::generate_untyped();
             ids.push(id.clone());
             let payload = serde_json::to_string(&job.to_payload())?;
 
@@ -162,7 +162,7 @@ impl OutboxManager {
     pub async fn create_audit_log(&self, audit: CreateAuditLogDto) -> Result<String, OutboxError> {
         self.ensure_client_id()?;
 
-        let id = TsidGenerator::generate_untyped();
+        let id = tsid::generate_untyped();
         let payload = serde_json::to_string(&audit.to_payload())?;
         let headers = if audit.headers.is_empty() {
             None
@@ -191,7 +191,7 @@ impl OutboxManager {
         let mut messages = Vec::with_capacity(audits.len());
 
         for audit in &audits {
-            let id = TsidGenerator::generate_untyped();
+            let id = tsid::generate_untyped();
             ids.push(id.clone());
             let payload = serde_json::to_string(&audit.to_payload())?;
             let headers = if audit.headers.is_empty() {

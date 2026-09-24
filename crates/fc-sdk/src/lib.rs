@@ -90,7 +90,7 @@
 //! ```ignore
 //! use fc_sdk::usecase::{ExecutionContext, EventMetadata, DomainEvent};
 //! use fc_sdk::outbox::{OutboxUnitOfWork, UnitOfWork};
-//! use fc_sdk::tsid::{TsidGenerator, EntityType};
+//! use fc_sdk::tsid::{self, EntityType};
 //! use serde::Serialize;
 //!
 //! // 1. Define your domain event

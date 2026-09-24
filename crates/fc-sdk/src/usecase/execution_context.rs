@@ -5,7 +5,7 @@
 
 use super::domain_event::DomainEvent;
 use super::tracing_context::TracingContext;
-use crate::tsid::TsidGenerator;
+use crate::tsid;
 use chrono::{DateTime, Utc};
 
 /// Context for a use case execution.
@@ -51,7 +51,7 @@ impl ExecutionContext {
             return Self::from_tracing_context(&tracing_ctx, principal_id);
         }
 
-        let exec_id = format!("exec-{}", TsidGenerator::generate_untyped());
+        let exec_id = format!("exec-{}", tsid::generate_untyped());
         Self {
             execution_id: exec_id.clone(),
             correlation_id: exec_id,
@@ -69,7 +69,7 @@ impl ExecutionContext {
         tracing_context: &TracingContext,
         principal_id: impl Into<String>,
     ) -> Self {
-        let exec_id = format!("exec-{}", TsidGenerator::generate_untyped());
+        let exec_id = format!("exec-{}", tsid::generate_untyped());
         Self {
             execution_id: exec_id,
             correlation_id: tracing_context.correlation_id().to_string(),
@@ -85,7 +85,7 @@ impl ExecutionContext {
         correlation_id: impl Into<String>,
     ) -> Self {
         Self {
-            execution_id: format!("exec-{}", TsidGenerator::generate_untyped()),
+            execution_id: format!("exec-{}", tsid::generate_untyped()),
             correlation_id: correlation_id.into(),
             causation_id: None,
             principal_id: principal_id.into(),
@@ -99,7 +99,7 @@ impl ExecutionContext {
     /// correlation_id is preserved.
     pub fn from_parent_event<E: DomainEvent>(parent: &E, principal_id: impl Into<String>) -> Self {
         Self {
-            execution_id: format!("exec-{}", TsidGenerator::generate_untyped()),
+            execution_id: format!("exec-{}", tsid::generate_untyped()),
             correlation_id: parent.metadata().correlation_id.clone(),
             causation_id: Some(parent.metadata().event_id.clone()),
             principal_id: principal_id.into(),

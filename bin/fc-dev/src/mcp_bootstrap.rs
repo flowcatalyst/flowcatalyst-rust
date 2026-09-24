@@ -32,7 +32,7 @@ use anyhow::{Context, Result};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use fc_common::tsid::{EntityType, TsidGenerator};
+use fc_common::tsid::{self, EntityType};
 use fc_platform::auth::oauth_entity::{GrantType, OAuthClient};
 use fc_platform::repository::Repositories;
 use fc_platform::service_account::entity::RoleAssignment;
@@ -97,7 +97,7 @@ pub async fn run(repos: &Repositories) -> Result<()> {
     // TSID, NOT the OAuth `client_id`. We generate a proper TSID here and
     // keep `CLIENT_ID` (the human-readable OAuth public identifier) only
     // on the OAuthClient row.
-    let service_account_id = TsidGenerator::generate(EntityType::ServiceAccount);
+    let service_account_id = tsid::generate(EntityType::ServiceAccount);
     let mut principal = Principal::new_service(service_account_id, PRINCIPAL_NAME);
     principal.scope = UserScope::Anchor; // matches the role's reach
     principal.roles = vec![RoleAssignment::new(SUPER_ADMIN_ROLE)];

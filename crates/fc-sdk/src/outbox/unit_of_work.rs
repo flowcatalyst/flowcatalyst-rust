@@ -71,7 +71,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use tokio::sync::Mutex;
 use tracing::{debug, error};
 
-use crate::tsid::TsidGenerator;
+use crate::tsid;
 use crate::usecase::domain_event::DomainEvent;
 use crate::usecase::error::UseCaseError;
 use crate::usecase::result::UseCaseResult;
@@ -318,7 +318,7 @@ impl OutboxUnitOfWork {
         event: &E,
         client_id: &Option<String>,
     ) -> Result<(), UseCaseError> {
-        let id = TsidGenerator::generate_untyped();
+        let id = tsid::generate_untyped();
         let payload = Self::event_outbox_payload(event).map_err(|e| {
             error!("Failed to serialize event for outbox: {}", e);
             UseCaseError::commit(format!("Failed to serialize event: {}", e))
@@ -360,7 +360,7 @@ impl OutboxUnitOfWork {
         command: &C,
         client_id: &Option<String>,
     ) -> Result<(), UseCaseError> {
-        let id = TsidGenerator::generate_untyped();
+        let id = tsid::generate_untyped();
 
         let command_name = std::any::type_name::<C>()
             .rsplit("::")
