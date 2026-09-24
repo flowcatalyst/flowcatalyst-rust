@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::IdpRoleMappingDeleted;
+use crate::auth::config_entity::IdpRoleMapping;
 use crate::auth::config_repository::IdpRoleMappingRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,30 +59,33 @@ impl<U: UnitOfWork> UseCase for DeleteIdpRoleMappingUseCase<U> {
         command: DeleteIdpRoleMappingCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<IdpRoleMappingDeleted> {
-        let mapping = match self
-            .idp_role_mapping_repo
-            .find_by_id(&command.mapping_id)
-            .await
-        {
-            Ok(Some(m)) => m,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "MAPPING_NOT_FOUND",
-                    format!("Mapping '{}' not found", command.mapping_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch mapping: {}",
-                    e,
-                )));
-            }
+        let (mapping, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        let event = IdpRoleMappingDeleted::new(&ctx, &mapping.id);
 
         self.unit_of_work
             .commit_delete(&mapping, &*self.idp_role_mapping_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteIdpRoleMappingUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteIdpRoleMappingCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(IdpRoleMapping, IdpRoleMappingDeleted), UseCaseError> {
+        let mapping = self
+            .idp_role_mapping_repo
+            .find_by_id(&command.mapping_id)
+            .await
+            .or_not_found(
+                "MAPPING_NOT_FOUND",
+                format!("Mapping '{}' not found", command.mapping_id),
+            )?;
+
+        let event = IdpRoleMappingDeleted::new(ctx, &mapping.id);
+        Ok((mapping, event))
     }
 }

@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::PlatformConfigAccessRevoked;
+use crate::platform_config::access_entity::PlatformConfigAccess;
 use crate::platform_config::access_repository::PlatformConfigAccessRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,38 +69,41 @@ impl<U: UnitOfWork> UseCase for RevokePlatformConfigAccessUseCase<U> {
         command: RevokePlatformConfigAccessCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<PlatformConfigAccessRevoked> {
-        let access = match self
-            .access_repo
-            .find_by_application_and_role(&command.application_code, &command.role_code)
-            .await
-        {
-            Ok(Some(a)) => a,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "ACCESS_NOT_FOUND",
-                    format!(
-                        "Config access for {}/{} not found",
-                        command.application_code, command.role_code
-                    ),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "fetch access: {}",
-                    e,
-                )));
-            }
+        let (access, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        let event = PlatformConfigAccessRevoked::new(
-            &ctx,
-            &access.id,
-            &access.application_code,
-            &access.role_code,
-        );
 
         self.unit_of_work
             .commit_delete(&access, &*self.access_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> RevokePlatformConfigAccessUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &RevokePlatformConfigAccessCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(PlatformConfigAccess, PlatformConfigAccessRevoked), UseCaseError> {
+        let access = self
+            .access_repo
+            .find_by_application_and_role(&command.application_code, &command.role_code)
+            .await
+            .or_not_found(
+                "ACCESS_NOT_FOUND",
+                format!(
+                    "Config access for {}/{} not found",
+                    command.application_code, command.role_code
+                ),
+            )?;
+
+        let event = PlatformConfigAccessRevoked::new(
+            ctx,
+            &access.id,
+            &access.application_code,
+            &access.role_code,
+        );
+        Ok((access, event))
     }
 }

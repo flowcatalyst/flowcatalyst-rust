@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::OAuthClientDeleted;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::auth::oauth_entity::OAuthClient;
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,30 +59,33 @@ impl<U: UnitOfWork> UseCase for DeleteOAuthClientUseCase<U> {
         command: DeleteOAuthClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<OAuthClientDeleted> {
-        let client = match self
-            .oauth_client_repo
-            .find_by_id(&command.oauth_client_id)
-            .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "OAUTH_CLIENT_NOT_FOUND",
-                    format!("OAuth client '{}' not found", command.oauth_client_id),
-                ))
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "fetch oauth client: {}",
-                    e,
-                )))
-            }
+        let (client, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        let event = OAuthClientDeleted::new(&ctx, &client.id, &client.client_id);
 
         self.unit_of_work
             .commit_delete(&client, &*self.oauth_client_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteOAuthClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteOAuthClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(OAuthClient, OAuthClientDeleted), UseCaseError> {
+        let client = self
+            .oauth_client_repo
+            .find_by_id(&command.oauth_client_id)
+            .await
+            .or_not_found(
+                "OAUTH_CLIENT_NOT_FOUND",
+                format!("OAuth client '{}' not found", command.oauth_client_id),
+            )?;
+
+        let event = OAuthClientDeleted::new(ctx, &client.id, &client.client_id);
+        Ok((client, event))
     }
 }

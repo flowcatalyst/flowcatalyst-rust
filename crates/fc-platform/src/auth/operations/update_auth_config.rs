@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::AuthConfigUpdated;
-use crate::auth::config_entity::{AuthConfigType, AuthProvider};
+use crate::auth::config_entity::{AuthConfigType, AuthProvider, ClientAuthConfig};
 use crate::auth::config_repository::ClientAuthConfigRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,25 +79,31 @@ impl<U: UnitOfWork> UseCase for UpdateAuthConfigUseCase<U> {
         command: UpdateAuthConfigCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<AuthConfigUpdated> {
-        let mut config = match self
+        let (config, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&config, &*self.auth_config_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateAuthConfigUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateAuthConfigCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ClientAuthConfig, AuthConfigUpdated), UseCaseError> {
+        let mut config = self
             .auth_config_repo
             .find_by_id(&command.auth_config_id)
             .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "AUTH_CONFIG_NOT_FOUND",
-                    format!("Auth config '{}' not found", command.auth_config_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch auth config: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "AUTH_CONFIG_NOT_FOUND",
+                format!("Auth config '{}' not found", command.auth_config_id),
+            )?;
 
         if let Some(ref client_id) = command.primary_client_id {
             config.primary_client_id = Some(client_id.clone());
@@ -127,10 +135,7 @@ impl<U: UnitOfWork> UseCase for UpdateAuthConfigUseCase<U> {
 
         config.updated_at = chrono::Utc::now();
 
-        let event = AuthConfigUpdated::new(&ctx, &config.id, &config.email_domain);
-
-        self.unit_of_work
-            .commit(&config, &*self.auth_config_repo, event, &command)
-            .await
+        let event = AuthConfigUpdated::new(ctx, &config.id, &config.email_domain);
+        Ok((config, event))
     }
 }

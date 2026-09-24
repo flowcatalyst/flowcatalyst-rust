@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientActivated;
-use crate::client::entity::ClientStatus;
+use crate::client::entity::{Client, ClientStatus};
 use crate::client::repository::ClientRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for activating a client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,26 +63,37 @@ impl<U: UnitOfWork> UseCase for ActivateClientUseCase<U> {
         command: ActivateClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ClientActivated> {
-        // Fetch existing client
-        let mut client = match self.client_repo.find_by_id(&command.client_id).await {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CLIENT_NOT_FOUND",
-                    format!("Client with ID '{}' not found", command.client_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch client: {}",
-                    e
-                )));
-            }
+        let (client, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&client, &*self.client_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> ActivateClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &ActivateClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Client, ClientActivated), UseCaseError> {
+        // Fetch existing client
+        let mut client = self
+            .client_repo
+            .find_by_id(&command.client_id)
+            .await
+            .or_not_found(
+                "CLIENT_NOT_FOUND",
+                format!("Client with ID '{}' not found", command.client_id),
+            )?;
 
         // Business rule: client must not already be active
         if client.status == ClientStatus::Active {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ALREADY_ACTIVE",
                 "Client is already active",
             ));
@@ -92,12 +105,8 @@ impl<U: UnitOfWork> UseCase for ActivateClientUseCase<U> {
         client.activate();
 
         // Create domain event
-        let event = ClientActivated::new(&ctx, &client.id, previous_status);
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&client, &*self.client_repo, event, &command)
-            .await
+        let event = ClientActivated::new(ctx, &client.id, previous_status);
+        Ok((client, event))
     }
 }
 

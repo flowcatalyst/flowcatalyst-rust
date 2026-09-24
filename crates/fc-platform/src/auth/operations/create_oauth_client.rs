@@ -92,21 +92,29 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
         command: CreateOAuthClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<OAuthClientCreated> {
-        let exists = match self
+        let (client, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&client, &*self.oauth_client_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> CreateOAuthClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &CreateOAuthClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(OAuthClient, OAuthClientCreated), UseCaseError> {
+        let exists = self
             .oauth_client_repo
             .exists_by_client_id(&command.client_id)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "check client_id uniqueness: {}",
-                    e,
-                )))
-            }
-        };
+            .await?;
         if exists {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "OAUTH_CLIENT_EXISTS",
                 format!(
                     "OAuth client with clientId '{}' already exists",
@@ -135,10 +143,7 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
         client.service_account_principal_id = command.service_account_principal_id.clone();
         client.created_by = command.created_by.clone();
 
-        let event = OAuthClientCreated::new(&ctx, &client.id, &client.client_id);
-
-        self.unit_of_work
-            .commit(&client, &*self.oauth_client_repo, event, &command)
-            .await
+        let event = OAuthClientCreated::new(ctx, &client.id, &client.client_id);
+        Ok((client, event))
     }
 }

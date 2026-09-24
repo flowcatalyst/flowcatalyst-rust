@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientSuspended;
-use crate::client::entity::ClientStatus;
+use crate::client::entity::{Client, ClientStatus};
 use crate::client::repository::ClientRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for suspending a client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,28 +81,39 @@ impl<U: UnitOfWork> UseCase for SuspendClientUseCase<U> {
         command: SuspendClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ClientSuspended> {
+        let (client, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&client, &*self.client_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> SuspendClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SuspendClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Client, ClientSuspended), UseCaseError> {
         let reason = command.reason.trim();
 
         // Fetch existing client
-        let mut client = match self.client_repo.find_by_id(&command.client_id).await {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CLIENT_NOT_FOUND",
-                    format!("Client with ID '{}' not found", command.client_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch client: {}",
-                    e
-                )));
-            }
-        };
+        let mut client = self
+            .client_repo
+            .find_by_id(&command.client_id)
+            .await
+            .or_not_found(
+                "CLIENT_NOT_FOUND",
+                format!("Client with ID '{}' not found", command.client_id),
+            )?;
 
         // Business rule: cannot suspend an inactive client
         if client.status == ClientStatus::Inactive {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CANNOT_SUSPEND_INACTIVE",
                 "Cannot suspend an inactive client",
             ));
@@ -108,7 +121,7 @@ impl<U: UnitOfWork> UseCase for SuspendClientUseCase<U> {
 
         // Business rule: client must not already be suspended
         if client.status == ClientStatus::Suspended {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ALREADY_SUSPENDED",
                 "Client is already suspended",
             ));
@@ -118,12 +131,8 @@ impl<U: UnitOfWork> UseCase for SuspendClientUseCase<U> {
         client.suspend(reason);
 
         // Create domain event
-        let event = ClientSuspended::new(&ctx, &client.id, reason);
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&client, &*self.client_repo, event, &command)
-            .await
+        let event = ClientSuspended::new(ctx, &client.id, reason);
+        Ok((client, event))
     }
 }
 

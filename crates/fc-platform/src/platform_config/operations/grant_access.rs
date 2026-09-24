@@ -76,18 +76,27 @@ impl<U: UnitOfWork> UseCase for GrantPlatformConfigAccessUseCase<U> {
         command: GrantPlatformConfigAccessCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<PlatformConfigAccessGranted> {
-        let existing = match self
+        let (access, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&access, &*self.access_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> GrantPlatformConfigAccessUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &GrantPlatformConfigAccessCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(PlatformConfigAccess, PlatformConfigAccessGranted), UseCaseError> {
+        let existing = self
             .access_repo
             .find_by_application_and_role(&command.application_code, &command.role_code)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(
-                    format!("fetch access: {}", e,),
-                ))
-            }
-        };
+            .await?;
 
         let (mut access, was_created) = match existing {
             Some(a) => (a, false),
@@ -105,7 +114,7 @@ impl<U: UnitOfWork> UseCase for GrantPlatformConfigAccessUseCase<U> {
         }
 
         let event = PlatformConfigAccessGranted::new(
-            &ctx,
+            ctx,
             &access.id,
             &access.application_code,
             &access.role_code,
@@ -113,9 +122,6 @@ impl<U: UnitOfWork> UseCase for GrantPlatformConfigAccessUseCase<U> {
             access.can_write,
             was_created,
         );
-
-        self.unit_of_work
-            .commit(&access, &*self.access_repo, event, &command)
-            .await
+        Ok((access, event))
     }
 }

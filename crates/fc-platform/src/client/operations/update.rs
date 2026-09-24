@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientUpdated;
+use crate::client::entity::Client;
 use crate::client::repository::ClientRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 /// Command for updating an existing client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,22 +94,33 @@ impl<U: UnitOfWork> UseCase for UpdateClientUseCase<U> {
         command: UpdateClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ClientUpdated> {
-        // Fetch existing client
-        let mut client = match self.client_repo.find_by_id(&command.client_id).await {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CLIENT_NOT_FOUND",
-                    format!("Client with ID '{}' not found", command.client_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch client: {}",
-                    e
-                )));
-            }
+        let (client, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&client, &*self.client_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Client, ClientUpdated), UseCaseError> {
+        // Fetch existing client
+        let mut client = self
+            .client_repo
+            .find_by_id(&command.client_id)
+            .await
+            .or_not_found(
+                "CLIENT_NOT_FOUND",
+                format!("Client with ID '{}' not found", command.client_id),
+            )?;
 
         // Apply updates
         let mut updated_name: Option<&str> = None;
@@ -121,7 +135,7 @@ impl<U: UnitOfWork> UseCase for UpdateClientUseCase<U> {
 
         // Check if anything actually changed
         if updated_name.is_none() {
-            return UseCaseResult::failure(UseCaseError::validation(
+            return Err(UseCaseError::validation(
                 "NO_CHANGES",
                 "No changes detected",
             ));
@@ -130,12 +144,8 @@ impl<U: UnitOfWork> UseCase for UpdateClientUseCase<U> {
         client.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = ClientUpdated::new(&ctx, &client.id, updated_name, None);
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&client, &*self.client_repo, event, &command)
-            .await
+        let event = ClientUpdated::new(ctx, &client.id, updated_name, None);
+        Ok((client, event))
     }
 }
 

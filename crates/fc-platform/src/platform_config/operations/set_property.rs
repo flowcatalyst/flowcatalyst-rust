@@ -82,8 +82,25 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
         command: SetPlatformConfigPropertyCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<PlatformConfigPropertySet> {
+        let (config, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work
+            .commit(&config, &*self.config_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> SetPlatformConfigPropertyUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SetPlatformConfigPropertyCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(PlatformConfig, PlatformConfigPropertySet), UseCaseError> {
         // Upsert by natural key: (app_code, section, property, scope, client_id).
-        let existing = match self
+        let existing = self
             .config_repo
             .find_by_key(
                 &command.application_code,
@@ -92,15 +109,7 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
                 &command.scope,
                 command.client_id.as_deref(),
             )
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(
-                    format!("fetch config: {}", e,),
-                ))
-            }
-        };
+            .await?;
 
         let (mut config, was_created) = match existing {
             Some(cfg) => (cfg, false),
@@ -130,7 +139,7 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
         config.updated_at = chrono::Utc::now();
 
         let event = PlatformConfigPropertySet::new(
-            &ctx,
+            ctx,
             &config.id,
             &config.application_code,
             &config.section,
@@ -140,9 +149,6 @@ impl<U: UnitOfWork> UseCase for SetPlatformConfigPropertyUseCase<U> {
             config.value_type.as_str(),
             was_created,
         );
-
-        self.unit_of_work
-            .commit(&config, &*self.config_repo, event, &command)
-            .await
+        Ok((config, event))
     }
 }

@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::OAuthClientDeactivated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::auth::oauth_entity::OAuthClient;
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::OAuthClientRepository;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,33 +59,36 @@ impl<U: UnitOfWork> UseCase for DeactivateOAuthClientUseCase<U> {
         command: DeactivateOAuthClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<OAuthClientDeactivated> {
-        let mut client = match self
-            .oauth_client_repo
-            .find_by_id(&command.oauth_client_id)
-            .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "OAUTH_CLIENT_NOT_FOUND",
-                    format!("OAuth client '{}' not found", command.oauth_client_id),
-                ))
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "fetch oauth client: {}",
-                    e,
-                )))
-            }
+        let (client, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        client.active = false;
-        client.updated_at = chrono::Utc::now();
-
-        let event = OAuthClientDeactivated::new(&ctx, &client.id, &client.client_id);
 
         self.unit_of_work
             .commit(&client, &*self.oauth_client_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeactivateOAuthClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeactivateOAuthClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(OAuthClient, OAuthClientDeactivated), UseCaseError> {
+        let mut client = self
+            .oauth_client_repo
+            .find_by_id(&command.oauth_client_id)
+            .await
+            .or_not_found(
+                "OAUTH_CLIENT_NOT_FOUND",
+                format!("OAuth client '{}' not found", command.oauth_client_id),
+            )?;
+
+        client.active = false;
+        client.updated_at = chrono::Utc::now();
+
+        let event = OAuthClientDeactivated::new(ctx, &client.id, &client.client_id);
+        Ok((client, event))
     }
 }

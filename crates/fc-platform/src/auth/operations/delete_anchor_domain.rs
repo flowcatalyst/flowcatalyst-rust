@@ -5,8 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::AnchorDomainDeleted;
+use crate::auth::config_entity::AnchorDomain;
 use crate::auth::config_repository::AnchorDomainRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,30 +59,33 @@ impl<U: UnitOfWork> UseCase for DeleteAnchorDomainUseCase<U> {
         command: DeleteAnchorDomainCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<AnchorDomainDeleted> {
-        let anchor_domain = match self
-            .anchor_domain_repo
-            .find_by_id(&command.anchor_domain_id)
-            .await
-        {
-            Ok(Some(ad)) => ad,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "ANCHOR_DOMAIN_NOT_FOUND",
-                    format!("Anchor domain '{}' not found", command.anchor_domain_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch anchor domain: {}",
-                    e
-                )));
-            }
+        let (anchor_domain, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        let event = AnchorDomainDeleted::new(&ctx, &anchor_domain.id, &anchor_domain.domain);
 
         self.unit_of_work
             .commit_delete(&anchor_domain, &*self.anchor_domain_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteAnchorDomainUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteAnchorDomainCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(AnchorDomain, AnchorDomainDeleted), UseCaseError> {
+        let anchor_domain = self
+            .anchor_domain_repo
+            .find_by_id(&command.anchor_domain_id)
+            .await
+            .or_not_found(
+                "ANCHOR_DOMAIN_NOT_FOUND",
+                format!("Anchor domain '{}' not found", command.anchor_domain_id),
+            )?;
+
+        let event = AnchorDomainDeleted::new(ctx, &anchor_domain.id, &anchor_domain.domain);
+        Ok((anchor_domain, event))
     }
 }

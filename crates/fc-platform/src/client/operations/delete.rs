@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ClientDeleted;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::client::entity::Client;
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ClientRepository;
 
 /// Command for deleting a client.
@@ -58,37 +61,39 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
         command: DeleteClientCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ClientDeleted> {
-        let client = match self.client_repo.find_by_id(&command.client_id).await {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "CLIENT_NOT_FOUND",
-                    format!("Client with ID '{}' not found", command.client_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch client: {}",
-                    e
-                )));
-            }
+        let (client, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work
+            .commit_delete(&client, &*self.client_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteClientUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteClientCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Client, ClientDeleted), UseCaseError> {
+        let client = self
+            .client_repo
+            .find_by_id(&command.client_id)
+            .await
+            .or_not_found(
+                "CLIENT_NOT_FOUND",
+                format!("Client with ID '{}' not found", command.client_id),
+            )?;
 
         // Business rule: refuse when principals still have this as home client.
         // `iam_principals.client_id` is a code-enforced reference (no DB-level FK).
         // Silently orphaning a user's home client would change their scope
         // without explicit action — force the admin to migrate them first.
-        let home_principals = match self.client_repo.count_home_principals(&client.id).await {
-            Ok(n) => n,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to count home principals: {}",
-                    e,
-                )));
-            }
-        };
+        let home_principals = self.client_repo.count_home_principals(&client.id).await?;
         if home_principals > 0 {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CLIENT_HAS_PRINCIPALS",
                 format!(
                     "Cannot delete client '{}' — {} principal(s) have it as their home client. \
@@ -101,21 +106,8 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
         // Business rules: refuse when any code-enforced reference still
         // points at this client. None of these have DB-level FKs — each
         // must be explicitly unwired before deletion.
-        let grants = self
-            .client_repo
-            .count_access_grants(&client.id)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("count access grants: {}", e)));
-        let configs = self
-            .client_repo
-            .count_client_configs(&client.id)
-            .await
-            .map_err(|e| UseCaseError::commit(format!("count client configs: {}", e)));
-
-        let (grants, configs) = match (grants, configs) {
-            (Ok(a), Ok(b)) => (a, b),
-            (Err(e), _) | (_, Err(e)) => return UseCaseResult::failure(e),
-        };
+        let grants = self.client_repo.count_access_grants(&client.id).await?;
+        let configs = self.client_repo.count_client_configs(&client.id).await?;
 
         let refs = [("access grants", grants), ("application configs", configs)];
         let blockers: Vec<String> = refs
@@ -124,7 +116,7 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
             .map(|(label, n)| format!("{n} {label}"))
             .collect();
         if !blockers.is_empty() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CLIENT_HAS_REFERENCES",
                 format!(
                     "Cannot delete client '{}' — {} still reference it. \
@@ -135,11 +127,8 @@ impl<U: UnitOfWork> UseCase for DeleteClientUseCase<U> {
             ));
         }
 
-        let event = ClientDeleted::new(&ctx, &client.id, &client.name, &client.identifier);
-
-        self.unit_of_work
-            .commit_delete(&client, &*self.client_repo, event, &command)
-            .await
+        let event = ClientDeleted::new(ctx, &client.id, &client.name, &client.identifier);
+        Ok((client, event))
     }
 }
 
