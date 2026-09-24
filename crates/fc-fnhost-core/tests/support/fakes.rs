@@ -76,6 +76,10 @@ pub struct FakeControlPlane {
     /// When set, `desired_state` waits here (loop tests).
     pub gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
     pub panic_next: AtomicBool,
+    /// Every emit, in order.
+    pub emits: Mutex<Vec<EmitRequest>>,
+    /// When set, every emit is refused with this.
+    pub emit_refusal: Mutex<Option<EventEmitError>>,
 }
 
 impl FakeControlPlane {
@@ -134,8 +138,12 @@ impl ControlPlane for FakeControlPlane {
         Ok(())
     }
 
-    async fn emit(&self, _request: &EmitRequest) -> Result<(), EventEmitError> {
-        Ok(())
+    async fn emit(&self, request: &EmitRequest) -> Result<(), EventEmitError> {
+        self.emits.lock().push(request.clone());
+        match self.emit_refusal.lock().clone() {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        }
     }
 }
 

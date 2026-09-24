@@ -1,0 +1,8 @@
+[package]
+name = "common"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+wasip2 = { workspace = true }

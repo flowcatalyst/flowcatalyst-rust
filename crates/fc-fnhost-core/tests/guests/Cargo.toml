@@ -1,0 +1,39 @@
+# The fc-fnhost-core test guests: Rust `wasm32-wasip2` components, one per
+# behaviour the host tests exercise. Their own Cargo workspace, NOT a member
+# of the root one. The built `.wasm` files are committed beside this file
+# (with SHA256SUMS) so the tests never need the wasm toolchain; rebuild them
+# with `./build.sh`.
+[workspace]
+resolver = "2"
+members = [
+    "common",
+    "fc",
+    "echo",
+    "spin",
+    "alloc",
+    "fail",
+    "config",
+    "secret",
+    "http",
+    "emit",
+    "log",
+    "pure",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+wasip2 = "=1.0.4"
+wit-bindgen = "=0.57.1"
+common = { path = "common" }
+fc = { path = "fc" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
