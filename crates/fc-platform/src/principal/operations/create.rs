@@ -46,7 +46,9 @@ pub struct CreateUserCommand {
     pub granted_client_ids: Vec<String>,
 
     /// Initial password (optional, for embedded auth). Hashed by the use case.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Never serialised: the UnitOfWork persists the command into
+    /// `aud_logs.operation_json`, and a plaintext password must not land there.
+    #[serde(default, skip_serializing)]
     pub password: Option<String>,
 
     /// When `false`, skip the platform's password complexity rules (uppercase/
@@ -247,6 +249,30 @@ mod tests {
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("user@example.com"));
         assert!(json.contains("CLIENT"));
+    }
+
+    #[test]
+    fn test_password_never_serialized() {
+        // The command is persisted into aud_logs.operation_json by the UoW.
+        let cmd = CreateUserCommand {
+            email: "user@example.com".to_string(),
+            name: None,
+            scope: UserScope::Client,
+            client_id: None,
+            granted_client_ids: vec![],
+            password: Some("Sup3r$ecret!".to_string()),
+            enforce_password_complexity: None,
+            idp_type: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(!json.contains("password\""), "password leaked: {json}");
+        assert!(!json.contains("Sup3r$ecret!"), "password leaked: {json}");
+
+        let back: CreateUserCommand = serde_json::from_str(
+            r#"{"email":"u@example.com","scope":"CLIENT","password":"Sup3r$ecret!"}"#,
+        )
+        .unwrap();
+        assert_eq!(back.password.as_deref(), Some("Sup3r$ecret!"));
     }
 
     #[test]

@@ -22,6 +22,9 @@ use crate::usecase::{
 #[serde(rename_all = "camelCase")]
 pub struct ResetPasswordCommand {
     pub principal_id: String,
+    /// Never serialised: the UnitOfWork persists the command into
+    /// `aud_logs.operation_json`, and a plaintext password must not land there.
+    #[serde(skip_serializing)]
     pub new_password: String,
     /// When `false`, skip the platform's complexity rules (uppercase/lowercase/
     /// digit/special) and enforce only a 2-character minimum. Defaults to `true`.
@@ -164,7 +167,16 @@ mod tests {
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("principalId"));
-        assert!(json.contains("newPassword"));
         assert!(json.contains("enforcePasswordComplexity"));
+        // The command is persisted into aud_logs.operation_json by the UoW.
+        assert!(!json.contains("newPassword"), "password leaked: {json}");
+        assert!(!json.contains("hunter22!"), "password leaked: {json}");
+    }
+
+    #[test]
+    fn command_still_deserializes_the_password() {
+        let cmd: ResetPasswordCommand =
+            serde_json::from_str(r#"{"principalId":"user-1","newPassword":"hunter22!"}"#).unwrap();
+        assert_eq!(cmd.new_password, "hunter22!");
     }
 }
