@@ -321,14 +321,14 @@ pub async fn create_application<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.create_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok((
+    match state.create_use_case.run(command, ctx).await.into_result() {
+        Ok(event) => Ok((
             StatusCode::CREATED,
             Json(crate::shared::api_common::CreatedResponse::new(
                 event.application_id,
             )),
         )),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -442,9 +442,9 @@ pub async fn update_application<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.update_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_event) => Ok(StatusCode::NO_CONTENT),
-        UseCaseResult::Failure(err) => Err(err.into()),
+    match state.update_use_case.run(command, ctx).await.into_result() {
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -521,9 +521,9 @@ pub async fn delete_application<U: UnitOfWork>(
         })
         .await;
 
-    match result {
-        UseCaseResult::Success(_event) => Ok(StatusCode::NO_CONTENT),
-        UseCaseResult::Failure(err) => Err(err.into()),
+    match result.into_result() {
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -552,8 +552,13 @@ pub async fn activate_application<U: UnitOfWork>(
     let command = ActivateApplicationCommand { id: id.clone() };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.activate_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_event) => {
+    match state
+        .activate_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(_event) => {
             let app = state
                 .application_repo
                 .find_by_id(&id)
@@ -561,7 +566,7 @@ pub async fn activate_application<U: UnitOfWork>(
                 .ok_or_else(|| PlatformError::not_found("Application", &id))?;
             Ok(Json(app.into()))
         }
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -596,10 +601,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
     // inside the tx closure stays small. Reads are tolerable outside
     // the tx — the worst case (someone provisions a new SA mid-call)
     // gets caught the next time the operator deactivates.
-    let sas = state
-        .service_account_repo
-        .find_by_application(&id)
-        .await?;
+    let sas = state.service_account_repo.find_by_application(&id).await?;
     let mut oauth_clients_to_deactivate: Vec<String> = Vec::new();
     for sa in &sas {
         let clients = state
@@ -620,14 +622,12 @@ pub async fn deactivate_application<U: UnitOfWork>(
     let result = state
         .pg_unit_of_work
         .run(|session| async move {
-            let deactivate_sa_uc =
-                DeactivateServiceAccountUseCase::new(sa_repo, session.clone());
+            let deactivate_sa_uc = DeactivateServiceAccountUseCase::new(sa_repo, session.clone());
             let deactivate_oauth_uc =
                 DeactivateOAuthClientUseCase::new(oauth_repo, session.clone());
             let deactivate_app_uc =
                 crate::application::operations::DeactivateApplicationUseCase::new(
-                    app_repo,
-                    session,
+                    app_repo, session,
                 );
 
             let ctx = ExecutionContext::create(&principal_id);
@@ -674,8 +674,8 @@ pub async fn deactivate_application<U: UnitOfWork>(
         })
         .await;
 
-    match result {
-        UseCaseResult::Success(_event) => {
+    match result.into_result() {
+        Ok(_event) => {
             let app = state
                 .application_repo
                 .find_by_id(&id)
@@ -683,7 +683,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
                 .ok_or_else(|| PlatformError::not_found("Application", &id))?;
             Ok(Json(app.into()))
         }
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -776,8 +776,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
     // the tx. We hand the encrypted ref into the closure and keep the
     // plaintext to return in the response.
     let oauth_row_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
-    let oauth_public_client_id =
-        crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let oauth_public_client_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
     let (client_secret_plaintext, client_secret_ref) = generate_and_encrypt_client_secret()?;
 
     let sa_code = format!("app:{}", app.code);
@@ -802,8 +801,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
             let create_sa_uc = CreateServiceAccountUseCase::new(sa_repo, session.clone());
             let attach_uc =
                 AttachServiceAccountToApplicationUseCase::new(app_repo, session.clone());
-            let create_oauth_uc =
-                CreateOAuthClientUseCase::new(oauth_client_repo, session);
+            let create_oauth_uc = CreateOAuthClientUseCase::new(oauth_client_repo, session);
 
             let ctx = crate::usecase::ExecutionContext::create(&principal_id);
 
@@ -832,11 +830,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 service_account_id: sa_id.clone(),
                 service_account_code: sa_code,
             };
-            if let Err(err) = attach_uc
-                .run(attach_cmd, ctx.clone())
-                .await
-                .into_result()
-            {
+            if let Err(err) = attach_uc.run(attach_cmd, ctx.clone()).await.into_result() {
                 return crate::usecase::UseCaseResult::failure(err);
             }
 
@@ -858,7 +852,10 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 service_account_principal_id: Some(sa_id.clone()),
                 created_by: Some(principal_id.clone()),
             };
-            create_oauth_uc.run(oauth_cmd, ctx).await.map(move |_| sa_id)
+            create_oauth_uc
+                .run(oauth_cmd, ctx)
+                .await
+                .map(move |_| sa_id)
         })
         .await;
 
@@ -956,20 +953,18 @@ pub async fn provision_login_client<U: UnitOfWork>(
     }
 
     let oauth_row_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
-    let oauth_public_client_id =
-        crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
+    let oauth_public_client_id = crate::TsidGenerator::generate(crate::EntityType::OAuthClient);
     let client_name = format!("{} Login", app.name);
 
     // CONFIDENTIAL clients get a secret at the edge (only confidential
     // clients have one — PUBLIC clients use PKCE alone).
-    let (client_secret_plaintext, client_secret_ref) = if client_type
-        == OAuthClientType::Confidential
-    {
-        let (plaintext, encrypted) = generate_and_encrypt_client_secret()?;
-        (Some(plaintext), Some(format!("encrypted:{}", encrypted)))
-    } else {
-        (None, None)
-    };
+    let (client_secret_plaintext, client_secret_ref) =
+        if client_type == OAuthClientType::Confidential {
+            let (plaintext, encrypted) = generate_and_encrypt_client_secret()?;
+            (Some(plaintext), Some(format!("encrypted:{}", encrypted)))
+        } else {
+            (None, None)
+        };
 
     let cmd = CreateOAuthClientCommand {
         oauth_client_id: oauth_row_id.clone(),
@@ -1037,13 +1032,12 @@ fn generate_and_encrypt_client_secret() -> Result<(String, String), PlatformErro
     rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret_bytes);
     let plaintext = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
 
-    let enc = crate::shared::encryption_service::EncryptionService::from_env().ok_or_else(
-        || {
+    let enc =
+        crate::shared::encryption_service::EncryptionService::from_env().ok_or_else(|| {
             PlatformError::internal(
                 "FLOWCATALYST_APP_KEY not configured — cannot encrypt client secret",
             )
-        },
-    )?;
+        })?;
     let encrypted = enc
         .encrypt(&plaintext)
         .map_err(|e| PlatformError::internal(format!("Failed to encrypt client secret: {}", e)))?;

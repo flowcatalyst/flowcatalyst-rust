@@ -20,7 +20,7 @@ use crate::dispatch_pool::operations::{
 use crate::shared::api_common::PaginationParams;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase};
 use crate::DispatchPoolRepository;
 use crate::{DispatchPool, DispatchPoolStatus};
 
@@ -181,14 +181,14 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.create_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok((
+    match state.create_use_case.run(command, ctx).await.into_result() {
+        Ok(event) => Ok((
             StatusCode::CREATED,
             Json(crate::shared::api_common::CreatedResponse::new(
                 event.dispatch_pool_id,
             )),
         )),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -345,9 +345,9 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.update_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_event) => Ok(StatusCode::NO_CONTENT),
-        UseCaseResult::Failure(err) => Err(err.into()),
+    match state.update_use_case.run(command, ctx).await.into_result() {
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -393,8 +393,8 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     let command = ArchiveDispatchPoolCommand { id: id.clone() };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.archive_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_event) => {
+    match state.archive_use_case.run(command, ctx).await.into_result() {
+        Ok(_event) => {
             let pool = state
                 .dispatch_pool_repo
                 .find_by_id(&id)
@@ -402,7 +402,7 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
                 .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
             Ok(Json(pool.into()))
         }
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -449,8 +449,8 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     let command = ArchiveDispatchPoolCommand { id: id.clone() };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.archive_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_event) => {
+    match state.archive_use_case.run(command, ctx).await.into_result() {
+        Ok(_event) => {
             let pool = state
                 .dispatch_pool_repo
                 .find_by_id(&id)
@@ -458,7 +458,7 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
                 .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
             Ok(Json(pool.into()))
         }
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -512,8 +512,8 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.update_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_event) => {
+    match state.update_use_case.run(command, ctx).await.into_result() {
+        Ok(_event) => {
             let pool = state
                 .dispatch_pool_repo
                 .find_by_id(&id)
@@ -521,7 +521,7 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
                 .ok_or_else(|| PlatformError::not_found("DispatchPool", &id))?;
             Ok(Json(pool.into()))
         }
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -550,9 +550,9 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
     let command = DeleteDispatchPoolCommand { id };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.delete_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_event) => Ok(StatusCode::NO_CONTENT),
-        UseCaseResult::Failure(err) => Err(err.into()),
+    match state.delete_use_case.run(command, ctx).await.into_result() {
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
+        Err(err) => Err(err.into()),
     }
 }
 

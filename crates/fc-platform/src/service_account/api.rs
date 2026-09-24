@@ -22,7 +22,7 @@ use crate::service_account::operations::{
 };
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseResult};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase};
 use crate::ServiceAccount;
 use crate::ServiceAccountRepository;
 
@@ -363,8 +363,8 @@ pub async fn create_service_account<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.create_use_case.run(command, ctx).await {
-        UseCaseResult::Success(result) => {
+    match state.create_use_case.run(command, ctx).await.into_result() {
+        Ok(result) => {
             let account = state
                 .repo
                 .find_by_id(&result.event.service_account_id)
@@ -435,7 +435,7 @@ pub async fn create_service_account<U: UnitOfWork>(
                 },
             }))
         }
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -471,9 +471,9 @@ pub async fn update_service_account<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.update_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_event) => Ok(StatusCode::NO_CONTENT),
-        UseCaseResult::Failure(err) => Err(err.into()),
+    match state.update_use_case.run(command, ctx).await.into_result() {
+        Ok(_event) => Ok(StatusCode::NO_CONTENT),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -502,9 +502,9 @@ pub async fn delete_service_account<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.delete_use_case.run(command, ctx).await {
-        UseCaseResult::Success(_) => Ok(StatusCode::NO_CONTENT),
-        UseCaseResult::Failure(err) => Err(err.into()),
+    match state.delete_use_case.run(command, ctx).await.into_result() {
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -535,11 +535,16 @@ pub async fn update_auth_token<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.regenerate_token_use_case.run(command, ctx).await {
-        UseCaseResult::Success(result) => Ok(Json(RegenerateTokenResponse {
+    match state
+        .regenerate_token_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(result) => Ok(Json(RegenerateTokenResponse {
             auth_token: result.auth_token,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -570,11 +575,16 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.regenerate_token_use_case.run(command, ctx).await {
-        UseCaseResult::Success(result) => Ok(Json(RegenerateTokenResponse {
+    match state
+        .regenerate_token_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(result) => Ok(Json(RegenerateTokenResponse {
             auth_token: result.auth_token,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -605,11 +615,16 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.regenerate_secret_use_case.run(command, ctx).await {
-        UseCaseResult::Success(result) => Ok(Json(RegenerateSecretResponse {
+    match state
+        .regenerate_secret_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(result) => Ok(Json(RegenerateSecretResponse {
             signing_secret: result.signing_secret,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -682,8 +697,13 @@ pub async fn assign_roles<U: UnitOfWork>(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.assign_roles_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => {
+    match state
+        .assign_roles_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => {
             // Fetch updated account to get role details
             let account = state
                 .repo
@@ -707,7 +727,7 @@ pub async fn assign_roles<U: UnitOfWork>(
                 removed_roles: event.roles_removed,
             }))
         }
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 

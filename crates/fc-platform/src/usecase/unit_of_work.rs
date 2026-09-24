@@ -739,8 +739,8 @@ impl PgUnitOfWork {
         let tx_opt = scoped.take_tx().await;
 
         if let Some(tx) = tx_opt {
-            match &result {
-                UseCaseResult::Success(_) => {
+            match result.as_result() {
+                Ok(_) => {
                     if let Err(e) = tx.commit().await {
                         error!("Failed to commit orchestration tx: {}", e);
                         return UseCaseResult::failure(UseCaseError::commit(format!(
@@ -750,7 +750,7 @@ impl PgUnitOfWork {
                     }
                     debug!("Orchestration tx committed");
                 }
-                UseCaseResult::Failure(err) => {
+                Err(err) => {
                     let _ = tx.rollback().await;
                     debug!(error = %err.code(), "Orchestration tx rolled back");
                 }

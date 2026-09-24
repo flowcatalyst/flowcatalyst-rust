@@ -20,15 +20,13 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::application::repository::ApplicationRepository;
-use crate::application_openapi_spec::operations::{
-    SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase,
-};
+use crate::application_openapi_spec::operations::{SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase};
 use crate::application_openapi_spec::repository::OpenApiSpecRepository;
 use crate::event_type::repository::EventTypeRepository;
 use crate::shared::authorization_service::AuthContext;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
-use crate::usecase::{ExecutionContext, UseCase, UseCaseResult};
+use crate::usecase::{ExecutionContext, UseCase};
 use crate::PrincipalRepository;
 
 #[derive(Clone)]
@@ -297,14 +295,21 @@ pub async fn list_versions(
     crate::shared::authorization_service::checks::can_read_application_openapi(&auth.0)?;
     require_app_access(&state, &auth.0, &app_id).await?;
 
-    let rows = state.openapi_spec_repo.find_all_by_application(&app_id).await?;
+    let rows = state
+        .openapi_spec_repo
+        .find_all_by_application(&app_id)
+        .await?;
     let items = rows
         .into_iter()
         .map(|s| OpenApiVersionSummary {
             id: s.id,
             version: s.version,
             status: s.status.as_str().to_string(),
-            has_breaking: s.change_notes.as_ref().map(|c| c.has_breaking).unwrap_or(false),
+            has_breaking: s
+                .change_notes
+                .as_ref()
+                .map(|c| c.has_breaking)
+                .unwrap_or(false),
             change_notes_text: s.change_notes_text,
             synced_at: s.synced_at,
         })
@@ -403,8 +408,13 @@ pub async fn sync_platform_openapi(
     };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_openapi_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncPlatformOpenApiResponse {
+    match state
+        .sync_openapi_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncPlatformOpenApiResponse {
             application_code: event.application_code,
             spec_id: event.spec_id,
             version: event.version,
@@ -417,7 +427,7 @@ pub async fn sync_platform_openapi(
             has_breaking: event.has_breaking,
             unchanged: event.unchanged,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -437,10 +447,7 @@ pub fn bff_developer_router(state: BffDeveloperState) -> Router {
             "/applications/{app_id}/openapi/versions/{spec_id}",
             get(get_version),
         )
-        .route(
-            "/applications/{app_id}/event-types",
-            get(list_event_types),
-        )
+        .route("/applications/{app_id}/event-types", get(list_event_types))
         .route("/sync-platform-openapi", post(sync_platform_openapi))
         .with_state(state)
 }

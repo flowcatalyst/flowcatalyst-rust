@@ -14,9 +14,7 @@ use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::application::repository::ApplicationRepository;
-use crate::application_openapi_spec::operations::{
-    SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase,
-};
+use crate::application_openapi_spec::operations::{SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase};
 use crate::dispatch_pool::operations::{
     SyncDispatchPoolInput, SyncDispatchPoolsCommand, SyncDispatchPoolsUseCase,
 };
@@ -26,9 +24,7 @@ use crate::event_type::operations::{
 use crate::principal::operations::{
     SyncPrincipalInput, SyncPrincipalsCommand, SyncPrincipalsUseCase,
 };
-use crate::process::operations::{
-    SyncProcessInput, SyncProcessesCommand, SyncProcessesUseCase,
-};
+use crate::process::operations::{SyncProcessInput, SyncProcessesCommand, SyncProcessesUseCase};
 use crate::role::operations::{SyncRoleInput, SyncRolesCommand, SyncRolesUseCase};
 use crate::scheduled_job::operations::{
     ScheduledJobSyncEntry, SyncScheduledJobsCommand, SyncScheduledJobsUseCase,
@@ -39,7 +35,7 @@ use crate::subscription::operations::{
     EventTypeBindingInput, SyncSubscriptionInput, SyncSubscriptionsCommand,
     SyncSubscriptionsUseCase,
 };
-use crate::usecase::{ExecutionContext, UseCase, UseCaseResult};
+use crate::usecase::{ExecutionContext, UseCase};
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -368,15 +364,20 @@ async fn sync_roles(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_roles_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
+    match state
+        .sync_roles_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncResultResponse {
             application_code: event.application_code,
             created: event.created,
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_names,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -423,15 +424,20 @@ async fn sync_event_types(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_event_types_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
+    match state
+        .sync_event_types_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncResultResponse {
             application_code: event.application_code,
             created: event.created,
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_codes,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -493,15 +499,20 @@ async fn sync_subscriptions(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_subscriptions_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
+    match state
+        .sync_subscriptions_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncResultResponse {
             application_code: event.application_code,
             created: event.created,
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_codes,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -549,15 +560,20 @@ async fn sync_dispatch_pools(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_dispatch_pools_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
+    match state
+        .sync_dispatch_pools_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncResultResponse {
             application_code: event.application_code,
             created: event.created,
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_codes,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -605,15 +621,20 @@ async fn sync_principals(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_principals_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
+    match state
+        .sync_principals_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncResultResponse {
             application_code: event.application_code,
             created: event.created,
             updated: event.updated,
             deleted: event.deactivated,
             synced_codes: event.synced_emails,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -688,14 +709,19 @@ async fn sync_scheduled_jobs(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_scheduled_jobs_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncScheduledJobsResultResponse {
+    match state
+        .sync_scheduled_jobs_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncScheduledJobsResultResponse {
             application_code: app_code,
             created: event.created,
             updated: event.updated,
             archived: event.archived,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -744,15 +770,20 @@ async fn sync_processes(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_processes_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncResultResponse {
+    match state
+        .sync_processes_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncResultResponse {
             application_code: event.application_code,
             created: event.created,
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_codes,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -816,9 +847,7 @@ async fn sync_openapi(
         .application_repo
         .find_by_code(&app_code)
         .await?
-        .ok_or_else(|| {
-            PlatformError::not_found("Application", format!("code={}", app_code))
-        })?;
+        .ok_or_else(|| PlatformError::not_found("Application", format!("code={}", app_code)))?;
 
     // Resource-level guard: anchor users may sync any application; otherwise
     // the caller must BE this application's bound service account (matches the
@@ -845,8 +874,13 @@ async fn sync_openapi(
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.sync_openapi_use_case.run(command, ctx).await {
-        UseCaseResult::Success(event) => Ok(Json(SyncOpenApiSpecResponse {
+    match state
+        .sync_openapi_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
+        Ok(event) => Ok(Json(SyncOpenApiSpecResponse {
             application_code: event.application_code,
             spec_id: event.spec_id,
             version: event.version,
@@ -859,7 +893,7 @@ async fn sync_openapi(
             has_breaking: event.has_breaking,
             unchanged: event.unchanged,
         })),
-        UseCaseResult::Failure(err) => Err(err.into()),
+        Err(err) => Err(err.into()),
     }
 }
 

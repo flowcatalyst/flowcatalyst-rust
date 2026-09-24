@@ -156,11 +156,19 @@ fn only_returns_failures(body: &str) -> bool {
     // expression (which, thanks to the seal, can only be a UoW call).
     //
     // Returns true only if every path is a failure. Conservative: if the
-    // body contains `UseCaseResult::Success(` or `result.map(` etc, treat
-    // it as trying to produce a success and require UoW.
+    // body mentions any success-producing expression — the restricted
+    // `UseCaseResult::success(` constructor, a direct `UseCaseResult(Ok(..))`
+    // construction, a legacy `UseCaseResult::Success(` variant, or
+    // `result.map(` etc — treat it as trying to produce a success and
+    // require UoW.
+    const SUCCESS_PATTERNS: &[&str] = &[
+        "UseCaseResult::success(",
+        "UseCaseResult(Ok",
+        "UseCaseResult::Success",
+        ".map(|",
+    ];
     body.contains("UseCaseResult::failure")
-        && !body.contains("UseCaseResult::Success")
-        && !body.contains(".map(|")
+        && !SUCCESS_PATTERNS.iter().any(|p| body.contains(p))
         && !has_uow_call(body)
 }
 

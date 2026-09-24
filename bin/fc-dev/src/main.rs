@@ -38,8 +38,7 @@ use fc_outbox::postgres::PostgresOutboxRepository;
 use fc_queue::postgres::PostgresQueue;
 use fc_queue::EmbeddedQueue;
 use fc_router::{
-    api::create_router as create_api_router,
-    HealthService, HealthServiceConfig,
+    api::create_router as create_api_router, HealthService, HealthServiceConfig,
     HttpMediatorConfig, LifecycleConfig, LifecycleManager, QueueManager, WarningService,
     WarningServiceConfig,
 };
@@ -740,9 +739,8 @@ async fn main() -> Result<()> {
     // path doesn't need the queue/dispatch deps wired in here.
     let rate_limit_store =
         fc_platform::shared::rate_limit_store::build_rate_limit_store(repos.pool.clone()).await;
-    let rate_limit_policies = std::sync::Arc::new(
-        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
-    );
+    let rate_limit_policies =
+        std::sync::Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
 
     let routes = fc_platform::shared::server_setup::build_platform_routes(
         &repos,
@@ -1107,7 +1105,7 @@ async fn auto_sync_developer_portal(
     };
     use fc_platform::application_openapi_spec::repository::OpenApiSpecRepository;
     use fc_platform::event_type::operations::{SyncEventTypesCommand, SyncEventTypesUseCase};
-    use fc_platform::usecase::{ExecutionContext, UseCase, UseCaseResult};
+    use fc_platform::usecase::{ExecutionContext, UseCase};
 
     // Attribute the sync to the seeded bootstrap admin so it has a real
     // principal_id (and so audit logs / `synced_by` show a human, not a
@@ -1140,8 +1138,8 @@ async fn auto_sync_developer_portal(
         remove_unlisted: false,
     };
     let sync_event_types = SyncEventTypesUseCase::new(event_type_repo, unit_of_work.clone());
-    match sync_event_types.run(cmd, ctx.clone()).await {
-        UseCaseResult::Success(event) => {
+    match sync_event_types.run(cmd, ctx.clone()).await.into_result() {
+        Ok(event) => {
             info!(
                 total = event_types_total,
                 created = event.created,
@@ -1150,7 +1148,7 @@ async fn auto_sync_developer_portal(
                 "Developer-portal auto-sync: platform event types"
             );
         }
-        UseCaseResult::Failure(err) => {
+        Err(err) => {
             warn!(error = ?err, "Developer-portal auto-sync: platform event types failed");
         }
     }
@@ -1167,8 +1165,8 @@ async fn auto_sync_developer_portal(
         application_code: "platform".to_string(),
         spec: platform_openapi,
     };
-    match sync_openapi.run(cmd, ctx).await {
-        UseCaseResult::Success(event) => {
+    match sync_openapi.run(cmd, ctx).await.into_result() {
+        Ok(event) => {
             info!(
                 version = %event.version,
                 unchanged = event.unchanged,
@@ -1176,7 +1174,7 @@ async fn auto_sync_developer_portal(
                 "Developer-portal auto-sync: platform OpenAPI"
             );
         }
-        UseCaseResult::Failure(err) => {
+        Err(err) => {
             warn!(error = ?err, "Developer-portal auto-sync: platform OpenAPI failed");
         }
     }
