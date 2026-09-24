@@ -109,7 +109,11 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
         let code = format!("{}:{}", app_code, role_name);
 
         // Business rule: name must be unique
-        if let Ok(Some(_)) = self.role_repo.find_by_name(&code).await {
+        let existing = match self.role_repo.find_by_name(&code).await {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "ROLE_CODE_EXISTS",
                 format!("A role with code '{}' already exists", code),

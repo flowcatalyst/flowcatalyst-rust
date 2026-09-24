@@ -134,7 +134,11 @@ impl<U: UnitOfWork> UseCase for CreateUserUseCase<U> {
         let email = command.email.trim().to_lowercase();
 
         // Business rule: email must be unique
-        if let Ok(Some(_)) = self.principal_repo.find_by_email(&email).await {
+        let existing = match self.principal_repo.find_by_email(&email).await {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule_with_details(
                 "EMAIL_EXISTS",
                 format!("A user with email '{}' already exists", email),

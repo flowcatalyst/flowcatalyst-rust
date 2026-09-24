@@ -96,7 +96,7 @@ impl<U: UnitOfWork> UpdateAnchorDomainUseCase<U> {
 
         // Business rule: new domain must be unique (unless it's the same row).
         if new_domain != anchor_domain.domain {
-            if let Ok(Some(other)) = self.anchor_domain_repo.find_by_domain(&new_domain).await {
+            if let Some(other) = self.anchor_domain_repo.find_by_domain(&new_domain).await? {
                 if other.id != anchor_domain.id {
                     return Err(UseCaseError::business_rule(
                         "DOMAIN_EXISTS",

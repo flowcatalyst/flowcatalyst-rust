@@ -136,10 +136,11 @@ impl<U: UnitOfWork> RegisterPasskeyUseCase<U> {
 
         // Reject if the credential is somehow already registered (rare — webauthn-rs
         // de-dupes via exclude_credentials at challenge time, but defence in depth).
-        if let Ok(Some(_existing)) = self
+        if self
             .credential_repo
             .find_by_credential_id(passkey.cred_id().as_ref())
-            .await
+            .await?
+            .is_some()
         {
             return Err(UseCaseError::business_rule(
                 "CREDENTIAL_EXISTS",

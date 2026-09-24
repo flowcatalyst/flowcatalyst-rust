@@ -93,11 +93,15 @@ impl<U: UnitOfWork> UseCase for CreateDispatchPoolUseCase<U> {
         let name = command.name.trim();
 
         // Business rule: code must be unique
-        let existing = self
+        let existing = match self
             .dispatch_pool_repo
             .find_by_code(code, command.client_id.as_deref())
-            .await;
-        if let Ok(Some(_)) = existing {
+            .await
+        {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "DISPATCH_POOL_CODE_EXISTS",
                 format!("A dispatch pool with code '{}' already exists", code),

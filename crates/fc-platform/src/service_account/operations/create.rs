@@ -144,8 +144,11 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         let name = command.name.trim();
 
         // Business rule: code must be unique
-        let existing = self.service_account_repo.find_by_code(code).await;
-        if let Ok(Some(_)) = existing {
+        let existing = match self.service_account_repo.find_by_code(code).await {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "SERVICE_ACCOUNT_CODE_EXISTS",
                 format!("A service account with code '{}' already exists", code),

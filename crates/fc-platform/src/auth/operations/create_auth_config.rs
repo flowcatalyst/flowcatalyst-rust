@@ -76,11 +76,15 @@ impl<U: UnitOfWork> UseCase for CreateAuthConfigUseCase<U> {
         let email_domain = command.email_domain.trim().to_lowercase();
 
         // Business rule: email domain must be unique
-        if let Ok(Some(_)) = self
+        let existing = match self
             .auth_config_repo
             .find_by_email_domain(&email_domain)
             .await
         {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "EMAIL_DOMAIN_EXISTS",
                 format!(

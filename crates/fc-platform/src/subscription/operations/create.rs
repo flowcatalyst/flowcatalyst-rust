@@ -162,12 +162,16 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         let endpoint = command.endpoint.trim();
 
         // Business rule: code must be unique within client scope
-        let existing = self
+        let existing = match self
             .subscription_repo
             .find_by_code_and_client(&code, command.client_id.as_deref())
-            .await;
+            .await
+        {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
 
-        if let Ok(Some(_)) = existing {
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "SUBSCRIPTION_CODE_EXISTS",
                 format!("A subscription with code '{}' already exists", code),

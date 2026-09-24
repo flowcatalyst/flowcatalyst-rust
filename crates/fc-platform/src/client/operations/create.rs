@@ -102,7 +102,11 @@ impl<U: UnitOfWork> UseCase for CreateClientUseCase<U> {
         let identifier = command.identifier.trim().to_lowercase();
 
         // Business rule: identifier must be unique
-        if let Ok(Some(_)) = self.client_repo.find_by_identifier(&identifier).await {
+        let existing = match self.client_repo.find_by_identifier(&identifier).await {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "IDENTIFIER_EXISTS",
                 format!("A client with identifier '{}' already exists", identifier),

@@ -133,7 +133,11 @@ impl<U: UnitOfWork> UseCase for CreateEventTypeUseCase<U> {
         ctx: ExecutionContext,
     ) -> UseCaseResult<EventTypeCreated> {
         // Business rule: code must be unique
-        if let Ok(Some(_)) = self.event_type_repo.find_by_code(&command.code).await {
+        let existing = match self.event_type_repo.find_by_code(&command.code).await {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Event type with code '{}' already exists", command.code),

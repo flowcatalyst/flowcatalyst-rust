@@ -136,8 +136,8 @@ impl<U: UnitOfWork> CreateConnectionUseCase<U> {
         let existing = self
             .connection_repo
             .find_by_code_and_client(&code, command.client_id.as_deref())
-            .await;
-        if let Ok(Some(_)) = existing {
+            .await?;
+        if existing.is_some() {
             return Err(UseCaseError::business_rule(
                 "CONNECTION_CODE_EXISTS",
                 format!(

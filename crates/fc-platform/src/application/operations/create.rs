@@ -94,8 +94,11 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         let name = command.name.trim();
 
         // Business rule: code must be unique
-        let existing = self.application_repo.find_by_code(code).await;
-        if let Ok(Some(_)) = existing {
+        let existing = match self.application_repo.find_by_code(code).await {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "APPLICATION_CODE_EXISTS",
                 format!("An application with code '{}' already exists", code),

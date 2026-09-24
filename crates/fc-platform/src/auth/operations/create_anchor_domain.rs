@@ -61,7 +61,11 @@ impl<U: UnitOfWork> UseCase for CreateAnchorDomainUseCase<U> {
         let domain = command.domain.trim().to_lowercase();
 
         // Business rule: domain must be unique
-        if let Ok(Some(_)) = self.anchor_domain_repo.find_by_domain(&domain).await {
+        let existing = match self.anchor_domain_repo.find_by_domain(&domain).await {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "DOMAIN_EXISTS",
                 format!("Anchor domain '{}' already exists", domain),

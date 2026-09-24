@@ -110,11 +110,15 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
         cmd: Self::Command,
         ctx: ExecutionContext,
     ) -> UseCaseResult<Self::Event> {
-        let existing = self
+        let existing = match self
             .repo
             .find_by_code(cmd.client_id.as_deref(), &cmd.code)
-            .await;
-        if let Ok(Some(_)) = existing {
+            .await
+        {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("ScheduledJob '{}' already exists in this scope", cmd.code),

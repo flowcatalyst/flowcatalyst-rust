@@ -65,11 +65,15 @@ impl<U: UnitOfWork> UseCase for CreateIdpRoleMappingUseCase<U> {
         command: CreateIdpRoleMappingCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<IdpRoleMappingCreated> {
-        if let Ok(Some(_)) = self
+        let existing = match self
             .idp_role_mapping_repo
             .find_by_idp_role(&command.idp_type, &command.idp_role_name)
             .await
         {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "MAPPING_EXISTS",
                 format!(

@@ -96,7 +96,11 @@ impl<U: UnitOfWork> UseCase for CreateProcessUseCase<U> {
         command: CreateProcessCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ProcessCreated> {
-        if let Ok(Some(_)) = self.process_repo.find_by_code(&command.code).await {
+        let existing = match self.process_repo.find_by_code(&command.code).await {
+            Ok(found) => found,
+            Err(e) => return UseCaseResult::failure(e.into()),
+        };
+        if existing.is_some() {
             return UseCaseResult::failure(UseCaseError::business_rule(
                 "CODE_EXISTS",
                 format!("Process with code '{}' already exists", command.code),
