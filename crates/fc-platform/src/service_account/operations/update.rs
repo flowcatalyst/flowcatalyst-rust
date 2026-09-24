@@ -7,7 +7,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::events::ServiceAccountUpdated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::service_account::ServiceAccount;
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ServiceAccountRepository;
 
 /// Command for updating a service account.
@@ -67,22 +70,38 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
         command: UpdateServiceAccountCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ServiceAccountUpdated> {
-        // Find the service account
-        let mut service_account = match self.service_account_repo.find_by_id(&command.id).await {
-            Ok(Some(sa)) => sa,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SERVICE_ACCOUNT_NOT_FOUND",
-                    format!("Service account with ID '{}' not found", command.id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find service account: {}",
-                    e
-                )));
-            }
+        let (service_account, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(
+                &service_account,
+                &*self.service_account_repo,
+                event,
+                &command,
+            )
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateServiceAccountCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ServiceAccount, ServiceAccountUpdated), UseCaseError> {
+        // Find the service account
+        let mut service_account = self
+            .service_account_repo
+            .find_by_id(&command.id)
+            .await
+            .or_not_found(
+                "SERVICE_ACCOUNT_NOT_FOUND",
+                format!("Service account with ID '{}' not found", command.id),
+            )?;
 
         // Track changes for event
         let mut updated_name: Option<String> = None;
@@ -94,7 +113,7 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
         if let Some(ref name) = command.name {
             let name = name.trim();
             if name.is_empty() || name.len() > 100 {
-                return UseCaseResult::failure(UseCaseError::validation(
+                return Err(UseCaseError::validation(
                     "INVALID_NAME",
                     "Name must be 1-100 characters",
                 ));
@@ -108,7 +127,7 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
         // Apply description update
         if let Some(ref description) = command.description {
             if description.len() > 500 {
-                return UseCaseResult::failure(UseCaseError::validation(
+                return Err(UseCaseError::validation(
                     "INVALID_DESCRIPTION",
                     "Description must be max 500 characters",
                 ));
@@ -132,23 +151,14 @@ impl<U: UnitOfWork> UseCase for UpdateServiceAccountUseCase<U> {
 
         // Create domain event
         let event = ServiceAccountUpdated::new(
-            &ctx,
+            ctx,
             &service_account.id,
             updated_name.as_deref(),
             updated_description.as_deref(),
             client_ids_added,
             client_ids_removed,
         );
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(
-                &service_account,
-                &*self.service_account_repo,
-                event,
-                &command,
-            )
-            .await
+        Ok((service_account, event))
     }
 }
 

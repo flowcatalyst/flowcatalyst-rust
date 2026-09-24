@@ -110,6 +110,31 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
         cmd: Self::Command,
         ctx: ExecutionContext,
     ) -> UseCaseResult<Self::Event> {
+        let (to_persist, event) = match self.prepare(&cmd, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        if to_persist.is_empty() {
+            // No changes to write; emit a summary event anyway so the audit
+            // log records that a sync run occurred (matches event_type sync).
+            return self.unit_of_work.emit_event(event, &cmd).await;
+        }
+
+        self.unit_of_work
+            .commit_all(&to_persist, &*self.repo, event, &cmd)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
+    /// Diff the payload against the stored jobs: the rows to write and the
+    /// summary event.
+    async fn prepare(
+        &self,
+        cmd: &SyncScheduledJobsCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Vec<ScheduledJob>, ScheduledJobsSynced), UseCaseError> {
         let existing = match cmd.client_id.as_deref() {
             Some(cid) => self.repo.find_by_client(cid).await,
             None => {
@@ -118,15 +143,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
                     .await
             }
         };
-        let existing = match existing {
-            Ok(v) => v,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load existing ScheduledJobs: {}",
-                    e
-                )))
-            }
-        };
+        let existing = existing?;
 
         let mut existing_by_code: std::collections::HashMap<String, ScheduledJob> =
             existing.into_iter().map(|j| (j.code.clone(), j)).collect();
@@ -231,22 +248,13 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
         }
 
         let event = ScheduledJobsSynced::new(
-            &ctx,
+            ctx,
             &cmd.scope,
             cmd.client_id.as_deref(),
             created.clone(),
             updated.clone(),
             archived.clone(),
         );
-
-        if to_persist.is_empty() {
-            // No changes to write; emit a summary event anyway so the audit
-            // log records that a sync run occurred (matches event_type sync).
-            return self.unit_of_work.emit_event(event, &cmd).await;
-        }
-
-        self.unit_of_work
-            .commit_all(&to_persist, &*self.repo, event, &cmd)
-            .await
+        Ok((to_persist, event))
     }
 }

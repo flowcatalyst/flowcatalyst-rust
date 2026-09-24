@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ServiceAccountDeleted;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::service_account::ServiceAccount;
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ServiceAccountRepository;
 
 /// Command for deleting a service account.
@@ -53,25 +56,10 @@ impl<U: UnitOfWork> UseCase for DeleteServiceAccountUseCase<U> {
         command: DeleteServiceAccountCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ServiceAccountDeleted> {
-        // Find the service account
-        let service_account = match self.service_account_repo.find_by_id(&command.id).await {
-            Ok(Some(sa)) => sa,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SERVICE_ACCOUNT_NOT_FOUND",
-                    format!("Service account with ID '{}' not found", command.id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find service account: {}",
-                    e
-                )));
-            }
+        let (service_account, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        // Create domain event
-        let event = ServiceAccountDeleted::new(&ctx, &service_account.id, &service_account.code);
 
         // Atomic commit with delete
         self.unit_of_work
@@ -82,6 +70,28 @@ impl<U: UnitOfWork> UseCase for DeleteServiceAccountUseCase<U> {
                 &command,
             )
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteServiceAccountUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteServiceAccountCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ServiceAccount, ServiceAccountDeleted), UseCaseError> {
+        // Find the service account
+        let service_account = self
+            .service_account_repo
+            .find_by_id(&command.id)
+            .await
+            .or_not_found(
+                "SERVICE_ACCOUNT_NOT_FOUND",
+                format!("Service account with ID '{}' not found", command.id),
+            )?;
+
+        // Create domain event
+        let event = ServiceAccountDeleted::new(ctx, &service_account.id, &service_account.code);
+        Ok((service_account, event))
     }
 }
 

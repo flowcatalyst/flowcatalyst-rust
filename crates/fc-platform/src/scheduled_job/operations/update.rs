@@ -11,8 +11,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ScheduledJobUpdated;
+use crate::scheduled_job::entity::ScheduledJob;
 use crate::scheduled_job::ScheduledJobRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,21 +104,31 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
         cmd: Self::Command,
         ctx: ExecutionContext,
     ) -> UseCaseResult<Self::Event> {
-        let mut job = match self.repo.find_by_id(&cmd.scheduled_job_id).await {
-            Ok(Some(j)) => j,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SCHEDULED_JOB_NOT_FOUND",
-                    format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
-                ))
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load ScheduledJob: {}",
-                    e
-                )))
-            }
+        let (job, event) = match self.prepare(&cmd, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work
+            .commit(&job, &*self.repo, event, &cmd)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateScheduledJobUseCase<U> {
+    async fn prepare(
+        &self,
+        cmd: &UpdateScheduledJobCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ScheduledJob, ScheduledJobUpdated), UseCaseError> {
+        let mut job = self
+            .repo
+            .find_by_id(&cmd.scheduled_job_id)
+            .await
+            .or_not_found(
+                "SCHEDULED_JOB_NOT_FOUND",
+                format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
+            )?;
 
         let mut changed: Vec<String> = Vec::new();
         if let Some(v) = &cmd.name {
@@ -180,7 +193,7 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
         }
 
         if changed.is_empty() {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "NO_CHANGES",
                 "Update command did not change any fields",
             ));
@@ -189,16 +202,13 @@ impl<U: UnitOfWork> UseCase for UpdateScheduledJobUseCase<U> {
         job.record_update(Some(ctx.principal_id.clone()));
 
         let event = ScheduledJobUpdated::new(
-            &ctx,
+            ctx,
             &job.id,
             job.client_id.as_deref(),
             &job.code,
             changed,
             job.version,
         );
-
-        self.unit_of_work
-            .commit(&job, &*self.repo, event, &cmd)
-            .await
+        Ok((job, event))
     }
 }

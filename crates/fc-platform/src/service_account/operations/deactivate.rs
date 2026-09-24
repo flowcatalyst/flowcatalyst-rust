@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ServiceAccountDeactivated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::service_account::ServiceAccount;
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ServiceAccountRepository;
 
 /// Command for deactivating a service account.
@@ -59,38 +62,42 @@ impl<U: UnitOfWork> UseCase for DeactivateServiceAccountUseCase<U> {
         command: DeactivateServiceAccountCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ServiceAccountDeactivated> {
-        let mut sa = match self.service_account_repo.find_by_id(&command.id).await {
-            Ok(Some(s)) => s,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SERVICE_ACCOUNT_NOT_FOUND",
-                    format!("Service account with ID '{}' not found", command.id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find service account: {}",
-                    e
-                )));
-            }
+        let (sa, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
-
-        // Idempotent: already-inactive SA is a no-op success so the
-        // cascade caller doesn't have to filter.
-        if !sa.active {
-            let event = ServiceAccountDeactivated::new(&ctx, &sa.id, &sa.code);
-            return self
-                .unit_of_work
-                .commit(&sa, &*self.service_account_repo, event, &command)
-                .await;
-        }
-
-        sa.deactivate();
-
-        let event = ServiceAccountDeactivated::new(&ctx, &sa.id, &sa.code);
 
         self.unit_of_work
             .commit(&sa, &*self.service_account_repo, event, &command)
             .await
+    }
+}
+
+impl<U: UnitOfWork> DeactivateServiceAccountUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeactivateServiceAccountCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ServiceAccount, ServiceAccountDeactivated), UseCaseError> {
+        let mut sa = self
+            .service_account_repo
+            .find_by_id(&command.id)
+            .await
+            .or_not_found(
+                "SERVICE_ACCOUNT_NOT_FOUND",
+                format!("Service account with ID '{}' not found", command.id),
+            )?;
+
+        // Idempotent: already-inactive SA is a no-op success so the
+        // cascade caller doesn't have to filter.
+        if !sa.active {
+            let event = ServiceAccountDeactivated::new(ctx, &sa.id, &sa.code);
+            return Ok((sa, event));
+        }
+
+        sa.deactivate();
+
+        let event = ServiceAccountDeactivated::new(ctx, &sa.id, &sa.code);
+        Ok((sa, event))
     }
 }

@@ -7,9 +7,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::events::ScheduledJobArchived;
-use crate::scheduled_job::entity::ScheduledJobStatus;
+use crate::scheduled_job::entity::{ScheduledJob, ScheduledJobStatus};
 use crate::scheduled_job::ScheduledJobRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,33 +51,41 @@ impl<U: UnitOfWork> UseCase for ArchiveScheduledJobUseCase<U> {
         cmd: Self::Command,
         ctx: ExecutionContext,
     ) -> UseCaseResult<Self::Event> {
-        let mut job = match self.repo.find_by_id(&cmd.scheduled_job_id).await {
-            Ok(Some(j)) => j,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SCHEDULED_JOB_NOT_FOUND",
-                    format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
-                ))
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load ScheduledJob: {}",
-                    e
-                )))
-            }
+        let (job, event) = match self.prepare(&cmd, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
+        self.unit_of_work
+            .commit(&job, &*self.repo, event, &cmd)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> ArchiveScheduledJobUseCase<U> {
+    async fn prepare(
+        &self,
+        cmd: &ArchiveScheduledJobCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(ScheduledJob, ScheduledJobArchived), UseCaseError> {
+        let mut job = self
+            .repo
+            .find_by_id(&cmd.scheduled_job_id)
+            .await
+            .or_not_found(
+                "SCHEDULED_JOB_NOT_FOUND",
+                format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
+            )?;
+
         if job.status == ScheduledJobStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ALREADY_ARCHIVED",
                 "ScheduledJob is already archived",
             ));
         }
 
         job.archive();
-        let event = ScheduledJobArchived::new(&ctx, &job.id, job.client_id.as_deref(), &job.code);
-        self.unit_of_work
-            .commit(&job, &*self.repo, event, &cmd)
-            .await
+        let event = ScheduledJobArchived::new(ctx, &job.id, job.client_id.as_deref(), &job.code);
+        Ok((job, event))
     }
 }

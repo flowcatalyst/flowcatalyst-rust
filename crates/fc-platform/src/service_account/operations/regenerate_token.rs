@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ServiceAccountTokenRegenerated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::service_account::ServiceAccount;
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ServiceAccountRepository;
 use crate::WebhookAuthType;
 
@@ -119,44 +122,9 @@ impl<U: UnitOfWork> UseCase for RegenerateAuthTokenUseCase<U> {
         command: RegenerateAuthTokenCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<RegenerateAuthTokenResult> {
-        // Find the service account
-        let mut service_account = match self
-            .service_account_repo
-            .find_by_id(&command.service_account_id)
-            .await
-        {
-            Ok(Some(sa)) => sa,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SERVICE_ACCOUNT_NOT_FOUND",
-                    format!(
-                        "Service account with ID '{}' not found",
-                        command.service_account_id
-                    ),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find service account: {}",
-                    e
-                )));
-            }
-        };
-
-        // Generate new token
-        let auth_token = generate_auth_token();
-        service_account.webhook_credentials.token = Some(auth_token.clone());
-        service_account.webhook_credentials.auth_type = WebhookAuthType::BearerToken;
-        service_account.updated_at = Utc::now();
-
-        // Create domain event
-        let event =
-            ServiceAccountTokenRegenerated::new(&ctx, &service_account.id, &service_account.code);
-
-        // Create result with one-time token
-        let result = RegenerateAuthTokenResult {
-            event: event.clone(),
-            auth_token,
+        let (service_account, event, result) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
         // Atomic commit through UnitOfWork, then map the event onto our
@@ -170,6 +138,52 @@ impl<U: UnitOfWork> UseCase for RegenerateAuthTokenUseCase<U> {
             )
             .await
             .map(|_| result)
+    }
+}
+
+impl<U: UnitOfWork> RegenerateAuthTokenUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &RegenerateAuthTokenCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<
+        (
+            ServiceAccount,
+            ServiceAccountTokenRegenerated,
+            RegenerateAuthTokenResult,
+        ),
+        UseCaseError,
+    > {
+        // Find the service account
+        let mut service_account = self
+            .service_account_repo
+            .find_by_id(&command.service_account_id)
+            .await
+            .or_not_found(
+                "SERVICE_ACCOUNT_NOT_FOUND",
+                format!(
+                    "Service account with ID '{}' not found",
+                    command.service_account_id
+                ),
+            )?;
+
+        // Generate new token
+        let auth_token = generate_auth_token();
+        service_account.webhook_credentials.token = Some(auth_token.clone());
+        service_account.webhook_credentials.auth_type = WebhookAuthType::BearerToken;
+        service_account.updated_at = Utc::now();
+
+        // Create domain event
+        let event =
+            ServiceAccountTokenRegenerated::new(ctx, &service_account.id, &service_account.code);
+
+        // Create result with one-time token
+        let result = RegenerateAuthTokenResult {
+            event: event.clone(),
+            auth_token,
+        };
+
+        Ok((service_account, event, result))
     }
 }
 

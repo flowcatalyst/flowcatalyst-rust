@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ServiceAccountSecretRegenerated;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::service_account::ServiceAccount;
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ServiceAccountRepository;
 
 /// Generate a signing secret (URL-safe base64)
@@ -112,43 +115,9 @@ impl<U: UnitOfWork> UseCase for RegenerateSigningSecretUseCase<U> {
         command: RegenerateSigningSecretCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<RegenerateSigningSecretResult> {
-        // Find the service account
-        let mut service_account = match self
-            .service_account_repo
-            .find_by_id(&command.service_account_id)
-            .await
-        {
-            Ok(Some(sa)) => sa,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SERVICE_ACCOUNT_NOT_FOUND",
-                    format!(
-                        "Service account with ID '{}' not found",
-                        command.service_account_id
-                    ),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to find service account: {}",
-                    e
-                )));
-            }
-        };
-
-        // Generate new secret
-        let signing_secret = generate_signing_secret();
-        service_account.webhook_credentials.signing_secret = Some(signing_secret.clone());
-        service_account.updated_at = Utc::now();
-
-        // Create domain event
-        let event =
-            ServiceAccountSecretRegenerated::new(&ctx, &service_account.id, &service_account.code);
-
-        // Create result with one-time secret
-        let result = RegenerateSigningSecretResult {
-            event: event.clone(),
-            signing_secret,
+        let (service_account, event, result) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
         // Atomic commit through UnitOfWork, then map the event onto our
@@ -162,6 +131,51 @@ impl<U: UnitOfWork> UseCase for RegenerateSigningSecretUseCase<U> {
             )
             .await
             .map(|_| result)
+    }
+}
+
+impl<U: UnitOfWork> RegenerateSigningSecretUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &RegenerateSigningSecretCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<
+        (
+            ServiceAccount,
+            ServiceAccountSecretRegenerated,
+            RegenerateSigningSecretResult,
+        ),
+        UseCaseError,
+    > {
+        // Find the service account
+        let mut service_account = self
+            .service_account_repo
+            .find_by_id(&command.service_account_id)
+            .await
+            .or_not_found(
+                "SERVICE_ACCOUNT_NOT_FOUND",
+                format!(
+                    "Service account with ID '{}' not found",
+                    command.service_account_id
+                ),
+            )?;
+
+        // Generate new secret
+        let signing_secret = generate_signing_secret();
+        service_account.webhook_credentials.signing_secret = Some(signing_secret.clone());
+        service_account.updated_at = Utc::now();
+
+        // Create domain event
+        let event =
+            ServiceAccountSecretRegenerated::new(ctx, &service_account.id, &service_account.code);
+
+        // Create result with one-time secret
+        let result = RegenerateSigningSecretResult {
+            event: event.clone(),
+            signing_secret,
+        };
+
+        Ok((service_account, event, result))
     }
 }
 

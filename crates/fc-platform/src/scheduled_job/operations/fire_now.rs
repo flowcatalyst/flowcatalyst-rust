@@ -20,7 +20,9 @@ use crate::scheduled_job::entity::{
     InstanceStatus, ScheduledJobInstance, ScheduledJobStatus, TriggerKind,
 };
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,24 +75,32 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
         cmd: Self::Command,
         ctx: ExecutionContext,
     ) -> UseCaseResult<Self::Event> {
-        let job = match self.repo.find_by_id(&cmd.scheduled_job_id).await {
-            Ok(Some(j)) => j,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SCHEDULED_JOB_NOT_FOUND",
-                    format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
-                ))
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to load ScheduledJob: {}",
-                    e
-                )))
-            }
+        let event = match self.prepare(&cmd, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
+        self.unit_of_work.emit_event(event, &cmd).await
+    }
+}
+
+impl<U: UnitOfWork> FireScheduledJobUseCase<U> {
+    async fn prepare(
+        &self,
+        cmd: &FireScheduledJobCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<ScheduledJobFiredManually, UseCaseError> {
+        let job = self
+            .repo
+            .find_by_id(&cmd.scheduled_job_id)
+            .await
+            .or_not_found(
+                "SCHEDULED_JOB_NOT_FOUND",
+                format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
+            )?;
+
         if job.status == ScheduledJobStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ARCHIVED",
                 "Cannot fire an archived ScheduledJob",
             ));
@@ -119,20 +129,19 @@ impl<U: UnitOfWork> UseCase for FireScheduledJobUseCase<U> {
         };
 
         if let Err(e) = self.instance_repo.insert(&instance).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
+            return Err(UseCaseError::commit(format!(
                 "Failed to insert instance row: {}",
                 e
             )));
         }
 
         let event = ScheduledJobFiredManually::new(
-            &ctx,
+            ctx,
             &job.id,
             job.client_id.as_deref(),
             &job.code,
             &instance.id,
         );
-
-        self.unit_of_work.emit_event(event, &cmd).await
+        Ok(event)
     }
 }
