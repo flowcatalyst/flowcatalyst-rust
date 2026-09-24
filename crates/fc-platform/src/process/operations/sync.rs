@@ -78,19 +78,25 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
         command: SyncProcessesCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ProcessesSynced> {
-        let existing = match self
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> SyncProcessesUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SyncProcessesCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<ProcessesSynced, UseCaseError> {
+        let existing = self
             .process_repo
             .find_by_application(&command.application_code)
-            .await
-        {
-            Ok(list) => list,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch existing processes: {}",
-                    e
-                )));
-            }
-        };
+            .await?;
 
         let mut created = 0u32;
         let mut updated = 0u32;
@@ -116,7 +122,7 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                         up.tags = input.tags.clone();
                         up.updated_at = chrono::Utc::now();
                         if let Err(e) = self.process_repo.update(&up).await {
-                            return UseCaseResult::failure(UseCaseError::commit(format!(
+                            return Err(UseCaseError::commit(format!(
                                 "Failed to update process '{}': {}",
                                 input.code, e
                             )));
@@ -125,15 +131,8 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                     }
                 }
                 None => {
-                    let mut p = match Process::new(&input.code, &input.name) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            return UseCaseResult::failure(UseCaseError::validation(
-                                "INVALID_PROCESS_CODE",
-                                e,
-                            ));
-                        }
-                    };
+                    let mut p = Process::new(&input.code, &input.name)
+                        .map_err(|e| UseCaseError::validation("INVALID_PROCESS_CODE", e))?;
                     p.source = ProcessSource::Api;
                     p.description = input.description.clone();
                     p.body = input.body.clone();
@@ -144,7 +143,7 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                     }
                     p.tags = input.tags.clone();
                     if let Err(e) = self.process_repo.insert(&p).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to create process '{}': {}",
                             input.code, e
                         )));
@@ -160,7 +159,7 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
                     && !synced_codes.contains(&p.code)
                 {
                     if let Err(e) = self.process_repo.delete(&p.id).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to delete process '{}': {}",
                             p.code, e
                         )));
@@ -171,14 +170,13 @@ impl<U: UnitOfWork> UseCase for SyncProcessesUseCase<U> {
         }
 
         let event = ProcessesSynced::new(
-            &ctx,
+            ctx,
             &command.application_code,
             created,
             updated,
             deleted,
             synced_codes,
         );
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }

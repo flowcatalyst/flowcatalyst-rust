@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use super::events::EmailDomainMappingCreated;
 use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::EmailDomainMappingRepository;
 use crate::IdentityProviderRepository;
 
@@ -91,47 +93,51 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
         command: CreateEmailDomainMappingCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EmailDomainMappingCreated> {
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        // Emit the event + audit log via UoW. The entity itself was written
+        // in prepare() via a direct repo call (pre-existing pattern with junction
+        // tables). TODO: migrate to `impl Persist<EmailDomainMapping> for
+        // EmailDomainMappingRepository` and `unit_of_work.commit(...)` to
+        // match the rest of the codebase.
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &CreateEmailDomainMappingCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<EmailDomainMappingCreated, UseCaseError> {
         let email_domain = command.email_domain.trim().to_lowercase();
 
         // Verify identity provider exists
-        match self
-            .idp_repo
+        self.idp_repo
             .find_by_id(&command.identity_provider_id)
             .await
-        {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "IDENTITY_PROVIDER_NOT_FOUND",
-                    format!(
-                        "Identity provider '{}' not found",
-                        command.identity_provider_id
-                    ),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to validate identity provider: {}",
-                    e
-                )));
-            }
-        }
+            .or_not_found(
+                "IDENTITY_PROVIDER_NOT_FOUND",
+                format!(
+                    "Identity provider '{}' not found",
+                    command.identity_provider_id
+                ),
+            )?;
 
         // Check for duplicate email domain
-        match self.edm_repo.find_by_email_domain(&email_domain).await {
-            Ok(Some(_)) => {
-                return UseCaseResult::failure(UseCaseError::business_rule(
-                    "EMAIL_DOMAIN_ALREADY_MAPPED",
-                    format!("Email domain '{}' is already mapped", email_domain),
-                ));
-            }
-            Ok(None) => {}
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to check email domain: {}",
-                    e
-                )));
-            }
+        if self
+            .edm_repo
+            .find_by_email_domain(&email_domain)
+            .await?
+            .is_some()
+        {
+            return Err(UseCaseError::business_rule(
+                "EMAIL_DOMAIN_ALREADY_MAPPED",
+                format!("Email domain '{}' is already mapped", email_domain),
+            ));
         }
 
         // Parse scope type
@@ -151,26 +157,21 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
         mapping.sync_roles_from_idp = command.sync_roles_from_idp;
 
         if let Err(e) = self.edm_repo.insert(&mapping).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
+            return Err(UseCaseError::commit(format!(
                 "Failed to insert email domain mapping: {}",
                 e
             )));
         }
 
         let event = EmailDomainMappingCreated::new(
-            &ctx,
+            ctx,
             &mapping.id,
             &mapping.email_domain,
             &mapping.identity_provider_id,
             scope_type.as_str(),
         );
 
-        // Emit the event + audit log via UoW. The entity itself was written
-        // above via a direct repo call (pre-existing pattern with junction
-        // tables). TODO: migrate to `impl Persist<EmailDomainMapping> for
-        // EmailDomainMappingRepository` and `unit_of_work.commit(...)` to
-        // match the rest of the codebase.
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

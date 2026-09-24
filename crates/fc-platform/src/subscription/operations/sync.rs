@@ -9,7 +9,9 @@ use std::sync::Arc;
 use super::create::EventTypeBindingInput;
 use super::events::SubscriptionsSynced;
 use crate::subscription::entity::SubscriptionSource;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::ConnectionRepository;
 use crate::DispatchPoolRepository;
 use crate::SubscriptionRepository;
@@ -128,41 +130,39 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         command: SyncSubscriptionsCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<SubscriptionsSynced> {
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &SyncSubscriptionsCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<SubscriptionsSynced, UseCaseError> {
         // Validate connections exist (only when connection_id is provided)
         for input in &command.subscriptions {
             if let Some(ref conn_id) = input.connection_id {
-                match self.connection_repo.find_by_id(conn_id).await {
-                    Ok(Some(_)) => {}
-                    Ok(None) => {
-                        return UseCaseResult::failure(UseCaseError::not_found(
-                            "CONNECTION_NOT_FOUND",
-                            format!("Connection '{}' not found", conn_id),
-                        ));
-                    }
-                    Err(e) => {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
-                            "Failed to validate connection: {}",
-                            e
-                        )));
-                    }
-                }
+                self.connection_repo
+                    .find_by_id(conn_id)
+                    .await
+                    .or_not_found(
+                        "CONNECTION_NOT_FOUND",
+                        format!("Connection '{}' not found", conn_id),
+                    )?;
             }
         }
 
         // Fetch existing anchor-level subscriptions for this application
-        let existing = match self
+        let existing = self
             .subscription_repo
             .find_by_application_code(&command.application_code)
-            .await
-        {
-            Ok(list) => list,
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch existing subscriptions: {}",
-                    e
-                )));
-            }
-        };
+            .await?;
 
         let mut created_count = 0u32;
         let mut updated_count = 0u32;
@@ -215,7 +215,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         }
                         updated.updated_at = chrono::Utc::now();
                         if let Err(e) = self.subscription_repo.update(&updated).await {
-                            return UseCaseResult::failure(UseCaseError::commit(format!(
+                            return Err(UseCaseError::commit(format!(
                                 "Failed to update subscription '{}': {}",
                                 input.code, e
                             )));
@@ -247,7 +247,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                         }
                     }
                     if let Err(e) = self.subscription_repo.insert(&sub).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to create subscription '{}': {}",
                             input.code, e
                         )));
@@ -264,7 +264,7 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
                     && !synced_codes.contains(&sub.code)
                 {
                     if let Err(e) = self.subscription_repo.delete(&sub.id).await {
-                        return UseCaseResult::failure(UseCaseError::commit(format!(
+                        return Err(UseCaseError::commit(format!(
                             "Failed to delete subscription '{}': {}",
                             sub.code, e
                         )));
@@ -275,15 +275,14 @@ impl<U: UnitOfWork> UseCase for SyncSubscriptionsUseCase<U> {
         }
 
         let event = SubscriptionsSynced::new(
-            &ctx,
+            ctx,
             &command.application_code,
             created_count,
             updated_count,
             deleted_count,
             synced_codes,
         );
-
-        self.unit_of_work.emit_event(event, &command).await
+        Ok(event)
     }
 }
 

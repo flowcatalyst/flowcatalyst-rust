@@ -8,8 +8,11 @@ use std::sync::Arc;
 use super::create::EventTypeBindingInput;
 use super::events::SubscriptionUpdated;
 use crate::subscription::entity::DispatchMode;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::EventTypeBinding;
+use crate::Subscription;
 use crate::SubscriptionRepository;
 
 /// Command for updating an existing subscription.
@@ -126,29 +129,36 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
         command: UpdateSubscriptionCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<SubscriptionUpdated> {
+        let (subscription, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&subscription, &*self.subscription_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateSubscriptionCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Subscription, SubscriptionUpdated), UseCaseError> {
         // Fetch existing subscription
-        let mut subscription = match self
+        let mut subscription = self
             .subscription_repo
             .find_by_id(&command.subscription_id)
             .await
-        {
-            Ok(Some(s)) => s,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SUBSCRIPTION_NOT_FOUND",
-                    format!(
-                        "Subscription with ID '{}' not found",
-                        command.subscription_id
-                    ),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch subscription: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "SUBSCRIPTION_NOT_FOUND",
+                format!(
+                    "Subscription with ID '{}' not found",
+                    command.subscription_id
+                ),
+            )?;
 
         // Track changes
         let mut updated_name: Option<&str> = None;
@@ -239,17 +249,13 @@ impl<U: UnitOfWork> UseCase for UpdateSubscriptionUseCase<U> {
 
         // Create domain event
         let event = SubscriptionUpdated::new(
-            &ctx,
+            ctx,
             &subscription.id,
             updated_name,
             event_types_added,
             event_types_removed,
         );
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&subscription, &*self.subscription_repo, event, &command)
-            .await
+        Ok((subscription, event))
     }
 }
 

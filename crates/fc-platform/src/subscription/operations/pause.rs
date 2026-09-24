@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::SubscriptionPaused;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
+use crate::Subscription;
 use crate::SubscriptionRepository;
 use crate::SubscriptionStatus;
 
@@ -60,33 +63,40 @@ impl<U: UnitOfWork> UseCase for PauseSubscriptionUseCase<U> {
         command: PauseSubscriptionCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<SubscriptionPaused> {
+        let (subscription, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
+        };
+
+        // Atomic commit
+        self.unit_of_work
+            .commit(&subscription, &*self.subscription_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> PauseSubscriptionUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &PauseSubscriptionCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Subscription, SubscriptionPaused), UseCaseError> {
         // Fetch existing subscription
-        let mut subscription = match self
+        let mut subscription = self
             .subscription_repo
             .find_by_id(&command.subscription_id)
             .await
-        {
-            Ok(Some(s)) => s,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "SUBSCRIPTION_NOT_FOUND",
-                    format!(
-                        "Subscription with ID '{}' not found",
-                        command.subscription_id
-                    ),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch subscription: {}",
-                    e
-                )));
-            }
-        };
+            .or_not_found(
+                "SUBSCRIPTION_NOT_FOUND",
+                format!(
+                    "Subscription with ID '{}' not found",
+                    command.subscription_id
+                ),
+            )?;
 
         // Business rule: can only pause active subscriptions
         if subscription.status == SubscriptionStatus::Paused {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ALREADY_PAUSED",
                 "Subscription is already paused",
             ));
@@ -96,12 +106,8 @@ impl<U: UnitOfWork> UseCase for PauseSubscriptionUseCase<U> {
         subscription.pause();
 
         // Create domain event
-        let event = SubscriptionPaused::new(&ctx, &subscription.id, &subscription.code);
-
-        // Atomic commit
-        self.unit_of_work
-            .commit(&subscription, &*self.subscription_repo, event, &command)
-            .await
+        let event = SubscriptionPaused::new(ctx, &subscription.id, &subscription.code);
+        Ok((subscription, event))
     }
 }
 

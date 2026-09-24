@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use super::events::EmailDomainMappingUpdated;
 use crate::email_domain_mapping::entity::ScopeType;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::EmailDomainMappingRepository;
 
 /// Command for updating an email domain mapping.
@@ -77,24 +79,32 @@ impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
         command: UpdateEmailDomainMappingCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EmailDomainMappingUpdated> {
-        let mut mapping = match self.edm_repo.find_by_id(&command.mapping_id).await {
-            Ok(Some(m)) => m,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "NOT_FOUND",
-                    format!(
-                        "Email domain mapping with ID '{}' not found",
-                        command.mapping_id
-                    ),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch email domain mapping: {}",
-                    e
-                )));
-            }
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
+
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateEmailDomainMappingCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<EmailDomainMappingUpdated, UseCaseError> {
+        let mut mapping = self
+            .edm_repo
+            .find_by_id(&command.mapping_id)
+            .await
+            .or_not_found(
+                "NOT_FOUND",
+                format!(
+                    "Email domain mapping with ID '{}' not found",
+                    command.mapping_id
+                ),
+            )?;
 
         // Selectively update fields
         if let Some(ref idp_id) = command.identity_provider_id {
@@ -132,15 +142,14 @@ impl<U: UnitOfWork> UseCase for UpdateEmailDomainMappingUseCase<U> {
         // for EmailDomainMappingRepository` and migrate to
         // `unit_of_work.commit(...)` for a single atomic transaction.
         if let Err(e) = self.edm_repo.update(&mapping).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
+            return Err(UseCaseError::commit(format!(
                 "Failed to update email domain mapping: {}",
                 e
             )));
         }
 
-        let event = EmailDomainMappingUpdated::new(&ctx, &mapping.id, &mapping.email_domain);
-
-        self.unit_of_work.emit_event(event, &command).await
+        let event = EmailDomainMappingUpdated::new(ctx, &mapping.id, &mapping.email_domain);
+        Ok(event)
     }
 }
 

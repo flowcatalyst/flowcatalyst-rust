@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ProcessArchived;
-use crate::process::entity::ProcessStatus;
+use crate::process::entity::{Process, ProcessStatus};
 use crate::process::repository::ProcessRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,24 +59,34 @@ impl<U: UnitOfWork> UseCase for ArchiveProcessUseCase<U> {
         command: ArchiveProcessCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ProcessArchived> {
-        let mut process = match self.process_repo.find_by_id(&command.process_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "PROCESS_NOT_FOUND",
-                    format!("Process with ID '{}' not found", command.process_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch process: {}",
-                    e
-                )));
-            }
+        let (process, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
+        self.unit_of_work
+            .commit(&process, &*self.process_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> ArchiveProcessUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &ArchiveProcessCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Process, ProcessArchived), UseCaseError> {
+        let mut process = self
+            .process_repo
+            .find_by_id(&command.process_id)
+            .await
+            .or_not_found(
+                "PROCESS_NOT_FOUND",
+                format!("Process with ID '{}' not found", command.process_id),
+            )?;
+
         if process.status == ProcessStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "ALREADY_ARCHIVED",
                 "Process is already archived",
             ));
@@ -82,10 +94,7 @@ impl<U: UnitOfWork> UseCase for ArchiveProcessUseCase<U> {
 
         process.archive();
 
-        let event = ProcessArchived::new(&ctx, &process.id, &process.code);
-
-        self.unit_of_work
-            .commit(&process, &*self.process_repo, event, &command)
-            .await
+        let event = ProcessArchived::new(ctx, &process.id, &process.code);
+        Ok((process, event))
     }
 }

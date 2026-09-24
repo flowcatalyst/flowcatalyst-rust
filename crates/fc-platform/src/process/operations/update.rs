@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ProcessUpdated;
-use crate::process::entity::ProcessStatus;
+use crate::process::entity::{Process, ProcessStatus};
 use crate::process::repository::ProcessRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,24 +80,34 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
         command: UpdateProcessCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ProcessUpdated> {
-        let mut process = match self.process_repo.find_by_id(&command.process_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "PROCESS_NOT_FOUND",
-                    format!("Process with ID '{}' not found", command.process_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch process: {}",
-                    e
-                )));
-            }
+        let (process, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
+        self.unit_of_work
+            .commit(&process, &*self.process_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> UpdateProcessUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &UpdateProcessCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Process, ProcessUpdated), UseCaseError> {
+        let mut process = self
+            .process_repo
+            .find_by_id(&command.process_id)
+            .await
+            .or_not_found(
+                "PROCESS_NOT_FOUND",
+                format!("Process with ID '{}' not found", command.process_id),
+            )?;
+
         if process.status == ProcessStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CANNOT_UPDATE_ARCHIVED",
                 "Cannot update an archived process",
             ));
@@ -145,7 +157,7 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
         }
 
         if !any_change {
-            return UseCaseResult::failure(UseCaseError::validation(
+            return Err(UseCaseError::validation(
                 "NO_CHANGES",
                 "No changes detected",
             ));
@@ -154,16 +166,13 @@ impl<U: UnitOfWork> UseCase for UpdateProcessUseCase<U> {
         process.updated_at = chrono::Utc::now();
 
         let event = ProcessUpdated::new(
-            &ctx,
+            ctx,
             &process.id,
             changed_name.as_deref(),
             changed_description.as_deref(),
             if body_changed { Some(true) } else { None },
             changed_tags.as_deref(),
         );
-
-        self.unit_of_work
-            .commit(&process, &*self.process_repo, event, &command)
-            .await
+        Ok((process, event))
     }
 }

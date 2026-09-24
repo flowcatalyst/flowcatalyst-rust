@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::ProcessDeleted;
-use crate::process::entity::ProcessStatus;
+use crate::process::entity::{Process, ProcessStatus};
 use crate::process::repository::ProcessRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,33 +59,40 @@ impl<U: UnitOfWork> UseCase for DeleteProcessUseCase<U> {
         command: DeleteProcessCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<ProcessDeleted> {
-        let process = match self.process_repo.find_by_id(&command.process_id).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "PROCESS_NOT_FOUND",
-                    format!("Process with ID '{}' not found", command.process_id),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch process: {}",
-                    e
-                )));
-            }
+        let (process, event) = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
+        self.unit_of_work
+            .commit_delete(&process, &*self.process_repo, event, &command)
+            .await
+    }
+}
+
+impl<U: UnitOfWork> DeleteProcessUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteProcessCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<(Process, ProcessDeleted), UseCaseError> {
+        let process = self
+            .process_repo
+            .find_by_id(&command.process_id)
+            .await
+            .or_not_found(
+                "PROCESS_NOT_FOUND",
+                format!("Process with ID '{}' not found", command.process_id),
+            )?;
+
         if process.status != ProcessStatus::Archived {
-            return UseCaseResult::failure(UseCaseError::business_rule(
+            return Err(UseCaseError::business_rule(
                 "CANNOT_DELETE",
                 "Can only delete archived processes",
             ));
         }
 
-        let event = ProcessDeleted::new(&ctx, &process.id, &process.code);
-
-        self.unit_of_work
-            .commit_delete(&process, &*self.process_repo, event, &command)
-            .await
+        let event = ProcessDeleted::new(ctx, &process.id, &process.code);
+        Ok((process, event))
     }
 }

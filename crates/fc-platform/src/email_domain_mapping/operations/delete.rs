@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::EmailDomainMappingDeleted;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::EmailDomainMappingRepository;
 
 /// Command for deleting an email domain mapping.
@@ -60,35 +62,42 @@ impl<U: UnitOfWork> UseCase for DeleteEmailDomainMappingUseCase<U> {
         command: DeleteEmailDomainMappingCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EmailDomainMappingDeleted> {
-        let mapping = match self.edm_repo.find_by_id(&command.mapping_id).await {
-            Ok(Some(m)) => m,
-            Ok(None) => {
-                return UseCaseResult::failure(UseCaseError::not_found(
-                    "NOT_FOUND",
-                    format!(
-                        "Email domain mapping with ID '{}' not found",
-                        command.mapping_id
-                    ),
-                ));
-            }
-            Err(e) => {
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to fetch email domain mapping: {}",
-                    e
-                )));
-            }
+        let event = match self.prepare(&command, &ctx).await {
+            Ok(v) => v,
+            Err(e) => return UseCaseResult::failure(e),
         };
 
+        self.unit_of_work.emit_event(event, &command).await
+    }
+}
+
+impl<U: UnitOfWork> DeleteEmailDomainMappingUseCase<U> {
+    async fn prepare(
+        &self,
+        command: &DeleteEmailDomainMappingCommand,
+        ctx: &ExecutionContext,
+    ) -> Result<EmailDomainMappingDeleted, UseCaseError> {
+        let mapping = self
+            .edm_repo
+            .find_by_id(&command.mapping_id)
+            .await
+            .or_not_found(
+                "NOT_FOUND",
+                format!(
+                    "Email domain mapping with ID '{}' not found",
+                    command.mapping_id
+                ),
+            )?;
+
         if let Err(e) = self.edm_repo.delete(&mapping.id).await {
-            return UseCaseResult::failure(UseCaseError::commit(format!(
+            return Err(UseCaseError::commit(format!(
                 "Failed to delete email domain mapping: {}",
                 e
             )));
         }
 
-        let event = EmailDomainMappingDeleted::new(&ctx, &mapping.id, &mapping.email_domain);
-
-        self.unit_of_work.emit_event(event, &command).await
+        let event = EmailDomainMappingDeleted::new(ctx, &mapping.id, &mapping.email_domain);
+        Ok(event)
     }
 }
 
