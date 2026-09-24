@@ -1,7 +1,14 @@
+import { redactAuditData } from "./audit-redaction.js";
+
 /**
  * DTO for creating an audit log entry in the outbox.
  *
  * Uses an immutable builder pattern - all `with*()` methods return a new instance.
+ *
+ * `operationData` is redacted (see `redactAuditData`) before it is
+ * serialised into the outbox payload, so passwords, tokens and other
+ * secret-shaped fields never reach `aud_logs`. Pass a masked-fields list to
+ * `withOperationData` for fields the name rule alone would not catch.
  *
  * @example
  * ```typescript
@@ -17,6 +24,7 @@ export class CreateAuditLogDto {
 	readonly entityId: string;
 	readonly operation: string;
 	readonly operationData: Record<string, unknown> | null;
+	readonly maskedFields: readonly string[];
 	readonly principalId: string | null;
 	readonly performedAt: Date | null;
 	readonly source: string | null;
@@ -29,6 +37,7 @@ export class CreateAuditLogDto {
 		entityId: string;
 		operation: string;
 		operationData?: Record<string, unknown> | null;
+		maskedFields?: readonly string[];
 		principalId?: string | null;
 		performedAt?: Date | null;
 		source?: string | null;
@@ -40,6 +49,7 @@ export class CreateAuditLogDto {
 		this.entityId = params.entityId;
 		this.operation = params.operation;
 		this.operationData = params.operationData ?? null;
+		this.maskedFields = params.maskedFields ?? [];
 		this.principalId = params.principalId ?? null;
 		this.performedAt = params.performedAt ?? null;
 		this.source = params.source ?? null;
@@ -56,8 +66,16 @@ export class CreateAuditLogDto {
 		return new CreateAuditLogDto({ entityType, entityId, operation });
 	}
 
-	withOperationData(operationData: Record<string, unknown>): CreateAuditLogDto {
-		return new CreateAuditLogDto({ ...this.toParams(), operationData });
+	/**
+	 * @param maskedFields Top-level field names to mask in addition to the
+	 *   name rule (see `redactAuditData`), e.g. a config value whose secrecy
+	 *   depends on a sibling field.
+	 */
+	withOperationData(
+		operationData: Record<string, unknown>,
+		maskedFields: readonly string[] = [],
+	): CreateAuditLogDto {
+		return new CreateAuditLogDto({ ...this.toParams(), operationData, maskedFields });
 	}
 
 	withPrincipalId(principalId: string): CreateAuditLogDto {
@@ -97,7 +115,7 @@ export class CreateAuditLogDto {
 			entityId: this.entityId,
 			operation: this.operation,
 			operationData: this.operationData
-				? JSON.stringify(this.operationData)
+				? JSON.stringify(redactAuditData(this.operationData, this.maskedFields))
 				: null,
 			principalId: this.principalId,
 			performedAt: (this.performedAt ?? new Date()).toISOString(),
@@ -113,6 +131,7 @@ export class CreateAuditLogDto {
 			entityId: this.entityId,
 			operation: this.operation,
 			operationData: this.operationData,
+			maskedFields: this.maskedFields,
 			principalId: this.principalId,
 			performedAt: this.performedAt,
 			source: this.source,

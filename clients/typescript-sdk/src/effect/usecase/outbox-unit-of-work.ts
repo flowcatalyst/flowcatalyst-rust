@@ -7,6 +7,7 @@
 
 import { Effect, Layer } from "effect";
 import { CreateAuditLogDto } from "../../outbox/create-audit-log-dto.js";
+import { auditMaskedFieldsOf } from "../../outbox/audit-redaction.js";
 import { CreateEventDto } from "../../outbox/create-event-dto.js";
 import { OutboxManager } from "../../outbox/outbox-manager.js";
 import type { OutboxDriver } from "../../outbox/types.js";
@@ -68,7 +69,7 @@ const toAuditDto = <E extends DomainEvent>(
 			? (command as Record<string, unknown>)
 			: { command };
 	return CreateAuditLogDto.create(entityType, entityId, operation)
-		.withOperationData(operationData)
+		.withOperationData(operationData, auditMaskedFieldsOf(command))
 		.withPrincipalId(event.principalId || fallbackPrincipalId)
 		.withCorrelationId(event.correlationId)
 		.withSource(event.source)

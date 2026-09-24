@@ -11,6 +11,7 @@
 import { OutboxManager } from "../outbox/outbox-manager.js";
 import { CreateEventDto } from "../outbox/create-event-dto.js";
 import { CreateAuditLogDto } from "../outbox/create-audit-log-dto.js";
+import { auditMaskedFieldsOf } from "../outbox/audit-redaction.js";
 import type { OutboxDriver } from "../outbox/types.js";
 import { DomainEvent } from "./domain-event.js";
 import type { DomainEvent as DomainEventType } from "./domain-event.js";
@@ -234,7 +235,7 @@ export class OutboxUnitOfWork implements UnitOfWork {
 				: { command };
 
 		return CreateAuditLogDto.create(entityType, entityId, operation)
-			.withOperationData(operationData)
+			.withOperationData(operationData, auditMaskedFieldsOf(command))
 			.withPrincipalId(event.principalId || this.fallbackPrincipalId)
 			.withCorrelationId(event.correlationId)
 			.withSource(event.source)
@@ -426,7 +427,7 @@ const toAuditDtoFor = <T extends DomainEventType>(
 			: { command };
 
 	return CreateAuditLogDto.create(entityType, entityId, operation)
-		.withOperationData(operationData)
+		.withOperationData(operationData, auditMaskedFieldsOf(command))
 		.withPrincipalId(event.principalId || fallbackPrincipalId)
 		.withCorrelationId(event.correlationId)
 		.withSource(event.source)

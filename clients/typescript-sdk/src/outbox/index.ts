@@ -9,6 +9,11 @@ export type {
 export { CreateEventDto } from "./create-event-dto.js";
 export { CreateDispatchJobDto } from "./create-dispatch-job-dto.js";
 export { CreateAuditLogDto } from "./create-audit-log-dto.js";
+export {
+	redactAuditData,
+	auditMaskedFieldsOf,
+	type AuditMasked,
+} from "./audit-redaction.js";
 export { generate as generateTsid, isValid as isValidTsid } from "./tsid.js";
 export { PgOutboxDriver } from "./drivers/pg-outbox-driver.js";
 export type {
