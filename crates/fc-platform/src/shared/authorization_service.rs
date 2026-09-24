@@ -396,6 +396,31 @@ pub mod checks {
         }
     }
 
+    /// Read a platform-config property: `platform:admin:config:view`, and
+    /// nothing else. Anchor scope is reach, not authority, and there is no
+    /// per-application grant (Java PlatformConfigApi.java:66-77,
+    /// docs/spec/config-permissions.md §A.2).
+    pub fn can_read_config(context: &AuthContext) -> Result<()> {
+        if context.has_permission(permissions::admin::CONFIG_READ) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot read platform config"))
+        }
+    }
+
+    /// Set or delete a platform-config property: `platform:admin:config:manage`
+    /// (Java PlatformConfigApi.java:95-97, SetProperty.java:41), or the older
+    /// `platform:admin:config:update` that stored roles still carry.
+    pub fn can_write_config(context: &AuthContext) -> Result<()> {
+        if context.has_permission(permissions::admin::CONFIG_MANAGE)
+            || context.has_permission(permissions::admin::CONFIG_UPDATE)
+        {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden("Cannot manage platform config"))
+        }
+    }
+
     /// Developer portal: read an application's OpenAPI document.
     /// Resource scoping (which application the principal can see) is handled
     /// in the handler against `iam_principal_application_access`.

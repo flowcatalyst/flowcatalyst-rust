@@ -353,26 +353,75 @@ async fn provisioned_service_account_reaches_only_its_application() {
     );
 }
 
-/// Platform config is addressed by `{appCode}` too, and a service account can
-/// be anchor scope, so anchor alone would let one application's service
-/// account rewrite another's config. On top of that, Go's rules apply:
-/// anchor or a role access grant for properties, anchor plus the config
-/// permission for access grants.
+/// Platform config is addressed by `{appCode}`, and a caller is confined to
+/// its own applications (A15, owner request). On top of that Java's rule
+/// applies (PlatformConfigApi.java:66-97, config-permissions.md §A.2):
+/// `platform:admin:config:view` reads, `platform:admin:config:manage` (or the
+/// older `:update` stored roles carry) writes. Anchor scope alone passes
+/// nothing, and a config-access grant no longer opens the property routes.
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn platform_config_is_confined_to_the_callers_applications() {
+    use fc_platform::role::entity::{permissions, AuthRole};
+
     let app = TestApp::setup().await;
     let app_a = create_app(&app, "cfg-a").await;
     create_app(&app, "cfg-b").await;
-    let sa_a = token_for(
-        &app,
-        Principal::new_service("sa_cfg_a", "SA Cfg A", UserScope::Anchor)
-            .with_application_id(&app_a.id),
-        &[&app_a],
-    )
-    .await;
     let body = json!({ "value": "x" });
 
+    let mut role_names = Vec::new();
+    for (code, perms) in [
+        (
+            "cfg-manage",
+            vec![
+                permissions::admin::CONFIG_READ,
+                permissions::admin::CONFIG_MANAGE,
+            ],
+        ),
+        ("cfg-view", vec![permissions::admin::CONFIG_READ]),
+        ("cfg-update", vec![permissions::admin::CONFIG_UPDATE]),
+    ] {
+        let role = AuthRole::new("test", code, code).with_permissions(perms);
+        app.repos
+            .role_repo
+            .insert(&role)
+            .await
+            .expect("insert role");
+        role_names.push(role.name);
+    }
+    let stored = |email: &str, scope: UserScope, role: Option<&String>| {
+        let mut p = Principal::new_user(email, scope);
+        p.roles = role.into_iter().map(RoleAssignment::new).collect();
+        p
+    };
+    let insert = |p: Principal| {
+        let app = &app;
+        async move {
+            app.repos
+                .principal_repo
+                .insert(&p)
+                .await
+                .expect("insert principal");
+            token(app, &p)
+        }
+    };
+
+    // A service account holding manage, confined to application A.
+    let mut sa = Principal::new_service("sa_cfg_a", "SA Cfg A", UserScope::Anchor)
+        .with_application_id(&app_a.id);
+    sa.roles = vec![RoleAssignment::new(role_names[0].clone())];
+    app.repos
+        .principal_repo
+        .insert(&sa)
+        .await
+        .expect("insert service account");
+    sa.accessible_application_ids = vec![app_a.id.clone()];
+    app.repos
+        .principal_repo
+        .update(&sa)
+        .await
+        .expect("grant application access");
+    let sa_a = token(&app, &sa);
     let own = app
         .put("/api/config/cfg-a/general/colour", &sa_a, body.clone())
         .await;
@@ -385,78 +434,83 @@ async fn platform_config_is_confined_to_the_callers_applications() {
         app.get("/api/config/cfg-b", &sa_a).await.status(),
         StatusCode::NOT_FOUND
     );
-    // Access grants need anchor plus platform:admin:config:view, as in Go's
-    // CanReadPlatformConfig; the application service role has neither.
+
+    // An anchor with no config permission reads and writes nothing.
+    let bare = insert(stored(
+        "cfg-bare@flowcatalyst.test",
+        UserScope::Anchor,
+        None,
+    ))
+    .await;
     assert_eq!(
-        app.get("/api/config-access/cfg-b", &sa_a).await.status(),
+        app.get("/api/config/cfg-b", &bare).await.status(),
         StatusCode::FORBIDDEN
     );
-
-    let admin = token_for(
-        &app,
-        Principal::new_user("cfg-admin@flowcatalyst.test", UserScope::Anchor),
-        &[],
-    )
-    .await;
-    let as_admin = app
-        .put("/api/config/cfg-b/general/colour", &admin, body)
-        .await;
-    assert_eq!(as_admin.status(), StatusCode::CREATED);
-    // An anchor admin holding every permission (a stored principal, so its
-    // application scope resolves).
-    app.anchor_admin_token().await; // seeds the platform:test-admin role
-    let mut full = Principal::new_user("cfg-full@flowcatalyst.test", UserScope::Anchor);
-    full.roles = vec![RoleAssignment::new("platform:test-admin")];
-    app.repos
-        .principal_repo
-        .insert(&full)
-        .await
-        .expect("insert admin");
-    let full_admin = token(&app, &full);
     assert_eq!(
-        app.get("/api/config-access/cfg-b", &full_admin)
+        app.put("/api/config/cfg-b/general/colour", &bare, body.clone())
             .await
             .status(),
-        StatusCode::OK
-    );
-
-    // Below anchor, a property needs a role access grant, as in Go: none is a
-    // 403; a read grant allows reads but not writes.
-    let mut reader = Principal::new_user("cfg-reader@flowcatalyst.test", UserScope::Client);
-    reader.all_applications = true;
-    reader.roles = vec![RoleAssignment::new("cfg-b:reader")];
-    app.repos
-        .principal_repo
-        .insert(&reader)
-        .await
-        .expect("insert reader");
-    let reader_token = token(&app, &reader);
-    assert_eq!(
-        app.get("/api/config/cfg-b", &reader_token).await.status(),
         StatusCode::FORBIDDEN
     );
+
+    // view reads but doesn't write, whatever the tier.
+    let viewer = insert(stored(
+        "cfg-viewer@flowcatalyst.test",
+        UserScope::Client,
+        Some(&role_names[1]),
+    ))
+    .await;
+    assert_eq!(
+        app.get("/api/config/cfg-b", &viewer).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.put("/api/config/cfg-b/general/colour", &viewer, body.clone())
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // The older update code still writes.
+    let updater = insert(stored(
+        "cfg-updater@flowcatalyst.test",
+        UserScope::Anchor,
+        Some(&role_names[2]),
+    ))
+    .await;
+    assert_eq!(
+        app.put("/api/config/cfg-b/general/colour", &updater, body)
+            .await
+            .status(),
+        StatusCode::CREATED
+    );
+
+    // Access grants keep their own gate (anchor plus the config permission),
+    // and a grant no longer opens the property routes.
+    let full_admin = {
+        app.anchor_admin_token().await; // seeds the platform:test-admin role
+        let full = stored(
+            "cfg-full@flowcatalyst.test",
+            UserScope::Anchor,
+            Some(&"platform:test-admin".to_string()),
+        );
+        insert(full).await
+    };
     let (status, grant) = read_json(
         app.post(
             "/api/config-access/cfg-b",
             &full_admin,
-            json!({ "roleCode": "cfg-b:reader", "canRead": true, "canWrite": false }),
+            json!({ "roleCode": "cfg-b:reader", "canRead": true, "canWrite": true }),
         )
         .await,
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{grant}");
+    let mut granted = stored("cfg-granted@flowcatalyst.test", UserScope::Client, None);
+    granted.roles = vec![RoleAssignment::new("cfg-b:reader")];
+    let granted = insert(granted).await;
     assert_eq!(
-        app.get("/api/config/cfg-b", &reader_token).await.status(),
-        StatusCode::OK
-    );
-    assert_eq!(
-        app.put(
-            "/api/config/cfg-b/general/colour",
-            &reader_token,
-            json!({ "value": "y" })
-        )
-        .await
-        .status(),
+        app.get("/api/config/cfg-b", &granted).await.status(),
         StatusCode::FORBIDDEN
     );
 }

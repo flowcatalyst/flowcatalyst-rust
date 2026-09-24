@@ -351,8 +351,13 @@ pub mod permissions {
         pub const AUDIT_LOG_READ: &str = "platform:admin:audit-log:view";
         pub const AUDIT_LOG_EXPORT: &str = "platform:admin:audit-log:export";
 
-        // Config management
+        // Config management. Java's rule (config-permissions.md §A.2): view
+        // reads the property routes, manage writes them. `update` is the
+        // older code (Go's, and Java's before V17) for the same authority;
+        // roles in the shared database still carry it, so it passes the
+        // manage check too, and it still gates the config-access grants.
         pub const CONFIG_READ: &str = "platform:admin:config:view";
+        pub const CONFIG_MANAGE: &str = "platform:admin:config:manage";
         pub const CONFIG_UPDATE: &str = "platform:admin:config:update";
 
         // Batch operations
@@ -685,6 +690,9 @@ pub mod roles {
                 permissions::admin::AUDIT_LOG_EXPORT,
                 permissions::admin::LOGIN_ATTEMPT_READ,
                 permissions::developer::APPLICATION_OPENAPI_MANAGE,
+                // Java PlatformRoles.java:42: view + manage.
+                permissions::admin::CONFIG_READ,
+                permissions::admin::CONFIG_MANAGE,
             ])
     }
 
@@ -702,6 +710,8 @@ pub mod roles {
                 permissions::admin::AUDIT_LOG_READ,
                 permissions::admin::LOGIN_ATTEMPT_READ,
                 permissions::developer::APPLICATION_OPENAPI_VIEW,
+                // Java PlatformRoles.java:57.
+                permissions::admin::CONFIG_READ,
             ])
     }
 
@@ -854,6 +864,8 @@ pub mod roles {
                 permissions::admin::PROCESS_READ,
                 permissions::admin::AUDIT_LOG_READ,
                 permissions::admin::LOGIN_ATTEMPT_READ,
+                // Java PlatformRoles.java:174.
+                permissions::admin::CONFIG_READ,
             ])
     }
 
