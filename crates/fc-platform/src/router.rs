@@ -645,6 +645,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         let app = app
             // Health
             .route(PATH_HEALTH, get(health_handler))
+            // The function manifest's JSON Schema: unauthenticated, as in
+            // Java (Platform.java:724-727), because an editor fetches it
+            // with no token.
+            .merge(crate::function::schema::function_manifest_schema_router())
             // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
             .merge(SwaggerUi::new(PATH_SWAGGER_UI).url(PATH_OPENAPI_SPEC, openapi.clone()))
             // Full OpenAPI spec including `/bff/*`. JSON only — not mounted

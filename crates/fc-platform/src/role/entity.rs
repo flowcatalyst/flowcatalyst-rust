@@ -621,6 +621,38 @@ pub mod permissions {
             "platform:developer:application-openapi:manage";
     }
 
+    /// The function registry (Java `shared/auth/Permission.java:271-293`),
+    /// declared in Java's order.
+    pub mod function {
+        pub const FUNCTION_VIEW: &str = "platform:function:function:view";
+        pub const FUNCTION_MANAGE: &str = "platform:function:function:manage";
+        pub const FUNCTION_PUBLISH: &str = "platform:function:version:publish";
+        pub const FUNCTION_PROMOTE: &str = "platform:function:alias:promote";
+        pub const FUNCTION_POLICY_MANAGE: &str = "platform:function:policy:manage";
+        /// What the function host's `/control/functions/*` calls need, and
+        /// nothing else.
+        pub const FUNCTION_HOST_CONTROL: &str = "platform:function:host:control";
+        /// Smoke-testing a versioned call.
+        pub const FUNCTION_VERSION_INVOKE: &str = "platform:function:version:invoke";
+        /// Platform-side config and secrets.
+        pub const FUNCTION_SECRET_MANAGE: &str = "platform:function:secret:manage";
+        /// Claiming and releasing public hostnames.
+        pub const FUNCTION_DOMAIN_MANAGE: &str = "platform:function:domain:manage";
+
+        /// All function permissions
+        pub const ALL: &[&str] = &[
+            FUNCTION_VIEW,
+            FUNCTION_MANAGE,
+            FUNCTION_PUBLISH,
+            FUNCTION_PROMOTE,
+            FUNCTION_POLICY_MANAGE,
+            FUNCTION_HOST_CONTROL,
+            FUNCTION_VERSION_INVOKE,
+            FUNCTION_SECRET_MANAGE,
+            FUNCTION_DOMAIN_MANAGE,
+        ];
+    }
+
     /// Superuser permission (grants all platform access)
     pub const ADMIN_ALL: &str = "platform:*:*:*";
 
@@ -839,6 +871,16 @@ pub mod roles {
                 permissions::admin::PROCESS_DELETE,
                 permissions::admin::PROCESS_ARCHIVE,
                 permissions::admin::PROCESS_SYNC,
+                // Java PlatformRoles.java:149-150: every function grant
+                // except host control, which is `function-host` alone.
+                permissions::function::FUNCTION_VIEW,
+                permissions::function::FUNCTION_MANAGE,
+                permissions::function::FUNCTION_PUBLISH,
+                permissions::function::FUNCTION_PROMOTE,
+                permissions::function::FUNCTION_POLICY_MANAGE,
+                permissions::function::FUNCTION_VERSION_INVOKE,
+                permissions::function::FUNCTION_SECRET_MANAGE,
+                permissions::function::FUNCTION_DOMAIN_MANAGE,
             ])
     }
 
@@ -906,6 +948,30 @@ pub mod roles {
         role
     }
 
+    /// PLATFORM_FUNCTION_PUBLISHER — what a deployment pipeline's service
+    /// account holds (Java PlatformRoles.java:211-217).
+    pub fn function_publisher() -> AuthRole {
+        AuthRole::new("platform", "function-publisher", "Function Publisher")
+            .with_description("Publishes and promotes function versions")
+            .with_source(RoleSource::Code)
+            .with_permissions([
+                permissions::function::FUNCTION_VIEW,
+                permissions::function::FUNCTION_PUBLISH,
+                permissions::function::FUNCTION_PROMOTE,
+                permissions::function::FUNCTION_VERSION_INVOKE,
+                permissions::function::FUNCTION_SECRET_MANAGE,
+            ])
+    }
+
+    /// PLATFORM_FUNCTION_HOST — the one permission the function host's
+    /// `/control/functions/*` calls need (Java PlatformRoles.java:219-224).
+    pub fn function_host() -> AuthRole {
+        AuthRole::new("platform", "function-host", "Function Host")
+            .with_description("Fetches desired state and reports heartbeats for the function host")
+            .with_source(RoleSource::Code)
+            .with_permission(permissions::function::FUNCTION_HOST_CONTROL)
+    }
+
     /// Get all built-in roles
     pub fn all() -> Vec<AuthRole> {
         vec![
@@ -921,6 +987,8 @@ pub mod roles {
             viewer(),
             developer(),
             application_service(),
+            function_publisher(),
+            function_host(),
         ]
     }
 }
@@ -998,7 +1066,7 @@ mod tests {
         // Bump this number whenever you add a built-in role in `roles::all()`.
         // The test is a tripwire against accidentally orphaning a new role
         // from `role_sync_service::seed_built_in_roles`'s consumption path.
-        assert_eq!(all_roles.len(), 12);
+        assert_eq!(all_roles.len(), 14);
 
         // Super admin has wildcard
         let super_admin = roles::super_admin();

@@ -56,6 +56,11 @@ pub enum EntityType {
     ScheduledJobInstanceLog,
     ApplicationOpenApiSpec,
     Process,
+    // The function registry (Java `EntityType.java:56-59`).
+    Function,
+    FunctionVersion,
+    FunctionDomain,
+    FunctionRoute,
 }
 
 impl EntityType {
@@ -98,6 +103,10 @@ impl EntityType {
             EntityType::ScheduledJobInstanceLog => "sjl",
             EntityType::ApplicationOpenApiSpec => "oas",
             EntityType::Process => "prc",
+            EntityType::Function => "fnc",
+            EntityType::FunctionVersion => "fnv",
+            EntityType::FunctionDomain => "fnd",
+            EntityType::FunctionRoute => "fnr",
         }
     }
 }
@@ -222,6 +231,18 @@ mod tests {
         let id = generate(EntityType::Client);
         assert_eq!(id.len(), 17);
         assert!(id.starts_with("clt_"));
+    }
+
+    // Java `EntityType.java:56-59`.
+    #[test]
+    fn function_prefixes_match_java() {
+        assert_eq!(EntityType::Function.prefix(), "fnc");
+        assert_eq!(EntityType::FunctionVersion.prefix(), "fnv");
+        assert_eq!(EntityType::FunctionDomain.prefix(), "fnd");
+        assert_eq!(EntityType::FunctionRoute.prefix(), "fnr");
+        let id = generate(EntityType::FunctionVersion);
+        assert_eq!(id.len(), 17);
+        assert!(id.starts_with("fnv_"));
     }
 
     #[test]

@@ -409,6 +409,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "033_oauth_client_secret_grace",
             include_str!("../../../../migrations/033_oauth_client_secret_grace.sql"),
         ),
+        // Java's V13 + V15 - V16: the function registry's fn_* tables, and
+        // msg_subscriptions.source gaining FUNCTION.
+        (
+            "034_functions",
+            include_str!("../../../../migrations/034_functions.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -519,6 +525,23 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' \
                AND table_name = 'oauth_clients' \
                AND column_name = 'previous_secret_last_used_at')",
+        ),
+        // A database Java migrated to V16 has all of 034's effects: the last
+        // table, V15's column, V16's dropped column and the widened source
+        // CHECK.
+        (
+            "034_functions",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'fn_secrets') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'fn_routes' \
+               AND column_name = 'alias_prefixes') \
+             AND NOT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'fn_domains' \
+               AND column_name = 'verification_token') \
+             AND EXISTS (SELECT 1 FROM pg_constraint \
+             WHERE conname = 'chk_msg_subscriptions_source' \
+               AND pg_get_constraintdef(oid) LIKE '%FUNCTION%')",
         ),
     ];
 

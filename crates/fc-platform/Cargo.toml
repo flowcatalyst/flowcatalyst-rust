@@ -9,6 +9,9 @@ description = "FlowCatalyst Platform - Core domain models, services, and APIs"
 # Workspace dependencies
 fc-common = { path = "../fc-common" }
 fc-queue = { path = "../fc-queue" }
+# FunctionAddress, shared with the function host and the guest PDK. Without
+# the Extism envelope, which is the host's business.
+fc-function-abi = { path = "../fc-function-abi", default-features = false }
 
 # Async runtime
 tokio = { workspace = true }
@@ -17,7 +20,8 @@ futures = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+indexmap = { workspace = true }
 
 # Database (PostgreSQL)
 sqlx = { workspace = true }

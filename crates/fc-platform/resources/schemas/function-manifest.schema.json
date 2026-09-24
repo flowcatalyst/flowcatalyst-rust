@@ -1,0 +1,261 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:flowcatalyst:function-manifest",
+  "title": "FlowCatalyst function manifest",
+  "description": "A function version's manifest (docs/spec/function-invocation.md §3, docs/spec/function-registry.md §4). This document is an editor/validation aid only — the manifest file itself is the source of truth (Manifest#parseStrict is the actual, authoritative reader); a rule this schema cannot express is named in the relevant property's description instead, by the validation code the platform will report at publish.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional: points an editor (VS Code, IntelliJ) at this document so manifest.json is validated as you type. Accepted and ignored by Manifest#parseStrict; never written back by Manifest#toJson, so publishing/promoting a version never stores it."
+    },
+    "runtime": {
+      "type": "string",
+      "enum": ["jvm", "wasm"],
+      "description": "The runtime this version executes in. Must match the function's own runtime, or publish fails with RUNTIME_MISMATCH."
+    },
+    "entrypoint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "jvm: a binary class name implementing io.flowcatalyst.function.Function (^[A-Za-z_$][\\w$]*(\\.[A-Za-z_$][\\w$]*)*$), else ENTRYPOINT_INVALID. wasm: an export name (^[A-Za-z_]\\w*$)."
+    },
+    "pool": {
+      "type": "string",
+      "description": "The execution pool this version runs in, a DNS label. Defaults to \"default\" when absent.",
+      "default": "default"
+    },
+    "warm": {
+      "type": "boolean",
+      "description": "Whether the function should be kept warm (an idle instance held ready) rather than started on demand.",
+      "default": false
+    },
+    "limits": {
+      "type": "object",
+      "description": "Resource limits, resolved and frozen at publish: absent ⇒ min(platform default, the client's ceiling); present ⇒ must not exceed the ceiling (LIMIT_OVER_CEILING). Ceiling values themselves are a client policy the platform holds, not expressible here.",
+      "properties": {
+        "maxDurationMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum single-invocation duration, in milliseconds. Absent ⇒ the platform default clamped to the client's ceiling."
+        },
+        "maxConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum concurrent invocations for this version. Absent ⇒ the platform default clamped to the client's ceiling."
+        },
+        "wasmMemoryMb": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Wasm linear memory, in megabytes. Only applicable when runtime is \"wasm\" — present on a jvm function is LIMIT_NOT_APPLICABLE. Absent on a wasm function ⇒ the platform default clamped to the client's ceiling."
+        }
+      },
+      "additionalProperties": false
+    },
+    "endpoints": {
+      "type": "array",
+      "description": "The function's HTTP surface (function-invocation.md §3): how the host authenticates each path before the function sees it.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A route pattern (function-registry.md §5.2): literal segments, {param} segments, or a trailing *."
+          },
+          "auth": {
+            "type": "string",
+            "enum": ["webhook", "platform", "none"],
+            "description": "How the host authenticates the call before the function sees it. Required — there is no default (ENDPOINT_AUTH_REQUIRED)."
+          },
+          "methods": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "Accepted methods. Absent/empty means every method. A webhook endpoint's methods, if given, must be exactly [\"POST\"] (ENDPOINT_INVALID)."
+          },
+          "cors": {
+            "type": "object",
+            "description": "Optional CORS policy.",
+            "properties": {
+              "origins": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Allowed origins: \"*\", or scheme://host[:port] with no path/query/fragment. \"*\" together with allowCredentials: true is rejected (ENDPOINT_INVALID)."
+              },
+              "methods": { "type": "array", "items": { "type": "string" } },
+              "headers": { "type": "array", "items": { "type": "string" } },
+              "allowCredentials": { "type": "boolean", "default": false }
+            },
+            "additionalProperties": false,
+            "if": {
+              "properties": { "origins": { "contains": { "const": "*" } } },
+              "required": ["origins"]
+            },
+            "then": {
+              "properties": { "allowCredentials": { "const": false } }
+            }
+          },
+          "maxBodyBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Maximum accepted request body size, in bytes.",
+            "default": 1048576
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Per-call timeout, in milliseconds, held to the ceiling of limits.maxDurationMs (LIMIT_OVER_CEILING). Absent ⇒ this version's own maxDurationMs."
+          }
+        },
+        "required": ["path", "auth"],
+        "additionalProperties": false,
+        "if": {
+          "properties": { "auth": { "const": "webhook" } },
+          "required": ["auth", "methods"]
+        },
+        "then": {
+          "properties": { "methods": { "const": ["POST"] } }
+        }
+      }
+    },
+    "subscriptions": {
+      "type": "array",
+      "description": "Event-type subscriptions the platform creates at promote (function-invocation.md §3, §4). Not expressible here: the event type must exist (EVENT_TYPE_NOT_FOUND), and path must match a webhook endpoint of this manifest (SUBSCRIPTION_PATH_NOT_WEBHOOK) — both checked against the database at promote/validate time.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "eventType": { "type": "string", "minLength": 1, "description": "The subscribed event type pattern." },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The literal delivery path (no {param}/*); must resolve to a webhook endpoint of this manifest (SUBSCRIPTION_PATH_NOT_WEBHOOK)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["IMMEDIATE", "NEXT_ON_ERROR", "BLOCK_ON_ERROR"],
+            "description": "Router ordering mode for this subscription.",
+            "default": "IMMEDIATE"
+          },
+          "maxRetries": { "type": "integer", "minimum": 1, "description": "Retry budget.", "default": 3 },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Per-delivery timeout, in seconds.",
+            "default": 30
+          },
+          "dataOnly": {
+            "type": "boolean",
+            "description": "Deliver only the event's data, not the whole envelope.",
+            "default": false
+          }
+        },
+        "required": ["eventType", "path"],
+        "additionalProperties": false
+      }
+    },
+    "schedules": {
+      "type": "array",
+      "description": "Cron schedules the platform creates at promote (function-invocation.md §3, §4). Not expressible here: cron/timezone validity, and path must match a webhook endpoint of this manifest (SCHEDULE_PATH_NOT_WEBHOOK) — both checked at promote/validate time.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cron": { "type": "string", "minLength": 1, "description": "The cron expression." },
+          "timezone": { "type": "string", "description": "An optional IANA timezone name." },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The literal delivery path (no {param}/*); must resolve to a webhook endpoint of this manifest (SCHEDULE_PATH_NOT_WEBHOOK)."
+          },
+          "payload": { "description": "Opaque JSON delivered with each firing. Absent means none." }
+        },
+        "required": ["cron", "path"],
+        "additionalProperties": false
+      }
+    },
+    "public": {
+      "type": "array",
+      "description": "(hostname, pathPrefix) pairs the platform exposes on the public listener for this function (function-invocation.md §3, §5). Not expressible here: the hostname's domain must be claimed by this function's owner, and the (hostname, pathPrefix) pair must not already be taken by another function (PUBLIC_ROUTE_TAKEN) — both checked against the database at promote/validate time.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A public hostname (function-registry.md §5.1): lower-cased, ≤253 characters, at least two DNS labels, no wildcard/port/trailing dot, not an IP literal."
+          },
+          "pathPrefix": {
+            "type": "string",
+            "description": "A literal path prefix, stripped before endpoint matching. Absent ⇒ \"/\".",
+            "default": "/"
+          },
+          "aliasPrefixes": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" },
+            "uniqueItems": true,
+            "description": "Opt-in alias name prefixes (function-zones-and-aliases.md §3): each a DNS label, never \"live\", no duplicates. Absent/empty means exact-hostname match only."
+          }
+        },
+        "required": ["hostname"],
+        "additionalProperties": false
+      }
+    },
+    "config": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_./-]{0,99}$" },
+      "uniqueItems": true,
+      "description": "Required config variable names this version needs at runtime (function-context.md §1)."
+    },
+    "secrets": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_./-]{0,99}$" },
+      "uniqueItems": true,
+      "description": "Required secret references this version needs at runtime."
+    },
+    "db": {
+      "type": "array",
+      "description": "Database connections this version needs.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+            "description": "The connection's local name, a DNS label, unique within this manifest."
+          },
+          "secretRef": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_./-]{0,99}$",
+            "description": "The secret holding the DSN."
+          },
+          "poolSize": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Connection pool size, held to the client's dbPoolSize ceiling (LIMIT_OVER_CEILING). Absent ⇒ the platform default clamped to the ceiling."
+          }
+        },
+        "required": ["name", "secretRef"],
+        "additionalProperties": false
+      }
+    },
+    "httpAllow": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "Outbound hosts this version may call."
+    }
+  },
+  "required": ["runtime", "entrypoint"],
+  "additionalProperties": false,
+  "if": {
+    "properties": { "runtime": { "const": "jvm" } },
+    "required": ["runtime"]
+  },
+  "then": {
+    "properties": {
+      "limits": {
+        "properties": { "wasmMemoryMb": false }
+      }
+    }
+  }
+}

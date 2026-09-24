@@ -1,0 +1,1220 @@
+{
+ "manifest": [
+  {
+   "name": "valid/minimal-jvm",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\n  \"runtime\": \"jvm\",\n  \"entrypoint\": \"com.acme.billing.CreateInvoice\",\n  \"endpoints\": [ { \"path\": \"/events/invoice-created\", \"auth\": \"webhook\" } ],\n  \"subscriptions\": [ { \"eventType\": \"billing:invoices:invoice:created\", \"path\": \"/events/invoice-created\" } ]\n}"
+  },
+  {
+   "name": "valid/full-jvm",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\n  \"runtime\": \"jvm\",\n  \"entrypoint\": \"com.acme.billing.CreateInvoice\",\n  \"pool\": \"default\",\n  \"warm\": false,\n  \"limits\": { \"maxDurationMs\": 30000, \"maxConcurrency\": 32 },\n  \"endpoints\": [\n    { \"path\": \"/events/*\",  \"auth\": \"webhook\" },\n    { \"path\": \"/jobs/*\",    \"auth\": \"webhook\" },\n    { \"path\": \"/api/*\",     \"auth\": \"platform\", \"methods\": [\"GET\",\"POST\"],\n      \"cors\": { \"origins\": [\"https://app.acme.com\"] },\n      \"maxBodyBytes\": 1048576, \"timeoutMs\": 10000 },\n    { \"path\": \"/hooks/stripe\", \"auth\": \"none\" }\n  ],\n  \"subscriptions\": [\n    { \"eventType\": \"billing:invoices:invoice:created\", \"path\": \"/events/invoice-created\",\n      \"mode\": \"BLOCK_ON_ERROR\", \"maxRetries\": 3, \"timeoutSeconds\": 30, \"dataOnly\": false }\n  ],\n  \"schedules\": [ { \"cron\": \"0 * * * *\", \"timezone\": \"UTC\", \"path\": \"/jobs/hourly\", \"payload\": { \"x\": 1 } } ],\n  \"public\":    [ { \"hostname\": \"api.acme.com\", \"pathPrefix\": \"/\" } ],\n  \"config\": [\"INVOICE_PREFIX\"],\n  \"secrets\": [\"billing/stripe-key\"],\n  \"db\": [ { \"name\": \"main\", \"secretRef\": \"billing/dsn\", \"poolSize\": 4 } ],\n  \"httpAllow\": [\"api.stripe.com\"]\n}"
+  },
+  {
+   "name": "valid/wasm-memory",
+   "runtime": "WASM",
+   "ceilings": null,
+   "text": "{\n  \"runtime\": \"wasm\",\n  \"entrypoint\": \"handle\",\n  \"limits\": { \"wasmMemoryMb\": 32 },\n  \"endpoints\": [ { \"path\": \"/events/*\", \"auth\": \"webhook\" } ],\n  \"subscriptions\": [ { \"eventType\": \"billing:invoices:invoice:created\", \"path\": \"/events/invoice-created\" } ]\n}"
+  },
+  {
+   "name": "valid/wasm-defaults",
+   "runtime": "WASM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"wasm\",\"entrypoint\":\"handle\"}"
+  },
+  {
+   "name": "valid/tight-ceilings-clamp-absent-limit",
+   "runtime": "JVM",
+   "ceilings": [
+    30000,
+    10,
+    64,
+    4
+   ],
+   "text": "{\n  \"runtime\": \"jvm\",\n  \"entrypoint\": \"com.acme.billing.CreateInvoice\",\n  \"endpoints\": [ { \"path\": \"/events/invoice-created\", \"auth\": \"webhook\" } ],\n  \"subscriptions\": [ { \"eventType\": \"billing:invoices:invoice:created\", \"path\": \"/events/invoice-created\" } ]\n}"
+  },
+  {
+   "name": "valid/low-ceilings-wasm-db",
+   "runtime": "WASM",
+   "ceilings": [
+    1000,
+    5,
+    16,
+    2
+   ],
+   "text": "{\"runtime\":\"wasm\",\"entrypoint\":\"_start\",\"db\":[{\"name\":\"main\",\"secretRef\":\"dsn\"}],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "valid/schema-escape",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\n  \"$schema\": \"https://example.test/function-manifest.schema.json\",\n  \"runtime\": \"jvm\",\n  \"entrypoint\": \"com.acme.billing.CreateInvoice\",\n  \"endpoints\": [ { \"path\": \"/events/invoice-created\", \"auth\": \"webhook\" } ],\n  \"subscriptions\": [ { \"eventType\": \"billing:invoices:invoice:created\", \"path\": \"/events/invoice-created\" } ]\n}"
+  },
+  {
+   "name": "valid/endpoint-methods-absent",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "valid/webhook-no-methods",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"webhook\"}]}"
+  },
+  {
+   "name": "valid/webhook-exactly-post",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"webhook\",\"methods\":[\"POST\"]}]}"
+  },
+  {
+   "name": "valid/webhook-lower-case-post",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"WEBHOOK\",\"methods\":[\"post\"]}]}"
+  },
+  {
+   "name": "valid/cors-wildcard-no-credentials",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"*\"]}}]}"
+  },
+  {
+   "name": "valid/cors-real-origin-credentials",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com\"],\"allowCredentials\":true}}]}"
+  },
+  {
+   "name": "valid/cors-origin-with-port",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com:8443\"],\"methods\":[\"GET\"],\"headers\":[\"X-Trace\"]}}]}"
+  },
+  {
+   "name": "valid/route-not-ambiguous-disjoint-methods",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a/{x}\",\"auth\":\"none\",\"methods\":[\"GET\"]},{\"path\":\"/a/{y}\",\"auth\":\"none\",\"methods\":[\"POST\"]}]}"
+  },
+  {
+   "name": "valid/subscription-defaults",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\"}]}"
+  },
+  {
+   "name": "valid/cron-and-timezone-joined-with-nul",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\"}],\"schedules\":[{\"cron\":\"0 12 * * *\",\"timezone\":\"X Y\",\"path\":\"/jobs/a\"},{\"cron\":\"0 12 * * * X\",\"timezone\":\"Y\",\"path\":\"/jobs/b\"}]}"
+  },
+  {
+   "name": "valid/same-cron-different-timezone",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\"}],\"schedules\":[{\"cron\":\"0 * * * *\",\"timezone\":\"UTC\",\"path\":\"/jobs/hourly\"},{\"cron\":\"0 * * * *\",\"timezone\":\"America/New_York\",\"path\":\"/jobs/hourly\"}]}"
+  },
+  {
+   "name": "valid/public-prefix-defaults-to-root",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\"}]}"
+  },
+  {
+   "name": "valid/public-same-host-different-prefix",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/a\"},{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/b\"}]}"
+  },
+  {
+   "name": "valid/alias-prefixes-empty",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"aliasPrefixes\":[]}]}"
+  },
+  {
+   "name": "valid/alias-prefixes",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"aliasPrefixes\":[\"qa\",\"staging\"]}]}"
+  },
+  {
+   "name": "valid/secrets-key-format",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"secrets\":[\"billing/stripe-key\"],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "valid/db-secret-ref-format",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"db\":[{\"name\":\"main\",\"secretRef\":\"billing/dsn\"}],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "edge/upper-case-runtime-and-hostname",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"JVM\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"API.Acme.COM\",\"pathPrefix\":\"/v1\"}]}"
+  },
+  {
+   "name": "edge/payload-order-and-numbers",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\"}],\"schedules\":[{\"cron\":\"* * * * *\",\"path\":\"/jobs/a\",\"payload\":{\"b\":1,\"a\":[1.5,1e3,-0,12345678901234567890123,1e21,0.00001,\"x\\u0001\\u00e9\\n\",true,null],\"n\":null,\"o\":{\"z\":{},\"y\":[]}}},{\"cron\":\"0 * * * *\",\"path\":\"/jobs/b\",\"payload\":null}]}"
+  },
+  {
+   "name": "edge/entrypoint-boolean-is-its-text",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":true}"
+  },
+  {
+   "name": "edge/entrypoint-number-is-invalid",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":5}"
+  },
+  {
+   "name": "edge/entrypoint-number-with-bad-runtime",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"cobol\",\"entrypoint\":123}"
+  },
+  {
+   "name": "edge/duplicate-key-keeps-first-position",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"a\",\"warm\":true,\"entrypoint\":\"b\"}"
+  },
+  {
+   "name": "edge/warm-pool-and-exact-ceilings",
+   "runtime": "JVM",
+   "ceilings": [
+    30000,
+    10,
+    64,
+    4
+   ],
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"orders\",\"warm\":true,\"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":10},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"timeoutMs\":30000,\"maxBodyBytes\":1}]}"
+  },
+  {
+   "name": "edge/jvm-wasm-memory-null-is-absent",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"wasmMemoryMb\": null},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "edge/nulls-are-absent",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":null,\"warm\":null,\"limits\":null,\"endpoints\":null,\"subscriptions\":null,\"schedules\":null,\"public\":null,\"config\":null,\"secrets\":null,\"db\":null,\"httpAllow\":null,\"$schema\":null}"
+  },
+  {
+   "name": "edge/nbsp-event-type-is-not-blank",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\"subscriptions\":[{\"eventType\":\" \",\"path\":\"/events/a\"}]}"
+  },
+  {
+   "name": "edge/mode-and-auth-spellings",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\",\"mode\":\"NEXT_ON_ERROR\",\"maxRetries\":7,\"timeoutSeconds\":5,\"dataOnly\":true}]}"
+  },
+  {
+   "name": "edge/webhook-match-tie-first-wins",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/a\",\"auth\":\"webhook\",\"methods\":[\"POST\"]},{\"path\":\"/events/a\",\"auth\":\"platform\",\"methods\":[\"GET\"]}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\"}]}"
+  },
+  {
+   "name": "edge/webhook-match-tie-first-loses",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/a\",\"auth\":\"platform\",\"methods\":[\"GET\"]},{\"path\":\"/events/a\",\"auth\":\"webhook\",\"methods\":[\"POST\"]}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\"}]}"
+  },
+  {
+   "name": "edge/http-allow",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"httpAllow\":[\"api.stripe.com\",\"*.example.com\"]}"
+  },
+  {
+   "name": "example/function-hello",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\n  \"$schema\": \"../../server/src/main/resources/schemas/function-manifest.schema.json\",\n  \"runtime\": \"jvm\",\n  \"entrypoint\": \"io.flowcatalyst.example.hello.HelloFunction\",\n  \"pool\": \"default\",\n  \"warm\": false,\n  \"limits\": {\n    \"maxDurationMs\": 10000,\n    \"maxConcurrency\": 8\n  },\n  \"endpoints\": [\n    { \"path\": \"/events/greeting-requested\", \"auth\": \"webhook\" },\n    { \"path\": \"/api/hello/{name}\", \"auth\": \"platform\", \"methods\": [\"GET\"] },\n    { \"path\": \"/healthz\", \"auth\": \"none\", \"methods\": [\"GET\"] }\n  ],\n  \"subscriptions\": [\n    {\n      \"eventType\": \"hello:greeting:greeting:requested\",\n      \"path\": \"/events/greeting-requested\",\n      \"mode\": \"IMMEDIATE\",\n      \"maxRetries\": 3,\n      \"timeoutSeconds\": 30,\n      \"dataOnly\": false\n    }\n  ],\n  \"config\": [\"GREETING\"],\n  \"secrets\": [\"API_KEY\"]\n}\n"
+  },
+  {
+   "name": "example/function-subscription-test",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\n  \"$schema\": \"../../server/src/main/resources/schemas/function-manifest.schema.json\",\n  \"runtime\": \"jvm\",\n  \"entrypoint\": \"io.flowcatalyst.example.subscriptiontest.SubscriptionTestFunction\",\n  \"pool\": \"default\",\n  \"warm\": true,\n  \"limits\": { \"maxDurationMs\": 10000, \"maxConcurrency\": 4 },\n  \"endpoints\": [\n    { \"path\": \"/events/received\", \"auth\": \"webhook\" },\n    { \"path\": \"/healthz\", \"auth\": \"none\", \"methods\": [\"GET\"] }\n  ],\n  \"subscriptions\": [\n    { \"eventType\": \"platform:admin:eventtypes:synced\", \"path\": \"/events/received\",\n      \"mode\": \"IMMEDIATE\", \"maxRetries\": 3, \"timeoutSeconds\": 30, \"dataOnly\": false }\n  ],\n  \"secrets\": [\"EVENTS_DSN\"],\n  \"db\": [ { \"name\": \"events\", \"secretRef\": \"EVENTS_DSN\", \"poolSize\": 2 } ]\n}\n"
+  },
+  {
+   "name": "single/00",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "[]"
+  },
+  {
+   "name": "single/01",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "null"
+  },
+  {
+   "name": "single/02",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "\"x\""
+  },
+  {
+   "name": "single/03",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"bogus\":1,\n \"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/04",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"maxConcurency\":1},\n \"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/05",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"pth\":\"oops\"}]}"
+  },
+  {
+   "name": "single/06",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\",\"bogus\":1}]}"
+  },
+  {
+   "name": "single/07",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"warm\":\"yes\"}"
+  },
+  {
+   "name": "single/08",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"entrypoint\":\"x\"}"
+  },
+  {
+   "name": "single/09",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"dotnet\",\"entrypoint\":\"x\"}"
+  },
+  {
+   "name": "single/10",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"wasm\",\"entrypoint\":\"handle\"}"
+  },
+  {
+   "name": "single/11",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\"}"
+  },
+  {
+   "name": "single/12",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"  \"}"
+  },
+  {
+   "name": "single/13",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"123bad\"}"
+  },
+  {
+   "name": "single/14",
+   "runtime": "WASM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"wasm\",\"entrypoint\":\"not a name\"}"
+  },
+  {
+   "name": "single/15",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":\"Bad Pool\"}"
+  },
+  {
+   "name": "single/16",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"maxDurationMs\": 0},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/17",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"maxDurationMs\": 5000000000},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/18",
+   "runtime": "JVM",
+   "ceilings": [
+    30000,
+    10,
+    64,
+    4
+   ],
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"maxConcurrency\": 20},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/19",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"wasmMemoryMb\": 64},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/20",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\"}]}"
+  },
+  {
+   "name": "single/21",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"bearer\"}]}"
+  },
+  {
+   "name": "single/22",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"not-a-path\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/23",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"methods\":[]}]}"
+  },
+  {
+   "name": "single/24",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"methods\":[\"TRACE\"]}]}"
+  },
+  {
+   "name": "single/25",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"methods\":[\"GET\",\"get\"]}]}"
+  },
+  {
+   "name": "single/26",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":0}]}"
+  },
+  {
+   "name": "single/27",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"timeoutMs\":-5}]}"
+  },
+  {
+   "name": "single/28",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"  \"]}}]}"
+  },
+  {
+   "name": "single/29",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"*\"],\"allowCredentials\":true}}]}"
+  },
+  {
+   "name": "single/30",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"webhook\",\"methods\":[\"GET\"]}]}"
+  },
+  {
+   "name": "single/31",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[\n    {\"path\":\"/a/{x}\",\"auth\":\"none\"},\n    {\"path\":\"/a/{y}\",\"auth\":\"none\"}\n]}"
+  },
+  {
+   "name": "single/32",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\n \"endpoints\":[{\"path\":\"/events/invoice-created\",\"auth\":\"platform\"}],\n \"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/invoice-created\"}]}"
+  },
+  {
+   "name": "single/33",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\n \"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"},{\"path\":\"/events/special\",\"auth\":\"platform\"}],\n \"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/special\"}]}"
+  },
+  {
+   "name": "single/34",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\n \"endpoints\":[{\"path\":\"/jobs/invoice-created\",\"auth\":\"platform\"}],\n \"schedules\":[{\"cron\":\"* * * * *\",\"path\":\"/jobs/invoice-created\"}]}"
+  },
+  {
+   "name": "single/35",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\n \"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/{id}\"}]}"
+  },
+  {
+   "name": "single/36",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\"subscriptions\":[{\"path\":\"/events/a\"}]}"
+  },
+  {
+   "name": "single/37",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\",\"mode\":\"immediate\"}]}"
+  },
+  {
+   "name": "single/38",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\n \"subscriptions\":[\n    {\"eventType\":\"a:b:c\",\"path\":\"/events/a\"},\n    {\"eventType\":\"a:b:c\",\"path\":\"/events/a\"}]}"
+  },
+  {
+   "name": "single/39",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\"}],\n \"schedules\":[{\"path\":\"/jobs/hourly\"}]}"
+  },
+  {
+   "name": "single/40",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\"}],\n \"schedules\":[\n    {\"cron\":\"0 * * * *\",\"timezone\":\"UTC\",\"path\":\"/jobs/hourly\"},\n    {\"cron\":\"0 * * * *\",\"timezone\":\"UTC\",\"path\":\"/jobs/hourly\"}]}"
+  },
+  {
+   "name": "single/41",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"not a hostname\"}]}"
+  },
+  {
+   "name": "single/42",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/a/{id}\"}]}"
+  },
+  {
+   "name": "single/43",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"aliasPrefixes\":[\"live\"]}]}"
+  },
+  {
+   "name": "single/44",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"aliasPrefixes\":[\"qa\",\"qa\"]}]}"
+  },
+  {
+   "name": "single/45",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[\n    {\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/a\"},\n    {\"hostname\":\"api.acme.com\",\"pathPrefix\":\"/a\"}]}"
+  },
+  {
+   "name": "single/46",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"db\":[{\"name\":\"Bad Name\",\"secretRef\":\"s\"}],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/47",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"db\":[{\"name\":\"main\",\"secretRef\":\"  \"}],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/48",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"db\":[{\"name\":\"main\",\"secretRef\":\"a\"},{\"name\":\"main\",\"secretRef\":\"b\"}],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/49",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"db\":[{\"name\":\"main\",\"secretRef\":\"1bad\"}],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/50",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"config\":[\"  \"],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/51",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"config\":[\"A\", \"A\"],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/52",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"config\":{}}"
+  },
+  {
+   "name": "single/53",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"config\":[\"1BAD\"],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/endpoint-max-body-out-of-int",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"maxBodyBytes\":5000000000}]}"
+  },
+  {
+   "name": "single/limit-negative",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"maxDurationMs\": -1},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/limit-fraction",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"maxDurationMs\": 1.5},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/limit-string",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"maxDurationMs\": \"30000\"},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/cors-origin-path",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com/\"]}}]}"
+  },
+  {
+   "name": "single/cors-origin-path-segment",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com/callback\"]}}]}"
+  },
+  {
+   "name": "single/cors-origin-no-scheme",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"app.acme.com\"]}}]}"
+  },
+  {
+   "name": "single/cors-origin-userinfo",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://user@app.acme.com\"]}}]}"
+  },
+  {
+   "name": "single/cors-origin-query",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com?x=1\"]}}]}"
+  },
+  {
+   "name": "single/cors-wildcard-among-others-with-credentials",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com\",\"*\"],\"allowCredentials\":true}}]}"
+  },
+  {
+   "name": "single/webhook-post-and-get",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a\",\"auth\":\"webhook\",\"methods\":[\"POST\",\"GET\"]}]}"
+  },
+  {
+   "name": "single/ambiguous-one-side-no-methods",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a/{x}\",\"auth\":\"none\"},{\"path\":\"/a/{y}\",\"auth\":\"none\",\"methods\":[\"POST\"]}]}"
+  },
+  {
+   "name": "single/subscription-no-webhook-none",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/invoice-created\"}]}"
+  },
+  {
+   "name": "single/schedule-no-webhook-none",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[],\"schedules\":[{\"cron\":\"* * * * *\",\"path\":\"/jobs/hourly\"}]}"
+  },
+  {
+   "name": "single/subscription-no-webhook-platform",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/invoice-created\",\"auth\":\"platform\"}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/invoice-created\"}]}"
+  },
+  {
+   "name": "single/schedule-no-webhook-platform",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/invoice-created\",\"auth\":\"platform\"}],\"schedules\":[{\"cron\":\"* * * * *\",\"path\":\"/jobs/hourly\"}]}"
+  },
+  {
+   "name": "single/subscription-no-webhook-none-auth",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/invoice-created\",\"auth\":\"none\"}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/invoice-created\"}]}"
+  },
+  {
+   "name": "single/schedule-no-webhook-none-auth",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/invoice-created\",\"auth\":\"none\"}],\"schedules\":[{\"cron\":\"* * * * *\",\"path\":\"/jobs/hourly\"}]}"
+  },
+  {
+   "name": "single/alias-upper-case",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"aliasPrefixes\":[\"QA\"]}]}"
+  },
+  {
+   "name": "single/alias-over-63",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"aliasPrefixes\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]}]}"
+  },
+  {
+   "name": "single/alias-names-offender",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"api.acme.com\",\"aliasPrefixes\":[\"qa\",\"QA\"]}]}"
+  },
+  {
+   "name": "single/config-bad-character",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"config\":[\"BAD KEY\"],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/secrets-starts-with-digit",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"secrets\":[\"1BAD\"],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "many/unknown-deep-endpoint-no-path",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"pth\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "single/filter-is-unknown",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\",\"filter\":\"x\"}]}"
+  },
+  {
+   "name": "single/schema-not-string",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\n  \"$schema\": 42,\n  \"runtime\": \"jvm\",\n  \"entrypoint\": \"com.acme.billing.CreateInvoice\"\n}"
+  },
+  {
+   "name": "many/six-independent-mistakes",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"x\":1,\"runtime\":\"jvm\",\"entrypoint\":\"com.acme.Fn\",\"pool\":\"Bad Pool\",\n \"endpoints\":[\n    {\"path\":\"/events/*\",\"auth\":\"webhook\"},\n    {\"path\":\"/foo\"},\n    {\"path\":\"/other\",\"auth\":\"none\",\"cors\":{\"origins\":[\"https://app.acme.com/callback\"]}}\n ],\n \"subscriptions\":[\n    {\"eventType\":\"billing:invoice:created\",\"path\":\"/events/created\"},\n    {\"eventType\":\"billing:invoice:created\",\"path\":\"/events/created2\"}\n ],\n \"db\":[{\"name\":\"Bad Name\",\"secretRef\":\"billing/dsn\"}]}"
+  },
+  {
+   "name": "many/cascade-guard",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\n \"endpoints\":[{\"path\":\"/events/created\",\"auth\":\"bearer\"}],\n \"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/created\"}]}"
+  },
+  {
+   "name": "many/cascade-guard-schedule",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\",\"methods\":[\"GET\"]}],\"schedules\":[{\"cron\":\"* * * * *\",\"path\":\"/jobs/a\"}]}"
+  },
+  {
+   "name": "many/unknown-keys-everywhere",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"zz\":1,\"runtime\":\"jvm\",\"aa\":2,\"entrypoint\":\"x\",\"limits\":{\"q\":1,\"maxDurationMs\":5},\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\",\"e1\":1,\"cors\":{\"origins\":[\"*\"],\"c1\":true}}],\"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\",\"s1\":0}],\"schedules\":[{\"cron\":\"* * * * *\",\"path\":\"/events/b\",\"k\":1}],\"public\":[{\"hostname\":\"a.io\",\"p\":1}],\"db\":[{\"name\":\"d\",\"secretRef\":\"s\",\"x\":1}]}"
+  },
+  {
+   "name": "many/runtime-invalid-skips-dependents",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"entrypoint\":\"123 bad\",\"limits\":{\"wasmMemoryMb\":0,\"maxConcurrency\":0},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "many/limits-invalid-skips-timeout-default",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":[],\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\"},{\"path\":\"/b\",\"auth\":\"none\",\"timeoutMs\":999999}]}"
+  },
+  {
+   "name": "many/three-ambiguous-endpoints",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/a/{x}\",\"auth\":\"none\"},{\"path\":\"/a/{y}\",\"auth\":\"none\"},{\"path\":\"/a/{z}\",\"auth\":\"none\"}]}"
+  },
+  {
+   "name": "many/endpoint-shapes",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[\"x\",{\"path\":5,\"auth\":5,\"methods\":\"GET\",\"cors\":[]},{\"path\":\"/b\",\"auth\":\"none\",\"methods\":[1,\"TRACE\",\"GET\",\"get\"],\"cors\":{\"origins\":\"*\",\"methods\":[1],\"headers\":[\"\"],\"allowCredentials\":\"yes\"},\"maxBodyBytes\":1.5,\"timeoutMs\":\"1\"}]}"
+  },
+  {
+   "name": "many/endpoints-not-array",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":{},\"subscriptions\":{},\"schedules\":\"x\",\"public\":1,\"db\":{},\"config\":\"x\",\"secrets\":1,\"httpAllow\":{}}"
+  },
+  {
+   "name": "many/subscription-shapes",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"webhook\"}],\"subscriptions\":[5,{\"eventType\":\"  \",\"path\":\"/events/*\",\"mode\":5,\"maxRetries\":0,\"timeoutSeconds\":-1,\"dataOnly\":\"no\"},{\"eventType\":\"e\",\"mode\":\"SOMETIMES\"}]}"
+  },
+  {
+   "name": "many/schedule-shapes",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\"}],\"schedules\":[[],{\"cron\":\" \",\"timezone\":5,\"path\":\"jobs\"},{\"cron\":\"* * * * *\",\"path\":\"/jobs/a\"},{\"cron\":\"* * * * *\",\"path\":\"/jobs/b\",\"timezone\":null}]}"
+  },
+  {
+   "name": "many/public-shapes",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[null,{\"hostname\":5,\"pathPrefix\":\"/a/*\",\"aliasPrefixes\":\"qa\"},{\"hostname\":\"a.io\",\"pathPrefix\":null,\"aliasPrefixes\":[1,\"live\",\"qa\",\"qa\"]},{\"hostname\":\"10.0.0.1\",\"pathPrefix\":5}]}"
+  },
+  {
+   "name": "many/db-shapes",
+   "runtime": "JVM",
+   "ceilings": [
+    30000,
+    10,
+    64,
+    4
+   ],
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"db\":[1,{},{\"name\":\"a\",\"secretRef\":\"s\",\"poolSize\":0},{\"name\":\"b\",\"secretRef\":\"s\",\"poolSize\":5},{\"name\":\"a\",\"secretRef\":\"s\"}]}"
+  },
+  {
+   "name": "many/list-shapes",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"config\":[\"A\",1,\"A\",\"1B\"],\"secrets\":[\" \",\" \"],\"httpAllow\":[\"h\",2,\"h\",\"\"]}"
+  },
+  {
+   "name": "many/wasm-limits",
+   "runtime": "WASM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"wasm\",\"entrypoint\":\"h\",\"limits\":{\"wasmMemoryMb\":65,\"maxDurationMs\":30001,\"maxConcurrency\":33},\"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"timeoutMs\":30001}]}"
+  },
+  {
+   "name": "many/wasm-memory-zero",
+   "runtime": "WASM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"wasm\",\"entrypoint\":\"h\",\"limits\":{\"wasmMemoryMb\":0}}"
+  },
+  {
+   "name": "many/runtime-mismatch-jvm-on-wasm",
+   "runtime": "WASM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"wasmMemoryMb\":1}}"
+  },
+  {
+   "name": "many/null-timezone-duplicate",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/jobs/*\",\"auth\":\"webhook\"}],\"schedules\":[{\"cron\":\"c\",\"path\":\"/jobs/a\"},{\"cron\":\"c\",\"path\":\"/jobs/b\",\"timezone\":\"\"}]}"
+  },
+  {
+   "name": "many/pool-not-string",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"pool\":5,\"warm\":1}"
+  },
+  {
+   "name": "deviation/runtime-object",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":{},\"entrypoint\":\"x\"}"
+  },
+  {
+   "name": "deviation/entrypoint-array",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":[]}"
+  },
+  {
+   "name": "single/absent",
+   "runtime": "JVM",
+   "ceilings": null,
+   "text": null
+  }
+ ],
+ "stored": [
+  {
+   "name": "unreadable/empty-object",
+   "text": "{}"
+  },
+  {
+   "name": "unreadable/runtime-cobol",
+   "text": "{\"runtime\":\"cobol\",\"entrypoint\":\"x\"}"
+  },
+  {
+   "name": "unreadable/no-entrypoint",
+   "text": "{\"runtime\":\"jvm\"}"
+  },
+  {
+   "name": "unreadable/blank-entrypoint",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"  \"}"
+  },
+  {
+   "name": "unreadable/array",
+   "text": "[]"
+  },
+  {
+   "name": "unreadable/runtime-object",
+   "text": "{\"runtime\":{},\"entrypoint\":\"x\"}"
+  },
+  {
+   "name": "tolerant/unknown-keys",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"bogus\":1,\n \"limits\":{\"maxDurationMs\":30000,\"maxConcurrency\":32,\"extra\":true},\n \"endpoints\":[{\"path\":\"/a\",\"auth\":\"none\",\"weird\":true}]}"
+  },
+  {
+   "name": "tolerant/missing-optionals",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\"}"
+  },
+  {
+   "name": "tolerant/wasm-defaults",
+   "text": "{\"runtime\":\"WASM\",\"entrypoint\":\"h\",\"limits\":{\"wasmMemoryMb\":0}}"
+  },
+  {
+   "name": "tolerant/limit-out-of-int",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"limits\":{\"maxDurationMs\":5000000000,\"wasmMemoryMb\":5}}"
+  },
+  {
+   "name": "tolerant/malformed-endpoint-dropped",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[\n    {\"path\":\"not-a-path\",\"auth\":\"none\"},\n    {\"path\":\"/a\",\"auth\":\"none\"}\n]}"
+  },
+  {
+   "name": "tolerant/subscription-no-longer-webhook",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/events/*\",\"auth\":\"platform\"}],\n \"subscriptions\":[{\"eventType\":\"a:b:c\",\"path\":\"/events/a\"}]}"
+  },
+  {
+   "name": "tolerant/messy-entries",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":5,\"pool\":\"Bad\",\"warm\":\"yes\",\"endpoints\":{\"a\":1},\"subscriptions\":\"x\"}"
+  },
+  {
+   "name": "tolerant/messy-endpoint",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[1,{\"path\":\"/a\",\"auth\":5},{\"path\":\"/b\",\"auth\":\"Webhook\",\"methods\":[\"get\",\"TRACE\",1,\"POST\",\"POST\"],\"cors\":{\"origins\":[\"*\",\"\",\" \",3],\"allowCredentials\":\"y\"},\"maxBodyBytes\":0,\"timeoutMs\":7},{\"path\":\"/c\",\"auth\":\"none\",\"cors\":[]}]}"
+  },
+  {
+   "name": "tolerant/messy-triggers",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"endpoints\":[{\"path\":\"/e/*\",\"auth\":\"webhook\"}],\"subscriptions\":[{\"eventType\":\"a\",\"path\":\"/e/a\",\"mode\":\"immediate\",\"maxRetries\":-1,\"dataOnly\":\"x\"},{\"eventType\":\" \",\"path\":\"/e/b\"},{\"eventType\":\"b\",\"path\":\"/e/{x}\"},{\"eventType\":\"c\",\"path\":\"/e/c\",\"mode\":\"BLOCK_ON_ERROR\"}],\"schedules\":[{\"cron\":\"c\",\"path\":\"/e/a\",\"timezone\":5,\"payload\":null},{\"cron\":\"d\",\"path\":\"/e/b\",\"timezone\":\"UTC\",\"payload\":{\"k\":[1]}},{\"cron\":\"\",\"path\":\"/e/c\"}]}"
+  },
+  {
+   "name": "tolerant/messy-public",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"public\":[{\"hostname\":\"A.io\",\"aliasPrefixes\":[\"qa\",\"QA\",\"live\",\"qa\",1,\"stg\"]},{\"hostname\":\"a.io\",\"pathPrefix\":\"/p/*\"},{\"hostname\":\"bad\"},{\"hostname\":\"b.io\",\"pathPrefix\":null}]}"
+  },
+  {
+   "name": "tolerant/messy-db-and-lists",
+   "text": "{\"runtime\":\"jvm\",\"entrypoint\":\"x\",\"db\":[{\"name\":\"a\",\"secretRef\":\"s\"},{\"name\":\"B\",\"secretRef\":\"s\"},{\"name\":\"c\",\"secretRef\":\"1s\"},{\"name\":\"d\",\"secretRef\":\"s\",\"poolSize\":99}],\"config\":[\"A\",\"1B\",2,\"A\"],\"secrets\":[\"s\"],\"httpAllow\":[\"h\",\" \",3,\"h\"]}"
+  },
+  {
+   "name": "roundtrip/full-jvm",
+   "text": "{\n  \"runtime\": \"jvm\",\n  \"entrypoint\": \"com.acme.billing.CreateInvoice\",\n  \"pool\": \"default\",\n  \"warm\": false,\n  \"limits\": { \"maxDurationMs\": 30000, \"maxConcurrency\": 32 },\n  \"endpoints\": [\n    { \"path\": \"/events/*\",  \"auth\": \"webhook\" },\n    { \"path\": \"/jobs/*\",    \"auth\": \"webhook\" },\n    { \"path\": \"/api/*\",     \"auth\": \"platform\", \"methods\": [\"GET\",\"POST\"],\n      \"cors\": { \"origins\": [\"https://app.acme.com\"] },\n      \"maxBodyBytes\": 1048576, \"timeoutMs\": 10000 },\n    { \"path\": \"/hooks/stripe\", \"auth\": \"none\" }\n  ],\n  \"subscriptions\": [\n    { \"eventType\": \"billing:invoices:invoice:created\", \"path\": \"/events/invoice-created\",\n      \"mode\": \"BLOCK_ON_ERROR\", \"maxRetries\": 3, \"timeoutSeconds\": 30, \"dataOnly\": false }\n  ],\n  \"schedules\": [ { \"cron\": \"0 * * * *\", \"timezone\": \"UTC\", \"path\": \"/jobs/hourly\", \"payload\": { \"x\": 1 } } ],\n  \"public\":    [ { \"hostname\": \"api.acme.com\", \"pathPrefix\": \"/\" } ],\n  \"config\": [\"INVOICE_PREFIX\"],\n  \"secrets\": [\"billing/stripe-key\"],\n  \"db\": [ { \"name\": \"main\", \"secretRef\": \"billing/dsn\", \"poolSize\": 4 } ],\n  \"httpAllow\": [\"api.stripe.com\"]\n}"
+  }
+ ],
+ "values": {
+  "dnsLabel": [
+   "billing",
+   "a",
+   "0",
+   "inv-2",
+   "9lives",
+   "Billing",
+   "in_voices",
+   "a.b",
+   "a b",
+   "é",
+   "",
+   "-a",
+   "a-",
+   "-",
+   "a-b",
+   "a--b",
+   " a",
+   "a ",
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "hostname": [
+   "API.Acme.com",
+   "a.io",
+   "x-1.acme.co.za",
+   "localhost",
+   "a..com",
+   "-a.com",
+   "a_b.com",
+   "acme.com.",
+   "*.acme.com",
+   "acme.com:443",
+   "https://acme.com",
+   "10.0.0.1",
+   "",
+   "a.b.c.acme.com",
+   "a.1b",
+   "1.io",
+   "a.io1",
+   "Kcme.com",
+   "é.com"
+  ],
+  "digest": [
+   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "deadbeef",
+   ""
+  ],
+  "settingKey": [
+   "A",
+   "INVOICE_PREFIX",
+   "billing/stripe-key",
+   "1BAD",
+   "BAD KEY",
+   "",
+   "_x",
+   "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "routePattern": [
+   "/",
+   "/invoices",
+   "invoices",
+   "",
+   "/v1/invoices.json",
+   "/in voices",
+   "/a%20b",
+   "/a?b",
+   "/a#b",
+   "/invoices/{id}",
+   "/a/{x}/b/{y}",
+   "/{}",
+   "/{1d}",
+   "/a{id}",
+   "/{id}x",
+   "/{a}/{a}",
+   "/files/*",
+   "/*",
+   "/*/a",
+   "/a*",
+   "/**",
+   "//a",
+   "/a//b",
+   "/a/",
+   "/{a_1}/~x"
+  ],
+  "addressPattern": [
+   "billing.invoices.create",
+   "billing.invoices.*",
+   "billing.*",
+   "*",
+   "a.*.c",
+   "*.b.c",
+   "billing.inv*",
+   "a.b.c.*",
+   "",
+   "billing",
+   "Billing.*",
+   "a.B.*"
+  ],
+  "poolUrl": [
+   "http://fn-{pool}:8080",
+   "https://fn-{pool}:8443",
+   "http://127.0.0.1:8080",
+   "https://fn-pool.internal:8080",
+   "http://fn-{pool}:8080/",
+   "http://fn-{pool}.internal",
+   "http://{pool}:8080",
+   "http://{pool}@127.0.0.1:8080",
+   "http://admin@fn-host:8080",
+   "http://{pool}-{pool}:8080",
+   "http://fn-{pool}:8080/{pool}",
+   "http://fn-{pool}:8080/base",
+   "http://fn-host:8080/base",
+   "http://fn-{pool}:8080?x=1",
+   "http://fn-{pool}:8080#frag",
+   "//fn-{pool}:8080",
+   "ftp://fn-{pool}:8080",
+   "not a url",
+   "",
+   "HTTP://FN-{pool}:80",
+   "http:foo",
+   "http:///x",
+   "http://fn_pool:8080",
+   "http://host:abc",
+   "http://host:",
+   "http://host:99999999999",
+   "http://[::1]:8080",
+   "http://[::1",
+   "http://0001.0.0.1:8080",
+   "http://999.1.1.1:8080",
+   "http://1.2.3.4.5",
+   "http://a.1b",
+   "http://123:8080",
+   "http://host.:8080",
+   "http://-host",
+   "http://é.com",
+   "http://a%zz",
+   "http://a%41b.com",
+   " http://x",
+   "1http://x",
+   "http://x y",
+   "http://{pool}.{x}",
+   "http://host/?",
+   "mailto:x@y"
+  ],
+  "runtime": [
+   "jvm",
+   "Wasm",
+   "WASM",
+   "dotnet",
+   "",
+   " jvm",
+   "component"
+  ],
+  "httpMethod": [
+   "get",
+   "Post",
+   "DELETE",
+   "TRACE",
+   "",
+   "po st"
+  ],
+  "endpointAuth": [
+   "webhook",
+   "PLATFORM",
+   "None",
+   "bearer",
+   ""
+  ]
+ },
+ "matches": [
+  [
+   "/invoices/{id}",
+   "/invoices/abc-123"
+  ],
+  [
+   "/search/{term}",
+   "/search/caf%C3%A9"
+  ],
+  [
+   "/search/{term}",
+   "/search/a+b"
+  ],
+  [
+   "/search/{term}",
+   "/search/a%2"
+  ],
+  [
+   "/search/{term}",
+   "/search/a%zz"
+  ],
+  [
+   "/search/{term}",
+   "/search/%FF"
+  ],
+  [
+   "/files/*",
+   "/files"
+  ],
+  [
+   "/files/*",
+   "/files/"
+  ],
+  [
+   "/files/*",
+   "/files/a/b"
+  ],
+  [
+   "/a",
+   "/a"
+  ],
+  [
+   "/a",
+   "/a/"
+  ],
+  [
+   "/a",
+   "/a/b"
+  ],
+  [
+   "/a-b",
+   "/a%2Db"
+  ],
+  [
+   "/Invoices",
+   "/invoices"
+  ],
+  [
+   "/",
+   "/"
+  ],
+  [
+   "/",
+   "/x"
+  ],
+  [
+   "/*",
+   "/"
+  ],
+  [
+   "/a/{x}/{y}",
+   "/a/1/2"
+  ],
+  [
+   "/a/{x}",
+   "/a//"
+  ],
+  [
+   "/a/{x}",
+   "a/b"
+  ],
+  [
+   "/a/{x}",
+   "/a/%E2%82%AC"
+  ],
+  [
+   "/a/{x}",
+   "/a/é"
+  ]
+ ]
+}

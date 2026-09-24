@@ -679,6 +679,170 @@ async fn test_go_mirrored_migrations_are_idempotent() {
     }
 }
 
+/// Migration 034 (Java V13 + V15 - V16) is idempotent: re-running its SQL is
+/// a no-op, a tracker without the entry is backfilled by its probe, and a
+/// database Java migrated only to V13 is brought to the same shape. The
+/// constraints behave as Java's `FunctionSchemaTest` pins them.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_functions_migration_is_idempotent() {
+    let (pool, _container) = setup_test_db().await;
+    let sql = include_str!("../../../migrations/034_functions.sql");
+
+    sqlx::raw_sql(sql)
+        .execute(&pool)
+        .await
+        .expect("re-running 034 is a no-op");
+
+    sqlx::query("DELETE FROM _schema_migrations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    run_migrations(&pool, MigrationProfile::Production)
+        .await
+        .expect("migrations over existing fn_ tables");
+    let (tracked,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM _schema_migrations WHERE migration_id = '034_functions')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(tracked, "the probe recognises an applied 034");
+
+    // A database Java left at V13: fn_domains still has the verification
+    // columns and fn_routes lacks alias_prefixes. 034 brings it to V16.
+    sqlx::raw_sql(
+        "ALTER TABLE fn_routes DROP COLUMN alias_prefixes; \
+         ALTER TABLE fn_domains ADD COLUMN verification_token VARCHAR(64) NOT NULL DEFAULT 'x', \
+                                ADD COLUMN verified_at TIMESTAMPTZ;",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql(sql)
+        .execute(&pool)
+        .await
+        .expect("034 over a V13 schema");
+    let columns = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let rows: Vec<(String,)> = sqlx::query_as(
+                "SELECT column_name::text FROM information_schema.columns \
+                 WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position",
+            )
+            .bind(table)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            rows.into_iter().map(|(c,)| c).collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        columns("fn_domains").await,
+        ["id", "client_id", "hostname", "created_at"]
+    );
+    assert_eq!(
+        columns("fn_routes").await,
+        [
+            "id",
+            "function_id",
+            "hostname",
+            "path_prefix",
+            "created_at",
+            "alias_prefixes"
+        ]
+    );
+    let mut tables: Vec<(String,)> = sqlx::query_as(
+        "SELECT table_name::text FROM information_schema.tables \
+         WHERE table_schema = 'public' AND table_name LIKE 'fn\\_%' ORDER BY table_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    tables.sort();
+    assert_eq!(
+        tables.into_iter().map(|(t,)| t).collect::<Vec<_>>(),
+        [
+            "fn_aliases",
+            "fn_client_policies",
+            "fn_config",
+            "fn_domains",
+            "fn_functions",
+            "fn_hosts",
+            "fn_routes",
+            "fn_secrets",
+            "fn_trigger_objects",
+            "fn_versions"
+        ]
+    );
+
+    // Java FunctionSchemaTest: the constraints hold.
+    let exec = |sql: String| {
+        let pool = pool.clone();
+        async move { sqlx::query(&sql).execute(&pool).await.map(|_| ()) }
+    };
+    let err = |r: Result<(), sqlx::Error>| r.expect_err("constraint").to_string();
+    let function = |id: &str, service: &str| {
+        format!(
+            "INSERT INTO fn_functions (id, application_id, application_code, service_name, name, runtime) \
+             VALUES ('{id}', 'app_1', 'app-code', '{service}', 'fn-name', 'JVM')"
+        )
+    };
+    exec(function("f1", "a-b")).await.unwrap();
+    exec(function("f2", &"a".repeat(63))).await.unwrap();
+    assert!(err(exec(function("f3", "a-")).await).contains("fn_functions_service_name_check"));
+    assert!(err(exec(function("f4", "A")).await).contains("fn_functions_service_name_check"));
+    let version = |id: &str, n: i32, digest: &str, state: &str| {
+        format!(
+            "INSERT INTO fn_versions (id, function_id, version, artifact_ref, digest, manifest, state, published_by) \
+             VALUES ('{id}', 'f1', {n}, 'oci://artifact', '{digest}', '{{}}'::jsonb, '{state}', 'prn_1')"
+        )
+    };
+    let digest = format!("sha256:{}", "a".repeat(64));
+    exec(version("v1", 1, &digest, "PUBLISHED")).await.unwrap();
+    assert!(err(exec(version(
+        "v2",
+        2,
+        &format!("sha256:{}", "g".repeat(64)),
+        "PUBLISHED"
+    ))
+    .await)
+    .contains("fn_versions_digest_check"));
+    assert!(err(exec(version(
+        "v3",
+        3,
+        &format!("sha256:{}", "b".repeat(64)),
+        "READY"
+    ))
+    .await)
+    .contains("fn_versions_ready_at_check"));
+    let route = |id: &str, function: &str| {
+        format!(
+            "INSERT INTO fn_routes (id, function_id, hostname, path_prefix) \
+             VALUES ('{id}', '{function}', 'api.example.com', '/shared')"
+        )
+    };
+    exec(route("r1", "f1")).await.unwrap();
+    assert!(err(exec(route("r2", "f2")).await).contains("fn_routes_hostname_path_prefix_key"));
+    assert!(err(exec(
+        "INSERT INTO fn_client_policies (client_id, max_duration_ms) VALUES ('clt_1', 0)".into()
+    )
+    .await)
+    .contains("fn_client_policies_max_duration_ms_check"));
+
+    // msg_subscriptions.source admits FUNCTION, and nothing unknown.
+    let (def,): (String,) = sqlx::query_as(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint \
+         WHERE conname = 'chk_msg_subscriptions_source'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for source in ["CODE", "API", "UI", "FUNCTION"] {
+        assert!(def.contains(&format!("'{source}'")), "{def}");
+    }
+}
+
 // ─── Service Account Repository Tests ─────────────────────────────────────
 
 #[tokio::test]
