@@ -24,7 +24,33 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use std::string::FromUtf8Error;
 use tracing::{info, warn};
+
+/// Why a key could not be loaded or a value could not be encrypted or
+/// decrypted. The `Display` text is the message these functions used to
+/// return as a `String`.
+#[derive(Debug, thiserror::Error)]
+pub enum EncryptionError {
+    #[error("Invalid base64 key: {0}")]
+    InvalidKeyEncoding(#[source] base64::DecodeError),
+    #[error("Key must be 32 bytes (got {0})")]
+    InvalidKeyLength(usize),
+    #[error("Encryption failed: {0}")]
+    Encrypt(aes_gcm::Error),
+    #[error("Invalid base64: {0}")]
+    InvalidCiphertextEncoding(#[source] base64::DecodeError),
+    #[error("Empty encrypted data")]
+    Empty,
+    #[error("Encrypted data too short")]
+    TooShort,
+    #[error("Decrypted data not valid UTF-8: {0}")]
+    InvalidUtf8(#[source] FromUtf8Error),
+    #[error("Decrypted data not valid UTF-8 (previous key {key}): {source}")]
+    InvalidUtf8PreviousKey { key: usize, source: FromUtf8Error },
+    #[error("Decryption failed with all available keys")]
+    NoKeyMatched,
+}
 
 /// Current encryption format version.
 const CURRENT_VERSION: u8 = 1;
@@ -38,19 +64,18 @@ pub struct EncryptionService {
     previous: Vec<Aes256Gcm>,
 }
 
-fn make_cipher(key_base64: &str) -> Result<Aes256Gcm, String> {
+fn make_cipher(key_base64: &str) -> Result<Aes256Gcm, EncryptionError> {
     let key_bytes = BASE64
         .decode(key_base64)
-        .map_err(|e| format!("Invalid base64 key: {}", e))?;
-    if key_bytes.len() != 32 {
-        return Err(format!("Key must be 32 bytes (got {})", key_bytes.len()));
-    }
-    Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| format!("Failed to init AES cipher: {}", e))
+        .map_err(EncryptionError::InvalidKeyEncoding)?;
+    // `new_from_slice` fails only on a wrong key length.
+    Aes256Gcm::new_from_slice(&key_bytes)
+        .map_err(|_| EncryptionError::InvalidKeyLength(key_bytes.len()))
 }
 
 impl EncryptionService {
     /// Create with a single key (no rotation).
-    pub fn new(key_base64: &str) -> Result<Self, String> {
+    pub fn new(key_base64: &str) -> Result<Self, EncryptionError> {
         Ok(Self {
             current: make_cipher(key_base64)?,
             previous: Vec::new(),
@@ -58,7 +83,10 @@ impl EncryptionService {
     }
 
     /// Create with current key + previous key(s) for rotation.
-    pub fn with_previous_keys(current_key: &str, previous_keys: &[&str]) -> Result<Self, String> {
+    pub fn with_previous_keys(
+        current_key: &str,
+        previous_keys: &[&str],
+    ) -> Result<Self, EncryptionError> {
         let current = make_cipher(current_key)?;
         let previous = previous_keys
             .iter()
@@ -98,7 +126,7 @@ impl EncryptionService {
 
     /// Encrypt a plaintext string using the current key.
     /// Returns base64-encoded `version || nonce || ciphertext`.
-    pub fn encrypt(&self, plaintext: &str) -> Result<String, String> {
+    pub fn encrypt(&self, plaintext: &str) -> Result<String, EncryptionError> {
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from(nonce_bytes);
@@ -106,7 +134,7 @@ impl EncryptionService {
         let ciphertext = self
             .current
             .encrypt(&nonce, plaintext.as_bytes())
-            .map_err(|e| format!("Encryption failed: {}", e))?;
+            .map_err(EncryptionError::Encrypt)?;
 
         // Versioned format: version_byte || nonce || ciphertext
         let mut output = Vec::with_capacity(1 + 12 + ciphertext.len());
@@ -118,16 +146,16 @@ impl EncryptionService {
 
     /// Decrypt a value. Tries current key first, then falls back to previous keys.
     /// Supports both versioned (v1), legacy (v0), and TypeScript `encrypted:` prefix formats.
-    pub fn decrypt(&self, encrypted: &str) -> Result<String, String> {
+    pub fn decrypt(&self, encrypted: &str) -> Result<String, EncryptionError> {
         // Handle TypeScript encryption format: "encrypted:BASE64(iv || ciphertext || tag)"
         let raw = encrypted.strip_prefix("encrypted:").unwrap_or(encrypted);
 
         let data = BASE64
             .decode(raw)
-            .map_err(|e| format!("Invalid base64: {}", e))?;
+            .map_err(EncryptionError::InvalidCiphertextEncoding)?;
 
         if data.is_empty() {
-            return Err("Empty encrypted data".to_string());
+            return Err(EncryptionError::Empty);
         }
 
         // Check if versioned format (first byte is version)
@@ -135,7 +163,7 @@ impl EncryptionService {
             // Versioned: version(1) || nonce(12) || ciphertext
             if data.len() < 14 {
                 // 1 + 12 + at least 1 byte ciphertext
-                return Err("Encrypted data too short".to_string());
+                return Err(EncryptionError::TooShort);
             }
             let nonce_bytes: [u8; 12] = data[1..13].try_into().unwrap();
             let nonce = Nonce::from(nonce_bytes);
@@ -145,7 +173,7 @@ impl EncryptionService {
 
         // Legacy format (v0): nonce(12) || ciphertext (no version byte)
         if data.len() < 13 {
-            return Err("Encrypted data too short".to_string());
+            return Err(EncryptionError::TooShort);
         }
         let nonce_bytes: [u8; 12] = data[..12].try_into().unwrap();
         let nonce = Nonce::from(nonce_bytes);
@@ -158,28 +186,26 @@ impl EncryptionService {
         &self,
         nonce: &Nonce<U12>,
         ciphertext: &[u8],
-    ) -> Result<String, String> {
+    ) -> Result<String, EncryptionError> {
         // Try current key first
         if let Ok(plaintext) = self.current.decrypt(nonce, ciphertext) {
-            return String::from_utf8(plaintext)
-                .map_err(|e| format!("Decrypted data not valid UTF-8: {}", e));
+            return String::from_utf8(plaintext).map_err(EncryptionError::InvalidUtf8);
         }
 
         // Try previous keys
         for (i, prev) in self.previous.iter().enumerate() {
             if let Ok(plaintext) = prev.decrypt(nonce, ciphertext) {
-                return String::from_utf8(plaintext).map_err(|e| {
-                    format!("Decrypted data not valid UTF-8 (previous key {}): {}", i, e)
-                });
+                return String::from_utf8(plaintext)
+                    .map_err(|source| EncryptionError::InvalidUtf8PreviousKey { key: i, source });
             }
         }
 
-        Err("Decryption failed with all available keys".to_string())
+        Err(EncryptionError::NoKeyMatched)
     }
 
     /// Re-encrypt a value: decrypt with any available key, re-encrypt with current key.
     /// Returns the new encrypted value, or the original if it was already using the current key.
-    pub fn re_encrypt(&self, encrypted: &str) -> Result<String, String> {
+    pub fn re_encrypt(&self, encrypted: &str) -> Result<String, EncryptionError> {
         let plaintext = self.decrypt(encrypted)?;
         self.encrypt(&plaintext)
     }
@@ -244,7 +270,25 @@ mod tests {
     #[test]
     fn test_invalid_key_length() {
         let short_key = BASE64.encode([0u8; 16]);
-        assert!(EncryptionService::new(&short_key).is_err());
+        let err = EncryptionService::new(&short_key).err().unwrap();
+        assert!(matches!(err, EncryptionError::InvalidKeyLength(16)));
+        assert_eq!(err.to_string(), "Key must be 32 bytes (got 16)");
+    }
+
+    #[test]
+    fn test_decrypt_errors_keep_their_messages() {
+        let svc = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let err = svc.decrypt("").unwrap_err();
+        assert!(matches!(err, EncryptionError::Empty));
+        assert_eq!(err.to_string(), "Empty encrypted data");
+
+        let err = svc.decrypt("not base64!").unwrap_err();
+        assert!(matches!(err, EncryptionError::InvalidCiphertextEncoding(_)));
+        assert!(err.to_string().starts_with("Invalid base64: "));
+
+        let other = EncryptionService::new(&EncryptionService::generate_key()).unwrap();
+        let err = svc.decrypt(&other.encrypt("x").unwrap()).unwrap_err();
+        assert!(matches!(err, EncryptionError::NoKeyMatched));
     }
 
     #[test]
