@@ -119,7 +119,7 @@ The measurements are in `docs/function-runner-density.md` (macOS M4 Pro; redo on
     about 10 µs pooled or about 35 µs instance-per-request.
 - **Runtime value:** the manifest keeps `runtime: wasm`, so Java's management interface is unchanged. The Rust host
   sniffs the artifact: a **component** loads, and a **core module** (Java/Extism style) is refused with
-  `WASM_CORE_MODULE_UNSUPPORTED`. `entrypoint` names `wasi:http/incoming-handler`. Pools separate the Java hosts
+  `WASM_CORE_MODULE_UNSUPPORTED`. `entrypoint` names `wasi:http/incoming-handler`, or the manifest-safe alias **`wasi_http_incoming_handler`**. Java's wasm entrypoint rule `[A-Za-z_]\w*` refuses `:` and `/`, so the alias lets components publish through the unchanged management interface of either platform (`4fdf49b7`). Pools separate the Java hosts
   (jars and Extism) from the Rust hosts (components).
   *Owner decision (open):* adopt an explicit runtime value (e.g. `component`) in Java's schema and DB CHECK
   instead of sniffing.
