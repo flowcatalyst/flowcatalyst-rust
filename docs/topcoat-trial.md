@@ -95,7 +95,12 @@ side by side without a seam:
   `/ui/event-types/{id}`, or opened in place from a row), with coloured code
   segments.
 - **Login:** the themed login with the email step, then the password step
-  (with a show/hide toggle) or SSO, and passkeys.
+  (with a show/hide toggle) or SSO, and passkeys. `password_login` carries
+  Go's second-factor gate: `mfa_required` shows the challenge step
+  (TwoFactorChallenge.vue), whose code goes to `POST /auth/2fa/verify`
+  (which sets the session cookie); `enrollment_required` hands off to the
+  SPA's sign-in for enrolment; a user who has never set a password gets
+  the "Create your password" step (`POST /auth/password-setup/request`).
 - **Timestamps:** localised in the browser, like the Vue app's
   `toLocaleString()`.
 
@@ -123,8 +128,12 @@ These lift logic out of the axum handlers so fc-web can call it instead of
 copying it:
 
 - `shared::middleware::authenticate_headers` (the extractors now call it).
-- `auth::auth_api::password_login` (the body of `POST /auth/login`).
-- `auth::oidc_login_api::resolve_auth_method` (the body of `POST /auth/check-domain`).
+- `auth::auth_api::password_login` (the body of `POST /auth/login`, up to
+  and including the second-factor gate; it returns `PasswordLogin::Session`
+  or `::SecondFactor`), with `mfa::login_api::TwoFactorLogin::second_factor_owed`
+  as the typed half of `maybe_challenge`.
+- `auth::oidc_login_api::resolve_auth_method` (the body of `POST /auth/check-domain`)
+  and `PasswordSetupHint::required_for` (its `passwordSetupRequired`).
 - `shared::public_api::load_login_theme`.
 - `event_type::access::{ensure_visible, ensure_modifiable}`. These are the
   client/anchor rules the BFF event-type handlers had inlined 7 times; the
@@ -136,10 +145,9 @@ copying it:
   `bff_event_types_api::platform_sync_command`.
 - `subscription::access`, `connection::access`, `client::access`: the
   client/anchor rules the API handlers had inlined (the handlers call them).
-- `dispatch_pool::access` (the handlers keep their inline copies: switching
-  them over tripped `permission_convention_test`, which counts the inline
-  `is_anchor()` as their only check) and `checks::can_write_dispatch_pools`
-  (Go's `CanWriteDispatchPools`, used by fc-web only).
+- `dispatch_pool::access` (used by fc-web; the handlers keep their inline
+  reach checks after `checks::can_write_dispatch_pools`, which the
+  platform added for Go's `CanWriteDispatchPools`).
 - `application::api`: the delete / deactivate cascades and the service
   account / login client provisioning bodies.
 - `shared::caller_reach::{read_client_filter, ensure_row_visible}` (the
@@ -293,18 +301,14 @@ Postgres.
 - Subscriptions: fc-web lists paused subscriptions (the API doesn't, so
   the SPA's Paused filter is empty against Rust) and its drawer saves the
   dispatch mode through the use case (the API handler drops it).
-- Dispatch pools: fc-web lists every status and requires
-  `can_write_dispatch_pools` for writes, as Go (see below).
+- Dispatch pools: fc-web lists every status.
 
 ## Existing issues found along the way (not fixed here)
 
 Backend (main):
 
-- **Dispatch-pool writes have no permission check.** Create, update,
-  archive, suspend and activate in `dispatch_pool/api.rs` check only anchor
-  scope or client reach, and their use cases' `authorize` is empty. Go
-  requires `CanWriteDispatchPools`. `permission_convention_test` passes
-  because it counts the inline `is_anchor()`.
+- (Fixed on `feat/functions`, b05bff58: dispatch-pool writes had no
+  permission check.)
 - `GET /bff/roles` and `/bff/roles/{name}` need only a login (no
   `can_read_roles`); the BFF role list ignores `source` when an
   application is also given.

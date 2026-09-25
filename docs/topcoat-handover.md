@@ -6,8 +6,9 @@ the issues found. This file covers **where things stand and what is left**.
 
 ## Where things stand (2026-09-25, second session)
 
-- **Branch:** `trial/topcoat`, rebased on local `main` and fast-forwardable
-  from it. Not pushed (the owner hasn't asked for pushes).
+- **Branch:** `trial/topcoat`, rebased on local `feat/functions` (which
+  carries all of Go's routes, including the 2FA login gate) and
+  fast-forwardable from it. Not pushed (the owner hasn't asked for pushes).
 - **Task A (land on `main` behind `--features web`) is done:**
   - The platform extractions were re-applied on top of main's Go-parity
     rewrites (login, error envelope, session cookie), keeping main's
@@ -69,9 +70,10 @@ FC_DATABASE_URL=postgresql://flowcatalyst:flowcatalyst@localhost:55432/flowcatal
 ## Left to do
 
 - **Owner decisions / fixes on main** (see "Existing issues" in
-  `docs/topcoat-trial.md`), most importantly: dispatch-pool write handlers
-  have no permission check; `/bff/roles` reads have no permission check;
-  dispatch-job attempts are never read back by the API.
+  `docs/topcoat-trial.md`), most importantly: `/bff/roles` reads have no
+  permission check; dispatch-job attempts are never read back by the API.
+- **Login:** 2FA enrolment during sign-in is handed off to the SPA; port
+  it (TOTP QR, email confirm) if fc-web should own the whole sign-in.
 - **Sections not ported:** users (platform and client-scoped), service
   accounts, identity providers, email domains, OAuth clients, reset
   approvals, portal apps and users, CORS origins, login attempts,
