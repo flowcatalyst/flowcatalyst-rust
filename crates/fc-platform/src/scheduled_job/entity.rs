@@ -32,6 +32,11 @@ pub struct ScheduledJob {
     /// NULL = platform-scoped (anchor-only); Some = client-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// The application the job belongs to (Java `ScheduledJob.applicationId`):
+    /// its oldest active service account signs the job's firings. `None` for
+    /// a job no application owns.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_id: Option<String>,
     /// Routing key the SDK uses to find the registered handler. Unique per
     /// (client_id, code) — or globally when client_id is None.
     pub code: String,
@@ -91,6 +96,7 @@ impl ScheduledJob {
         Self {
             id: crate::shared::tsid::generate(crate::EntityType::ScheduledJob),
             client_id: None,
+            application_id: None,
             code: code.into(),
             name: name.into(),
             description: None,
@@ -114,6 +120,10 @@ impl ScheduledJob {
 
     pub fn with_client_id(mut self, id: impl Into<String>) -> Self {
         self.client_id = Some(id.into());
+        self
+    }
+    pub fn with_application_id(mut self, id: impl Into<String>) -> Self {
+        self.application_id = Some(id.into());
         self
     }
     pub fn with_description(mut self, d: impl Into<String>) -> Self {
@@ -182,6 +192,81 @@ impl ScheduledJob {
     pub fn is_active(&self) -> bool {
         matches!(self.status, ScheduledJobStatus::Active)
     }
+
+    /// The declarative reconcile (Java `ScheduledJob.reconcile`): this job
+    /// with `d` applied, `ACTIVE` again, the application backfilled when
+    /// given, `version + 1`, and the names of the fields that differed; or
+    /// `None` when nothing differs, so a no-op is neither written nor
+    /// reported. `code`, scope and `last_fired_at` never change here.
+    pub fn reconcile(
+        &self,
+        d: &JobDefinition,
+        application_id: Option<&str>,
+        by: Option<&str>,
+    ) -> Option<(ScheduledJob, Vec<String>)> {
+        let application_id = application_id
+            .map(str::to_string)
+            .or_else(|| self.application_id.clone());
+        let mut changed = Vec::new();
+        let mut differs = |yes: bool, field: &str| {
+            if yes {
+                changed.push(field.to_string());
+            }
+        };
+        differs(self.name != d.name, "name");
+        differs(self.description != d.description, "description");
+        differs(self.crons != d.crons, "crons");
+        differs(self.timezone != d.timezone, "timezone");
+        differs(self.payload != d.payload, "payload");
+        differs(self.concurrent != d.concurrent, "concurrent");
+        differs(
+            self.tracks_completion != d.tracks_completion,
+            "tracksCompletion",
+        );
+        differs(self.timeout_seconds != d.timeout_seconds, "timeoutSeconds");
+        differs(
+            self.delivery_max_attempts != d.delivery_max_attempts,
+            "deliveryMaxAttempts",
+        );
+        differs(self.target_url != d.target_url, "targetUrl");
+        differs(self.application_id != application_id, "applicationId");
+        differs(self.status != ScheduledJobStatus::Active, "status");
+        if changed.is_empty() {
+            return None;
+        }
+        let mut job = self.clone();
+        job.name = d.name.clone();
+        job.description = d.description.clone();
+        job.crons = d.crons.clone();
+        job.timezone = d.timezone.clone();
+        job.payload = d.payload.clone();
+        job.concurrent = d.concurrent;
+        job.tracks_completion = d.tracks_completion;
+        job.timeout_seconds = d.timeout_seconds;
+        job.delivery_max_attempts = d.delivery_max_attempts;
+        job.target_url = d.target_url.clone();
+        job.application_id = application_id;
+        job.status = ScheduledJobStatus::Active;
+        job.record_update(by.map(str::to_string));
+        Some((job, changed))
+    }
+}
+
+/// What a declarative writer wants a job to be (Java
+/// `ScheduledJob.Definition`): `timezone` already defaulted to `UTC`,
+/// `delivery_max_attempts` to 3, and a JSON `null` payload already `None`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub crons: Vec<String>,
+    pub timezone: String,
+    pub payload: Option<serde_json::Value>,
+    pub concurrent: bool,
+    pub tracks_completion: bool,
+    pub timeout_seconds: Option<i32>,
+    pub delivery_max_attempts: i32,
+    pub target_url: Option<String>,
 }
 
 /// Trigger reason for a single firing.
