@@ -117,7 +117,7 @@ pub struct UpdateScheduledJobRequest {
     pub target_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FireRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -696,8 +696,11 @@ pub async fn fire_scheduled_job(
     State(state): State<ScheduledJobsState>,
     auth: Authenticated,
     Path(id): Path<String>,
-    Json(req): Json<FireRequest>,
+    // The body is optional, as in Go: a fire with no body (and no
+    // Content-Type) is a fire with no correlation id.
+    req: Option<Json<FireRequest>>,
 ) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
+    let req = req.map(|Json(r)| r).unwrap_or_default();
     crate::shared::authorization_service::checks::can_fire_scheduled_jobs(&auth.0)?;
     let existing = state
         .repo

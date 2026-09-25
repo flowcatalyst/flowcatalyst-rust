@@ -706,6 +706,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 }),
             );
 
+        // Extractor rejections (unreadable body, query or path) answer in
+        // Go's envelope: 400 `VALIDATION`, or `invalid_request` on /oauth.
+        let app = app.layer(axum::middleware::from_fn(
+            crate::shared::rejection::go_rejections,
+        ));
+
         // SPA serving (if static_dir is configured). No static_dir: no root
         // handler. The binary can add its own (fc-dev uses embedded assets,
         // fc-server/fc-platform-server may redirect to Swagger).
