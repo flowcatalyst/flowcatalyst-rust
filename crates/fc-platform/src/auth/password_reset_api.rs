@@ -193,6 +193,41 @@ impl PasswordResetEmailer {
             .map_err(|e| PlatformError::internal(format!("send invite email: {e}")))
     }
 
+    /// Mint the same 72-hour invite as [`send_invite`](Self::send_invite)
+    /// but return the set-password link instead of emailing it (Go
+    /// `InviteLink`, which backs create-user's `returnInviteLink`). The link
+    /// is a live bearer credential: hand it only to the authorised caller,
+    /// never log it. `None` for a principal without an email.
+    pub async fn invite_link(
+        &self,
+        principal: &Principal,
+        redirect_uri: Option<String>,
+    ) -> Result<Option<String>, PlatformError> {
+        if principal
+            .user_identity
+            .as_ref()
+            .is_none_or(|i| i.email.trim().is_empty())
+        {
+            return Ok(None);
+        }
+        let raw_token = self
+            .mint(
+                &principal.id,
+                TokenPurpose::Invite,
+                Utc::now() + Duration::hours(INVITE_TOKEN_TTL_HOURS),
+                ResetOptions {
+                    redirect_uri,
+                    ..ResetOptions::default()
+                },
+            )
+            .await?;
+        Ok(Some(format!(
+            "{}/auth/set-password?token={}",
+            self.external_base_url.trim_end_matches('/'),
+            raw_token
+        )))
+    }
+
     /// Replace the principal's outstanding tokens with a fresh one; the raw
     /// token.
     async fn mint(

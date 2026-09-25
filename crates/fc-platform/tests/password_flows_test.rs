@@ -413,3 +413,43 @@ async fn a_lost_device_reset_clears_two_factor_and_sends_the_user_to_enrol() {
             .unwrap();
     assert_eq!(factors, 0, "2FA cleared");
 }
+
+/// Go `InviteLink` (create-user's `returnInviteLink`): the invite is minted
+/// and its set-password link returned, not emailed; it carries the redirect.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn an_invite_link_is_minted_for_the_caller() {
+    use fc_platform::auth::password_reset_api::PasswordResetEmailer;
+    let app = TestApp::setup().await;
+    let user = Principal::new_user("linked@flowcatalyst.test", UserScope::Client);
+    app.repos.principal_repo.insert(&user).await.unwrap();
+    let emailer = PasswordResetEmailer {
+        password_reset_repo: app.repos.password_reset_repo.clone(),
+        email_service: Arc::new(fc_platform::shared::email_service::LogEmailService),
+        unit_of_work: app.unit_of_work.clone(),
+        external_base_url: "https://platform.test/".to_string(),
+    };
+    let link = emailer
+        .invite_link(&user, Some("https://app.test/home".to_string()))
+        .await
+        .unwrap()
+        .expect("a link");
+    let raw = link
+        .strip_prefix("https://platform.test/auth/set-password?token=")
+        .expect("the set-password link");
+    let (_, v) = read_json(
+        app.get_unauth(&format!("/auth/password-reset/validate?token={raw}"))
+            .await,
+    )
+    .await;
+    assert_eq!(v["valid"], true, "{v}");
+    let (purpose, redirect): (String, Option<String>) = sqlx::query_as(
+        "SELECT purpose, redirect_uri FROM iam_password_reset_tokens WHERE principal_id = $1",
+    )
+    .bind(&user.id)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(purpose, "invite");
+    assert_eq!(redirect.as_deref(), Some("https://app.test/home"));
+}
