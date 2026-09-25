@@ -28,6 +28,13 @@ incompatibly.
   top-level fields to mask. `OutboxUnitOfWork` honours it.
 
 ### Changed
+- `Router::inPipeline()` / `inPipelineBatch()` send the platform bearer
+  token (the client's token provider) to the router. Today's routers ignore
+  it; a router that enforces platform tokens (owner ruling 2 of 2026-09-25)
+  requires it, with `platform:messaging:router:view`, which the built-in
+  `platform:application-service` role holds. Ship this release to apps
+  **before** any router enforces auth. `Router`'s constructor takes an
+  optional Guzzle client for the router's origin as a second argument.
 - `OutboxManager::createDispatchJob` / `createDispatchJobs`: the outbox
   payload now carries `id`, the outbox row's own id (the id the method
   returns). The platform honours a supplied dispatch-job id, so a batch the
