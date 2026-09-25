@@ -642,6 +642,20 @@ pub mod checks {
         require_permission(context, permissions::admin::CONNECTION_DELETE)
     }
 
+    /// Dispatch pools, any write (create, update, archive, suspend,
+    /// activate): one of the pool create/update/delete permissions (Go
+    /// `CanWriteDispatchPools`, auth.go:561).
+    pub fn can_write_dispatch_pools(context: &AuthContext) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::DISPATCH_POOL_CREATE,
+                permissions::admin::DISPATCH_POOL_UPDATE,
+                permissions::admin::DISPATCH_POOL_DELETE,
+            ],
+        )
+    }
+
     /// Dispatch pools, delete: `platform:messaging:dispatch-pool:delete` (Go
     /// `CanDeleteDispatchPools`, auth.go:557).
     pub fn can_delete_dispatch_pools(context: &AuthContext) -> Result<()> {

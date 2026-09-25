@@ -151,6 +151,9 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Json(req): Json<CreateDispatchPoolRequest>,
 ) -> Result<(StatusCode, Json<crate::shared::api_common::CreatedResponse>), PlatformError> {
+    // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
+    // permission first; client reach is checked below.
+    crate::checks::can_write_dispatch_pools(&auth.0)?;
     // Check access - anchor or client admin
     if !auth.0.is_anchor() {
         if let Some(ref client_id) = req.client_id {
@@ -315,6 +318,9 @@ pub async fn update_dispatch_pool<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<UpdateDispatchPoolRequest>,
 ) -> Result<StatusCode, PlatformError> {
+    // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
+    // permission first; client reach is checked below.
+    crate::checks::can_write_dispatch_pools(&auth.0)?;
     // Check access first
     let pool = state
         .dispatch_pool_repo
@@ -370,6 +376,9 @@ pub async fn archive_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchPoolResponse>, PlatformError> {
+    // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
+    // permission first; client reach is checked below.
+    crate::checks::can_write_dispatch_pools(&auth.0)?;
     // Check access first
     let pool = state
         .dispatch_pool_repo
@@ -426,6 +435,9 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchPoolResponse>, PlatformError> {
+    // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
+    // permission first; client reach is checked below.
+    crate::checks::can_write_dispatch_pools(&auth.0)?;
     // Check access first
     let pool = state
         .dispatch_pool_repo
@@ -484,6 +496,9 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchPoolResponse>, PlatformError> {
+    // Go `CanWriteDispatchPools` (dispatchpool/api/api.go): a pool
+    // permission first; client reach is checked below.
+    crate::checks::can_write_dispatch_pools(&auth.0)?;
     // Check access first
     let pool = state
         .dispatch_pool_repo
