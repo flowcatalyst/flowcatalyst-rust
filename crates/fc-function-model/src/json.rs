@@ -1,17 +1,15 @@
-//! An ordered JSON tree that reads and writes the way Java's Jackson does.
+//! An ordered JSON tree, read the way Java's Jackson reads it.
 //!
-//! The manifest parser needs three things `serde_json::Value` cannot promise
+//! The manifest parser needs two things `serde_json::Value` cannot promise
 //! in this crate: object keys in document order (problems are reported in
-//! document order, and `preserve_order` is not reliably on in every build),
+//! document order, and a crate feature should not decide that), and
 //! integers of any size kept exactly (a schedule's `payload` is opaque and
-//! stored as given), and Jackson's output bytes (`Json.MAPPER`, compact).
+//! stored as given).
 //!
 //! Reading follows Jackson 3's `readTree` defaults: strict RFC 8259, one
 //! value with nothing after it, a repeated key keeps its first position and
-//! takes the last value. Writing follows Jackson's generator: `\b \t \n \f \r`
-//! as short escapes, every other control character as upper-case `\u00XX`,
-//! non-ASCII written raw, and a fractional number as Java's
-//! `Double.toString` spells it.
+//! takes the last value. Writing is serde_json's, with object keys in the
+//! tree's order and integers written as their exact text.
 
 use std::fmt;
 
@@ -140,7 +138,8 @@ impl JsonNode {
     }
 
     /// Jackson's `asString()` on a scalar: a string's text, `""` for null,
-    /// `true`/`false`, and a number's written form. Jackson throws for an
+    /// `true`/`false`, and a number's text (an integer exactly, a float as
+    /// serde_json writes it). Jackson throws for an
     /// array or object; this answers `""`, so the caller reports the field
     /// as missing rather than failing the whole request.
     pub fn scalar_text(&self) -> String {
@@ -148,50 +147,17 @@ impl JsonNode {
             JsonNode::String(s) => s.clone(),
             JsonNode::Null | JsonNode::Array(_) | JsonNode::Object(_) => String::new(),
             JsonNode::Bool(b) => b.to_string(),
-            JsonNode::Number(n) => {
-                let mut out = String::new();
-                write_number(n, &mut out);
-                out
+            JsonNode::Number(JsonNumber::Integer(text)) => text.clone(),
+            JsonNode::Number(JsonNumber::Float(f)) => {
+                serde_json::Number::from_f64(*f).map_or_else(|| f.to_string(), |n| n.to_string())
             }
         }
     }
 
-    /// The compact JSON text Jackson writes for this tree.
+    /// The compact JSON text of this tree (see the [`serde::Serialize`]
+    /// impl).
     pub fn to_json_string(&self) -> String {
-        let mut out = String::new();
-        self.write(&mut out);
-        out
-    }
-
-    fn write(&self, out: &mut String) {
-        match self {
-            JsonNode::Null => out.push_str("null"),
-            JsonNode::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-            JsonNode::Number(n) => write_number(n, out),
-            JsonNode::String(s) => write_string(s, out),
-            JsonNode::Array(items) => {
-                out.push('[');
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    item.write(out);
-                }
-                out.push(']');
-            }
-            JsonNode::Object(map) => {
-                out.push('{');
-                for (i, (key, value)) in map.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    write_string(key, out);
-                    out.push(':');
-                    value.write(out);
-                }
-                out.push('}');
-            }
-        }
+        serde_json::to_string(self).expect("a JsonNode always serialises")
     }
 }
 
@@ -201,13 +167,45 @@ impl fmt::Display for JsonNode {
     }
 }
 
-/// Written through `serde_json`'s raw-value passthrough, so the bytes (and
-/// any big integer) are exactly [`JsonNode::to_json_string`]'s.
+/// Object members in the tree's order. An integer that fits `i64`/`u64` is
+/// written as one; a bigger one goes through `serde_json`'s raw-value
+/// passthrough so its digits survive (which only `serde_json` understands).
+/// A non-finite float (only `1e400`-style literals parse to one) is written
+/// as serde_json writes it, `null`.
 impl serde::Serialize for JsonNode {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let raw = serde_json::value::RawValue::from_string(self.to_json_string())
-            .map_err(serde::ser::Error::custom)?;
-        raw.serialize(serializer)
+        use serde::ser::{SerializeMap, SerializeSeq};
+        match self {
+            JsonNode::Null => serializer.serialize_unit(),
+            JsonNode::Bool(b) => serializer.serialize_bool(*b),
+            JsonNode::Number(JsonNumber::Float(f)) => serializer.serialize_f64(*f),
+            JsonNode::Number(JsonNumber::Integer(text)) => {
+                if let Ok(n) = text.parse::<i64>() {
+                    serializer.serialize_i64(n)
+                } else if let Ok(n) = text.parse::<u64>() {
+                    serializer.serialize_u64(n)
+                } else {
+                    serde_json::value::RawValue::from_string(text.clone())
+                        .map_err(serde::ser::Error::custom)?
+                        .serialize(serializer)
+                }
+            }
+            JsonNode::String(s) => serializer.serialize_str(s),
+            JsonNode::Array(items) => {
+                let mut seq = serializer.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    seq.serialize_element(item)?;
+                }
+                seq.end()
+            }
+            JsonNode::Object(map) => {
+                let mut out = serializer.serialize_map(Some(map.len()))?;
+                for (k, v) in map {
+                    out.serialize_entry(k, v)?;
+                }
+                out.end()
+            }
+        }
     }
 }
 
@@ -244,72 +242,6 @@ impl From<&serde_json::Value> for JsonNode {
                     .collect(),
             ),
         }
-    }
-}
-
-fn write_number(n: &JsonNumber, out: &mut String) {
-    match n {
-        JsonNumber::Integer(text) => out.push_str(text),
-        JsonNumber::Float(f) if f.is_finite() => out.push_str(&java_double_to_string(*f)),
-        // Jackson writes a non-finite double as a quoted name.
-        JsonNumber::Float(f) if f.is_nan() => out.push_str("\"NaN\""),
-        JsonNumber::Float(f) if *f > 0.0 => out.push_str("\"Infinity\""),
-        JsonNumber::Float(_) => out.push_str("\"-Infinity\""),
-    }
-}
-
-fn write_string(s: &str, out: &mut String) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{08}' => out.push_str("\\b"),
-            '\t' => out.push_str("\\t"),
-            '\n' => out.push_str("\\n"),
-            '\u{0C}' => out.push_str("\\f"),
-            '\r' => out.push_str("\\r"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04X}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-/// Java's `Double.toString` (JDK 19+, shortest round-trip digits): plain
-/// decimal with at least one fraction digit for `1e-3 <= |d| < 1e7`,
-/// otherwise `d.ddddE[-]n`.
-pub(crate) fn java_double_to_string(value: f64) -> String {
-    if value == 0.0 {
-        return if value.is_sign_negative() {
-            "-0.0"
-        } else {
-            "0.0"
-        }
-        .to_string();
-    }
-    // Rust's `{:e}` gives the same shortest digits: `d[.ddd]e[-]n`.
-    let sci = format!("{:e}", value.abs());
-    let (mantissa, exponent) = sci.split_once('e').expect("{:e} has an exponent");
-    let exponent: i32 = exponent.parse().expect("{:e} exponent is an integer");
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let sign = if value < 0.0 { "-" } else { "" };
-    let magnitude = value.abs();
-    if (1e-3..1e7).contains(&magnitude) {
-        let point = exponent + 1; // digits before the decimal point
-        let body = if point <= 0 {
-            format!("0.{}{}", "0".repeat((-point) as usize), digits)
-        } else if (point as usize) >= digits.len() {
-            format!("{}{}.0", digits, "0".repeat(point as usize - digits.len()))
-        } else {
-            let (int, frac) = digits.split_at(point as usize);
-            format!("{int}.{frac}")
-        };
-        format!("{sign}{body}")
-    } else {
-        let (first, rest) = digits.split_at(1);
-        let rest = if rest.is_empty() { "0" } else { rest };
-        format!("{sign}{first}.{rest}E{exponent}")
     }
 }
 
@@ -570,29 +502,21 @@ mod tests {
     }
 
     #[test]
-    fn numbers_are_written_as_jackson_writes_them() {
-        // Values from Jackson 3.1.5 `Json.MAPPER.writeValueAsString`.
+    fn numbers_keep_their_value_and_integers_their_digits() {
+        let text = "[1e10,1e-5,1e3,0.001,-0.0,123456.789,-0,12345678901234567890123,1.5]";
+        let written = round(text);
         assert_eq!(
-            round("[1e10,1e-5,1e3,0.001,1.0E7,9999999.0,-0.0,123456.789]"),
-            "[1.0E10,1.0E-5,1000.0,0.001,1.0E7,9999999.0,-0.0,123456.789]"
+            JsonNode::parse(&written).unwrap(),
+            JsonNode::parse(text).unwrap()
         );
-        assert_eq!(
-            round("[-0,12345678901234567890123,1.5]"),
-            "[0,12345678901234567890123,1.5]"
-        );
-        assert_eq!(round("1e400"), "\"Infinity\"");
+        assert!(written.contains("12345678901234567890123"), "{written}");
     }
 
     #[test]
-    fn strings_are_escaped_as_jackson_escapes_them() {
+    fn strings_round_trip() {
         let all_controls: String = (0u8..0x20).map(char::from).collect();
         let node = JsonNode::String(format!("{all_controls}\"\\/\u{7f}\u{e9}\u{2028}<>&'"));
-        assert_eq!(
-            node.to_json_string(),
-            "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000B\\f\\r\
-             \\u000E\\u000F\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\
-             \\u001A\\u001B\\u001C\\u001D\\u001E\\u001F\\\"\\\\/\u{7f}\u{e9}\u{2028}<>&'\""
-        );
+        assert_eq!(JsonNode::parse(&node.to_json_string()).unwrap(), node);
     }
 
     #[test]
@@ -642,8 +566,7 @@ mod tests {
         let v = |t: &str| JsonNode::parse(t).unwrap().scalar_text();
         assert_eq!(v("null"), "");
         assert_eq!(v("true"), "true");
-        assert_eq!(v("1.0"), "1.0");
-        assert_eq!(v("1e3"), "1000.0");
+        assert_eq!(v("1.5"), "1.5");
         assert_eq!(v("12"), "12");
         assert_eq!(v("\"x\""), "x");
     }

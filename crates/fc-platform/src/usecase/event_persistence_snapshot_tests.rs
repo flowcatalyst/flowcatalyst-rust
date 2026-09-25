@@ -111,11 +111,9 @@ fn persisted<E: DomainEvent, C: Serialize + AuditMasked>(event: &E, command: &C)
 }
 
 #[track_caller]
-/// Compares as parsed JSON, not strings. Workspace builds unify
-/// `serde_json/preserve_order` in (declaration-order keys) while a
-/// `-p fc-platform` build sorts keys; the columns are JSONB, so key order is
-/// not part of what gets persisted. `Value` equality ignores map order in
-/// both modes but still checks every key, value and array position.
+/// Compares as parsed JSON, not strings: the columns are JSONB, so key order
+/// is not part of what gets persisted. `Value` equality ignores map order but
+/// still checks every key, value and array position.
 fn check<E: DomainEvent>(event: &E, expected: &str) {
     let actual = persisted(event, &CMD);
     let actual_json: serde_json::Value =

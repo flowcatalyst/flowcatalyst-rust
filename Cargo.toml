@@ -43,7 +43,13 @@ license = "AGPL-3.0-or-later"
 tokio = { version = "1.44", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `preserve_order` is on for every build, deliberately. bson (fc-outbox's
+# `mongo` feature, in fc-dev and fc-outbox-processor) turns it on and cannot
+# be told not to, so with it off here Cargo's feature unification would
+# decide per binary: on under fc-dev and `cargo test --workspace`, off in
+# fc-server and fc-router. On everywhere, CI tests what production ships.
+# Nothing depends on the order: `Value` maps just keep insertion order.
+serde_json = { version = "1.0", features = ["preserve_order"] }
 axum = "0.8"
 axum-extra = { version = "0.10", features = ["cookie"] }
 ## NOTE: `default-features = false` is load-bearing.

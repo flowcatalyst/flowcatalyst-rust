@@ -17,7 +17,7 @@
 //!   than failing, and failing only when `runtime` or `entrypoint` is
 //!   unreadable.
 //!
-//! [`Manifest::to_json`] writes the normalised stored form (every default
+//! `Manifest`'s `Serialize` writes the normalised stored form (every default
 //! filled in, lower-case `runtime`/`auth`, upper-case methods and modes,
 //! absent optionals omitted), so `read_stored(parse_strict(x).to_json())`
 //! gives back an equal manifest.
@@ -31,8 +31,6 @@
 //! Pointers are built the way Java builds them, key names unescaped.
 
 use std::collections::HashSet;
-
-use indexmap::IndexMap;
 
 use crate::dns_label::DnsLabel;
 use crate::endpoint_auth::EndpointAuth;
@@ -499,63 +497,11 @@ impl Manifest {
             .any(|e| e.auth == EndpointAuth::Webhook)
     }
 
-    /// The normalised stored form.
+    /// The normalised stored form, as a tree (see the [`serde::Serialize`]
+    /// impl for the JSON).
     pub fn to_json(&self) -> JsonNode {
-        let mut node = IndexMap::new();
-        node.insert(
-            "runtime".into(),
-            JsonNode::string(self.runtime.wire_value()),
-        );
-        node.insert("entrypoint".into(), JsonNode::string(&self.entrypoint));
-        node.insert("pool".into(), JsonNode::string(self.pool.value()));
-        node.insert("warm".into(), JsonNode::Bool(self.warm));
-        let mut limits = IndexMap::new();
-        limits.insert(
-            "maxDurationMs".into(),
-            JsonNode::int(self.limits.max_duration_ms.into()),
-        );
-        limits.insert(
-            "maxConcurrency".into(),
-            JsonNode::int(self.limits.max_concurrency.into()),
-        );
-        if let Some(mb) = self.limits.wasm_memory_mb {
-            limits.insert("wasmMemoryMb".into(), JsonNode::int(mb.into()));
-        }
-        node.insert("limits".into(), JsonNode::Object(limits));
-        node.insert(
-            "endpoints".into(),
-            JsonNode::Array(self.endpoints.iter().map(endpoint_to_json).collect()),
-        );
-        node.insert(
-            "subscriptions".into(),
-            JsonNode::Array(
-                self.subscriptions
-                    .iter()
-                    .map(subscription_to_json)
-                    .collect(),
-            ),
-        );
-        node.insert(
-            "schedules".into(),
-            JsonNode::Array(self.schedules.iter().map(schedule_to_json).collect()),
-        );
-        node.insert(
-            "public".into(),
-            JsonNode::Array(
-                self.public_routes
-                    .iter()
-                    .map(public_route_to_json)
-                    .collect(),
-            ),
-        );
-        node.insert("config".into(), strings(&self.config));
-        node.insert("secrets".into(), strings(&self.secrets));
-        node.insert(
-            "db".into(),
-            JsonNode::Array(self.db.iter().map(db_ref_to_json).collect()),
-        );
-        node.insert("httpAllow".into(), strings(&self.http_allow));
-        JsonNode::Object(node)
+        let text = serde_json::to_string(self).expect("a manifest always serialises");
+        JsonNode::parse(&text).expect("serde_json writes valid JSON")
     }
 }
 
@@ -2101,94 +2047,174 @@ fn read_setting_key_list(root: &JsonNode, key: &str) -> Vec<String> {
         .collect()
 }
 
-// ── to_json ─────────────────────────────────────────────────────────────
+// ── the stored form ─────────────────────────────────────────────────────
 
-fn strings(values: &[String]) -> JsonNode {
-    JsonNode::Array(values.iter().map(JsonNode::string).collect())
+/// The normalised stored form: every default filled in, lower-case
+/// `runtime`/`auth`, upper-case methods and modes, absent optionals omitted.
+/// Keys are written in field order, so one manifest always gives the same
+/// bytes.
+impl serde::Serialize for Manifest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let m = self;
+        ManifestWire {
+            runtime: m.runtime.wire_value(),
+            entrypoint: &m.entrypoint,
+            pool: m.pool.value(),
+            warm: m.warm,
+            limits: LimitsWire {
+                max_duration_ms: m.limits.max_duration_ms,
+                max_concurrency: m.limits.max_concurrency,
+                wasm_memory_mb: m.limits.wasm_memory_mb,
+            },
+            endpoints: m
+                .endpoints
+                .iter()
+                .map(|e| EndpointWire {
+                    path: e.path.value(),
+                    auth: e.auth.wire_value(),
+                    methods: e.methods.iter().map(|m| m.as_str()).collect(),
+                    cors: e.cors.as_ref().map(|c| CorsWire {
+                        origins: &c.origins,
+                        methods: &c.methods,
+                        headers: &c.headers,
+                        allow_credentials: c.allow_credentials,
+                    }),
+                    max_body_bytes: e.max_body_bytes,
+                    timeout_ms: e.timeout_ms,
+                })
+                .collect(),
+            subscriptions: m
+                .subscriptions
+                .iter()
+                .map(|s| SubscriptionWire {
+                    event_type: &s.event_type,
+                    path: s.path.value(),
+                    mode: s.mode.as_str(),
+                    max_retries: s.max_retries,
+                    timeout_seconds: s.timeout_seconds,
+                    data_only: s.data_only,
+                })
+                .collect(),
+            schedules: m
+                .schedules
+                .iter()
+                .map(|s| ScheduleWire {
+                    cron: &s.cron,
+                    timezone: s.timezone.as_deref(),
+                    path: s.path.value(),
+                    payload: s.payload.as_ref(),
+                })
+                .collect(),
+            public_routes: m
+                .public_routes
+                .iter()
+                .map(|r| PublicRouteWire {
+                    hostname: r.hostname.value(),
+                    path_prefix: r.path_prefix.value(),
+                    alias_prefixes: &r.alias_prefixes,
+                })
+                .collect(),
+            config: &m.config,
+            secrets: &m.secrets,
+            db: m
+                .db
+                .iter()
+                .map(|d| DbRefWire {
+                    name: d.name.value(),
+                    secret_ref: &d.secret_ref,
+                    pool_size: d.pool_size,
+                })
+                .collect(),
+            http_allow: &m.http_allow,
+        }
+        .serialize(serializer)
+    }
 }
 
-fn endpoint_to_json(endpoint: &Endpoint) -> JsonNode {
-    let mut node = IndexMap::new();
-    node.insert("path".into(), JsonNode::string(endpoint.path.value()));
-    node.insert("auth".into(), JsonNode::string(endpoint.auth.wire_value()));
-    if !endpoint.methods.is_empty() {
-        node.insert(
-            "methods".into(),
-            JsonNode::Array(
-                endpoint
-                    .methods
-                    .iter()
-                    .map(|m| JsonNode::string(m.as_str()))
-                    .collect(),
-            ),
-        );
-    }
-    if let Some(cors) = &endpoint.cors {
-        let mut c = IndexMap::new();
-        c.insert("origins".into(), strings(&cors.origins));
-        c.insert("methods".into(), strings(&cors.methods));
-        c.insert("headers".into(), strings(&cors.headers));
-        c.insert(
-            "allowCredentials".into(),
-            JsonNode::Bool(cors.allow_credentials),
-        );
-        node.insert("cors".into(), JsonNode::Object(c));
-    }
-    node.insert(
-        "maxBodyBytes".into(),
-        JsonNode::int(endpoint.max_body_bytes.into()),
-    );
-    node.insert(
-        "timeoutMs".into(),
-        JsonNode::int(endpoint.timeout_ms.into()),
-    );
-    JsonNode::Object(node)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManifestWire<'a> {
+    runtime: &'a str,
+    entrypoint: &'a str,
+    pool: &'a str,
+    warm: bool,
+    limits: LimitsWire,
+    endpoints: Vec<EndpointWire<'a>>,
+    subscriptions: Vec<SubscriptionWire<'a>>,
+    schedules: Vec<ScheduleWire<'a>>,
+    #[serde(rename = "public")]
+    public_routes: Vec<PublicRouteWire<'a>>,
+    config: &'a [String],
+    secrets: &'a [String],
+    db: Vec<DbRefWire<'a>>,
+    http_allow: &'a [String],
 }
 
-fn subscription_to_json(spec: &SubscriptionSpec) -> JsonNode {
-    let mut node = IndexMap::new();
-    node.insert("eventType".into(), JsonNode::string(&spec.event_type));
-    node.insert("path".into(), JsonNode::string(spec.path.value()));
-    node.insert("mode".into(), JsonNode::string(spec.mode.as_str()));
-    node.insert("maxRetries".into(), JsonNode::int(spec.max_retries.into()));
-    node.insert(
-        "timeoutSeconds".into(),
-        JsonNode::int(spec.timeout_seconds.into()),
-    );
-    node.insert("dataOnly".into(), JsonNode::Bool(spec.data_only));
-    JsonNode::Object(node)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LimitsWire {
+    max_duration_ms: i32,
+    max_concurrency: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wasm_memory_mb: Option<i32>,
 }
 
-fn schedule_to_json(spec: &ScheduleSpec) -> JsonNode {
-    let mut node = IndexMap::new();
-    node.insert("cron".into(), JsonNode::string(&spec.cron));
-    if let Some(tz) = &spec.timezone {
-        node.insert("timezone".into(), JsonNode::string(tz));
-    }
-    node.insert("path".into(), JsonNode::string(spec.path.value()));
-    if let Some(payload) = &spec.payload {
-        node.insert("payload".into(), payload.clone());
-    }
-    JsonNode::Object(node)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EndpointWire<'a> {
+    path: &'a str,
+    auth: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    methods: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cors: Option<CorsWire<'a>>,
+    max_body_bytes: i32,
+    timeout_ms: i32,
 }
 
-fn public_route_to_json(route: &PublicRoute) -> JsonNode {
-    let mut node = IndexMap::new();
-    node.insert("hostname".into(), JsonNode::string(route.hostname.value()));
-    node.insert(
-        "pathPrefix".into(),
-        JsonNode::string(route.path_prefix.value()),
-    );
-    if !route.alias_prefixes.is_empty() {
-        node.insert("aliasPrefixes".into(), strings(&route.alias_prefixes));
-    }
-    JsonNode::Object(node)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CorsWire<'a> {
+    origins: &'a [String],
+    methods: &'a [String],
+    headers: &'a [String],
+    allow_credentials: bool,
 }
 
-fn db_ref_to_json(db: &DbRef) -> JsonNode {
-    let mut node = IndexMap::new();
-    node.insert("name".into(), JsonNode::string(db.name.value()));
-    node.insert("secretRef".into(), JsonNode::string(&db.secret_ref));
-    node.insert("poolSize".into(), JsonNode::int(db.pool_size.into()));
-    JsonNode::Object(node)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubscriptionWire<'a> {
+    event_type: &'a str,
+    path: &'a str,
+    mode: &'a str,
+    max_retries: i32,
+    timeout_seconds: i32,
+    data_only: bool,
+}
+
+#[derive(serde::Serialize)]
+struct ScheduleWire<'a> {
+    cron: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timezone: Option<&'a str>,
+    path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<&'a JsonNode>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicRouteWire<'a> {
+    hostname: &'a str,
+    path_prefix: &'a str,
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    alias_prefixes: &'a [String],
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DbRefWire<'a> {
+    name: &'a str,
+    secret_ref: &'a str,
+    pool_size: i32,
 }

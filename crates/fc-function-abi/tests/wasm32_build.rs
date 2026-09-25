@@ -1,5 +1,5 @@
 //! The crate is shared with WASM guests, so it must build for
-//! `wasm32-unknown-unknown`, with and without the `extism-abi` feature.
+//! `wasm32-unknown-unknown`.
 //! Skipped (with a note) when that target's standard library is not
 //! installed. Uses its own target directory, so it never waits on the lock
 //! of the build running this test.
@@ -31,27 +31,24 @@ fn builds_for_wasm32_unknown_unknown() {
     }
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let target_dir = manifest_dir.join("../../target/wasm32-check");
-    for features in [&[][..], &["--no-default-features"][..]] {
-        let output = Command::new(env!("CARGO"))
-            .current_dir(manifest_dir)
-            .args([
-                "build",
-                "--quiet",
-                "--lib",
-                "--target",
-                TARGET,
-                "-p",
-                "fc-function-abi",
-            ])
-            .args(features)
-            .arg("--target-dir")
-            .arg(&target_dir)
-            .output()
-            .expect("run cargo");
-        assert!(
-            output.status.success(),
-            "cargo build --target {TARGET} {features:?} failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    let output = Command::new(env!("CARGO"))
+        .current_dir(manifest_dir)
+        .args([
+            "build",
+            "--quiet",
+            "--lib",
+            "--target",
+            TARGET,
+            "-p",
+            "fc-function-abi",
+        ])
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .output()
+        .expect("run cargo");
+    assert!(
+        output.status.success(),
+        "cargo build --target {TARGET} failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

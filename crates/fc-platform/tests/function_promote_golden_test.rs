@@ -8,7 +8,7 @@
 //!   stores it and walked by the Rust scheduler's own reader, fires at the
 //!   instants Java's `CronExpression.next` gives, in region and fixed-offset
 //!   zones, across a daylight-saving gap;
-//! - the `plan` of `manifest/check`, byte for byte
+//! - the `plan` of `manifest/check`, as a JSON value
 //!   (`FunctionApi.PromotePlanResponse`);
 //! - delivery signing: the platform's signer gives Java `WebhookSigner`'s
 //!   bytes, and what both deliveries send passes the function host's own
@@ -306,14 +306,15 @@ fn plans() -> Vec<(&'static str, PromotePlan)> {
 }
 
 #[test]
-fn the_plan_is_javas_bytes() {
+fn the_plan_is_javas() {
     let golden = golden();
     let java = golden["plans"].as_object().unwrap();
     let plans = plans();
     assert_eq!(plans.len(), java.len());
     for (name, plan) in plans {
-        let rust = serde_json::to_string(&PromotePlanResponse::of(&plan)).unwrap();
-        assert_eq!(rust, java[name].as_str().unwrap(), "{name}");
+        let rust = serde_json::to_value(PromotePlanResponse::of(&plan)).unwrap();
+        let java: Value = serde_json::from_str(java[name].as_str().unwrap()).unwrap();
+        assert_eq!(rust, java, "{name}");
     }
 }
 

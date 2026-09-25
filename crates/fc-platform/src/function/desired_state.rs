@@ -6,12 +6,13 @@
 //! `If-None-Match`, and the `ETag` is the sha256 of the body, so one database
 //! state must always serialise to the same bytes: `functions` is sorted by
 //! `(address, version)`, `unload` likewise, `publicRoutes` by
-//! `(hostname, pathPrefix)`; `config` and `secrets` are key-ordered maps; and
-//! the document is written by [`JsonNode`]'s Jackson-compatible writer with
-//! Java's record key order, `null` members omitted (`Json.MAPPER`'s
-//! `NON_ABSENT`). Nothing here depends on row or hash-map order. The golden
-//! test (`tests/function_desired_state_golden_test.rs`) holds these bytes to
-//! the bytes Java's own `DesiredState` writes for the same rows.
+//! `(hostname, pathPrefix)`; `config` and `secrets` are key-ordered maps; the
+//! manifest is written in its own field order; and the document is serde's,
+//! in field order, `null` members omitted (`Json.MAPPER`'s `NON_ABSENT`).
+//! Nothing here depends on row or hash-map order. The ETag is opaque to the
+//! hosts (they store and echo it), so it need not equal Java's; the golden
+//! test (`tests/function_desired_state_golden_test.rs`) holds the document's
+//! content to what Java's own `DesiredState` writes for the same rows.
 //!
 //! What a pool's document holds, per `ACTIVE` function:
 //! - its `live` version, when that version's own manifest names the pool
@@ -40,6 +41,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use indexmap::{IndexMap, IndexSet};
+use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
 use super::entity::{Function, FunctionHost, FunctionStatus, FunctionVersion, SignerIdentity};
@@ -53,7 +55,8 @@ use crate::service_account::outbound_credentials::OutboundCredentialsResolver;
 use crate::shared::error::PlatformError;
 
 /// What one entry is to the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     Live,
     Candidate,
@@ -72,7 +75,8 @@ impl Role {
 
 /// One `functions` entry (Java `DesiredState.FunctionEntry`). `Debug` masks
 /// the signing secret and the secret values, as Java's `toString`.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FunctionEntry {
     pub address: String,
     pub function_id: String,
@@ -83,17 +87,21 @@ pub struct FunctionEntry {
     pub mode: &'static str,
     pub digest: String,
     pub artifact_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_bundle: Option<String>,
     /// The stored, normalised manifest.
     pub manifest: JsonNode,
     /// `None` when the version was published with signatures off.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub signer: Option<SignerIdentity>,
     /// Present only for a version with a `webhook` endpoint whose
     /// application has an active service account with a signing secret.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook_signing_secret: Option<String>,
     /// Always carried, a platform-owned function's too.
     pub application_id: String,
     /// `None` for a platform-owned function.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     /// The version's declared config keys that have a value.
     pub config: BTreeMap<String, String>,
@@ -140,14 +148,15 @@ impl fmt::Debug for FunctionEntry {
 }
 
 /// One `unload` entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct UnloadEntry {
     pub address: String,
     pub version: i32,
 }
 
 /// One `publicRoutes` entry: `{hostname, pathPrefix, address, aliasPrefixes}`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PublicRouteEntry {
     pub hostname: String,
     pub path_prefix: String,
@@ -156,7 +165,8 @@ pub struct PublicRouteEntry {
 }
 
 /// The whole document (Java `DesiredState.Document`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Document {
     pub pool: String,
     pub functions: Vec<FunctionEntry>,
@@ -164,104 +174,11 @@ pub struct Document {
     pub public_routes: Vec<PublicRouteEntry>,
 }
 
-fn strings(values: &[String]) -> JsonNode {
-    JsonNode::Array(values.iter().map(JsonNode::string).collect())
-}
-
-fn string_map(values: &BTreeMap<String, String>) -> JsonNode {
-    JsonNode::Object(
-        values
-            .iter()
-            .map(|(k, v)| (k.clone(), JsonNode::string(v)))
-            .collect(),
-    )
-}
-
-impl FunctionEntry {
-    /// Java's record component order; an absent optional is omitted.
-    fn to_json(&self) -> JsonNode {
-        let mut o = IndexMap::new();
-        o.insert("address".into(), JsonNode::string(&self.address));
-        o.insert("functionId".into(), JsonNode::string(&self.function_id));
-        o.insert("versionId".into(), JsonNode::string(&self.version_id));
-        o.insert("version".into(), JsonNode::int(i64::from(self.version)));
-        o.insert("role".into(), JsonNode::string(self.role.as_str()));
-        o.insert("mode".into(), JsonNode::string(self.mode));
-        o.insert("digest".into(), JsonNode::string(&self.digest));
-        o.insert("artifactRef".into(), JsonNode::string(&self.artifact_ref));
-        if let Some(bundle) = &self.signature_bundle {
-            o.insert("signatureBundle".into(), JsonNode::string(bundle));
-        }
-        o.insert("manifest".into(), self.manifest.clone());
-        if let Some(signer) = &self.signer {
-            let mut s = IndexMap::new();
-            s.insert("issuer".into(), JsonNode::string(&signer.issuer));
-            s.insert("subject".into(), JsonNode::string(&signer.subject));
-            o.insert("signer".into(), JsonNode::Object(s));
-        }
-        if let Some(secret) = &self.webhook_signing_secret {
-            o.insert("webhookSigningSecret".into(), JsonNode::string(secret));
-        }
-        o.insert(
-            "applicationId".into(),
-            JsonNode::string(&self.application_id),
-        );
-        if let Some(client_id) = &self.client_id {
-            o.insert("clientId".into(), JsonNode::string(client_id));
-        }
-        o.insert("config".into(), string_map(&self.config));
-        o.insert("secrets".into(), string_map(&self.secrets));
-        o.insert("missingSettings".into(), strings(&self.missing_settings));
-        o.insert("aliases".into(), strings(&self.aliases));
-        JsonNode::Object(o)
-    }
-}
-
 impl Document {
-    pub fn to_json(&self) -> JsonNode {
-        let mut o = IndexMap::new();
-        o.insert("pool".into(), JsonNode::string(&self.pool));
-        o.insert(
-            "functions".into(),
-            JsonNode::Array(self.functions.iter().map(FunctionEntry::to_json).collect()),
-        );
-        o.insert(
-            "unload".into(),
-            JsonNode::Array(
-                self.unload
-                    .iter()
-                    .map(|u| {
-                        let mut e = IndexMap::new();
-                        e.insert("address".into(), JsonNode::string(&u.address));
-                        e.insert("version".into(), JsonNode::int(i64::from(u.version)));
-                        JsonNode::Object(e)
-                    })
-                    .collect(),
-            ),
-        );
-        o.insert(
-            "publicRoutes".into(),
-            JsonNode::Array(
-                self.public_routes
-                    .iter()
-                    .map(|r| {
-                        let mut e = IndexMap::new();
-                        e.insert("hostname".into(), JsonNode::string(&r.hostname));
-                        e.insert("pathPrefix".into(), JsonNode::string(&r.path_prefix));
-                        e.insert("address".into(), JsonNode::string(&r.address));
-                        e.insert("aliasPrefixes".into(), strings(&r.alias_prefixes));
-                        JsonNode::Object(e)
-                    })
-                    .collect(),
-            ),
-        );
-        JsonNode::Object(o)
-    }
-
     /// The response body: serialised once, so the `ETag` hashes exactly
     /// the bytes a 200 returns.
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.to_json().to_json_string().into_bytes()
+        serde_json::to_vec(self).expect("a desired-state document always serialises")
     }
 }
 
@@ -706,6 +623,90 @@ mod tests {
         );
     }
 
+    fn document() -> Document {
+        Document {
+            pool: "edge".into(),
+            functions: vec![entry()],
+            unload: vec![UnloadEntry {
+                address: "a.b.old".into(),
+                version: 2,
+            }],
+            public_routes: vec![PublicRouteEntry {
+                hostname: "a.example.com".into(),
+                path_prefix: "/".into(),
+                address: "a.b.c".into(),
+                alias_prefixes: vec!["qa".into()],
+            }],
+        }
+    }
+
+    /// The ETag is opaque to the hosts: what matters is that the same state
+    /// always gives the same one and any change gives another.
+    #[test]
+    fn the_same_document_gives_the_same_etag_and_any_change_another() {
+        let tag = |d: &Document| etag(&d.to_bytes());
+        let base = tag(&document());
+        assert_eq!(tag(&document()), base, "the same state, the same ETag");
+
+        type Change = fn(&mut Document);
+        let changes: &[(&str, Change)] = &[
+            ("pool", |d| d.pool = "other".into()),
+            ("address", |d| d.functions[0].address = "a.b.d".into()),
+            ("functionId", |d| {
+                d.functions[0].function_id = "fnc_2".into()
+            }),
+            ("versionId", |d| d.functions[0].version_id = "fnv_2".into()),
+            ("version", |d| d.functions[0].version = 2),
+            ("role", |d| d.functions[0].role = Role::Candidate),
+            ("mode", |d| d.functions[0].mode = "warm"),
+            ("digest", |d| d.functions[0].digest = "sha256:01".into()),
+            ("artifactRef", |d| {
+                d.functions[0].artifact_ref = "oci://y".into()
+            }),
+            ("signatureBundle", |d| {
+                d.functions[0].signature_bundle = None
+            }),
+            ("manifest", |d| {
+                d.functions[0].manifest = JsonNode::parse(r#"{"warm":true}"#).unwrap()
+            }),
+            ("signer", |d| {
+                d.functions[0].signer = Some(SignerIdentity::new("https://issuer", "sub"))
+            }),
+            ("webhookSigningSecret", |d| {
+                d.functions[0].webhook_signing_secret = Some("other".into())
+            }),
+            ("applicationId", |d| {
+                d.functions[0].application_id = "app_2".into()
+            }),
+            ("clientId", |d| {
+                d.functions[0].client_id = Some("clt_1".into())
+            }),
+            ("config", |d| {
+                d.functions[0]
+                    .config
+                    .insert("PLAIN".into(), "changed".into());
+            }),
+            ("secrets", |d| {
+                d.functions[0]
+                    .secrets
+                    .insert("API_KEY".into(), "rotated".into());
+            }),
+            ("missingSettings", |d| {
+                d.functions[0].missing_settings.push("X".into())
+            }),
+            ("aliases", |d| d.functions[0].aliases.push("qa".into())),
+            ("unload", |d| d.unload[0].version = 3),
+            ("publicRoutes", |d| {
+                d.public_routes[0].alias_prefixes.clear()
+            }),
+        ];
+        for (field, change) in changes {
+            let mut d = document();
+            change(&mut d);
+            assert_ne!(tag(&d), base, "{field}");
+        }
+    }
+
     #[test]
     fn the_etag_is_the_quoted_sha256_of_the_body() {
         assert_eq!(
@@ -752,13 +753,14 @@ mod tests {
         e.signature_bundle = None;
         e.webhook_signing_secret = None;
         e.secrets.clear();
-        let json = e.to_json().to_json_string();
         assert_eq!(
-            json,
-            "{\"address\":\"a.b.c\",\"functionId\":\"fnc_1\",\"versionId\":\"fnv_1\",\"version\":1,\
-             \"role\":\"live\",\"mode\":\"lazy\",\"digest\":\"sha256:00\",\"artifactRef\":\"oci://x\",\
-             \"manifest\":{},\"applicationId\":\"app_1\",\"config\":{\"PLAIN\":\"shown\"},\
-             \"secrets\":{},\"missingSettings\":[],\"aliases\":[]}"
+            serde_json::to_value(&e).unwrap(),
+            serde_json::json!({
+                "address": "a.b.c", "functionId": "fnc_1", "versionId": "fnv_1", "version": 1,
+                "role": "live", "mode": "lazy", "digest": "sha256:00", "artifactRef": "oci://x",
+                "manifest": {}, "applicationId": "app_1", "config": {"PLAIN": "shown"},
+                "secrets": {}, "missingSettings": [], "aliases": []
+            })
         );
     }
 }

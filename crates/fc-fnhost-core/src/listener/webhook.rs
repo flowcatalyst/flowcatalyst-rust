@@ -68,7 +68,7 @@ fn matches(body: &[u8], signature: &str, timestamp: &str, secret: &str) -> bool 
 }
 
 /// Epoch seconds from a bare integer (backward compatibility), else an
-/// ISO-8601 instant (`Instant.parse`; the platform sends
+/// RFC 3339 instant (`Timestamp::parse`; the platform sends
 /// `yyyy-MM-ddTHH:mm:ss.SSSZ`).
 fn parse_timestamp(raw: &str) -> Option<i64> {
     if raw.bytes().all(|b| b.is_ascii_digit()) {

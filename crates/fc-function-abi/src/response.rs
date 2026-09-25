@@ -63,22 +63,21 @@ impl Response {
     }
 
     /// The invocation failed: `500`, `Content-Type: application/json` and
-    /// `{"error":"<reason>"}`, the reason escaped as Java's `JsonEscape`
-    /// does (every non-ASCII code unit as `\uXXXX`).
+    /// `{"error":"<reason>"}`.
     ///
     /// Errors when `reason` is blank (Java's `String.isBlank`).
     pub fn fail(reason: &str) -> Result<Self, InvalidArgument> {
         if java::is_blank(reason) {
             return Err(InvalidArgument("reason must not be blank".into()));
         }
-        let mut json = String::with_capacity(reason.len() + 12);
-        json.push_str("{\"error\":\"");
-        java::json_escape_ascii(reason, &mut json);
-        json.push_str("\"}");
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            error: &'a str,
+        }
         Ok(Self {
             status: 500,
             headers: content_type_json(),
-            body: json.into_bytes(),
+            body: serde_json::to_vec(&Body { error: reason }).expect("a string always serialises"),
         })
     }
 
@@ -249,9 +248,10 @@ mod tests {
     }
 
     #[test]
-    fn fail_escapes_non_ascii_as_unicode_escapes() {
+    fn fail_carries_non_ascii_reasons() {
         let r = Response::fail("caf\u{e9} \u{2603}").unwrap();
-        assert_eq!(body(&r), "{\"error\":\"caf\\u00e9 \\u2603\"}");
+        let v: serde_json::Value = serde_json::from_slice(r.body()).unwrap();
+        assert_eq!(v, serde_json::json!({"error": "caf\u{e9} \u{2603}"}));
     }
 
     #[test]

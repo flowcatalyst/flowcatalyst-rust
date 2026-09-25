@@ -11,7 +11,7 @@ fc-common = { path = "../fc-common" }
 fc-queue = { path = "../fc-queue" }
 # FunctionAddress, shared with the function host and the guest PDK. Without
 # the Extism envelope, which is the host's business.
-fc-function-abi = { path = "../fc-function-abi", default-features = false }
+fc-function-abi = { path = "../fc-function-abi" }
 # The manifest and the function value types, shared with the function host.
 fc-function-model = { path = "../fc-function-model" }
 # Sigstore verification of a published version's signature bundle.

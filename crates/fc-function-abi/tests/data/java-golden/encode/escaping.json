@@ -1,1 +1,0 @@
-{"address":"b-1.inv-2.c-3","version":2147483647,"invocationId":"","method":"","path":"/a\"b\\c/d\u0001\u001F\b\t\n\f\r é😀  <>&'","originalHost":"héllo.example","originalPath":"","pathParams":{"p":" "},"query":{"k/ey":["/"]},"headers":{"X-Ctl\u0000":["v\u001B"]},"bodyBase64":"QQ==","remoteAddress":"::1","caller":{"kind":"anonymous"}}

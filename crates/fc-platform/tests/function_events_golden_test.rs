@@ -3,7 +3,8 @@
 //! (`tests/java/io/flowcatalyst/platform/function/operations/FunctionEventsGoldenGen.java`)
 //! over fixed aggregates. The Rust events built from the same aggregates
 //! must carry the same type, source, spec version, subject and message
-//! group, and serialise to byte-identical `data`.
+//! group, and the same `data` (compared as JSON values: `msg_events.data`
+//! is JSONB, so key order and number spelling are not part of it).
 
 use std::path::Path;
 
@@ -252,7 +253,7 @@ fn rust_events() -> Vec<(&'static str, Builder)> {
 }
 
 #[test]
-fn every_event_matches_javas_envelope_and_data_bytes() {
+fn every_event_matches_javas_envelope_and_data() {
     let golden = golden();
     let expected = golden["events"].as_array().unwrap();
     let actual = rust_events();
@@ -289,7 +290,11 @@ fn every_event_matches_javas_envelope_and_data_bytes() {
             want["messageGroup"].as_str().unwrap(),
             "{case}: message group"
         );
-        assert_eq!(data, want["data"].as_str().unwrap(), "{case}: data bytes");
+        assert_eq!(
+            serde_json::from_str::<Value>(&data).unwrap(),
+            serde_json::from_str::<Value>(want["data"].as_str().unwrap()).unwrap(),
+            "{case}: data"
+        );
     }
 }
 
