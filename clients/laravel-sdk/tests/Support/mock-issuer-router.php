@@ -68,6 +68,23 @@ if ($path === '/oauth/token' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     } elseif ($grant === 'refresh_token') {
         $refreshToken = (string) ($params['refresh_token'] ?? '');
         $response = $state['refresh'][$refreshToken] ?? null;
+        if ($response === null) {
+            // Single-use tokens (MockIssuer::queueRefreshTokenOnce): consumed under a lock.
+            $fh = fopen($stateFile, 'c+');
+            if ($fh !== false && flock($fh, LOCK_EX)) {
+                $raw = stream_get_contents($fh);
+                $locked = is_string($raw) ? json_decode($raw, true) : null;
+                if (is_array($locked) && isset($locked['refresh_once'][$refreshToken])) {
+                    $response = $locked['refresh_once'][$refreshToken];
+                    unset($locked['refresh_once'][$refreshToken]);
+                    ftruncate($fh, 0);
+                    rewind($fh);
+                    fwrite($fh, (string) json_encode($locked));
+                }
+                flock($fh, LOCK_UN);
+                fclose($fh);
+            }
+        }
     }
 
     if ($response === null) {

@@ -28,6 +28,15 @@ incompatibly.
   top-level fields to mask. `OutboxUnitOfWork` honours it.
 
 ### Changed
+- The OIDC session refresh (`TokenRefresher`, used by the refresh route and
+  `AuthenticateFc`'s automatic refresh) is single-flight (owner ruling 5 of
+  2026-09-25). The platform rotates refresh tokens and revokes the whole
+  family when a rotated-out token is presented again (beyond a 10 s
+  leeway). One exchange now runs per refresh token under a cache lock
+  across PHP workers, and its token set is kept encrypted in the cache for
+  10 s so concurrent requests of the same session reuse it. A cache store
+  without locks still gets the memo. Use a shared cache store (redis,
+  memcached, database) for this to hold across servers.
 - `Router::inPipeline()` / `inPipelineBatch()` send the platform bearer
   token (the client's token provider) to the router. Today's routers ignore
   it; a router that enforces platform tokens (owner ruling 2 of 2026-09-25)

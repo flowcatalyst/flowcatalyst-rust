@@ -134,6 +134,18 @@ final class MockIssuer
         });
     }
 
+    /**
+     * Like {@see queueRefreshToken()}, but single-use, as a rotating issuer is: the
+     * first exchange of `$refreshToken` consumes it, and any later one answers 400
+     * `invalid_grant`.
+     */
+    public function queueRefreshTokenOnce(string $refreshToken, array $tokenResponseBody): void
+    {
+        $this->mutateState(function (array &$state) use ($refreshToken, $tokenResponseBody): void {
+            $state['refresh_once'][$refreshToken] = $tokenResponseBody;
+        });
+    }
+
     private function mutateState(callable $mutator): void
     {
         $fh = fopen($this->stateFile, 'c+');
