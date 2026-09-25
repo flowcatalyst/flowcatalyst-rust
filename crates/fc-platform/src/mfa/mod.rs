@@ -17,6 +17,7 @@
 //! `2FA_RECOVERY_REGENERATED`, `2FA_RESET_BY_ADMIN`) that [`audit`] writes.
 
 pub mod account_api;
+pub mod admin_api;
 pub mod audit;
 pub mod crypto;
 pub mod entity;
@@ -29,6 +30,7 @@ pub mod service;
 pub mod token;
 
 pub use account_api::{account_router, AccountState};
+pub use admin_api::two_factor_admin_router;
 pub use login_api::{two_factor_login_router, TwoFactorLogin};
 pub use policy::TwoFactorPolicy;
 pub use repository::MfaRepository;

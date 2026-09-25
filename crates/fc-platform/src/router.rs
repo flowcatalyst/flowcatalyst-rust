@@ -400,6 +400,11 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(PATH_API_CLIENTS, clients_router(self.clients))
             .nest(PATH_API_PRINCIPALS, principals_router(self.principals))
+            .nest(
+                PATH_API_PRINCIPALS,
+                crate::mfa::two_factor_admin_router(self.two_factor.clone()),
+            )
+
             .nest(PATH_API_ROLES, roles_router(self.roles))
             .nest(
                 PATH_API_SUBSCRIPTIONS,
