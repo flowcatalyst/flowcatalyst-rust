@@ -38,6 +38,13 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 utoipa-axum = { workspace = true }
 
+[dev-dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+
 [features]
 default = []
 alb = ["fc-router/alb"]
