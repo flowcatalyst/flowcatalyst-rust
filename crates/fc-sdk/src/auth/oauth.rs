@@ -256,10 +256,7 @@ impl OAuthClient {
             let mut slots = self.refreshes.lock().unwrap_or_else(|e| e.into_inner());
             let now = Instant::now();
             slots.retain(|_, slot| !slot.is_spent(now));
-            slots
-                .entry(refresh_token.to_string())
-                .or_default()
-                .clone()
+            slots.entry(refresh_token.to_string()).or_default().clone()
         };
         let (outcome, _) = slot
             .outcome
@@ -291,7 +288,10 @@ impl OAuthClient {
     }
 
     /// One `refresh_token` grant against `/oauth/token`.
-    async fn exchange_refresh_token(&self, refresh_token: &str) -> Result<TokenResponse, AuthError> {
+    async fn exchange_refresh_token(
+        &self,
+        refresh_token: &str,
+    ) -> Result<TokenResponse, AuthError> {
         let base = self.config.issuer_url.trim_end_matches('/');
         let url = format!("{}/oauth/token", base);
 
@@ -774,13 +774,24 @@ mod tests {
             ..OAuthConfig::default()
         });
 
-        let (a, b) = tokio::join!(client.refresh_token("rt-old"), client.refresh_token("rt-old"));
+        let (a, b) = tokio::join!(
+            client.refresh_token("rt-old"),
+            client.refresh_token("rt-old")
+        );
         let (a, b) = (a.unwrap(), b.unwrap());
-        assert_eq!(requests.load(Ordering::SeqCst), 1, "joined the in-flight exchange");
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "joined the in-flight exchange"
+        );
         assert_eq!(a.access_token, b.access_token);
 
         let c = client.refresh_token("rt-old").await.unwrap();
-        assert_eq!(requests.load(Ordering::SeqCst), 1, "reused the result just after");
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            1,
+            "reused the result just after"
+        );
         assert_eq!(c.refresh_token, a.refresh_token);
 
         client.refresh_token("rt-other").await.unwrap();
