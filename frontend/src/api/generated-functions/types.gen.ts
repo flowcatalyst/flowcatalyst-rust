@@ -255,6 +255,10 @@ export type VersionResponse = {
 
 export type PromoteRequest = {
     version: number;
+    /**
+     * Optional precondition: the version the alias points at now (0: none yet). A mismatch is 412 ALIAS_VERSION_CONFLICT and writes nothing.
+     */
+    expectedVersion?: number;
 };
 
 export type PromoteResponse = {
@@ -1121,6 +1125,12 @@ export type DeleteFunctionAliasResponse = DeleteFunctionAliasResponses[keyof Del
 
 export type PromoteFunctionAliasData = {
     body: PromoteRequest;
+    headers?: {
+        /**
+         * Optional precondition, the same as the body's `expectedVersion`: the version number the alias points at now (`3`, `"3"` or `W/"3"`; `0` for none). A mismatch is 412 ALIAS_VERSION_CONFLICT; a value that is not a version number is 400 IF_MATCH_INVALID, and one that disagrees with `expectedVersion` 400 EXPECTED_VERSION_CONFLICT.
+         */
+        'If-Match'?: string;
+    };
     path: {
         /**
          * the function's `application.service.name` address
@@ -1137,7 +1147,7 @@ export type PromoteFunctionAliasData = {
 
 export type PromoteFunctionAliasErrors = {
     /**
-     * ALIAS_INVALID
+     * ALIAS_INVALID, IF_MATCH_INVALID, EXPECTED_VERSION_CONFLICT
      */
     400: ErrorResponse;
     /**
@@ -1152,6 +1162,10 @@ export type PromoteFunctionAliasErrors = {
      * VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, SETTINGS_MISSING
      */
     409: ErrorResponse;
+    /**
+     * ALIAS_VERSION_CONFLICT: expectedVersion / If-Match no longer names the alias's version (details: alias, expectedVersion, currentVersion)
+     */
+    412: ErrorResponse;
 };
 
 export type PromoteFunctionAliasError = PromoteFunctionAliasErrors[keyof PromoteFunctionAliasErrors];

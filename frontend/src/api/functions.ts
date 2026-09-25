@@ -174,9 +174,21 @@ export const functionsApi = {
 		});
 	},
 
-	/** Points `alias` (default `live`) at `version`. `live` applies the manifest; any other alias is HTTP-only. */
-	promote(address: string, version: number, alias = "live"): Promise<PromoteResponse> {
-		return functionsApi.promoteAlias(address, alias, { version });
+	/**
+	 * Points `alias` (default `live`) at `version`. `live` applies the
+	 * manifest; any other alias is HTTP-only. `expectedVersion` (the version
+	 * the alias pointed at when the page loaded, `0` for none) makes it
+	 * optimistic: another promote in between answers 412
+	 * `ALIAS_VERSION_CONFLICT`. An alias already at `version` answers
+	 * `changed: false`.
+	 */
+	promote(
+		address: string,
+		version: number,
+		alias = "live",
+		expectedVersion?: number,
+	): Promise<PromoteResponse> {
+		return functionsApi.promoteAlias(address, alias, { version, expectedVersion });
 	},
 
 	listAliases(address: string): Promise<AliasResponse[]> {

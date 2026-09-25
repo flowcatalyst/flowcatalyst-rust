@@ -103,6 +103,11 @@ pub enum ErrorKind {
     /// tolerated the 409 keeps working.
     #[serde(rename = "UnchangedError")]
     Unchanged,
+    /// The caller's precondition no longer holds (an optimistic
+    /// `expectedVersion` / `If-Match` that another write has overtaken).
+    /// HTTP 412.
+    #[serde(rename = "PreconditionFailedError")]
+    PreconditionFailed,
 }
 
 impl ErrorKind {
@@ -116,6 +121,7 @@ impl ErrorKind {
             Self::Internal => 500,
             Self::Unprocessable => 422,
             Self::Unavailable => 503,
+            Self::PreconditionFailed => 412,
         }
     }
 }
@@ -215,6 +221,15 @@ impl UseCaseError {
         Self::new(ErrorKind::Unchanged, code, message, details)
     }
 
+    /// Create a precondition failure (HTTP 412), with details.
+    pub fn precondition_failed(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self::new(ErrorKind::PreconditionFailed, code, message, details)
+    }
+
     /// Whether this is a no-op write rather than a failure.
     pub fn is_unchanged(&self) -> bool {
         self.kind == ErrorKind::Unchanged
@@ -309,6 +324,7 @@ impl From<PlatformError> for UseCaseError {
                 403 => Self::new(ErrorKind::Forbidden, code, message, details),
                 404 => Self::not_found_with_details(code, message, details),
                 409 => Self::business_rule_with_details(code, message, details),
+                412 => Self::new(ErrorKind::PreconditionFailed, code, message, details),
                 422 => Self::new(ErrorKind::Unprocessable, code, message, details),
                 503 => Self::new(ErrorKind::Unavailable, code, message, details),
                 _ => Self::internal(code, message),
@@ -389,6 +405,12 @@ impl From<UseCaseError> for PlatformError {
             },
             ErrorKind::Unavailable => PlatformError::Coded {
                 status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                code,
+                message,
+                details,
+            },
+            ErrorKind::PreconditionFailed => PlatformError::Coded {
+                status: axum::http::StatusCode::PRECONDITION_FAILED,
                 code,
                 message,
                 details,
@@ -509,6 +531,10 @@ mod tests {
                 ErrorKind::Unprocessable,
             ),
             (UseCaseError::unavailable("B", "b"), ErrorKind::Unavailable),
+            (
+                UseCaseError::precondition_failed("C", "c", HashMap::new()),
+                ErrorKind::PreconditionFailed,
+            ),
         ] {
             assert_eq!(UseCaseError::from(PlatformError::from(err)).kind(), kind);
         }

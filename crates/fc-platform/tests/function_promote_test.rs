@@ -839,6 +839,72 @@ async fn promote_and_remove_alias_codes() {
         "no event for a no-op"
     );
 
+    // The optional precondition: qa has no version yet (0), so a stale
+    // expectation is 412 and writes nothing; the right one promotes.
+    let stale = send(
+        &r,
+        Method::PUT,
+        &format!("{path}/aliases/qa"),
+        &t,
+        Some(json!({"version": v1, "expectedVersion": 3})),
+    )
+    .await;
+    assert_error(
+        &stale,
+        StatusCode::PRECONDITION_FAILED,
+        "ALIAS_VERSION_CONFLICT",
+    );
+    assert_eq!(
+        stale.1["details"],
+        json!({"alias": "qa", "expectedVersion": 3, "currentVersion": 0})
+    );
+    assert_eq!(
+        stale.1["message"],
+        "alias 'qa' points at no version, not the expected version 3"
+    );
+    let (status, body) = send(
+        &r,
+        Method::PUT,
+        &format!("{path}/aliases/qa"),
+        &t,
+        Some(json!({"version": v1, "expectedVersion": 0})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["changed"], true);
+    // If-Match carries the same precondition.
+    let if_match = |value: &'static str| {
+        let r = r.clone();
+        let t = t.clone();
+        async move {
+            let req = Request::builder()
+                .method(Method::PUT)
+                .uri(format!("{path}/aliases/qa"))
+                .header("authorization", format!("Bearer {t}"))
+                .header("content-type", "application/json")
+                .header("if-match", value)
+                .body(Body::from(json!({"version": v1}).to_string()))
+                .unwrap();
+            read_json(r.oneshot(req).await.unwrap()).await
+        }
+    };
+    assert_error(
+        &if_match("\"7\"").await,
+        StatusCode::PRECONDITION_FAILED,
+        "ALIAS_VERSION_CONFLICT",
+    );
+    assert_error(
+        &if_match("latest").await,
+        StatusCode::BAD_REQUEST,
+        "IF_MATCH_INVALID",
+    );
+    let (status, body) = if_match("W/\"1\"").await;
+    assert_eq!(
+        (status, &body["changed"]),
+        (StatusCode::OK, &json!(false)),
+        "{body}"
+    );
+
     // Aliases: qa → v1, live cannot be removed, an unknown one is 404.
     assert_eq!(promote(&r, &t, path, "qa", v1).await.0, StatusCode::OK);
     let protected = send(

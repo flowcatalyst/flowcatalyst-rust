@@ -694,6 +694,7 @@ async fn promote_checks_the_alias_name_before_loading_anything() {
             address: address(),
             alias: "BAD".into(),
             version: 1,
+            expected_version: None,
         },
     )
     .await;
@@ -745,6 +746,7 @@ fn alias_events_and_commands() {
             address: address(),
             alias: "live".into(),
             version: 3,
+            expected_version: None,
         },
     );
     assert_eq!(

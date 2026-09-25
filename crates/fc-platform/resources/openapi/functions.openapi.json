@@ -918,6 +918,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "description": "Optional precondition, the same as the body's `expectedVersion`: the version number the alias points at now (`3`, `\"3\"` or `W/\"3\"`; `0` for none). A mismatch is 412 ALIAS_VERSION_CONFLICT; a value that is not a version number is 400 IF_MATCH_INVALID, and one that disagrees with `expectedVersion` 400 EXPECTED_VERSION_CONFLICT.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -942,7 +951,7 @@
             }
           },
           "400": {
-            "description": "ALIAS_INVALID",
+            "description": "ALIAS_INVALID, IF_MATCH_INVALID, EXPECTED_VERSION_CONFLICT",
             "content": {
               "application/json": {
                 "schema": {
@@ -973,6 +982,16 @@
           },
           "409": {
             "description": "VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, SETTINGS_MISSING",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "ALIAS_VERSION_CONFLICT: expectedVersion / If-Match no longer names the alias's version (details: alias, expectedVersion, currentVersion)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3319,6 +3338,11 @@
         "properties": {
           "version": {
             "type": "integer"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optional precondition: the version the alias points at now (0: none yet). A mismatch is 412 ALIAS_VERSION_CONFLICT and writes nothing."
           }
         },
         "required": [

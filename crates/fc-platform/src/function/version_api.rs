@@ -456,11 +456,56 @@ impl ConflictResponse {
 }
 
 /// Body of `PUT …/aliases/{alias}`. An absent `version` is 0, which names
-/// no version (Java's `int` record component).
+/// no version (Java's `int` record component). `expectedVersion`, when
+/// given, is the version the caller expects the alias to point at now (`0`:
+/// none yet); a mismatch is `412 ALIAS_VERSION_CONFLICT`. The `If-Match`
+/// header carries the same precondition.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct PromoteRequest {
     #[serde(default)]
     pub version: i32,
+    #[serde(default, rename = "expectedVersion")]
+    pub expected_version: Option<i32>,
+}
+
+/// The promote precondition from the body's `expectedVersion` and the
+/// `If-Match` header (`3`, `"3"` or `W/"3"`): either, or both when they
+/// agree. `400 IF_MATCH_INVALID` for a header that is not a version number,
+/// `400 EXPECTED_VERSION_CONFLICT` when the two disagree.
+fn promote_precondition(
+    body: Option<i32>,
+    headers: &HeaderMap,
+) -> Result<Option<i32>, PlatformError> {
+    let header = match headers.get(header::IF_MATCH) {
+        None => None,
+        Some(raw) => {
+            let text = raw.to_str().unwrap_or("").trim();
+            let text = text.strip_prefix("W/").unwrap_or(text);
+            let text = text
+                .strip_prefix('"')
+                .and_then(|t| t.strip_suffix('"'))
+                .unwrap_or(text);
+            match text.parse::<i32>() {
+                Ok(n) if n >= 0 => Some(n),
+                _ => {
+                    return Err(UseCaseError::validation(
+                        "IF_MATCH_INVALID",
+                        "If-Match must be the version number the alias points at (0 for none)",
+                    )
+                    .into())
+                }
+            }
+        }
+    };
+    match (body, header) {
+        (Some(b), Some(h)) if b != h => Err(UseCaseError::validation(
+            "EXPECTED_VERSION_CONFLICT",
+            format!("expectedVersion {b} and If-Match {h} disagree"),
+        )
+        .into()),
+        (Some(b), _) => Ok(Some(b)),
+        (None, h) => Ok(h),
+    }
 }
 
 /// `200` of a promote: `previousVersion` is the prior target's number,
@@ -765,6 +810,7 @@ pub async fn retire_version(
         (status = 403),
         (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
         (status = 409, description = "VERSION_NOT_READY, SETTINGS_MISSING, VERSION_RETIRED, FUNCTION_DISABLED or PUBLIC_ROUTE_TAKEN. An alias already naming the version is a no-op: 200 with changed false"),
+        (status = 412, description = "ALIAS_VERSION_CONFLICT: expectedVersion / If-Match no longer names the alias's version"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -772,15 +818,18 @@ pub async fn promote(
     State(state): State<FunctionsState>,
     auth: Authenticated,
     Path((address, alias)): Path<(String, String)>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<PromoteResponse>, PlatformError> {
     checks::require_permission(&auth.0, FUNCTION_PROMOTE)?;
     let address = address_from_path(&address)?;
     let req: PromoteRequest = parse_body(&body)?;
+    let expected_version = promote_precondition(req.expected_version, &headers)?;
     let command = PromoteCommand {
         address: address.clone(),
         alias: alias.clone(),
         version: req.version,
+        expected_version,
     };
     let caller = state.caller(&auth.0).await?;
     let reach = caller.clone();
@@ -949,4 +998,54 @@ pub async fn upload_artifact(
         digest: digest.value().to_string(),
         bytes: received.bytes,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn if_match(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, HeaderValue::from_str(value).unwrap());
+        headers
+    }
+
+    #[test]
+    fn the_promote_precondition_comes_from_the_body_or_if_match() {
+        let none = HeaderMap::new();
+        assert_eq!(promote_precondition(None, &none).unwrap(), None);
+        assert_eq!(promote_precondition(Some(3), &none).unwrap(), Some(3));
+        for value in ["3", "\"3\"", "W/\"3\"", " 3 "] {
+            assert_eq!(
+                promote_precondition(None, &if_match(value)).unwrap(),
+                Some(3),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            promote_precondition(Some(3), &if_match("\"3\"")).unwrap(),
+            Some(3)
+        );
+        assert_eq!(promote_precondition(None, &if_match("0")).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn a_bad_or_disagreeing_if_match_is_a_400() {
+        let code = |r: Result<Option<i32>, PlatformError>| match r.unwrap_err() {
+            PlatformError::Coded { status, code, .. } => (status.as_u16(), code),
+            other => panic!("{other:?}"),
+        };
+        for value in ["*", "latest", "-1", "\"\""] {
+            assert_eq!(
+                code(promote_precondition(None, &if_match(value))),
+                (400, "IF_MATCH_INVALID".to_string()),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            code(promote_precondition(Some(2), &if_match("3"))),
+            (400, "EXPECTED_VERSION_CONFLICT".to_string())
+        );
+    }
 }
