@@ -3,6 +3,7 @@
 //! greppable and `tests/auth_convention_test.rs` can check it.
 
 mod audit_log;
+mod connections;
 mod event_types;
 mod login;
 mod nav;
