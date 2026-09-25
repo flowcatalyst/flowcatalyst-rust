@@ -590,7 +590,7 @@ async fn auth_me_lists_the_effective_permissions() {
         .expect("insert user");
     let token = app.auth_service.generate_session_token(&user).unwrap();
 
-    let (status, body) = read_json(app.get("/auth/me", &token).await).await;
+    let (status, body) = read_json(app.get_with_session("/auth/me", &token).await).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["principalId"], user.id.as_str());
     assert_eq!(body["id"], user.id.as_str());
@@ -613,7 +613,7 @@ async fn auth_me_lists_the_effective_permissions() {
     admin.assign_role("platform:test-super");
     app.repos.principal_repo.insert(&admin).await.unwrap();
     let token = app.auth_service.generate_session_token(&admin).unwrap();
-    let (status, body) = read_json(app.get("/auth/me", &token).await).await;
+    let (status, body) = read_json(app.get_with_session("/auth/me", &token).await).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["permissions"], json!(["platform:*:*:*", "*"]));
     assert!(body["clientId"].is_null());
@@ -627,7 +627,7 @@ async fn auth_me_lists_the_effective_permissions() {
         })
         .await
         .unwrap();
-    let (status, _) = read_json(app.get("/auth/me", &token).await).await;
+    let (status, _) = read_json(app.get_with_session("/auth/me", &token).await).await;
     assert_eq!(status, 401);
 }
 

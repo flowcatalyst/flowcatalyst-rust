@@ -680,8 +680,9 @@ pub async fn oidc_callback(
         }
     };
 
-    // Issue session token using the principal (which has roles already synced)
-    let session_token = match state.auth_service.generate_access_token(&principal) {
+    // The session cookie carries the subject only; the principal's
+    // authority is reloaded on every request.
+    let session_token = match state.auth_service.generate_session_token(&principal) {
         Ok(t) => t,
         Err(e) => {
             error!(error = %e, "Failed to issue session token");

@@ -213,3 +213,135 @@ async fn an_unmapped_domain_is_404_email_domain_not_mapped() {
     assert_eq!(body["code"], "EMAIL_DOMAIN_NOT_MAPPED", "{body}");
     assert!(body["error"].as_str().unwrap().contains("nowhere.test"));
 }
+
+/// A user in the database, with a password, for the session tests.
+async fn seed_user(app: &TestApp, email: &str, password: &str) -> fc_platform::domain::Principal {
+    use fc_platform::auth::password_service::PasswordService;
+    use fc_platform::domain::{Principal, UserScope};
+    let mut user = Principal::new_user(email, UserScope::Anchor);
+    if let Some(identity) = user.user_identity.as_mut() {
+        identity.password_hash = Some(PasswordService::default().hash_password(password).unwrap());
+    }
+    app.repos.principal_repo.insert(&user).await.unwrap();
+    user
+}
+
+/// The `fc_session` value a response sets.
+fn session_cookie_of(resp: &Response<Body>) -> String {
+    resp.headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find_map(|c| c.strip_prefix("fc_session="))
+        .and_then(|c| c.split(';').next())
+        .expect("fc_session cookie set")
+        .to_string()
+}
+
+/// Decision #26: the session cookie carries the subject only (Go's shape)
+/// and the principal is reloaded on every request — a role granted after
+/// sign-in applies at once, and a deactivation signs the session out on
+/// the next request.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_session_cookie_is_the_subject_reloaded_per_request() {
+    use axum::http::Method;
+    use base64::Engine as _;
+
+    let app = TestApp::setup().await;
+    // Seeds the platform:test-admin role (platform:*:*:*).
+    let _ = app.anchor_admin_token().await;
+    let user = seed_user(&app, "ada@flowcatalyst.test", "Correct-Horse-9!").await;
+
+    let resp = send(
+        &app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/auth/login")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"email": "ada@flowcatalyst.test", "password": "Correct-Horse-9!"})
+                    .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cookie = session_cookie_of(&resp);
+
+    // Go's claim shape: identity only.
+    let payload: Value = serde_json::from_slice(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(cookie.split('.').nth(1).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let mut keys: Vec<&str> = payload
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "all_applications",
+            "email",
+            "exp",
+            "iat",
+            "iss",
+            "nbf",
+            "sub",
+            "tier"
+        ]
+    );
+    assert_eq!(payload["sub"], user.id.as_str());
+
+    let (status, body) = read_json(app.get_with_session("/auth/me", &cookie).await).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["principalId"], user.id.as_str());
+
+    // No role yet: a permission-gated read is refused...
+    let resp = app.get_with_session("/api/event-types", &cookie).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    // ...and a role granted now applies to the same cookie.
+    let mut granted = app
+        .repos
+        .principal_repo
+        .find_by_id(&user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    granted.assign_role("platform:test-admin");
+    app.repos.principal_repo.update(&granted).await.unwrap();
+    let resp = app.get_with_session("/api/event-types", &cookie).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // The cookie is no bearer.
+    let resp = app.get("/auth/me", &cookie).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Deactivation signs the session out on the next request.
+    granted.deactivate();
+    app.repos.principal_repo.update(&granted).await.unwrap();
+    let resp = app.get_with_session("/auth/me", &cookie).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let resp = app.get_with_session("/api/event-types", &cookie).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// An access token replayed as the cookie is no session, even for an
+/// active user (it may be narrowed or delegated to an OAuth client).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn an_access_token_is_no_session_cookie() {
+    let app = TestApp::setup().await;
+    let user = seed_user(&app, "bob@flowcatalyst.test", "Correct-Horse-9!").await;
+    let access = app.auth_service.generate_access_token(&user).unwrap();
+    let resp = app.get_with_session("/auth/me", &access).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let session = app.auth_service.generate_session_token(&user).unwrap();
+    let resp = app.get_with_session("/auth/me", &session).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}

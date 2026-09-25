@@ -105,7 +105,10 @@ impl TestApp {
             session_token_expiry_secs: 28800,
             refresh_token_expiry_secs: 86400,
         }));
-        let authz_service = Arc::new(AuthorizationService::new(repos.role_repo.clone()));
+        let authz_service = Arc::new(
+            AuthorizationService::new(repos.role_repo.clone())
+                .with_session_principals(repos.principal_repo.clone()),
+        );
 
         let auth_services = AuthServices {
             auth: auth_service.clone(),
@@ -245,6 +248,37 @@ impl TestApp {
 
     pub async fn delete(&self, path: &str, token: &str) -> Response<Body> {
         self.send(Method::DELETE, path, Some(token), None::<()>)
+            .await
+    }
+
+    /// A request carrying `token` as the platform session cookie rather
+    /// than a bearer.
+    pub async fn send_with_session<B: Serialize>(
+        &self,
+        method: Method,
+        path: &str,
+        session_token: &str,
+        body: Option<B>,
+    ) -> Response<Body> {
+        let builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("cookie", format!("fc_session={session_token}"));
+        let req = match body {
+            Some(b) => builder
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_string(&b).expect("serialize body"),
+                ))
+                .expect("build req"),
+            None => builder.body(Body::empty()).expect("build req"),
+        };
+        self.router.clone().oneshot(req).await.expect("oneshot")
+    }
+
+    /// GET with the platform session cookie.
+    pub async fn get_with_session(&self, path: &str, session_token: &str) -> Response<Body> {
+        self.send_with_session(Method::GET, path, session_token, None::<()>)
             .await
     }
 

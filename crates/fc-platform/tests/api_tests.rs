@@ -113,6 +113,7 @@ mod authorization_tests {
             accessible_clients: clients.into_iter().map(String::from).collect(),
             permissions: permissions.into_iter().map(String::from).collect(),
             roles: vec!["admin".to_string()],
+            credential: fc_platform::shared::authorization_service::Credential::BearerToken,
         }
     }
 

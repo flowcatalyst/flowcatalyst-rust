@@ -489,6 +489,7 @@ fn test_auth_context_permission_matching() {
         .map(|s| s.to_string())
         .collect(),
         roles: vec!["admin".to_string()],
+        credential: fc_platform::shared::authorization_service::Credential::BearerToken,
     };
 
     // Direct permissions (4-level)
@@ -526,6 +527,7 @@ fn test_auth_context_multiple_permissions_check() {
         .map(|s| s.to_string())
         .collect(),
         roles: vec!["viewer".to_string()],
+        credential: fc_platform::shared::authorization_service::Credential::BearerToken,
     };
 
     assert!(ctx.has_all_permissions(&[

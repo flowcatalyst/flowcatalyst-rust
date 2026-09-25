@@ -60,6 +60,7 @@ fn auth_context(tier: Option<&str>, clients: &[&str], permissions: &[&str]) -> A
             .map(|s| s.to_string())
             .collect::<HashSet<_>>(),
         roles: vec![],
+        credential: fc_platform::shared::authorization_service::Credential::BearerToken,
     }
 }
 
