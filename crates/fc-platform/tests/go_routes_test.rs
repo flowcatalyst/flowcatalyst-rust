@@ -1231,3 +1231,101 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
+
+// ── Applications ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn application_service_accounts_attach_and_client_configs_read() {
+    use fc_platform::application::entity::Application;
+    use fc_platform::ApplicationClientConfig;
+    let app = setup().await;
+    let admin = app.anchor_admin_token().await;
+    let application = Application::new("attachapp", "Attach App");
+    app.repos
+        .application_repo
+        .insert(&application)
+        .await
+        .unwrap();
+    let created = create_sa(&app, &admin, "attach-bot").await;
+    let sa_id = created["serviceAccount"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let principal = app
+        .repos
+        .principal_repo
+        .find_by_service_account(&sa_id)
+        .await
+        .unwrap()
+        .expect("sa principal");
+
+    let path = format!("/api/applications/{}/service-account", application.id);
+    let body = json!({ "serviceAccountId": sa_id, "serviceAccountCode": "attach-bot" });
+    let (s, _) = read_json(app.post(&path, &nobody_token(&app), body.clone()).await).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, b) = read_json(app.post(&path, &admin, body.clone()).await).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
+    let stored = app
+        .repos
+        .application_repo
+        .find_by_id(&application.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.service_account_id.as_deref(),
+        Some(principal.id.as_str())
+    );
+    let (s, b) = read_json(app.post(&path, &admin, body).await).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    assert_eq!(b["code"], "APPLICATION_HAS_SERVICE_ACCOUNT");
+    let (s, _) = read_json(
+        app.post(
+            &path,
+            &admin,
+            json!({ "serviceAccountId": "sac_nope", "serviceAccountCode": "" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // Client configs.
+    let client = insert_client(&app, "cfgclient").await;
+    let config = ApplicationClientConfig::new(&application.id, &client);
+    app.repos
+        .application_client_config_repo
+        .insert(&config)
+        .await
+        .unwrap();
+    let got = assert_status(
+        app.get(
+            &format!("/api/applications/{}/clients/{client}", application.id),
+            &admin,
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(got["id"], config.id.as_str());
+    assert_eq!(got["clientId"], client.as_str());
+    let (s, _) = read_json(
+        app.get(
+            &format!("/api/applications/{}/clients/clt_nope", application.id),
+            &admin,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = read_json(
+        app.get(
+            &format!("/api/applications/{}/clients/{client}", application.id),
+            &nobody_token(&app),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}

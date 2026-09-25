@@ -18,6 +18,7 @@ pub struct GoRoutesState {
     pub router_config: crate::shared::router_config_api::RouterConfigState,
     pub edm_lookup: crate::email_domain_mapping::lookup_api::EdmLookupState,
     pub principals: crate::principal::go_api::PrincipalGoState,
+    pub applications: crate::application::go_api::ApplicationGoState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
@@ -43,6 +44,16 @@ impl GoRoutesState {
             ),
         );
         Self {
+            applications: crate::application::go_api::ApplicationGoState {
+                principal_repo: repos.principal_repo.clone(),
+                client_config_repo: repos.application_client_config_repo.clone(),
+                attach_use_case: Arc::new(
+                    crate::application::operations::AttachServiceAccountToApplicationUseCase::new(
+                        repos.application_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+            },
             principals: crate::principal::go_api::PrincipalGoState {
                 principal_repo: repos.principal_repo.clone(),
                 role_repo: repos.role_repo.clone(),
@@ -149,6 +160,9 @@ impl GoRoutesState {
 /// All Go-parity routes, at their full paths.
 pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
     OpenApiRouter::new()
+        .merge(crate::application::go_api::application_go_router(
+            state.applications,
+        ))
         .merge(crate::principal::go_api::principal_go_router(
             state.principals,
         ))
