@@ -501,6 +501,16 @@ pub mod checks {
         )
     }
 
+    /// Service accounts, what issues authority or a credential to an
+    /// existing account: role assignment, auth-token and signing-secret
+    /// regeneration. Anchor plus `platform:iam:service-account:update` (Go's
+    /// `CanUpdateServiceAccounts`, auth.go:683-685, with decision #19's anchor
+    /// requirement; Java 6068fe6b S1.2). Anchor scope alone let an
+    /// application's own ANCHOR-tier account grant itself super-admin.
+    pub fn can_update_service_accounts(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::SERVICE_ACCOUNT_UPDATE)
+    }
+
     /// Service accounts, delete: `platform:iam:service-account:delete`, as
     /// Go's `CanDeleteServiceAccounts` (auth.go:687-689), with the same
     /// anchor requirement as [`can_write_service_accounts`].

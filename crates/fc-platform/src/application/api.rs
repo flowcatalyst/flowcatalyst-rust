@@ -838,6 +838,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 scope: None,
                 client_ids: Vec::new(),
                 application_id: Some(app_id.clone()),
+                all_applications: false,
             };
             let created = match create_sa_uc
                 .run(create_cmd, ctx.clone())

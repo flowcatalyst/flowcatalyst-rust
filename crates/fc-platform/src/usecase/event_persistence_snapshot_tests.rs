@@ -750,6 +750,7 @@ fn service_account_commands_persist_no_generated_credentials() {
         scope: Some(UserScope::Client),
         client_ids: s(&["clt_1"]),
         application_id: Some("app_1".to_string()),
+        all_applications: false,
     };
     let result = CreateServiceAccountResult {
         event: fixed!(ServiceAccountCreated::new(

@@ -62,6 +62,14 @@ pub struct CreateServiceAccountRequest {
     /// rather than silently ignored.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application_id: Option<String>,
+
+    /// `true` grants the account every application, present and future (Go's
+    /// `allApplications`). Omitted or `false`: no application access. Only a
+    /// caller that itself reaches every application may ask for it (403);
+    /// alongside `applicationId` it is a 400
+    /// `ALL_APPLICATIONS_WITH_APPLICATION_ID`.
+    #[serde(default)]
+    pub all_applications: Option<bool>,
 }
 
 /// Update service account request
@@ -243,6 +251,8 @@ pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     pub regenerate_token_use_case: Arc<RegenerateAuthTokenUseCase<U>>,
     pub regenerate_secret_use_case: Arc<RegenerateSigningSecretUseCase<U>>,
     pub create_oauth_client_use_case: Arc<crate::auth::operations::CreateOAuthClientUseCase<U>>,
+    /// The caller's application scope, for the `allApplications` opt-in.
+    pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
 }
 
 // ============================================================================
@@ -379,6 +389,24 @@ pub async fn create_service_account<U: UnitOfWork>(
     Json(req): Json<CreateServiceAccountRequest>,
 ) -> Result<(StatusCode, Json<CreateServiceAccountResponse>), PlatformError> {
     crate::checks::can_write_service_accounts(&auth.0)?;
+    let all_applications = req.all_applications == Some(true);
+    // Go serviceaccount/api/api.go:155-159: the rule for granting
+    // application access, only a caller that itself holds all-applications
+    // access may grant it.
+    if all_applications
+        && state.app_access.scope_for(&auth.0.principal_id).await?
+            != crate::shared::authorization_service::ApplicationScope::All
+    {
+        return Err(PlatformError::forbidden(
+            "Only an all-applications administrator may grant all-applications access",
+        ));
+    }
+    if all_applications && req.application_id.is_some() {
+        return Err(PlatformError::bad_request_code(
+            "ALL_APPLICATIONS_WITH_APPLICATION_ID",
+            "allApplications cannot be combined with applicationId",
+        ));
+    }
     if req.application_id.is_some() {
         return Err(PlatformError::validation(
             "applicationId is not accepted: a new service account has no application \
@@ -392,6 +420,7 @@ pub async fn create_service_account<U: UnitOfWork>(
         scope: parse_opt(req.scope.as_deref())?,
         client_ids: req.client_ids,
         application_id: None,
+        all_applications,
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -562,7 +591,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id,
     };
@@ -602,7 +631,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
-    crate::checks::require_anchor_scope(&auth.0)?;
+    crate::checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id,
     };
@@ -642,7 +671,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
-    crate::checks::require_anchor_scope(&auth.0)?;
+    crate::checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateSigningSecretCommand {
         service_account_id: id,
     };
@@ -724,7 +753,7 @@ pub async fn assign_roles<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<AssignRolesRequest>,
 ) -> Result<Json<AssignRolesResponse>, PlatformError> {
-    crate::checks::require_anchor_scope(&auth.0)?;
+    crate::checks::can_update_service_accounts(&auth.0)?;
     let command = AssignRolesCommand {
         service_account_id: id.clone(),
         roles: req.roles,

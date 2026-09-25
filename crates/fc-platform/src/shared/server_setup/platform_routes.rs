@@ -896,6 +896,7 @@ pub fn build_platform_routes(
         regenerate_token_use_case,
         regenerate_secret_use_case,
         create_oauth_client_use_case: oauth_clients_state.create_oauth_client_use_case.clone(),
+        app_access: app_access.clone(),
     };
 
     let sync_dispatch_pools_use_case = Arc::new(
