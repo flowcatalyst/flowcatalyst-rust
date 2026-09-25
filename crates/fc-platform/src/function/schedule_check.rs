@@ -4,10 +4,9 @@
 //! `ZoneId.of`.
 //!
 //! The grammar is ported with Java's field bit sets ([`JavaCron`]): publish
-//! refuses what Java refuses, with the same messages, and promote wiring
-//! translates what Java accepts into what the Rust scheduler evaluates the
-//! same way (`function::cron_dialect`). Evaluating a schedule is the
-//! scheduler's job.
+//! refuses what Java refuses, with the same messages, and promote stores the
+//! cron as Java does. Evaluating a schedule is the scheduler's job; it reads
+//! the same dialect (`scheduled_job::cron`).
 
 use std::str::FromStr;
 
