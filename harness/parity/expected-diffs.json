@@ -229,5 +229,19 @@
     "pointer": "/**",
     "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
     "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "refresh-reuse-rotated-token",
+    "pointer": "/**",
+    "reason": "The scenario replays refresh1 immediately after it was rotated. Go treats any second presentation as reuse and revokes the family (400 invalid_grant); Rust's 10 s replay leeway reads it as the client racing itself and rotates it again into a sibling (200 with fresh tokens). A replay after the leeway is refused as reuse, as in Go.",
+    "ruling": "owner decisions 2026-09-25, #21 (Java ruling 5): a refresh token rotated out less than 10 s ago rotates again into a sibling in the same family"
+  },
+  {
+    "scenario": "S2 auth: OAuth authorization code*",
+    "step": "refresh-after-family-revoked",
+    "pointer": "/**",
+    "reason": "Consequence of the leeway on the step before: on Go that replay revoked the family, so refresh2 is refused (400 invalid_grant); on Rust the family was never revoked (the replay was within the leeway), so refresh2 still rotates (200). Refreshing a genuinely revoked family is refused on Rust too (see refresh-revoked).",
+    "ruling": "owner decisions 2026-09-25, #21 (Java ruling 5): a refresh token rotated out less than 10 s ago rotates again into a sibling in the same family"
   }
 ]
