@@ -624,6 +624,30 @@ pub mod checks {
         require_permission(context, permissions::admin::CONNECTION_READ)
     }
 
+    /// Connections, create: `platform:messaging:connection:create` (Go
+    /// `CanCreateConnections`, auth.go:517).
+    pub fn can_create_connections(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::CONNECTION_CREATE)
+    }
+
+    /// Connections, update, pause and activate:
+    /// `platform:messaging:connection:update` (Go `CanUpdateConnections`).
+    pub fn can_update_connections(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::CONNECTION_UPDATE)
+    }
+
+    /// Connections, delete: `platform:messaging:connection:delete` (Go
+    /// `CanDeleteConnections`).
+    pub fn can_delete_connections(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::CONNECTION_DELETE)
+    }
+
+    /// Dispatch pools, delete: `platform:messaging:dispatch-pool:delete` (Go
+    /// `CanDeleteDispatchPools`, auth.go:557).
+    pub fn can_delete_dispatch_pools(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_POOL_DELETE)
+    }
+
     /// CORS origins, read: anchor plus `platform:admin:cors-origin:view` (Go
     /// `CanReadCorsOrigins`, auth.go:788).
     pub fn can_read_cors_origins(context: &AuthContext) -> Result<()> {

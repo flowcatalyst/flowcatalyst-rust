@@ -123,6 +123,7 @@ pub async fn create_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_connections(&auth.0)?;
 
     let cmd = CreateConnectionCommand {
         code: req.code,
@@ -252,6 +253,7 @@ pub async fn update_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_connections(&auth.0)?;
 
     let cmd = UpdateConnectionCommand {
         connection_id: id,
@@ -292,6 +294,7 @@ pub async fn delete_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_connections(&auth.0)?;
 
     let cmd = DeleteConnectionCommand { connection_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -323,6 +326,7 @@ pub async fn pause_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_connections(&auth.0)?;
 
     let cmd = UpdateConnectionCommand {
         connection_id: id.clone(),
@@ -366,6 +370,7 @@ pub async fn activate_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_connections(&auth.0)?;
 
     let cmd = UpdateConnectionCommand {
         connection_id: id.clone(),

@@ -543,6 +543,7 @@ pub async fn delete_dispatch_pool<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_delete_dispatch_pools(&auth.0)?;
 
     let command = DeleteDispatchPoolCommand { id };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
