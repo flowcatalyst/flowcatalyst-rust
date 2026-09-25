@@ -313,6 +313,7 @@ pub(crate) mod tests {
             accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
             permissions: perms.iter().map(|p| p.to_string()).collect::<HashSet<_>>(),
             roles: vec![],
+            credential: crate::shared::authorization_service::Credential::BearerToken,
         }
     }
 
