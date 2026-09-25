@@ -2976,6 +2976,7 @@ dependencies = [
  "fc-function-signing",
  "fc-http-listener",
  "fc-queue",
+ "fc-stream",
  "futures",
  "governor",
  "hex",
