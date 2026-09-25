@@ -10,22 +10,20 @@ import type { SdkError } from "../errors.js";
 import type { FlowCatalystClient } from "../client.js";
 import * as sdk from "../generated/sdk.gen.js";
 import type {
-	GetApiAuditLogsData,
-	GetApiAuditLogsResponse,
-	GetApiAuditLogsByIdResponse,
-	GetApiAuditLogsRecentResponse,
-	GetApiAuditLogsEntityByEntityTypeByEntityIdResponse,
-	GetApiAuditLogsPrincipalByPrincipalIdResponse,
+	ListAuditLogsData,
+	ListAuditLogsResponse,
+	GetAuditLogResponse,
+	ListAuditLogsRecentResponse,
+	AuditLogsByEntityResponse,
+	AuditLogsByPrincipalResponse,
 } from "../generated/types.gen.js";
 
-export type AuditLogFilters = GetApiAuditLogsData["query"];
-export type AuditLogListResponse = GetApiAuditLogsResponse;
-export type AuditLogDto = GetApiAuditLogsByIdResponse;
-export type RecentAuditLogsResponse = GetApiAuditLogsRecentResponse;
-export type AuditLogsForEntityResponse =
-	GetApiAuditLogsEntityByEntityTypeByEntityIdResponse;
-export type AuditLogsForPrincipalResponse =
-	GetApiAuditLogsPrincipalByPrincipalIdResponse;
+export type AuditLogFilters = ListAuditLogsData["query"];
+export type AuditLogListResponse = ListAuditLogsResponse;
+export type AuditLogDto = GetAuditLogResponse;
+export type RecentAuditLogsResponse = ListAuditLogsRecentResponse;
+export type AuditLogsForEntityResponse = AuditLogsByEntityResponse;
+export type AuditLogsForPrincipalResponse = AuditLogsByPrincipalResponse;
 
 /**
  * Audit logs resource for querying audit history.
@@ -44,7 +42,7 @@ export class AuditLogsResource {
 		filters?: AuditLogFilters,
 	): ResultAsync<AuditLogListResponse, SdkError> {
 		return this.client.request<AuditLogListResponse>((httpClient, headers) =>
-			sdk.getApiAuditLogs({
+			sdk.listAuditLogs({
 				client: httpClient,
 				headers,
 				query: filters,
@@ -57,7 +55,7 @@ export class AuditLogsResource {
 	 */
 	get(id: string): ResultAsync<AuditLogDto, SdkError> {
 		return this.client.request<AuditLogDto>((httpClient, headers) =>
-			sdk.getApiAuditLogsById({
+			sdk.getAuditLog({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -71,7 +69,7 @@ export class AuditLogsResource {
 	recent(): ResultAsync<RecentAuditLogsResponse, SdkError> {
 		return this.client.request<RecentAuditLogsResponse>(
 			(httpClient, headers) =>
-				sdk.getApiAuditLogsRecent({
+				sdk.listAuditLogsRecent({
 					client: httpClient,
 					headers,
 				}),
@@ -87,7 +85,7 @@ export class AuditLogsResource {
 	): ResultAsync<AuditLogsForEntityResponse, SdkError> {
 		return this.client.request<AuditLogsForEntityResponse>(
 			(httpClient, headers) =>
-				sdk.getApiAuditLogsEntityByEntityTypeByEntityId({
+				sdk.auditLogsByEntity({
 					client: httpClient,
 					headers,
 					path: { entityType, entityId },
@@ -103,7 +101,7 @@ export class AuditLogsResource {
 	): ResultAsync<AuditLogsForPrincipalResponse, SdkError> {
 		return this.client.request<AuditLogsForPrincipalResponse>(
 			(httpClient, headers) =>
-				sdk.getApiAuditLogsPrincipalByPrincipalId({
+				sdk.auditLogsByPrincipal({
 					client: httpClient,
 					headers,
 					path: { principalId },

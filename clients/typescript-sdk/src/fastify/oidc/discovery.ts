@@ -26,6 +26,15 @@ export interface OidcEndpoints {
 	tokenEndpoint: string;
 	endSessionEndpoint?: string;
 	verify: (token: string) => Promise<JWTPayload>;
+	/**
+	 * Verify an ID token. Distinct from {@link verify} because the two have
+	 * different audiences: an access token is addressed to the platform API
+	 * (`expectedAudience`), while an ID token is addressed to the relying
+	 * party — OIDC Core §3.1.3.7 requires `aud` to contain the client_id.
+	 * Passing an ID token to `verify` would fail whenever `expectedAudience`
+	 * is configured, and would skip the client check when it is not.
+	 */
+	verifyIdToken: (token: string, clientId: string) => Promise<JWTPayload>;
 }
 
 interface Pending {
@@ -35,12 +44,33 @@ interface Pending {
 export function createOidcClient(opts: {
 	baseUrl: string;
 	expectedAudience?: string;
+	/**
+	 * Override the discovered authorization endpoint. Portal-plane logins
+	 * (docs/portal-identity-plan.md) enter through `/portal/authorize`
+	 * instead of the discovered `/oauth/authorize`; the token endpoint and
+	 * JWKS stay as discovered.
+	 */
+	authorizationEndpoint?: string;
 }): { endpoints(): Promise<OidcEndpoints> } {
 	let pending: Pending | undefined;
 	return {
 		endpoints() {
 			if (!pending) {
-				pending = { endpoints: load(opts.baseUrl, opts.expectedAudience) };
+				const endpoints = load(
+					opts.baseUrl,
+					opts.expectedAudience,
+					opts.authorizationEndpoint,
+				);
+				// A rejected discovery must NOT stay memoized: with the platform
+				// briefly unreachable, a poisoned memo would 500 every login in
+				// this process until restart. Clear the memo on rejection (the
+				// caller still sees the rejection) so the next call retries.
+				endpoints.catch(() => {
+					if (pending?.endpoints === endpoints) {
+						pending = undefined;
+					}
+				});
+				pending = { endpoints };
 			}
 			return pending.endpoints;
 		},
@@ -50,6 +80,7 @@ export function createOidcClient(opts: {
 async function load(
 	baseUrl: string,
 	expectedAudience: string | undefined,
+	authorizationEndpointOverride?: string,
 ): Promise<OidcEndpoints> {
 	const url = `${stripSlash(baseUrl)}/.well-known/openid-configuration`;
 	const res = await fetch(url, { headers: { Accept: "application/json" } });
@@ -65,7 +96,7 @@ async function load(
 	const jwks = createRemoteJWKSet(new URL(doc.jwks_uri));
 	return {
 		issuer: doc.issuer,
-		authorizationEndpoint: doc.authorization_endpoint,
+		authorizationEndpoint: authorizationEndpointOverride ?? doc.authorization_endpoint,
 		tokenEndpoint: doc.token_endpoint,
 		...(doc.end_session_endpoint
 			? { endSessionEndpoint: doc.end_session_endpoint }
@@ -74,6 +105,13 @@ async function load(
 			const { payload } = await jwtVerify(token, jwks, {
 				issuer: doc.issuer,
 				...(expectedAudience ? { audience: expectedAudience } : {}),
+			});
+			return payload;
+		},
+		async verifyIdToken(token: string, clientId: string) {
+			const { payload } = await jwtVerify(token, jwks, {
+				issuer: doc.issuer,
+				audience: clientId,
 			});
 			return payload;
 		},

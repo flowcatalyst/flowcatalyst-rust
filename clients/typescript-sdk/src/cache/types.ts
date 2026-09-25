@@ -11,8 +11,8 @@
  *   - {@link RedisCacheStore} — ioredis-compatible client. Expiry enforced
  *     by Redis itself.
  *
- * Mirrors the Rust SDK's `Cache` trait so apps written in either language
- * follow the same shape.
+ * The FlowCatalyst SDKs share this cache contract so apps written in any
+ * of them follow the same shape.
  */
 
 /**

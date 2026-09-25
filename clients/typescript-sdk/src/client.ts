@@ -25,7 +25,10 @@ import { ClientsResource } from "./resources/clients.js";
 import { PrincipalsResource } from "./resources/principals.js";
 import { MeResource } from "./resources/me.js";
 import { ConnectionsResource } from "./resources/connections.js";
-import { DefinitionSynchronizer } from "./sync/definition-synchronizer.js";
+import {
+	DefinitionSynchronizer,
+	type DefinitionSynchronizerOptions,
+} from "./sync/definition-synchronizer.js";
 import { RouterResource } from "./resources/router.js";
 import { ScheduledJobsResource } from "./resources/scheduled-jobs.js";
 import {
@@ -48,7 +51,7 @@ export interface ClientCredentialsConfig extends TokenManagerConfig {
 	 * (`/monitoring/in-flight-messages/...`). The router runs at a
 	 * different host than the platform; if not set, router calls fall
 	 * back to `baseUrl` (correct only when router and platform share a
-	 * host, e.g. `fc-dev`).
+	 * host, e.g. `fcdev`).
 	 */
 	routerBaseUrl?: string;
 }
@@ -275,13 +278,16 @@ export class FlowCatalystClient {
 	}
 
 	/**
-	 * Definition synchronizer — bulk-sync roles, event types, subscriptions,
-	 * dispatch pools, and principals per application.
+	 * Definition synchronizer — bulk-sync roles, event types, connections,
+	 * subscriptions, dispatch pools, and principals per application.
+	 *
+	 * `options` (e.g. `subscriptionTargetBaseUrl`) only take effect on the
+	 * FIRST call — the synchronizer is created once and cached.
 	 *
 	 * See `docs/syncing-definitions.md` for structure and conventions.
 	 */
-	definitions(): DefinitionSynchronizer {
-		return (this._definitions ??= new DefinitionSynchronizer(this));
+	definitions(options?: DefinitionSynchronizerOptions): DefinitionSynchronizer {
+		return (this._definitions ??= new DefinitionSynchronizer(this, options));
 	}
 
 	// ============ Internal Methods ============

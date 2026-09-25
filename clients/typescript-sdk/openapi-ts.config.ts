@@ -1,7 +1,7 @@
 import { defineConfig } from "@hey-api/openapi-ts";
 
 // Default to the snapshotted JSON spec (refreshed by `just regen-sdks`).
-// FC_API_PORT lets you override the live port (defaults to 8080, matching fc-dev).
+// FC_API_PORT lets you override the live port (defaults to 8080, matching fcdev).
 const livePort = process.env.FC_API_PORT ?? "8080";
 const openApiInput =
 	process.env.OPENAPI_LIVE === "true"

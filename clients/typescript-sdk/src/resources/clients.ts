@@ -9,28 +9,27 @@ import type { SdkError } from "../errors.js";
 import type { FlowCatalystClient } from "../client.js";
 import * as sdk from "../generated/sdk.gen.js";
 import type {
-	GetApiClientsResponse,
-	GetApiClientsByIdResponse,
-	GetApiClientsByIdApplicationsResponse,
-	GetApiClientsSearchResponse,
-	PutApiClientsByIdApplicationsData,
-	PostApiClientsData,
-	PostApiClientsByIdNotesData,
-	PostApiClientsByIdNotesResponse,
-	PutApiClientsByIdData,
+	ListClientsResponse,
+	GetClientResponse,
+	GetClientApplicationsResponse,
+	SearchClientsByQueryResponse,
+	UpdateClientApplicationsData,
+	CreateClientData,
+	AddClientNoteData,
+	AddClientNoteResponse,
+	UpdateClientData,
 } from "../generated/types.gen.js";
 
-export type ClientListResponse = GetApiClientsResponse;
-export type ClientDto = GetApiClientsByIdResponse;
-export type ClientApplicationsResponse =
-	GetApiClientsByIdApplicationsResponse;
-export type ClientSearchResponse = GetApiClientsSearchResponse;
-export type AddNoteRequest = PostApiClientsByIdNotesData["body"];
-export type AddNoteResponse = PostApiClientsByIdNotesResponse;
-export type CreateClientRequest = PostApiClientsData["body"];
-export type UpdateClientRequest = PutApiClientsByIdData["body"];
+export type ClientListResponse = ListClientsResponse;
+export type ClientDto = GetClientResponse;
+export type ClientApplicationsResponse = GetClientApplicationsResponse;
+export type ClientSearchResponse = SearchClientsByQueryResponse;
+export type AddNoteRequest = AddClientNoteData["body"];
+export type AddNoteResponse = AddClientNoteResponse;
+export type CreateClientRequest = CreateClientData["body"];
+export type UpdateClientRequest = UpdateClientData["body"];
 export type UpdateClientApplicationsRequest =
-	PutApiClientsByIdApplicationsData["body"];
+	UpdateClientApplicationsData["body"];
 
 /**
  * Response for status change operations (enable/disable).
@@ -54,7 +53,7 @@ export class ClientsResource {
 	 */
 	list(): ResultAsync<ClientListResponse, SdkError> {
 		return this.client.request<ClientListResponse>((httpClient, headers) =>
-			sdk.getApiClients({
+			sdk.listClients({
 				client: httpClient,
 				headers,
 			}),
@@ -66,7 +65,7 @@ export class ClientsResource {
 	 */
 	get(id: string): ResultAsync<ClientDto, SdkError> {
 		return this.client.request<ClientDto>((httpClient, headers) =>
-			sdk.getApiClientsById({
+			sdk.getClient({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -79,7 +78,7 @@ export class ClientsResource {
 	 */
 	getByIdentifier(identifier: string): ResultAsync<ClientDto, SdkError> {
 		return this.client.request<ClientDto>((httpClient, headers) =>
-			sdk.getApiClientsByIdentifierByIdentifier({
+			sdk.getClientByIdentifier({
 				client: httpClient,
 				headers,
 				path: { identifier },
@@ -92,7 +91,7 @@ export class ClientsResource {
 	 */
 	create(data: CreateClientRequest): ResultAsync<ClientDto, SdkError> {
 		return this.client.request<ClientDto>((httpClient, headers) =>
-			sdk.postApiClients({
+			sdk.createClient({
 				client: httpClient,
 				headers,
 				body: data,
@@ -108,7 +107,7 @@ export class ClientsResource {
 		data: UpdateClientRequest,
 	): ResultAsync<ClientDto, SdkError> {
 		return this.client.request<ClientDto>((httpClient, headers) =>
-			sdk.putApiClientsById({
+			sdk.updateClient({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -122,7 +121,7 @@ export class ClientsResource {
 	 */
 	activate(id: string): ResultAsync<ClientDto, SdkError> {
 		return this.client.request<ClientDto>((httpClient, headers) =>
-			sdk.postApiClientsByIdActivate({
+			sdk.activateClient({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -135,7 +134,7 @@ export class ClientsResource {
 	 */
 	deactivate(id: string, reason: string): ResultAsync<ClientDto, SdkError> {
 		return this.client.request<ClientDto>((httpClient, headers) =>
-			sdk.postApiClientsByIdDeactivate({
+			sdk.deactivateClient({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -149,7 +148,7 @@ export class ClientsResource {
 	 */
 	suspend(id: string, reason: string): ResultAsync<ClientDto, SdkError> {
 		return this.client.request<ClientDto>((httpClient, headers) =>
-			sdk.postApiClientsByIdSuspend({
+			sdk.suspendClient({
 				client: httpClient,
 				headers,
 				path: { id },
@@ -166,7 +165,7 @@ export class ClientsResource {
 	): ResultAsync<ClientApplicationsResponse, SdkError> {
 		return this.client.request<ClientApplicationsResponse>(
 			(httpClient, headers) =>
-				sdk.getApiClientsByIdApplications({
+				sdk.getClientApplications({
 					client: httpClient,
 					headers,
 					path: { id },
@@ -183,7 +182,7 @@ export class ClientsResource {
 	): ResultAsync<ClientApplicationsResponse, SdkError> {
 		return this.client.request<ClientApplicationsResponse>(
 			(httpClient, headers) =>
-				sdk.putApiClientsByIdApplications({
+				sdk.updateClientApplications({
 					client: httpClient,
 					headers,
 					path: { id },
@@ -200,7 +199,7 @@ export class ClientsResource {
 		applicationId: string,
 	): ResultAsync<StatusResponse, SdkError> {
 		return this.client.request<StatusResponse>((httpClient, headers) =>
-			sdk.postApiClientsByIdApplicationsByAppIdEnable({
+			sdk.enableClientApplication({
 				client: httpClient,
 				headers,
 				path: { id: clientId, applicationId },
@@ -216,7 +215,7 @@ export class ClientsResource {
 		applicationId: string,
 	): ResultAsync<StatusResponse, SdkError> {
 		return this.client.request<StatusResponse>((httpClient, headers) =>
-			sdk.postApiClientsByIdApplicationsByAppIdDisable({
+			sdk.disableClientApplication({
 				client: httpClient,
 				headers,
 				path: { id: clientId, applicationId },
@@ -229,7 +228,7 @@ export class ClientsResource {
 	 */
 	search(query: string): ResultAsync<ClientSearchResponse, SdkError> {
 		return this.client.request<ClientSearchResponse>((httpClient, headers) =>
-			sdk.getApiClientsSearch({
+			sdk.searchClientsByQuery({
 				client: httpClient,
 				headers,
 				query: { q: query },
@@ -246,7 +245,7 @@ export class ClientsResource {
 		text: string,
 	): ResultAsync<AddNoteResponse, SdkError> {
 		return this.client.request<AddNoteResponse>((httpClient, headers) =>
-			sdk.postApiClientsByIdNotes({
+			sdk.addClientNote({
 				client: httpClient,
 				headers,
 				path: { id },

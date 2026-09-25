@@ -22,7 +22,18 @@ export interface PgSessionStoreOptions {
 	cookieName: string;
 	cookieOptions: CookieAttrs;
 	table?: string;
+	/**
+	 * Interval between periodic sweeps of expired rows, started by
+	 * {@link PgSessionStore.startReaper} (the `flowcatalystAuth` plugin calls
+	 * this once when the store is wired in, and `close()` on shutdown).
+	 * Defaults to hourly. Reads already filter on `expires_at > NOW()`, so a
+	 * missed or disabled sweep never affects correctness — only table
+	 * growth. Pass `false` to opt out entirely.
+	 */
+	reapIntervalMs?: number | false;
 }
+
+const DEFAULT_REAP_INTERVAL_MS = 60 * 60 * 1000; // hourly
 
 interface PgQueryResult<R> {
 	rows?: R[];
@@ -34,12 +45,15 @@ export class PgSessionStore implements SessionStore {
 	private readonly table: string;
 	private readonly cookieName: string;
 	private readonly cookieOptions: CookieAttrs;
+	private readonly reapIntervalMs: number | false;
+	private reapTimer: NodeJS.Timeout | undefined;
 
 	constructor(opts: PgSessionStoreOptions) {
 		this.executor = opts.executor;
 		this.table = opts.table ?? "fc_sessions";
 		this.cookieName = opts.cookieName;
 		this.cookieOptions = opts.cookieOptions;
+		this.reapIntervalMs = opts.reapIntervalMs ?? DEFAULT_REAP_INTERVAL_MS;
 	}
 
 	async read<TData>(
@@ -70,10 +84,19 @@ export class PgSessionStore implements SessionStore {
 		const sid = generateSid();
 		const payload = JSON.stringify(session);
 		const expiresAt = new Date(session.expiresAt);
+		// The store interface doesn't pass `req`, but Fastify hands every
+		// reply a back-reference to the request that produced it — that's
+		// where the superseded sid (if any) lives. Deleting it in the same
+		// statement means a rotation (every mid-session refresh calls write()
+		// again) never orphans the row it replaces.
+		const previousSid = reply.request?.cookies?.[this.cookieName] ?? null;
 		await this.executor.query(
-			`INSERT INTO ${this.table} (sid, payload, expires_at) VALUES ($1, $2, $3)
+			`WITH superseded AS (
+				DELETE FROM ${this.table} WHERE sid = $3 AND sid <> $1
+			 )
+			 INSERT INTO ${this.table} (sid, payload, expires_at) VALUES ($1, $2, $4)
 			 ON CONFLICT (sid) DO UPDATE SET payload = EXCLUDED.payload, expires_at = EXCLUDED.expires_at`,
-			[sid, payload, expiresAt],
+			[sid, payload, previousSid, expiresAt],
 		);
 		reply.setCookie(this.cookieName, sid, this.cookieOptions);
 	}
@@ -97,6 +120,29 @@ export class PgSessionStore implements SessionStore {
 			`DELETE FROM ${this.table} WHERE expires_at <= NOW()`,
 		)) as PgQueryResult<unknown>;
 		return result.rowCount ?? 0;
+	}
+
+	/**
+	 * Start the periodic sweep of expired rows (idempotent — a second call is
+	 * a no-op while one is already running). No-op when opted out via
+	 * `reapIntervalMs: false`. The interval is `unref()`'d so it never by
+	 * itself holds the process open.
+	 */
+	startReaper(): void {
+		if (this.reapIntervalMs === false || this.reapTimer) return;
+		const timer = setInterval(() => {
+			void this.reapExpired();
+		}, this.reapIntervalMs);
+		timer.unref();
+		this.reapTimer = timer;
+	}
+
+	/** Stop the periodic sweep, if running. Call on shutdown. */
+	close(): void {
+		if (this.reapTimer) {
+			clearInterval(this.reapTimer);
+			this.reapTimer = undefined;
+		}
 	}
 }
 

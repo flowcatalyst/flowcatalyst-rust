@@ -13,6 +13,14 @@ export interface CategorySyncResult {
 	updated: number;
 	deleted: number;
 	syncedCodes: string[];
+	/**
+	 * Set when this category could not be fully synced without aborting
+	 * sibling categories — a local configuration error (e.g. a duplicate
+	 * code within one scope) or a scope whose subscriptions were skipped
+	 * because that scope's connection sync failed first. Counts reflect
+	 * only what DID succeed; `syncedCodes` likewise.
+	 */
+	error?: string;
 }
 
 /** Sentinel returned when a category wasn't part of the submitted set. */
@@ -27,6 +35,8 @@ export interface SyncResult {
 	applicationCode: string;
 	roles: MaybeCategoryResult;
 	eventTypes: MaybeCategoryResult;
+	/** Always synced before `subscriptions` — see `DefinitionSet.connections`. */
+	connections: MaybeCategoryResult;
 	subscriptions: MaybeCategoryResult;
 	dispatchPools: MaybeCategoryResult;
 	principals: MaybeCategoryResult;

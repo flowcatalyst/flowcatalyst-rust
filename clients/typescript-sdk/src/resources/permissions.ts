@@ -9,12 +9,12 @@ import type { SdkError } from "../errors.js";
 import type { FlowCatalystClient } from "../client.js";
 import * as sdk from "../generated/sdk.gen.js";
 import type {
-	GetApiRolesPermissionsResponse,
-	GetApiRolesPermissionsByPermissionResponse,
+	ListPermissionsResponse,
+	GetPermissionResponse,
 } from "../generated/types.gen.js";
 
-export type PermissionListResponse = GetApiRolesPermissionsResponse;
-export type PermissionDto = GetApiRolesPermissionsByPermissionResponse;
+export type PermissionListResponse = ListPermissionsResponse;
+export type PermissionDto = GetPermissionResponse;
 
 /**
  * Permissions resource for querying available permissions.
@@ -31,7 +31,7 @@ export class PermissionsResource {
 	 */
 	list(): ResultAsync<PermissionListResponse, SdkError> {
 		return this.client.request<PermissionListResponse>((httpClient, headers) =>
-			sdk.getApiRolesPermissions({
+			sdk.listPermissions({
 				client: httpClient,
 				headers,
 			}),
@@ -43,7 +43,7 @@ export class PermissionsResource {
 	 */
 	get(permission: string): ResultAsync<PermissionDto, SdkError> {
 		return this.client.request<PermissionDto>((httpClient, headers) =>
-			sdk.getApiRolesPermissionsByPermission({
+			sdk.getPermission({
 				client: httpClient,
 				headers,
 				path: { permission },

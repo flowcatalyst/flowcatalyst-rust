@@ -12,10 +12,10 @@ yarn add @flowcatalyst/sdk
 bun add @flowcatalyst/sdk
 ```
 
-## Local development with `fc-dev`
+## Local development with `fcdev`
 
 For local work you need a FlowCatalyst control plane to talk to.
-`fc-dev` is the official one-binary dev environment — bundled
+`fcdev` is the official one-binary dev environment — bundled
 PostgreSQL, platform API, message router, scheduler, and frontend
 in a single process.
 
@@ -26,11 +26,11 @@ curl -fsSL https://raw.githubusercontent.com/flowcatalyst/flowcatalyst/main/inst
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/flowcatalyst/flowcatalyst/main/install.ps1 | iex
 
-fc-dev          # starts API on http://localhost:8080
+fcdev          # starts API on http://localhost:8080
 ```
 
 If you publish events via the **outbox pattern**, you also need
-`fc-dev outbox` running as a sidecar — it polls your app's
+`fcdev outbox` running as a sidecar — it polls your app's
 `outbox_messages` table and forwards events to the platform:
 
 ```bash
@@ -38,62 +38,54 @@ If you publish events via the **outbox pattern**, you also need
 
 # Once: write FC_OUTBOX_DB_URL / FC_OUTBOX_API_URL / FC_OUTBOX_TOKEN
 # into ./.env (0600 perms; no secrets on argv or shell history).
-fc-dev outbox init
+fcdev outbox init
 
 # Daily: reads .env, auto-creates the `outbox_messages` table on
 # first run, then polls.
-fc-dev outbox poll
+fcdev outbox poll
 ```
 
 The SDK's own migration at
 [`migrations/postgresql/001_create_outbox_messages.sql`](migrations/postgresql/001_create_outbox_messages.sql)
-and `fc-dev outbox poll`'s built-in `CREATE TABLE IF NOT EXISTS`
+and `fcdev outbox poll`'s built-in `CREATE TABLE IF NOT EXISTS`
 produce the same schema, so it doesn't matter which one runs first.
 
-Complete reference: [fc-dev CLI docs](https://github.com/flowcatalyst/flowcatalyst-rust/blob/main/docs/developers/fc-dev.md).
+Complete reference: run `fcdev --help`, or see the
+[FlowCatalyst repository](https://github.com/flowcatalyst/flowcatalyst).
 
 ## Usage
 
 ```typescript
 import { FlowCatalystClient } from '@flowcatalyst/sdk';
 
-// Initialize the client
+// Initialize the client (client_credentials — a service account)
 const client = new FlowCatalystClient({
   baseUrl: 'http://localhost:8080',
-  apiKey: 'your-api-key', // optional
-  timeout: 30000, // optional, defaults to 30s
+  clientId: 'your_client_id',
+  clientSecret: 'your_client_secret',
 });
 
-// Get all event types
-const { data: eventTypes, error } = await client.getEventTypes();
-if (error) {
-  console.error('Error:', error);
-} else {
-  console.log('Event types:', eventTypes);
-}
+// All methods return a neverthrow ResultAsync — no thrown errors
+const result = await client.eventTypes().list();
+result.match(
+  (eventTypes) => console.log('Event types:', eventTypes.items),
+  (error) => console.error('Error:', error.type, error.message),
+);
 
 // Create a new event type
-const { data: newEventType, error: createError } = await client.createEventType({
-  name: 'user.created',
-  version: '1.0.0',
-  schema: {
-    type: 'object',
-    properties: {
-      userId: { type: 'string' },
-      email: { type: 'string' },
-    },
-  },
+const created = await client.eventTypes().create({
+  code: 'orders:fulfillment:order:created',
+  name: 'Order Created',
+  description: 'Fired when a new order is placed',
 });
 
 // Create a subscription
-const { data: subscription } = await client.createSubscription({
-  eventTypeId: 'event-type-id',
+const subscription = await client.subscriptions().create({
+  code: 'notify-warehouse',
+  name: 'Notify Warehouse',
+  eventTypes: [{ eventTypeCode: 'orders:fulfillment:order:created' }],
   endpoint: 'https://myapp.com/webhooks',
-  status: 'active',
 });
-
-// Get dispatch jobs
-const { data: jobs } = await client.getDispatchJobs();
 ```
 
 ## API Reference
@@ -106,34 +98,47 @@ const { data: jobs } = await client.getDispatchJobs();
 new FlowCatalystClient(config: FlowCatalystConfig)
 ```
 
-**Config Options:**
+**Config options** — two authentication modes:
 
-- `baseUrl` (required): Base URL of the FlowCatalyst platform
-- `apiKey` (optional): API key for authentication
-- `timeout` (optional): Request timeout in milliseconds (default: 30000)
+- Client credentials (service account):
+  - `baseUrl` (required): Base URL of the FlowCatalyst platform
+  - `clientId` / `clientSecret` (required): OAuth client credentials
+  - `tokenUrl` (optional): Custom token endpoint (default: `{baseUrl}/oauth/token`)
+- User token (you already hold an access token):
+  - `baseUrl` (required)
+  - `accessToken` (required): the token, or a (sync/async) function returning the current one
 
-#### Event Types
+Both modes also accept `timeout` (ms, default 30000), `retryAttempts`
+(default 3), `retryDelay` (ms, default 100), and `routerBaseUrl` (message
+router host for `client.router()`, defaults to `baseUrl`).
 
-- `getEventTypes()`: Get all event types
-- `getEventType(id)`: Get a specific event type
-- `createEventType(eventType)`: Create a new event type
+#### Resources
 
-#### Subscriptions
+The API surface hangs off resource accessors, each wrapping the generated
+typed client with auth, retries, and neverthrow results:
 
-- `getSubscriptions()`: Get all subscriptions
-- `getSubscription(id)`: Get a specific subscription
-- `createSubscription(subscription)`: Create a new subscription
+- `client.eventTypes()` — `list()`, `get(id)`, `getByCode(code)`, `create(...)`, `update(...)`, `addSchemaVersion(...)`, `archive(id)`, `sync(...)`
+- `client.subscriptions()`, `client.dispatchPools()`, `client.connections()`, `client.processes()`
+- `client.roles()`, `client.permissions()`, `client.applications()`, `client.clients()`, `client.principals()`, `client.me()`
+- `client.scheduledJobs()`, `client.auditLogs()`, `client.router()`, `client.definitions()`
 
-#### Dispatch Jobs
+Anything not covered by a resource class is available through the generated
+functions (importable from the package root or the `api` namespace), passed
+through `client.request()` for auth + retries:
 
-- `getDispatchJobs()`: Get all dispatch jobs
-- `getDispatchJob(id)`: Get a specific dispatch job
+```typescript
+import { api } from '@flowcatalyst/sdk';
+
+const result = await client.request((httpClient, headers) =>
+  api.listDispatchJobs({ client: httpClient, headers, query: { status: 'FAILED' } }),
+);
+```
 
 ## Syncing Definitions
 
-Declare your application's roles, permissions, event types, subscriptions,
-dispatch pools, and principals in code, then push them to the platform with
-a single call:
+Declare your application's roles, permissions, event types, connections,
+subscriptions, dispatch pools, and principals in code, then push them to the
+platform with a single call:
 
 ```typescript
 import { FlowCatalystClient, sync } from "@flowcatalyst/sdk";
@@ -215,6 +220,21 @@ app.get("/api/me", { preHandler: app.fc.requireAuth() }, async (req) => ({
 ```
 
 Generate a session secret with `node -e "console.log(require('@flowcatalyst/sdk/fastify').generateSessionSecret())"`.
+
+Other useful options: `scope` (default `openid profile email`),
+`expectedAudience`, `sessionStore`, `routes` (override the default
+`/auth/{login,callback,logout}` paths), `publicBaseUrl`, and `portal` —
+set `portal: true` when the app is a customer portal, so logins enter
+through the platform's portal identity plane (`/portal/authorize`) instead
+of the standard authorize endpoint (see [Portal identities](#portal-identities)).
+
+`client` names the FlowCatalyst client (its URL-safe slug, e.g. `"acme"`)
+whose login branding the sign-in pages should wear — logo, colours, brand
+name and footer, configured under **Clients → Login Branding**. A
+per-request `?client=` on the login route overrides it. It is purely
+cosmetic: it does not affect who may sign in or what they may access, and
+an unrecognised value falls back to the platform-wide theme. Ignored in
+`portal` mode, which has its own login surface.
 
 ### Principal helpers
 
@@ -314,6 +334,26 @@ client. With a server-side store, the cookie contains an opaque session id
 only and the payload (including any size of `sessionData`) lives in the
 backend.
 
+`PgSessionStore` mints a fresh sid on every `write()` (including the
+mid-session token refresh the plugin performs automatically), deleting the
+row it supersedes in the same round trip — a long-lived session never
+orphans one row per rotation. It also carries a periodic sweep of rows past
+`expires_at` (reads already filter those out, so this is about table growth,
+not correctness): the `flowcatalystAuth` plugin starts it automatically when
+the store is registered, and stops it when the Fastify instance closes.
+It defaults to an hourly interval and is `unref()`'d, so it never by itself
+holds the process open; pass `reapIntervalMs` to change the interval or
+`reapIntervalMs: false` to opt out entirely:
+
+```typescript
+new PgSessionStore({
+  executor: pool,
+  cookieName: "fc_session",
+  cookieOptions: { /* ... */ },
+  reapIntervalMs: false, // opt out — sweep expired rows yourself instead
+});
+```
+
 ## Using with Effect
 
 If your project uses [Effect](https://effect.website/), the SDK ships an
@@ -327,29 +367,65 @@ See **[docs/effect-usage.md](./docs/effect-usage.md)** for the full
 worked example, layer wiring, error handling with `Effect.catchTag`, and
 testing with `TestUnitOfWork`.
 
-## TypeScript Support
+## Portal identities
 
-This SDK is written in TypeScript and provides full type definitions. All API responses are properly typed.
+Portal users (`ptu_…`) are a separate end-user population from platform
+users — customers of a client, invited per client, with no platform SSO
+reuse. The generated portal-user functions are re-exported from the package
+root; pass them through `client.request()`:
 
 ```typescript
-import type { EventType, Subscription, DispatchJob } from '@flowcatalyst/sdk';
+import { FlowCatalystClient, ensurePortalUser, listPortalUsers } from '@flowcatalyst/sdk';
+
+// Invite (idempotent): returns identityId, created/invited flags, inviteUrl
+const ensured = await client.request((c, headers) =>
+  ensurePortalUser({
+    client: c, headers,
+    body: { clientId, email: 'pat@customer.example', returnInviteLink: true },
+  }),
+);
+
+const users = await client.request((c, headers) =>
+  listPortalUsers({ client: c, headers, query: { clientId } }));
+```
+
+`activatePortalUser`, `deactivatePortalUser`, and `deletePortalUser` cover
+the rest of the lifecycle, and the Fastify plugin's `portal: true` option
+handles the browser login flow. All credential UX (login page, invites,
+self-service forgot-password) is platform-hosted — the portal app never
+implements any of it. Full walkthrough:
+[docs/portal-implementation-guide.md](../../docs/portal-implementation-guide.md).
+
+## TypeScript Support
+
+This SDK is written in TypeScript and provides full type definitions. All API responses are properly typed, and every generated wire type is re-exported from the package root.
+
+```typescript
+import type { EventTypeResponse, SubscriptionResponse, DispatchJobResponse } from '@flowcatalyst/sdk';
 ```
 
 ## Error Handling
 
-All API methods return a response object with either `data` or `error`:
+All API methods return a [neverthrow](https://github.com/supermacro/neverthrow)
+`ResultAsync` — errors are values, not exceptions:
 
 ```typescript
-const { data, error } = await client.getEventTypes();
+const result = await client.eventTypes().list();
 
-if (error) {
-  // Handle error
-  console.error('API Error:', error);
-} else {
-  // Use data
-  console.log('Event types:', data);
+result.match(
+  (eventTypes) => console.log('Event types:', eventTypes.items),
+  (error) => console.error('API Error:', error.type, error.message),
+);
+
+// Or use guards
+if (result.isOk()) {
+  console.log(result.value.items);
 }
 ```
+
+Error variants (`error.type`): `missing_credentials`, `invalid_credentials`,
+`token_expired`, `token_fetch_failed`, `network`, `timeout`, `http_error`,
+`validation`, `not_found`, `forbidden`, `conflict`, `rate_limited`.
 
 ## AI Agent Access (MCP Server)
 

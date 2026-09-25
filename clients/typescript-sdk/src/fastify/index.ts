@@ -67,6 +67,7 @@ export {
 } from "./rbac.js";
 export type {
 	Principal,
+	PortalContext,
 	PrincipalSnapshot,
 	PrincipalType,
 	PrincipalScope,

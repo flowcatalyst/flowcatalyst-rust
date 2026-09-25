@@ -1,3 +1,5 @@
+import { assertQualifiedCode } from "./qualified-code.js";
+
 /**
  * DTO for creating an event in the outbox.
  *
@@ -20,6 +22,8 @@ export class CreateEventDto {
 	readonly causationId: string | null;
 	readonly deduplicationId: string | null;
 	readonly messageGroup: string | null;
+	/** FlowCatalyst client (by code) this event belongs to; the platform resolves it to a client_id at ingest. */
+	readonly clientCode: string | null;
 	readonly contextData: Array<{ key: string; value: string }>;
 	readonly headers: Record<string, string>;
 
@@ -32,6 +36,7 @@ export class CreateEventDto {
 		causationId?: string | null;
 		deduplicationId?: string | null;
 		messageGroup?: string | null;
+		clientCode?: string | null;
 		contextData?: Array<{ key: string; value: string }>;
 		headers?: Record<string, string>;
 	}) {
@@ -43,11 +48,13 @@ export class CreateEventDto {
 		this.causationId = params.causationId ?? null;
 		this.deduplicationId = params.deduplicationId ?? null;
 		this.messageGroup = params.messageGroup ?? null;
+		this.clientCode = params.clientCode ?? null;
 		this.contextData = params.contextData ?? [];
 		this.headers = params.headers ?? {};
 	}
 
 	static create(type: string, data: Record<string, unknown>): CreateEventDto {
+		assertQualifiedCode(type, "Event type");
 		return new CreateEventDto({ type, data });
 	}
 
@@ -73,6 +80,11 @@ export class CreateEventDto {
 
 	withMessageGroup(messageGroup: string): CreateEventDto {
 		return new CreateEventDto({ ...this.toParams(), messageGroup });
+	}
+
+	/** Set the FlowCatalyst client (by code) this event belongs to. */
+	withClientCode(clientCode: string): CreateEventDto {
+		return new CreateEventDto({ ...this.toParams(), clientCode });
 	}
 
 	withHeaders(headers: Record<string, string>): CreateEventDto {
@@ -103,6 +115,7 @@ export class CreateEventDto {
 			causationId: this.causationId,
 			deduplicationId: this.deduplicationId,
 			messageGroup: this.messageGroup,
+			clientCode: this.clientCode,
 			contextData: this.contextData.length > 0 ? this.contextData : null,
 		});
 	}
@@ -117,6 +130,7 @@ export class CreateEventDto {
 			causationId: this.causationId,
 			deduplicationId: this.deduplicationId,
 			messageGroup: this.messageGroup,
+			clientCode: this.clientCode,
 			contextData: this.contextData,
 			headers: this.headers,
 		};

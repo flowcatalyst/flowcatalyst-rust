@@ -101,6 +101,8 @@ export interface CreateScheduledJobRequest {
 	name: string;
 	description?: string;
 	clientId?: string | null;
+	/** The registered Application that owns this job — a separate axis from clientId (tenant vs. registered app). */
+	applicationId?: string | null;
 	crons: string[];
 	timezone?: string;
 	payload?: unknown;

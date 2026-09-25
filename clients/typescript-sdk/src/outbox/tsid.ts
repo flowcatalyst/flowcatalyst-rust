@@ -28,6 +28,21 @@ export function generate(): string {
 }
 
 /**
+ * Generate a BRANDED (typed) TSID: `${prefix}_${raw}` — matching the
+ * FlowCatalyst platform convention (e.g. `aud_…`, `prn_…`). Use a short
+ * lowercase prefix for your own entities, e.g. `generateWithPrefix("cmt")`
+ * → `cmt_6F7JC2A6JFR7N`.
+ *
+ * @throws if the prefix is empty or contains an underscore.
+ */
+export function generateWithPrefix(prefix: string): string {
+	if (prefix.length === 0 || prefix.includes("_")) {
+		throw new Error("TSID prefix must be non-empty and contain no underscore.");
+	}
+	return `${prefix}_${generate()}`;
+}
+
+/**
  * Validate that a string is a valid TSID format.
  */
 export function isValid(tsid: string): boolean {

@@ -7,8 +7,12 @@ export type {
 	MessageType,
 } from "./types.js";
 export { CreateEventDto } from "./create-event-dto.js";
-export { CreateDispatchJobDto } from "./create-dispatch-job-dto.js";
+export {
+	CreateDispatchJobDto,
+	type DispatchMode,
+} from "./create-dispatch-job-dto.js";
 export { CreateAuditLogDto } from "./create-audit-log-dto.js";
+export { assertQualifiedCode } from "./qualified-code.js";
 export {
 	redactAuditData,
 	auditMaskedFieldsOf,
