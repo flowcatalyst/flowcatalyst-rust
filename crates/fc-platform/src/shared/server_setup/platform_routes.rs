@@ -403,6 +403,18 @@ pub fn build_platform_routes(
         create_use_case: create_role_use_case,
         update_use_case: update_role_use_case,
         delete_use_case: delete_role_use_case,
+        grant_permission_use_case: Arc::new(
+            crate::role::operations::GrantRolePermissionUseCase::new(
+                repos.role_repo.clone(),
+                unit_of_work.clone(),
+            ),
+        ),
+        revoke_permission_use_case: Arc::new(
+            crate::role::operations::RevokeRolePermissionUseCase::new(
+                repos.role_repo.clone(),
+                unit_of_work.clone(),
+            ),
+        ),
     };
 
     let sync_subscriptions_use_case = Arc::new(
@@ -937,6 +949,18 @@ pub fn build_platform_routes(
         update_use_case: update_pool_use_case,
         archive_use_case: archive_pool_use_case,
         delete_use_case: delete_pool_use_case,
+        suspend_use_case: Arc::new(
+            crate::dispatch_pool::operations::SuspendDispatchPoolUseCase::new(
+                repos.dispatch_pool_repo.clone(),
+                unit_of_work.clone(),
+            ),
+        ),
+        activate_use_case: Arc::new(
+            crate::dispatch_pool::operations::ActivateDispatchPoolUseCase::new(
+                repos.dispatch_pool_repo.clone(),
+                unit_of_work.clone(),
+            ),
+        ),
     };
 
     let sync_roles_use_case = Arc::new(crate::role::operations::SyncRolesUseCase::new(

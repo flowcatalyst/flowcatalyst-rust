@@ -70,6 +70,58 @@ role_event!(
     "platform:admin:role:deleted"
 );
 
+/// `{roleId, roleName, permission}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RolePermissionGranted {
+    #[serde(skip)]
+    pub metadata: EventMetadata,
+    pub role_id: String,
+    pub role_name: String,
+    pub permission: String,
+}
+
+impl_domain_event!(RolePermissionGranted);
+
+impl RolePermissionGranted {
+    pub const EVENT_TYPE: &'static str = "platform:admin:role:permission-granted";
+
+    pub fn new(ctx: &ExecutionContext, role_id: &str, role_name: &str, permission: &str) -> Self {
+        Self {
+            metadata: metadata(ctx, Self::EVENT_TYPE, role_id),
+            role_id: role_id.to_string(),
+            role_name: role_name.to_string(),
+            permission: permission.to_string(),
+        }
+    }
+}
+
+/// `{roleId, roleName, permission}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RolePermissionRevoked {
+    #[serde(skip)]
+    pub metadata: EventMetadata,
+    pub role_id: String,
+    pub role_name: String,
+    pub permission: String,
+}
+
+impl_domain_event!(RolePermissionRevoked);
+
+impl RolePermissionRevoked {
+    pub const EVENT_TYPE: &'static str = "platform:admin:role:permission-revoked";
+
+    pub fn new(ctx: &ExecutionContext, role_id: &str, role_name: &str, permission: &str) -> Self {
+        Self {
+            metadata: metadata(ctx, Self::EVENT_TYPE, role_id),
+            role_id: role_id.to_string(),
+            role_name: role_name.to_string(),
+            permission: permission.to_string(),
+        }
+    }
+}
+
 /// The rollup of an application's SDK role sync:
 /// `{created, updated, removed, total, applicationCode, syncedCodes}`.
 /// `total` is the number of roles in the payload; `applicationCode` and

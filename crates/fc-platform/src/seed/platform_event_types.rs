@@ -253,7 +253,19 @@ pub fn definitions() -> Vec<SyncEventTypeInput> {
         &mut defs,
         &schemas,
         "platform:admin:role",
-        &["created", "updated", "deleted"],
+        &[
+            "created",
+            "updated",
+            "deleted",
+            "permission-granted",
+            "permission-revoked",
+        ],
+    );
+    group(
+        &mut defs,
+        &schemas,
+        "platform:admin:dispatch-pool",
+        &["suspended", "activated"],
     );
     push(
         &mut defs,

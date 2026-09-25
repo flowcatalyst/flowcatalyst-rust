@@ -128,6 +128,8 @@ pub struct DispatchPoolsState<U: UnitOfWork + 'static> {
     pub update_use_case: Arc<UpdateDispatchPoolUseCase<U>>,
     pub archive_use_case: Arc<ArchiveDispatchPoolUseCase<U>>,
     pub delete_use_case: Arc<DeleteDispatchPoolUseCase<U>>,
+    pub suspend_use_case: Arc<crate::dispatch_pool::operations::SuspendDispatchPoolUseCase<U>>,
+    pub activate_use_case: Arc<crate::dispatch_pool::operations::ActivateDispatchPoolUseCase<U>>,
 }
 
 /// Create a new dispatch pool
@@ -439,10 +441,12 @@ pub async fn suspend_dispatch_pool<U: UnitOfWork>(
         }
     }
 
-    let command = ArchiveDispatchPoolCommand { id: id.clone() };
+    // Go's SuspendDispatchPool: status SUSPENDED, event
+    // platform:admin:dispatch-pool:suspended (it used to archive the pool).
+    let command = crate::dispatch_pool::operations::SuspendDispatchPoolCommand { id: id.clone() };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.archive_use_case.run(command, ctx).await.into_result() {
+    match state.suspend_use_case.run(command, ctx).await.into_result() {
         Ok(_event) => {
             let pool = state
                 .dispatch_pool_repo
@@ -495,17 +499,17 @@ pub async fn activate_dispatch_pool<U: UnitOfWork>(
         }
     }
 
-    // Re-use update use case to set status back to active
-    let command = UpdateDispatchPoolCommand {
-        id: id.clone(),
-        name: None,
-        description: None,
-        rate_limit: None,
-        concurrency: None,
-    };
+    // Go's ActivateDispatchPool: status ACTIVE, event
+    // platform:admin:dispatch-pool:activated (it used to change nothing).
+    let command = crate::dispatch_pool::operations::ActivateDispatchPoolCommand { id: id.clone() };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
 
-    match state.update_use_case.run(command, ctx).await.into_result() {
+    match state
+        .activate_use_case
+        .run(command, ctx)
+        .await
+        .into_result()
+    {
         Ok(_event) => {
             let pool = state
                 .dispatch_pool_repo

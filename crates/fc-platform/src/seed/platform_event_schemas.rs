@@ -640,6 +640,21 @@ fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
     ] {
         m.insert(code, id_and("roleId", &[req_str("name")]));
     }
+    for code in [
+        "platform:admin:role:permission-granted",
+        "platform:admin:role:permission-revoked",
+    ] {
+        m.insert(
+            code,
+            id_and("roleId", &[req_str("roleName"), req_str("permission")]),
+        );
+    }
+    for code in [
+        "platform:admin:dispatch-pool:suspended",
+        "platform:admin:dispatch-pool:activated",
+    ] {
+        m.insert(code, id_and("poolId", &[req_str("code")]));
+    }
     m.insert(
         "platform:admin:roles:synced",
         obj(&[

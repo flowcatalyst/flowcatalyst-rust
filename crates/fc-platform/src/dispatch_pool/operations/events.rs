@@ -113,6 +113,16 @@ pool_code_event!(
     DispatchPoolDeleted,
     "platform:admin:dispatch-pool:deleted"
 );
+pool_code_event!(
+    /// `{poolId, code}`.
+    DispatchPoolSuspended,
+    "platform:admin:dispatch-pool:suspended"
+);
+pool_code_event!(
+    /// `{poolId, code}`.
+    DispatchPoolActivated,
+    "platform:admin:dispatch-pool:activated"
+);
 
 /// The rollup of an SDK dispatch-pool sync:
 /// `{applicationCode, created, updated, deleted, syncedCodes}` on subject
