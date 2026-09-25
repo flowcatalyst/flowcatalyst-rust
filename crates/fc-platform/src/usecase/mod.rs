@@ -21,7 +21,9 @@ pub use domain_event::{DomainEvent, EventMetadata};
 pub use error::{ErrorKind, OrNotFound, UseCaseError};
 pub use execution_context::ExecutionContext;
 pub use result::UseCaseResult;
-pub use unit_of_work::{DbTx, HasId, Persist, PgUnitOfWork, UnitOfWork};
+pub use unit_of_work::{
+    DbTx, HasId, LockedRead, Persist, PgUnitOfWork, TxScopedUnitOfWork, UnitOfWork,
+};
 pub use use_case::UseCase;
 
 /// A command's declared audit-masked fields (see `fc_common::audit_redaction`).

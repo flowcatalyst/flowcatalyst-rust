@@ -383,6 +383,37 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Function publishing works with nothing configured, as Java's
+    // `fcdev start` (StartCommand.java:391-413): dev mode on, uploaded
+    // artifacts kept in the dev cache, and signatures off (which the
+    // platform allows only in dev mode). Each is a default an operator's
+    // own value overrides.
+    if std::env::var("FLOWCATALYST_DEV_MODE").is_err() {
+        std::env::set_var("FLOWCATALYST_DEV_MODE", "true");
+    }
+    if std::env::var("FC_FN_ARTIFACT_STORE").is_err() {
+        let dir = dirs::cache_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("flowcatalyst-dev")
+            .join("fn-artifacts");
+        // Percent-encoded, as Java's Path#toUri: macOS's cache path can hold
+        // a space. A Windows path becomes `file:///C:/…`.
+        let path = dir
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace('%', "%25")
+            .replace(' ', "%20");
+        let path = if path.starts_with('/') {
+            path
+        } else {
+            format!("/{path}")
+        };
+        std::env::set_var("FC_FN_ARTIFACT_STORE", format!("file://{path}"));
+    }
+    if std::env::var("FC_FN_SIGNATURES").is_err() {
+        std::env::set_var("FC_FN_SIGNATURES", "off");
+    }
+
     // Anchor the JWT keypair to an absolute dev-cache path so sessions
     // survive across launches regardless of CWD. Without this, the keys
     // land in `./.jwt-keys/` relative to wherever fc-dev was invoked —

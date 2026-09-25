@@ -182,6 +182,20 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - Use cases PublishVersion (a `nextVersion` row lock, every `checkPublish` code) and RetireVersion.
 - Version reads, and `…/manifest/check`.
 
+> **P4 outcome (2026-09-25).** Done on `feat/fn-p4-artifacts`.
+> - The verifier is a new crate, `crates/fc-function-signing`: a copy of the host's port of Java's
+>   `SignatureVerifier` (all 40 of Java's cases), split out while `fc-fnhost-core` was being edited. The host
+>   still has its own copy; a dedupe pass moves it onto the crate.
+> - Publish runs on a transaction-scoped unit of work (`PgUnitOfWork::run`), as Java's `TxOperation`: the
+>   version number is a `LockedRead` (`SELECT … FOR UPDATE` on the function row) in the transaction it is
+>   committed in. `UnitOfWork::read_locked` is new, and P6's `MarkVersionReady` row lock can use it too.
+> - Every `checkPublish` code is in (`operations/publish_checks.rs`), ahead of the wiring; P5 folds it into
+>   the ported `FunctionTriggerSync`. The cron grammar and `ZoneId.of` are ported and checked against goldens
+>   from the pinned Java sources.
+> - Left for P5: the `plan` in `manifest/check`. Left for P6: the artifact download route.
+> - `UseCaseError` gained 422 and 503 kinds (Java's `ArtifactHttpException`), and a conflict keeps its
+>   `details` (`VERSION_DIGEST_EXISTS`'s `details.version`).
+
 **P5: promote, aliases and wiring** (about 1,300)
 - PromoteVersion and RemoveAlias.
 - A port of `FunctionTriggerSync` and `PromotePlan`, which create, update and delete, through their own use cases and events:

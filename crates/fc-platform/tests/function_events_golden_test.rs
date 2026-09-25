@@ -11,13 +11,17 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use fc_platform::function::entity::{
-    ClientPolicy, Function, FunctionDomain, FunctionStatus, SecretValue, SignerRule,
+    ClientPolicy, Function, FunctionDomain, FunctionStatus, FunctionVersion, SecretValue,
+    SignerIdentity, SignerRule,
 };
 use fc_platform::function::operations::events::{
     ConfigUpdated, DomainClaimed, DomainReleased, FunctionCreated, FunctionDeleted,
-    FunctionUpdated, PolicyUpdated, SecretDeleted, SecretSet,
+    FunctionUpdated, PolicyUpdated, SecretDeleted, SecretSet, VersionPublished, VersionRetired,
 };
-use fc_platform::function::{FunctionAddress, FunctionOwner, Hostname, Runtime};
+use fc_platform::function::{
+    ClientCeilings, Digest, FunctionAddress, FunctionLimits, FunctionOwner, Hostname, JsonNode,
+    Manifest, Runtime,
+};
 use fc_platform::usecase::{DomainEvent, EventMetadata, ExecutionContext};
 
 fn golden() -> Value {
@@ -65,6 +69,38 @@ fn policy(
         created_at: at(),
         updated_at: at(),
     }
+}
+
+/// A version as Java's generator builds it (`version-*` cases).
+fn version(
+    id: &str,
+    function_id: &str,
+    number: i32,
+    signer: Option<SignerIdentity>,
+) -> FunctionVersion {
+    let defaults = FunctionLimits::defaults();
+    let manifest = Manifest::parse_strict(
+        Some(
+            &JsonNode::parse(r#"{"runtime":"wasm","entrypoint":"handle","pool":"edge"}"#).unwrap(),
+        ),
+        Runtime::Wasm,
+        &defaults,
+        &ClientCeilings::of(&defaults),
+    )
+    .unwrap();
+    let mut v = FunctionVersion::publish(
+        function_id,
+        number,
+        "oci://r/a",
+        Digest::parse(&format!("sha256:{}", "b".repeat(64))).unwrap(),
+        None,
+        signer,
+        manifest,
+        "prn_1",
+        at(),
+    );
+    v.id = id.into();
+    v
 }
 
 fn domain(id: &str, owner: FunctionOwner, hostname: &str) -> FunctionDomain {
@@ -186,6 +222,31 @@ fn rust_events() -> Vec<(&'static str, Builder)> {
         (
             "domain-released/client",
             Box::new(move || pack(DomainReleased::new(&ctx(), &client_domain()))),
+        ),
+        (
+            "version-published/signed",
+            Box::new(move || {
+                let signer = SignerIdentity {
+                    issuer: "https://issuer".into(),
+                    subject: "repo:acme/fn".into(),
+                };
+                let v = version("fnv_3", "fnc_1", 3, Some(signer));
+                pack(VersionPublished::new(&ctx(), &platform_fn(), &v))
+            }),
+        ),
+        (
+            "version-published/unsigned",
+            Box::new(move || {
+                let v = version("fnv_4", "fnc_2", 4, None);
+                pack(VersionPublished::new(&ctx(), &client_fn(), &v))
+            }),
+        ),
+        (
+            "version-retired/client",
+            Box::new(move || {
+                let v = version("fnv_4", "fnc_2", 4, None);
+                pack(VersionRetired::new(&ctx(), &client_fn(), &v))
+            }),
         ),
     ]
 }

@@ -27,6 +27,24 @@ impl Digest {
     pub fn value(&self) -> &str {
         &self.0
     }
+
+    /// The digest of raw SHA-256 output.
+    pub fn from_sha256(bytes: &[u8]) -> Digest {
+        Digest(format!("sha256:{}", hex::encode(bytes)))
+    }
+
+    /// The 64 hex characters after `sha256:`.
+    pub fn hex(&self) -> &str {
+        self.0.strip_prefix("sha256:").unwrap_or(&self.0)
+    }
+
+    /// A digest that skipped [`Digest::parse`], as Java's canonical
+    /// constructor allows: only for tests that prove a store validates
+    /// keys itself (Java `FileArtifactBlobStoreTest`, U9).
+    #[cfg(test)]
+    pub(crate) fn unchecked(raw: &str) -> Digest {
+        Digest(raw.to_string())
+    }
 }
 
 impl fmt::Display for Digest {

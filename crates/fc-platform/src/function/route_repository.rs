@@ -42,6 +42,28 @@ impl FunctionRouteRepository {
         rows.into_iter().map(to_entity).collect()
     }
 
+    /// Every route at one of `keys`' exact `(hostname, pathPrefix)` pairs,
+    /// in one query (Java `findPublic`, for many).
+    pub async fn find_public_each(
+        &self,
+        keys: &[(&Hostname, &RoutePattern)],
+    ) -> Result<Vec<FunctionRoute>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let hostnames: Vec<&str> = keys.iter().map(|(h, _)| h.value()).collect();
+        let prefixes: Vec<&str> = keys.iter().map(|(_, p)| p.value()).collect();
+        let rows = sqlx::query_as::<_, RouteRow>(&format!(
+            "SELECT {COLUMNS} FROM fn_routes \
+             WHERE (hostname, path_prefix) IN (SELECT * FROM UNNEST($1::text[], $2::text[]))"
+        ))
+        .bind(&hostnames)
+        .bind(&prefixes)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(to_entity).collect()
+    }
+
     pub async fn list_by_hostname(&self, hostname: &Hostname) -> Result<Vec<FunctionRoute>> {
         let rows = sqlx::query_as::<_, RouteRow>(&format!(
             "SELECT {COLUMNS} FROM fn_routes WHERE hostname = $1 \

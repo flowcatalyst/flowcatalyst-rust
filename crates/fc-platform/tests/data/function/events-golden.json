@@ -111,6 +111,30 @@
     "subject" : "platform.function-domain.fnd_2",
     "messageGroup" : "platform:function-domain:fnd_2",
     "data" : "{\"domainId\":\"fnd_2\",\"hostname\":\"api.example.org\",\"owner\":\"clt_1\"}"
+  }, {
+    "case" : "version-published/signed",
+    "type" : "platform:function:version:published",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_1",
+    "messageGroup" : "platform:function:fnc_1",
+    "data" : "{\"functionId\":\"fnc_1\",\"address\":\"billing.invoices.create\",\"versionId\":\"fnv_3\",\"version\":3,\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"pool\":\"edge\",\"signerIssuer\":\"https://issuer\",\"signerSubject\":\"repo:acme/fn\"}"
+  }, {
+    "case" : "version-published/unsigned",
+    "type" : "platform:function:version:published",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\",\"versionId\":\"fnv_4\",\"version\":4,\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"pool\":\"edge\"}"
+  }, {
+    "case" : "version-retired/client",
+    "type" : "platform:function:version:retired",
+    "source" : "platform:function",
+    "specVersion" : "1.0",
+    "subject" : "platform.function.fnc_2",
+    "messageGroup" : "platform:function:fnc_2",
+    "data" : "{\"functionId\":\"fnc_2\",\"address\":\"billing.invoices.create\",\"versionId\":\"fnv_4\",\"version\":4}"
   } ],
   "secretValue" : "\"***\""
 }

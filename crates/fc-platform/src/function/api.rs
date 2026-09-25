@@ -1,7 +1,7 @@
 //! `/api/functions*` and `/api/function-pools` (Java
-//! `function/api/FunctionApi.java`, the routes this workstream owns:
-//! `register` lines 178-184 and 202-206). Versions, aliases, the manifest
-//! check and artifact upload are P4 and P5.
+//! `function/api/FunctionApi.java`, `register` lines 178-206). Versions,
+//! the manifest check and artifact upload are in [`super::version_api`];
+//! aliases are P5.
 //!
 //! Each write handler is a permission check, a command built from the body,
 //! a use case run, and a response. Reads go to the repositories and apply
@@ -121,7 +121,7 @@ fn require_encryption(state: &FunctionsState) -> Result<(), PlatformError> {
 }
 
 /// `{v}` or `?version=`: a positive integer, else `400 VERSION_INVALID`.
-fn parse_version_number(raw: &str) -> Result<i32, UseCaseError> {
+pub(crate) fn parse_version_number(raw: &str) -> Result<i32, UseCaseError> {
     raw.parse::<i32>().ok().filter(|v| *v > 0).ok_or_else(|| {
         UseCaseError::validation("VERSION_INVALID", "version must be a positive integer")
     })
@@ -614,7 +614,7 @@ pub async fn delete_function(
     checks::require_permission(&auth.0, FUNCTION_MANAGE)?;
     let address = address_from_path(&address)?;
     let caller = state.caller(&auth.0).await?;
-    state
+    let event = state
         .ops
         .delete(caller)
         .run(
@@ -623,15 +623,20 @@ pub async fn delete_function(
         )
         .await
         .into_result()?;
-    // TODO(P4): after the commit, delete the function's artifact blobs from
-    // the store, best-effort (a failure is a WARN, never a failed delete),
-    // as Java's FunctionApi.delete does (FunctionApi.java:639-648).
+    // After the commit, best-effort (Java FunctionApi.java:639-648): the
+    // function's uploaded blobs are garbage now, and a store failure is a
+    // WARN, never a failed delete.
+    if let Some(store) = &state.ops.artifacts {
+        if let Err(e) = store.delete_all(&event.function_id).await {
+            tracing::warn!(id = %event.function_id, error = %e, "deleting a deleted function's artifacts failed");
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// What exists for one function now: its versions, the hosts reporting it
-/// and its wiring. Versions, hosts and wiring stay empty until publishing
-/// (P4), the host control plane (P6) and promote (P5) write them.
+/// and its wiring. Hosts and wiring stay empty until the host control plane
+/// (P6) and promote (P5) write them.
 #[utoipa::path(
     get, path = "/api/functions/{address}/status", tag = "functions",
     operation_id = "getApiFunctionsByAddressStatus",
@@ -1025,6 +1030,14 @@ pub fn function_routes() -> OpenApiRouter<FunctionsState> {
         .routes(routes!(get_function, update_function, delete_function))
         .routes(routes!(function_status))
         .routes(routes!(function_pools))
+        .routes(routes!(
+            super::version_api::publish_version,
+            super::version_api::list_versions
+        ))
+        .routes(routes!(super::version_api::get_version))
+        .routes(routes!(super::version_api::retire_version))
+        .routes(routes!(super::version_api::check_manifest))
+        .routes(routes!(super::version_api::upload_artifact))
         .routes(routes!(get_config, put_config))
         .routes(routes!(get_secrets))
         .routes(routes!(put_secret, delete_secret))

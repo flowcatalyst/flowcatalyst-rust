@@ -71,20 +71,14 @@ mod tests {
     }
 
     /// The routes Rust registers (in its own utoipa document) are exactly
-    /// the `/api/` operations of Java's document that this workstream
-    /// owns; the versions, aliases, manifest check and artifact upload
-    /// operations are P4 and P5.
+    /// the `/api/` operations of Java's document, but the aliases, which
+    /// are promote (P5).
     #[test]
     fn rust_registers_javas_operations() {
         use std::collections::BTreeSet;
         const LATER: &[&str] = &[
-            "/api/functions/{address}/versions",
-            "/api/functions/{address}/manifest/check",
-            "/api/functions/{address}/versions/{version}",
-            "/api/functions/{address}/versions/{version}/retire",
             "/api/functions/{address}/aliases/{alias}",
             "/api/functions/{address}/aliases",
-            "/api/functions/{address}/artifacts/{digest}",
         ];
         let java: serde_json::Value = serde_json::from_slice(FUNCTIONS_OPENAPI).unwrap();
         let java: BTreeSet<(String, String)> = java["paths"]

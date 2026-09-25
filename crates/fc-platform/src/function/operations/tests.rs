@@ -15,9 +15,9 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::access::tests::caller;
-use super::events::SecretSet;
+use super::events::{SecretSet, VersionPublished, VersionRetired};
 use super::*;
-use crate::function::entity::{Function, SecretValue};
+use crate::function::entity::{Function, FunctionVersion, SecretValue, SignerIdentity};
 use crate::function::{FunctionAddress, FunctionOwner, Runtime};
 use crate::usecase::unit_of_work::{AuditRow, InMemoryUnitOfWork};
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError};
@@ -28,17 +28,37 @@ fn ops() -> FunctionOperations<InMemoryUnitOfWork> {
         .acquire_timeout(std::time::Duration::from_millis(1))
         .connect_lazy("postgres://nobody@127.0.0.1:1/none")
         .unwrap();
+    let functions = Arc::new(crate::function::repository::FunctionRepository::new(&pool));
+    let versions =
+        Arc::new(crate::function::version_repository::FunctionVersionRepository::new(&pool));
+    let domains =
+        Arc::new(crate::function::domain_repository::FunctionDomainRepository::new(&pool));
+    let routes = Arc::new(crate::function::route_repository::FunctionRouteRepository::new(&pool));
+    let limits = crate::function::FunctionLimits::defaults();
     FunctionOperations {
-        functions: Arc::new(crate::function::repository::FunctionRepository::new(&pool)),
+        functions: functions.clone(),
+        versions: versions.clone(),
         applications: Arc::new(crate::ApplicationRepository::new(&pool)),
         clients: Arc::new(crate::ClientRepository::new(&pool)),
         settings: Arc::new(
             crate::function::settings_repository::FunctionSettingsRepository::new(&pool, None),
         ),
         policies: Arc::new(crate::function::policy_repository::ClientPolicyRepository::new(&pool)),
-        domains: Arc::new(crate::function::domain_repository::FunctionDomainRepository::new(&pool)),
-        routes: Arc::new(crate::function::route_repository::FunctionRouteRepository::new(&pool)),
+        domains: domains.clone(),
+        routes: routes.clone(),
         trigger_sync: TriggerSync,
+        limits,
+        signatures: fc_function_signing::Signatures::Off,
+        artifacts: None,
+        publish_checks: PublishChecks {
+            event_types: Arc::new(crate::EventTypeRepository::new(&pool)),
+            service_accounts: Arc::new(crate::ServiceAccountRepository::new(&pool)),
+            versions,
+            functions,
+            domains,
+            routes,
+            limits,
+        },
         unit_of_work: Arc::new(InMemoryUnitOfWork::new()),
     }
 }
@@ -455,4 +475,193 @@ async fn release_of_an_invalid_hostname_is_400_before_any_load() {
     )
     .await;
     assert_error(&err, 400, "HOSTNAME_INVALID");
+}
+
+// ── PublishVersion / RetireVersion ──────────────────────────────────────────
+
+fn publish_command() -> PublishCommand {
+    PublishCommand {
+        address: address(),
+        artifact_ref: Some("oci://registry/fn".into()),
+        digest: Some(format!("sha256:{}", "a".repeat(64))),
+        signature_bundle: None,
+        manifest: None,
+    }
+}
+
+/// Java `PublishVersion`'s `validate`: the ref's presence, its scheme, the
+/// digest's shape, in that order, before anything is loaded.
+#[tokio::test]
+async fn publish_validates_the_ref_and_digest_before_anything_else() {
+    let ops = ops();
+    let cases = [
+        (
+            PublishCommand {
+                artifact_ref: None,
+                digest: None,
+                ..publish_command()
+            },
+            "ARTIFACT_REF_REQUIRED",
+            "artifactRef is required",
+        ),
+        (
+            PublishCommand {
+                artifact_ref: Some(" \t".into()),
+                ..publish_command()
+            },
+            "ARTIFACT_REF_REQUIRED",
+            "artifactRef is required",
+        ),
+        (
+            PublishCommand {
+                artifact_ref: Some("https://example.com/a.wasm".into()),
+                digest: None,
+                ..publish_command()
+            },
+            "ARTIFACT_REF_INVALID",
+            "artifactRef must start with oci://, file://, s3://, or platform://",
+        ),
+        (
+            PublishCommand {
+                digest: None,
+                ..publish_command()
+            },
+            "DIGEST_INVALID",
+            "digest must be sha256: followed by 64 lower-case hex characters",
+        ),
+        (
+            PublishCommand {
+                digest: Some(format!("sha256:{}", "A".repeat(64))),
+                ..publish_command()
+            },
+            "DIGEST_INVALID",
+            "digest must be sha256: followed by 64 lower-case hex characters",
+        ),
+    ];
+    for (command, code, message) in cases {
+        let err = run_err(ops.publish(anchor()), command).await;
+        assert_error(&err, 400, code);
+        assert_eq!(err.message(), message);
+    }
+}
+
+fn published_version(f: &Function, signer: Option<SignerIdentity>) -> FunctionVersion {
+    let defaults = crate::function::FunctionLimits::defaults();
+    let manifest = crate::function::Manifest::parse_strict(
+        Some(
+            &crate::function::JsonNode::parse(
+                r#"{"runtime":"wasm","entrypoint":"handle","pool":"edge"}"#,
+            )
+            .unwrap(),
+        ),
+        Runtime::Wasm,
+        &defaults,
+        &crate::function::ClientCeilings::of(&defaults),
+    )
+    .unwrap();
+    let mut v = FunctionVersion::publish(
+        &f.id,
+        3,
+        "platform://fnc_1/abc",
+        crate::function::Digest::parse(&format!("sha256:{}", "b".repeat(64))).unwrap(),
+        Some("{\"bundle\":true}".into()),
+        signer,
+        manifest,
+        "prn_1",
+        chrono::Utc::now(),
+    );
+    v.id = "fnv_3".into();
+    v
+}
+
+fn platform_function() -> Function {
+    let mut f = Function::create(
+        "app_1",
+        address(),
+        FunctionOwner::Platform,
+        Runtime::Wasm,
+        None,
+    );
+    f.id = "fnc_1".into();
+    f
+}
+
+/// Java `PublishPromoteRetireTest`: one `version:published` event and one
+/// audit row per publish, the audit row carrying the command as Java's
+/// does (bundle and manifest included, masked by the secret-name rule
+/// alone), and one `version:retired` per retire.
+#[tokio::test]
+async fn publish_and_retire_write_one_event_and_one_audit_row() {
+    let f = platform_function();
+    let signed = published_version(
+        &f,
+        Some(SignerIdentity {
+            issuer: "https://issuer".into(),
+            subject: "repo:acme/fn".into(),
+        }),
+    );
+    let event = VersionPublished::new(&ctx(), &f, &signed);
+    assert_eq!(
+        event.metadata.event_type,
+        "platform:function:version:published"
+    );
+    assert_eq!(event.metadata.subject, "platform.function.fnc_1");
+    assert_eq!(event.metadata.message_group, "platform:function:fnc_1");
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        json!({"functionId": "fnc_1", "address": "billing.invoices.create", "versionId": "fnv_3",
+               "version": 3, "digest": format!("sha256:{}", "b".repeat(64)), "pool": "edge",
+               "signerIssuer": "https://issuer", "signerSubject": "repo:acme/fn"})
+    );
+    let unsigned = VersionPublished::new(&ctx(), &f, &published_version(&f, None));
+    let data = serde_json::to_value(&unsigned).unwrap();
+    assert!(data.get("signerIssuer").is_none() && data.get("signerSubject").is_none());
+
+    let command = PublishCommand {
+        signature_bundle: Some("{\"bundle\":true}".into()),
+        manifest: Some(
+            crate::function::JsonNode::parse(
+                r#"{"runtime":"wasm","entrypoint":"handle","apiKey":"sk_live_1","config":["A"]}"#,
+            )
+            .unwrap(),
+        ),
+        ..publish_command()
+    };
+    let uow = InMemoryUnitOfWork::new();
+    let _ = uow.emit_event(event, &command).await;
+    assert_eq!(uow.committed_events.lock().unwrap().len(), 1);
+    let audit = uow.committed_audits.lock().unwrap()[0].clone().unwrap();
+    assert_eq!(
+        audit,
+        json!({"address": "billing.invoices.create", "artifactRef": "oci://registry/fn",
+               "digest": format!("sha256:{}", "a".repeat(64)),
+               "signatureBundle": "{\"bundle\":true}",
+               "manifest": {"runtime": "wasm", "entrypoint": "handle", "apiKey": "***",
+                            "config": ["A"]}})
+    );
+
+    let retired = VersionRetired::new(&ctx(), &f, &signed);
+    assert_eq!(
+        retired.metadata.event_type,
+        "platform:function:version:retired"
+    );
+    assert_eq!(
+        serde_json::to_value(&retired).unwrap(),
+        json!({"functionId": "fnc_1", "address": "billing.invoices.create",
+               "versionId": "fnv_3", "version": 3})
+    );
+    let audit = AuditRow::from_event(
+        &retired,
+        &RetireCommand {
+            address: address(),
+            version: 3,
+        },
+    );
+    assert_eq!(audit.entity_type, "Function");
+    assert_eq!(audit.entity_id, "fnc_1");
+    assert_eq!(audit.operation, "RetireCommand");
+    assert_eq!(
+        audit.operation_json.unwrap(),
+        json!({"address": "billing.invoices.create", "version": 3})
+    );
 }

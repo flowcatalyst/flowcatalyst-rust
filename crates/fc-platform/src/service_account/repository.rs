@@ -231,6 +231,21 @@ impl ServiceAccountRepository {
         self.hydrate_many(principals).await
     }
 
+    /// Whether the application's oldest active service account carries a
+    /// webhook signing secret (Java `OutboundCredentials.resolve`'s
+    /// `signingSecret`, read shallow): the account every delivery to one of
+    /// its functions is signed with.
+    pub async fn oldest_active_has_signing_secret(&self, application_id: &str) -> Result<bool> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT wh_signing_secret_ref FROM iam_service_accounts \
+             WHERE application_id = $1 AND active = true ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(application_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(matches!(row, Some((Some(secret),)) if !secret.is_empty()))
+    }
+
     /// Find service accounts by client ID.
     pub async fn find_by_client(&self, client_id: &str) -> Result<Vec<ServiceAccount>> {
         let principals = sqlx::query_as::<_, PrincipalRow>(

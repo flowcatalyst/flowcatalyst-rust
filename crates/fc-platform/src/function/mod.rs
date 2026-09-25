@@ -7,6 +7,7 @@
 //! and the guest PDK; [`function_address`] adds the platform's error for it.
 
 pub mod api;
+pub mod artifact;
 pub mod digest;
 pub mod dns_label;
 pub mod domain_api;
@@ -31,10 +32,12 @@ pub mod repository;
 pub mod route_pattern;
 pub mod route_repository;
 pub mod runtime;
+pub mod schedule_check;
 pub mod schema;
 pub mod setting_key;
 pub mod settings_repository;
 pub mod trigger_object_repository;
+pub mod version_api;
 pub mod version_repository;
 pub mod wire;
 

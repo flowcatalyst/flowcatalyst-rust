@@ -56,6 +56,33 @@ impl FunctionDomainRepository {
         Ok(None)
     }
 
+    /// [`Self::covering`] for each of `hostnames`, in order, in one query.
+    pub async fn covering_each(
+        &self,
+        hostnames: &[&Hostname],
+    ) -> Result<Vec<Option<FunctionDomain>>> {
+        if hostnames.is_empty() {
+            return Ok(Vec::new());
+        }
+        let candidates: Vec<Vec<String>> = hostnames.iter().map(|h| h.zone_candidates()).collect();
+        let all: Vec<&String> = candidates.iter().flatten().collect();
+        let rows = sqlx::query_as::<_, DomainRow>(
+            "SELECT id, client_id, hostname, created_at FROM fn_domains WHERE hostname = ANY($1)",
+        )
+        .bind(&all)
+        .fetch_all(&self.pool)
+        .await?;
+        let claims: Vec<FunctionDomain> = rows.into_iter().map(to_entity).collect::<Result<_>>()?;
+        Ok(candidates
+            .iter()
+            .map(|zones| {
+                zones
+                    .iter()
+                    .find_map(|zone| claims.iter().find(|d| d.hostname.value() == zone).cloned())
+            })
+            .collect())
+    }
+
     /// Whether any claim, by any owner, is strictly under `zone` (never
     /// `zone` itself).
     pub async fn any_under(&self, zone: &Hostname) -> Result<bool> {

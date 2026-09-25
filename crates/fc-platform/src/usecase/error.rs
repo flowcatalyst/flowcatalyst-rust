@@ -83,6 +83,15 @@ pub enum ErrorKind {
     /// or read ([`UseCaseError::internal`]). HTTP 500.
     #[serde(rename = "CommitError")]
     Internal,
+    /// A well-formed request whose bytes or reference cannot be processed
+    /// (Java `ArtifactHttpException`'s 422s: a `platform://` artifact that
+    /// names another function, or was never uploaded). HTTP 422.
+    #[serde(rename = "UnprocessableError")]
+    Unprocessable,
+    /// A capability this deployment has not configured (Java
+    /// `ArtifactHttpException.storeNotConfigured`). HTTP 503.
+    #[serde(rename = "UnavailableError")]
+    Unavailable,
 }
 
 impl ErrorKind {
@@ -94,6 +103,8 @@ impl ErrorKind {
             Self::NotFound => 404,
             Self::Forbidden => 403,
             Self::Internal => 500,
+            Self::Unprocessable => 422,
+            Self::Unavailable => 503,
         }
     }
 }
@@ -171,6 +182,16 @@ impl UseCaseError {
     /// `UseCaseException.authorization(code, message)`.
     pub fn forbidden(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Forbidden, code, message, HashMap::new())
+    }
+
+    /// Create an unprocessable error (HTTP 422).
+    pub fn unprocessable(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Unprocessable, code, message, HashMap::new())
+    }
+
+    /// Create an unavailable error (HTTP 503).
+    pub fn unavailable(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Unavailable, code, message, HashMap::new())
     }
 
     /// Create a concurrency error.
@@ -262,6 +283,8 @@ impl From<PlatformError> for UseCaseError {
                 403 => Self::new(ErrorKind::Forbidden, code, message, details),
                 404 => Self::not_found_with_details(code, message, details),
                 409 => Self::business_rule_with_details(code, message, details),
+                422 => Self::new(ErrorKind::Unprocessable, code, message, details),
+                503 => Self::new(ErrorKind::Unavailable, code, message, details),
                 _ => Self::internal(code, message),
             },
             e @ (PlatformError::EventTypeNotFound { .. }
@@ -296,6 +319,14 @@ impl From<UseCaseError> for PlatformError {
                 message,
                 details,
             },
+            // A conflict that carries details (Java's `VERSION_DIGEST_EXISTS`
+            // with `details.version`) keeps them in the body.
+            ErrorKind::BusinessRule if !details.is_empty() => PlatformError::Coded {
+                status: axum::http::StatusCode::CONFLICT,
+                code,
+                message,
+                details,
+            },
             ErrorKind::BusinessRule => PlatformError::BusinessRule { code, message },
             ErrorKind::NotFound => PlatformError::Coded {
                 status: axum::http::StatusCode::NOT_FOUND,
@@ -314,6 +345,18 @@ impl From<UseCaseError> for PlatformError {
             },
             ErrorKind::Internal => PlatformError::Internal {
                 message: format!("{}: {}", code, message),
+            },
+            ErrorKind::Unprocessable => PlatformError::Coded {
+                status: axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                code,
+                message,
+                details,
+            },
+            ErrorKind::Unavailable => PlatformError::Coded {
+                status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                code,
+                message,
+                details,
             },
         }
     }
@@ -391,6 +434,52 @@ mod tests {
             .await
             .unwrap();
         (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    /// Java's artifact statuses (422, 503) and a conflict's details reach
+    /// the body, and survive a round trip through `PlatformError`.
+    #[tokio::test]
+    async fn unprocessable_unavailable_and_detailed_conflicts_render_as_java() {
+        let (status, body) =
+            render(UseCaseError::unprocessable("ARTIFACT_EMPTY", "empty").into()).await;
+        assert_eq!(status, 422);
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "ARTIFACT_EMPTY", "message": "empty"})
+        );
+        let (status, body) =
+            render(UseCaseError::unavailable("ARTIFACT_STORE_NOT_CONFIGURED", "none").into()).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (503, Some("ARTIFACT_STORE_NOT_CONFIGURED"))
+        );
+        let mut details = HashMap::new();
+        details.insert("version".to_string(), serde_json::json!(3));
+        let conflict =
+            UseCaseError::business_rule_with_details("VERSION_DIGEST_EXISTS", "dup", details);
+        let (status, body) = render(conflict.clone().into()).await;
+        assert_eq!(status, 409);
+        assert_eq!(
+            body,
+            serde_json::json!({"error": "VERSION_DIGEST_EXISTS", "message": "dup", "details": {"version": 3}})
+        );
+        let back = UseCaseError::from(PlatformError::from(conflict));
+        assert_eq!(
+            (back.kind(), back.details()["version"].as_i64()),
+            (ErrorKind::BusinessRule, Some(3))
+        );
+        for (err, kind) in [
+            (
+                UseCaseError::unprocessable("A", "a"),
+                ErrorKind::Unprocessable,
+            ),
+            (UseCaseError::unavailable("B", "b"), ErrorKind::Unavailable),
+        ] {
+            assert_eq!(UseCaseError::from(PlatformError::from(err)).kind(), kind);
+        }
+        // A conflict with no details keeps the plain body.
+        let (_, body) = render(UseCaseError::business_rule("X", "x").into()).await;
+        assert!(body.get("details").is_none());
     }
 
     /// Converting a `PlatformError` into a `UseCaseError` and back must
