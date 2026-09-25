@@ -71,7 +71,7 @@ impl Backend for WasiBackend {
     }
 
     #[cfg(feature = "flowcatalyst")]
-    fn emit(&self, event: &OutboundEvent) -> Result<(), EmitError> {
+    fn emit(&self, event: &OutboundEvent) -> Result<String, EmitError> {
         use fc::events;
         let data = match event.data() {
             [] => None,
@@ -90,13 +90,16 @@ impl Backend for WasiBackend {
             message_group: event.message_group().map(str::to_owned),
             dedup_id: event.dedup_id().to_owned(),
         };
-        events::emit(&wire).map_err(|e| match e {
-            events::EmitError::Invalid(code) => EmitError::Invalid(code),
-            events::EmitError::Refused(r) => EmitError::Refused {
+        // 0.1.1: the event id, and the platform's reason on a refusal. What
+        // failed to reach the platform is the host's to log, not the guest's.
+        events::emit_event(&wire).map_err(|e| match e {
+            events::EmitEventError::Invalid(code) => EmitError::Invalid(code),
+            events::EmitEventError::Refused(r) => EmitError::Refused {
                 code: r.code,
                 status: r.status,
+                message: r.message,
             },
-            events::EmitError::Unavailable => EmitError::Unavailable,
+            events::EmitEventError::Unavailable(_) => EmitError::Unavailable,
         })
     }
 

@@ -273,20 +273,42 @@ fn emit_request() -> EmitRequest {
 async fn emit_maps_platform_errors_to_their_code_and_status() {
     let r = rig().await;
     r.platform.valid_tokens.lock().push("tok-0".into());
-    r.control.emit(&emit_request()).await.unwrap();
+    // Java 571fdff1: accepted, the id the platform stored the event under;
+    // an unreadable 2xx is still accepted, with no id.
+    assert_eq!(r.control.emit(&emit_request()).await.unwrap(), "");
     assert!(r.platform.emits.lock()[0].starts_with(r#"{"hostId":"h","address":"app.svc.fn","version":3,"events":[{"type":"app:order:shipped","subject":"order/1","dedupId":"d1""#));
+    *r.platform.emit_status.lock() = (
+        201,
+        r#"{"results":[{"id":"evt_0HZXEQ5Y8JY5Z","status":"SUCCESS"}]}"#.into(),
+    );
+    assert_eq!(
+        r.control.emit(&emit_request()).await.unwrap(),
+        "evt_0HZXEQ5Y8JY5Z"
+    );
+    *r.platform.emit_status.lock() = (201, "not json".into());
+    assert_eq!(r.control.emit(&emit_request()).await.unwrap(), "");
 
+    // Java 67b04a51: a refusal carries the platform's reason.
     *r.platform.emit_status.lock() = (
         403,
         r#"{"error":"EVENT_TYPE_NOT_OWNED","message":"no"}"#.into(),
     );
     let err = r.control.emit(&emit_request()).await.unwrap_err();
     assert_eq!((err.code(), err.status()), ("EVENT_TYPE_NOT_OWNED", 403));
+    assert_eq!(err.message(), "no");
+    assert_eq!(
+        err.to_string(),
+        "emit refused: EVENT_TYPE_NOT_OWNED (403): no"
+    );
 
     *r.platform.emit_status.lock() = (500, "not json".into());
     let err = r.control.emit(&emit_request()).await.unwrap_err();
-    assert_eq!((err.code(), err.status()), ("UNKNOWN", 500));
+    assert_eq!(
+        (err.code(), err.status(), err.message()),
+        ("UNKNOWN", 500, "")
+    );
 
+    // A transport failure says what failed (and is logged, throttled).
     let down = HttpControlPlane::new(
         HttpControlPlane::default_client(),
         "http://127.0.0.1:1",
@@ -294,6 +316,12 @@ async fn emit_maps_platform_errors_to_their_code_and_status() {
     );
     let err = down.emit(&emit_request()).await.unwrap_err();
     assert_eq!((err.code(), err.status()), ("UNAVAILABLE", 503));
+    assert!(
+        err.message()
+            .starts_with("control plane request failed: POST /control/functions/events: "),
+        "{}",
+        err.message()
+    );
 }
 
 #[tokio::test]

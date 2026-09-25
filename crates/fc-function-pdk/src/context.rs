@@ -245,10 +245,16 @@ pub struct Events {
 #[cfg(feature = "flowcatalyst")]
 impl Events {
     /// Publishes `event` and returns once the platform has accepted or
-    /// refused it. A `None` correlation or causation id takes the
+    /// refused it: accepted, the id the platform stored it under (Java's
+    /// `EmitResult.Emitted`). The id is empty when the platform accepted the
+    /// event but its answer could not be read: the event is stored, so never
+    /// emit it again. A `None` correlation or causation id takes the
     /// invocation's ([`Invocation::correlation_id`],
     /// [`Invocation::causation_id`]). The payload must be JSON.
-    pub fn emit(&self, event: &OutboundEvent) -> Result<(), EmitError> {
+    ///
+    /// Calls `flowcatalyst:function/events.emit-event` (contract 0.1.1), so
+    /// the component needs a host that serves 0.1.1.
+    pub fn emit(&self, event: &OutboundEvent) -> Result<String, EmitError> {
         self.backend.emit(event)
     }
 }
@@ -264,12 +270,16 @@ pub enum EmitError {
     /// or [`emit_error::DEDUP_ID_REQUIRED`](crate::emit_error::DEDUP_ID_REQUIRED).
     Invalid(String),
     /// The platform refused the event, with its own code (for example
-    /// `EVENT_TYPE_NOT_OWNED` or `DEDUP_ID_DUPLICATE`) and HTTP status.
+    /// `EVENT_TYPE_NOT_OWNED` or `DEDUP_ID_DUPLICATE`), HTTP status and
+    /// reason.
     Refused {
         /// The platform's error code.
         code: String,
         /// The HTTP status the platform answered with.
         status: u16,
+        /// The platform's own message: which check refused the event.
+        /// Empty when it gave none.
+        message: String,
     },
     /// The platform could not be reached. Worth a retry.
     Unavailable,
@@ -303,13 +313,26 @@ impl EmitError {
     pub fn is_retryable(&self) -> bool {
         self.status() >= 500
     }
+
+    /// The platform's reason for a refusal; empty otherwise.
+    pub fn message(&self) -> &str {
+        match self {
+            EmitError::Refused { message, .. } => message,
+            _ => "",
+        }
+    }
 }
 
-/// `emit refused: <code> (<status>)`, as Java's `EventEmitException`.
+/// `emit refused: <code> (<status>)`, then `: <message>` when the platform
+/// gave one, as Java's refusal message.
 #[cfg(feature = "flowcatalyst")]
 impl fmt::Display for EmitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "emit refused: {} ({})", self.code(), self.status())
+        write!(f, "emit refused: {} ({})", self.code(), self.status())?;
+        match self.message() {
+            "" => Ok(()),
+            message => write!(f, ": {message}"),
+        }
     }
 }
 
@@ -319,7 +342,7 @@ impl std::error::Error for EmitError {}
 #[cfg(feature = "flowcatalyst")]
 impl From<EmitError> for EventEmitError {
     fn from(error: EmitError) -> Self {
-        EventEmitError::new(error.code(), error.status())
+        EventEmitError::new(error.code(), error.status()).with_message(error.message())
     }
 }
 
@@ -400,6 +423,7 @@ mod tests {
         let refused = EmitError::Refused {
             code: "EVENT_TYPE_NOT_OWNED".into(),
             status: 403,
+            message: String::new(),
         };
         assert_eq!(
             refused.to_string(),
@@ -408,9 +432,21 @@ mod tests {
         assert!(!refused.is_retryable());
         assert!(EmitError::Refused {
             code: "X".into(),
-            status: 502
+            status: 502,
+            message: String::new(),
         }
         .is_retryable());
+        // Java 67b04a51: the platform's reason joins the text and carries over.
+        let reasoned = EmitError::Refused {
+            code: "EVENT_TYPE_NOT_OWNED".into(),
+            status: 403,
+            message: "not yours".into(),
+        };
+        assert_eq!(
+            reasoned.to_string(),
+            "emit refused: EVENT_TYPE_NOT_OWNED (403): not yours"
+        );
+        assert_eq!(EventEmitError::from(reasoned).message(), "not yours");
         assert_eq!(
             EventEmitError::from(EmitError::Unavailable),
             EventEmitError::unavailable()

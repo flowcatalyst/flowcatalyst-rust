@@ -27,8 +27,9 @@ pub(crate) trait Backend {
     #[cfg(feature = "flowcatalyst")]
     fn secret(&self, key: &str) -> Option<String>;
 
+    /// The id the platform stored the event under.
     #[cfg(feature = "flowcatalyst")]
-    fn emit(&self, event: &OutboundEvent) -> Result<(), EmitError>;
+    fn emit(&self, event: &OutboundEvent) -> Result<String, EmitError>;
 
     fn log(&self, level: Level, message: &str);
 

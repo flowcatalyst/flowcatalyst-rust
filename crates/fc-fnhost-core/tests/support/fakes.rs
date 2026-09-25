@@ -138,11 +138,16 @@ impl ControlPlane for FakeControlPlane {
         Ok(())
     }
 
-    async fn emit(&self, request: &EmitRequest) -> Result<(), EventEmitError> {
-        self.emits.lock().push(request.clone());
+    /// Accepted: `evt_<n>`, the n-th emit.
+    async fn emit(&self, request: &EmitRequest) -> Result<String, EventEmitError> {
+        let n = {
+            let mut emits = self.emits.lock();
+            emits.push(request.clone());
+            emits.len()
+        };
         match self.emit_refusal.lock().clone() {
             Some(refusal) => Err(refusal),
-            None => Ok(()),
+            None => Ok(format!("evt_{n}")),
         }
     }
 }

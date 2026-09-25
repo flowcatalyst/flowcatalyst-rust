@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use fc_function_abi::{emit_error, EventEmitError, FunctionAddress};
+use fc_function_abi::{EventEmitError, FunctionAddress};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, ETAG, IF_NONE_MATCH};
 use reqwest::{Client, Response, StatusCode};
 use serde::Serialize;
@@ -20,6 +20,7 @@ use serde_json::Value;
 
 use crate::desired::DesiredDocument;
 use crate::heartbeat::HeartbeatReport;
+use crate::log_throttle::LogThrottle;
 use crate::token::TokenSource;
 
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -136,9 +137,11 @@ pub trait ControlPlane: Send + Sync {
     async fn heartbeat(&self, report: &HeartbeatReport) -> Result<(), ControlPlaneError>;
 
     /// `POST /control/functions/events` on a function's behalf (used by the
-    /// runtime's `fc_emit_event`). A non-2xx carries the platform's `error`
-    /// code and status; a transport failure is `UNAVAILABLE`/503.
-    async fn emit(&self, request: &EmitRequest) -> Result<(), EventEmitError>;
+    /// runtime's `fc_emit_event`). Accepted: the id the platform stored the
+    /// event under (`""` when its answer could not be read). A non-2xx
+    /// carries the platform's `error` code, status and `message`; a
+    /// transport failure is `UNAVAILABLE`/503 with what failed.
+    async fn emit(&self, request: &EmitRequest) -> Result<String, EventEmitError>;
 }
 
 /// [`ControlPlane`] over HTTP.
@@ -267,7 +270,7 @@ impl ControlPlane for HttpControlPlane {
         Ok(())
     }
 
-    async fn emit(&self, request: &EmitRequest) -> Result<(), EventEmitError> {
+    async fn emit(&self, request: &EmitRequest) -> Result<String, EventEmitError> {
         let url = format!("{}/control/functions/events", self.platform_url);
         let body = request.to_json();
         let post = |token: &str| {
@@ -277,9 +280,17 @@ impl ControlPlane for HttpControlPlane {
                 .header(CONTENT_TYPE, "application/json")
                 .body(body.clone())
         };
-        let unavailable = || EventEmitError::new(emit_error::UNAVAILABLE, 503);
-        let token = self.token_source.token().await.map_err(|_| unavailable())?;
-        let mut response = post(&token).send().await.map_err(|_| unavailable())?;
+        let token = self
+            .token_source
+            .token()
+            .await
+            .map_err(|e| emit_unavailable("minting a control-plane token failed", &e))?;
+        let mut response = post(&token).send().await.map_err(|e| {
+            emit_unavailable(
+                "control plane request failed: POST /control/functions/events",
+                &e,
+            )
+        })?;
         if response.status() == StatusCode::UNAUTHORIZED {
             tracing::debug!(
                 "control plane rejected the bearer token on emit; refreshing and retrying once"
@@ -288,22 +299,74 @@ impl ControlPlane for HttpControlPlane {
                 .token_source
                 .refresh()
                 .await
-                .map_err(|_| unavailable())?;
-            response = post(&token).send().await.map_err(|_| unavailable())?;
+                .map_err(|e| emit_unavailable("refreshing a control-plane token failed", &e))?;
+            response = post(&token).send().await.map_err(|e| {
+                emit_unavailable(
+                    "control plane request failed: POST /control/functions/events",
+                    &e,
+                )
+            })?;
         }
         let status = response.status();
+        // An unreadable body reads as empty: a 2xx is still an accepted event.
+        let body = response.bytes().await.unwrap_or_default();
         if status.is_success() {
-            return Ok(());
+            return Ok(emitted_id(&body));
         }
-        let code = response
-            .json::<Value>()
-            .await
-            .ok()
-            .and_then(|body| body.get("error").and_then(Value::as_str).map(str::to_owned))
-            .filter(|code| !crate::java::is_blank(code))
-            .unwrap_or_else(|| "UNKNOWN".to_owned());
-        Err(EventEmitError::new(code, status.as_u16()))
+        Err(refusal(status.as_u16(), &body))
     }
+}
+
+/// Spec §3: a 2xx body is the ingest routes' `{results: [{id, status}]}`,
+/// one item per event, and this host always sends a batch of one. An
+/// unreadable body still means the platform accepted the event, so the id
+/// falls back to `""` rather than turning an accepted emit into a refusal
+/// the function might retry into a duplicate (Java 571fdff1).
+fn emitted_id(body: &[u8]) -> String {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|body| {
+            body.pointer("/results/0/id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+/// The platform's own `{error, message}` envelope read back into a refusal
+/// naming its code, this response's status and the platform's reason. An
+/// unreadable body still carries a real status, so the code falls back to
+/// `UNKNOWN` rather than losing it (Java 67b04a51).
+fn refusal(status: u16, body: &[u8]) -> EventEmitError {
+    let body = serde_json::from_slice::<Value>(body).ok();
+    let text = |field: &str| {
+        body.as_ref()
+            .and_then(|b| b.get(field))
+            .and_then(Value::as_str)
+            .filter(|v| !crate::java::is_blank(v))
+            .map(str::to_owned)
+    };
+    EventEmitError::new(
+        text("error").unwrap_or_else(|| "UNKNOWN".to_owned()),
+        status,
+    )
+    .with_message(text("message").unwrap_or_default())
+}
+
+/// A transport or token failure: the function gets the `UNAVAILABLE` code it
+/// branches on, and the host operator gets the cause, logged at WARN and
+/// throttled (a platform outage fails every emit).
+fn emit_unavailable(what: &str, cause: &dyn std::fmt::Display) -> EventEmitError {
+    static EMIT_FAILURE_LOG: LogThrottle = LogThrottle::new(Duration::from_secs(10));
+    if let Some(suppressed) = EMIT_FAILURE_LOG.admit() {
+        tracing::warn!(
+            what,
+            error = %cause,
+            suppressed_since_last = suppressed,
+            "a function's event emit could not reach the platform"
+        );
+    }
+    EventEmitError::unavailable().with_message(format!("{what}: {cause}"))
 }
 
 #[cfg(test)]

@@ -41,6 +41,7 @@ pub mod host;
 pub mod invoke;
 pub mod listener;
 pub mod loader;
+pub mod log_throttle;
 pub mod logging;
 pub mod metrics;
 pub mod observability;

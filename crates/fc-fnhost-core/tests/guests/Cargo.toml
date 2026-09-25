@@ -16,6 +16,7 @@ members = [
     "secret",
     "http",
     "emit",
+    "emit_event",
     "log",
     "pure",
     "pdk",

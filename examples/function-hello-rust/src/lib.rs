@@ -189,7 +189,7 @@ async fn order_placed(req: Request, ctx: Context) -> Result<Response, Error> {
     })?;
     // The correlation and causation ids default to the inbound event's.
     match ctx.events().emit(&event) {
-        Ok(()) => {}
+        Ok(_event_id) => {}
         Err(e) if e.is_retryable() => return Ok(Response::retry(RETRY_AFTER)),
         Err(e) => return Err(e.into()),
     }

@@ -570,6 +570,57 @@ async fn emit_reaches_the_control_plane_and_a_refusal_is_a_typed_value() {
     );
 }
 
+/// Owner ruling 11 (Java 571fdff1 + 67b04a51), through
+/// `flowcatalyst:function@0.1.1`'s `emit-event`: the event id on success,
+/// the platform's reason on a refusal, what failed when it could not be
+/// reached. A 0.1.0 component (`emit`) links unchanged beside it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn emit_event_answers_the_event_id_and_the_platforms_reason() {
+    let imports = |name: &str| {
+        let bytes = std::fs::read(guest(name)).unwrap();
+        fc_fnhost_core::wasm::inspect::check(&bytes, "wasi:http/incoming-handler", 16 << 20)
+            .unwrap()
+            .imports
+    };
+    assert!(
+        imports("emit").contains(&"flowcatalyst:function/events@0.1.0".to_owned()),
+        "the old contract's component is still served"
+    );
+    assert!(imports("emit_event").contains(&"flowcatalyst:function/events@0.1.1".to_owned()));
+
+    let h = one("emit_event", json!({}), json!({})).await;
+    let emitted = h.guest_json("/x?dedupId=d-1").await;
+    assert_eq!(
+        emitted["result"],
+        json!({"ok": true, "eventId": "evt_1"}),
+        "{emitted}"
+    );
+    assert_eq!(h.control.emits.lock()[0].events[0].dedup_id, "d-1");
+
+    *h.control.emit_refusal.lock() =
+        Some(EventEmitError::new("EVENT_TYPE_NOT_OWNED", 403).with_message("not yours"));
+    let refused = h.guest_json("/x?dedupId=d-2").await;
+    assert_eq!(
+        refused["result"],
+        json!({"ok": false, "error": "refused", "code": "EVENT_TYPE_NOT_OWNED", "status": 403, "message": "not yours"})
+    );
+
+    *h.control.emit_refusal.lock() =
+        Some(EventEmitError::unavailable().with_message("control plane request failed"));
+    let unavailable = h.guest_json("/x?dedupId=d-3").await;
+    assert_eq!(
+        unavailable["result"],
+        json!({"ok": false, "error": "unavailable", "message": "control plane request failed"})
+    );
+
+    *h.control.emit_refusal.lock() = None;
+    let invalid = h.guest_json("/x").await;
+    assert_eq!(
+        invalid["result"],
+        json!({"ok": false, "error": "invalid", "code": "DEDUP_ID_REQUIRED"})
+    );
+}
+
 // ── portability ───────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
