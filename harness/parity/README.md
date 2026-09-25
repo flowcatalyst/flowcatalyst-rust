@@ -115,9 +115,13 @@ header says which path the run took.
 Same format and matching as Java (`scenario`/`step` may be `"*"`, `scenario`
 may end in `*`; `pointer` may start `**/` or end `/**`; `"!go-expect"`
 accepts Go missing a step's own `expect.status`). Java's entries are Go-vs-Java
-rulings and were **not** carried over; this file starts empty and an entry is
-added only when a Rust owner decision makes the difference deliberate. A
-difference with no decision behind it stays a `DIFF`.
+rulings and were **not** carried over. An entry is added only when a Rust owner
+decision makes the difference deliberate; a difference with no decision behind
+it stays a `DIFF`. Today the file holds one kind of entry: the function-route
+steps of `functions/functions.json`, because Go has no function runner (it
+serves its SPA for those paths) and the owner decisions' Direction section makes
+Java, not Go, the reference for that API. Run 1's findings are in
+`docs/parity/api-run-1.md`.
 
 ## Differences from Java's harness
 
