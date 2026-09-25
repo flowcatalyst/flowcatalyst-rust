@@ -47,6 +47,10 @@ const PUBLIC_ROUTES: &[(&str, &str)] = &[
         "the message router's callback, authenticated by the handler's own router credential check",
     ),
     (
+        "POST /api/dispatch/settled",
+        "the router's settled-notification callback (Go settled/settled.go); each job's HMAC dispatch token is verified by the handler",
+    ),
+    (
         "GET /api/openapi-functions.json",
         "the function API contract, unauthenticated as in Java (FunctionOpenApiRoutes)",
     ),
