@@ -23,6 +23,7 @@ pub struct GoRoutesState {
     pub read_aliases: crate::shared::go_read_aliases_api::ReadAliasesState,
     pub sdk_sync: crate::shared::sdk_sync_go_api::SdkSyncGoState,
     pub docs: crate::app_docs::api::DocsState,
+    pub dispatch_job_actions: crate::dispatch_job_actions::api::DispatchJobActionsState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
@@ -58,7 +59,41 @@ impl GoRoutesState {
         let docs_repo = Arc::new(crate::app_docs::repository::AppDocsRepository::new(
             &repos.pool,
         ));
+        let actions_repo = Arc::new(
+            crate::dispatch_job_actions::repository::DispatchJobActionsRepository::new(&repos.pool),
+        );
+        let outbound = Arc::new(
+            crate::service_account::outbound_credentials::OutboundCredentialsResolver::new(
+                repos.service_account_repo.clone(),
+                encryption.clone(),
+            ),
+        );
         Self {
+            dispatch_job_actions: crate::dispatch_job_actions::api::DispatchJobActionsState {
+                repo: actions_repo.clone(),
+                dispatch_job_repo: repos.dispatch_job_repo.clone(),
+                client_repo: repos.client_repo.clone(),
+                credentials: Arc::new(
+                    crate::dispatch_job::delivery_credentials::DeliveryCredentials::new(
+                        repos.subscription_repo.clone(),
+                        repos.connection_repo.clone(),
+                        repos.application_repo.clone(),
+                        outbound,
+                    ),
+                ),
+                requeue_use_case: Arc::new(
+                    crate::dispatch_job_actions::operations::RequeueDispatchJobsUseCase::new(
+                        actions_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+                settle_use_case: Arc::new(
+                    crate::dispatch_job_actions::operations::SettleDispatchJobUseCase::new(
+                        actions_repo,
+                        uow.clone(),
+                    ),
+                ),
+            },
             docs: crate::app_docs::api::DocsState {
                 repo: docs_repo.clone(),
                 application_repo: repos.application_repo.clone(),
@@ -231,6 +266,11 @@ impl GoRoutesState {
 /// All Go-parity routes, at their full paths.
 pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
     OpenApiRouter::new()
+        .merge(
+            crate::dispatch_job_actions::api::dispatch_job_actions_router(
+                state.dispatch_job_actions,
+            ),
+        )
         .merge(crate::app_docs::api::docs_router(state.docs))
         .merge(crate::shared::sdk_sync_go_api::sdk_sync_go_router(
             state.sdk_sync,

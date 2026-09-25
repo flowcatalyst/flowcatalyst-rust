@@ -1795,3 +1795,128 @@ async fn documentation_is_synced_and_read_as_go() {
     let (s, _) = read_json(app.get("/api/docs", &nobody_token(&app)).await).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
+
+// ── Dispatch-job operator actions ────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn dispatch_jobs_are_requeued_settled_and_signed_as_go() {
+    use fc_platform::DispatchJob;
+    let app = setup().await;
+    let admin = app.anchor_admin_token().await;
+    let mut failed = DispatchJob::for_event(
+        Some("evn_1"),
+        "shop:orders:order:shipped",
+        Some("shop"),
+        "https://example.test/hook",
+        r#"{"a":1}"#,
+    );
+    let mut pending = failed.clone();
+    pending.id = fc_platform::shared::tsid::generate_untyped();
+    failed.id = fc_platform::shared::tsid::generate_untyped();
+    let (fid, pid) = (failed.id.clone(), pending.id.clone());
+    for j in [&failed, &pending] {
+        app.repos.dispatch_job_repo.insert(j).await.unwrap();
+    }
+    sqlx::query(
+        "UPDATE msg_dispatch_jobs SET status = 'FAILED', attempt_count = 3, last_error = 'boom' \
+         WHERE id = $1",
+    )
+    .bind(&fid)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    // cancel/complete: FAILED only.
+    let (s, b) = read_json(
+        app.post(
+            &format!("/api/dispatch-jobs/{pid}/cancel"),
+            &admin,
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert_eq!(b["code"], "NOT_FAILED");
+    let body = assert_status(
+        app.post(
+            &format!("/bff/dispatch-jobs/{fid}/complete"),
+            &admin,
+            json!({}),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(body["id"], fid.as_str());
+    let status: (String,) = sqlx::query_as("SELECT status FROM msg_dispatch_jobs WHERE id = $1")
+        .bind(&fid)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(status.0, "COMPLETED");
+    assert_eq!(
+        app.event_count_by_type("platform:messaging:dispatch-job:completed")
+            .await,
+        1
+    );
+    let (s, _) = read_json(
+        app.post("/api/dispatch-jobs/djb_nope/complete", &admin, json!({}))
+            .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // requeue: any status, unknown ids dropped.
+    let body = assert_status(
+        app.post(
+            "/api/dispatch-jobs/requeue",
+            &admin,
+            json!({ "ids": [fid, "djb_nope"] }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(body, json!({ "requeued": 1 }));
+    let row: (String, i32, Option<String>) = sqlx::query_as(
+        "SELECT status, attempt_count, last_error FROM msg_dispatch_jobs WHERE id = $1",
+    )
+    .bind(&fid)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(row, ("PENDING".to_string(), 0, None));
+    let body = assert_status(
+        app.post("/api/dispatch-jobs/requeue", &admin, json!({ "ids": [] }))
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(body, json!({ "requeued": 0 }));
+
+    // sign: a dry run, unsigned here (no credentials).
+    let plan = assert_status(
+        app.post(&format!("/api/dispatch-jobs/{pid}/sign"), &admin, json!({}))
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(plan["headers"]["X-Dispatch-Job-Id"], pid.as_str());
+    assert_eq!(plan["request"]["signature"], false);
+    assert!(plan["request"]["unsignedReason"].is_string());
+    let sent: Value = serde_json::from_str(plan["body"].as_str().unwrap()).unwrap();
+    assert_eq!(sent["data"], json!({ "a": 1 }));
+
+    // Gates.
+    let nobody = nobody_token(&app);
+    for path in [
+        "/api/dispatch-jobs/requeue".to_string(),
+        format!("/api/dispatch-jobs/{pid}/cancel"),
+        format!("/bff/dispatch-jobs/{pid}/sign"),
+    ] {
+        let (s, _) = read_json(app.post(&path, &nobody, json!({ "ids": ["x"] })).await).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{path}");
+    }
+}
