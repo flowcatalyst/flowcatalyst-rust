@@ -1433,3 +1433,33 @@ async fn event_type_schemas_and_read_aliases_answer_as_go() {
         assert_eq!(s, StatusCode::FORBIDDEN, "{path}");
     }
 }
+
+// ── OpenAPI ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_openapi_document_is_served_as_json_and_yaml_without_auth() {
+    use http_body_util::BodyExt;
+    let app = setup().await;
+    let res = app.get_unauth("/api/openapi.json").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["content-type"], "application/json");
+    let (_, doc) = read_json(res).await;
+    assert!(doc["paths"]["/api/roles/{roleName}/permissions"].is_object());
+    assert!(doc["paths"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .all(|p| !p.starts_with("/bff/")));
+
+    let res = app.get_unauth("/api/openapi.yaml").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()["content-type"], "application/yaml");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(
+        text.starts_with("openapi:"),
+        "{}",
+        &text[..40.min(text.len())]
+    );
+}

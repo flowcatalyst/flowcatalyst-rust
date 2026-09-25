@@ -679,6 +679,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             app
         };
 
+        // Go's spec routes (internal/server/wire_spec.go): the programmable
+        // document (BFF-stripped, as /q/openapi) as JSON and YAML, no auth.
+        let app = app.merge(crate::shared::openapi_api::openapi_router(&openapi));
+
         let app = app
             // Health
             .route(PATH_HEALTH, get(health_handler))
