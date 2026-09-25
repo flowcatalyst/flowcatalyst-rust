@@ -393,11 +393,31 @@ impl LifecycleManager {
         // it retries until a configuration lands, then polls on the sync
         // interval. A config already applied by the caller hashes the same,
         // so its first pass is a no-op.
+        //
+        // With standby enabled the watcher starts only once this instance
+        // first becomes leader (Go: `gateOnLeadership` → `startPools`), so
+        // a standby that has never led builds no consumers; after that it
+        // keeps running across leadership changes, since losing leadership
+        // only pauses polling (owner ruling). The wait never blocks the
+        // caller — HTTP is served meanwhile.
         if let Some(ref sync_service) = config_sync {
             if sync_service.is_enabled() {
-                info!("Starting configuration sync background task");
-                let handle =
-                    tokio::spawn(sync_service.clone().run(lifecycle.shutdown.child_token()));
+                let token = lifecycle.shutdown.child_token();
+                let sync_service = sync_service.clone();
+                let standby_gate = standby.clone();
+                let handle = tokio::spawn(async move {
+                    if let Some(standby) = standby_gate {
+                        if !standby.is_leader() {
+                            info!("Configuration sync waits for this instance to become leader");
+                            tokio::select! {
+                                _ = standby.wait_for_leadership() => {}
+                                _ = token.cancelled() => return,
+                            }
+                        }
+                    }
+                    info!("Starting configuration sync background task");
+                    sync_service.run(token).await;
+                });
                 lifecycle.tasks.push(handle);
             }
         }

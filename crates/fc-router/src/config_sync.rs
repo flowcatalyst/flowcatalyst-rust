@@ -1074,6 +1074,63 @@ mod tests {
         );
     }
 
+    /// H14 (Go `Watch`): a config source that is down at boot is retried at
+    /// the retry cadence until a configuration lands — the router keeps
+    /// running meanwhile — rather than failing after one fetch's retry
+    /// budget (which used to exit the process).
+    #[tokio::test]
+    async fn run_retries_at_boot_until_the_config_lands() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+        Mock::given(method("GET"))
+            .respond_with(move |_req: &wiremock::Request| {
+                if calls_clone.fetch_add(1, Ordering::SeqCst) < 3 {
+                    ResponseTemplate::new(503)
+                } else {
+                    ResponseTemplate::new(200).set_body_json(good_config_body("BOOT"))
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let mut service = test_service(server.uri());
+        service.warning_service = Arc::new(WarningService::default());
+        let service = Arc::new(service);
+        let manager = service.queue_manager.clone();
+        let token = CancellationToken::new();
+        let task = tokio::spawn(service.clone().run(token.clone()));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while manager.get_pool("BOOT").is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the config must be applied once the source recovers"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(calls.load(Ordering::SeqCst) >= 4);
+        assert_eq!(
+            service.warning_service.warning_count(),
+            1,
+            "one warning per streak"
+        );
+        assert_eq!(
+            service.warning_service.get_unacknowledged_warnings().len(),
+            0,
+            "the failure-streak warning is resolved once the config lands"
+        );
+        token.cancel();
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("run() exits on cancel")
+            .unwrap();
+    }
+
     /// R-30: a source that has never succeeded (no cache yet — first boot)
     /// contributes nothing when it fails; if every configured source is in
     /// that state, `fetch_config` still fails outright rather than
