@@ -1,5 +1,17 @@
 name: Split TypeScript SDK
 
+# This repo is the SDKs' home (docs/owner-decisions-2026-09-25.md #11;
+# cutover steps in docs/sdks.md). Fires on `typescript-sdk/v*` (cut via
+# `just release-ts-sdk patch`), splits clients/typescript-sdk/ out with
+# splitsh-lite, force-pushes it to the standalone flowcatalyst/typescript-sdk
+# repo, builds and commits dist/ there, and tags that commit as plain vX.Y.Z.
+# Consumers install from that git repo; the package is not on the npm registry.
+#
+# Only ONE source repo may push to the standalone repo: flowcatalyst-go's copy of
+# this workflow is disabled (`if: false`, 2026-09-24), and flowcatalyst-javalin's
+# copy must be disabled before the first release from here. Needs the
+# TYPESCRIPT_SDK_TOKEN secret in this repo.
+
 on:
   push:
     tags:
