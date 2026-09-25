@@ -3,10 +3,17 @@ package io.flowcatalyst.sdk.outbox;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * DTO for creating an audit log entry in the outbox. Immutable builder — all
  * {@code with*} methods return a new instance.
+ *
+ * <p>{@code operationData} is redacted (see {@link AuditRedaction}) before it
+ * is serialised into the outbox payload, so passwords, tokens and other
+ * secret-shaped fields never reach the audit log. Pass masked fields to
+ * {@link #withOperationData(Map, Set)} for fields the name rule alone would
+ * not catch.
  *
  * <pre>{@code
  * var auditLog = CreateAuditLogDto
@@ -22,6 +29,7 @@ public final class CreateAuditLogDto {
     private String entityId;
     private String operation;
     private Map<String, Object> operationData;
+    private Set<String> maskedFields = Set.of();
     private String principalId;
     private Instant performedAt;
     private String source;
@@ -41,6 +49,7 @@ public final class CreateAuditLogDto {
         c.entityId = entityId;
         c.operation = operation;
         c.operationData = operationData;
+        c.maskedFields = maskedFields;
         c.principalId = principalId;
         c.performedAt = performedAt;
         c.source = source;
@@ -61,8 +70,18 @@ public final class CreateAuditLogDto {
     }
 
     public CreateAuditLogDto withOperationData(Map<String, Object> operationData) {
+        return withOperationData(operationData, Set.of());
+    }
+
+    /**
+     * Set the operation data, masking {@code maskedFields} (top-level names)
+     * in addition to the name rule, e.g. a config value whose secrecy depends
+     * on a sibling field.
+     */
+    public CreateAuditLogDto withOperationData(Map<String, Object> operationData, Set<String> maskedFields) {
         CreateAuditLogDto c = copy();
         c.operationData = operationData;
+        c.maskedFields = maskedFields == null ? Set.of() : Set.copyOf(maskedFields);
         return c;
     }
 
@@ -128,8 +147,8 @@ public final class CreateAuditLogDto {
 
     /**
      * Build the audit log payload for the outbox (nulls omitted).
-     * {@code operationData} is embedded as a JSON string; {@code performedAt}
-     * defaults to now.
+     * {@code operationData} is redacted, then embedded as a JSON string;
+     * {@code performedAt} defaults to now.
      */
     Map<String, Object> toPayload(com.fasterxml.jackson.databind.ObjectMapper mapper) {
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -138,8 +157,9 @@ public final class CreateAuditLogDto {
         payload.put("operation", operation);
         if (operationData != null) {
             try {
-                payload.put("operationData", mapper.writeValueAsString(operationData));
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                payload.put("operationData", mapper.writeValueAsString(
+                        AuditRedaction.redact(mapper.valueToTree(operationData), maskedFields)));
+            } catch (com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException e) {
                 throw new IllegalArgumentException(
                         "Audit operationData is not serializable to JSON", e);
             }

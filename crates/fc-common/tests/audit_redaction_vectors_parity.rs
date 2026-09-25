@@ -23,6 +23,7 @@ const COPIES: &[&str] = &[
     "crates/fc-sdk/tests/fixtures/audit-redaction-vectors.json",
     "clients/typescript-sdk/tests/fixtures/audit-redaction-vectors.json",
     "clients/laravel-sdk/tests/Fixtures/audit-redaction-vectors.json",
+    "clients/java-sdk/src/test/resources/audit-redaction-vectors.json",
 ];
 
 #[test]
