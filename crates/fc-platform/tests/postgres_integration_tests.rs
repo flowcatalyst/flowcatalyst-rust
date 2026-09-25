@@ -596,6 +596,65 @@ async fn test_unit_of_work_commit() {
     assert!(!logs.is_empty(), "At least one audit log should exist");
 }
 
+/// Java 9d71ffd4: a concurrent writer took a unique key between a use
+/// case's validate check and its persist. The database's unique violation
+/// is a 409 `DUPLICATE_KEY` naming the aggregate, not a 500, and nothing of
+/// the losing write is committed.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_unit_of_work_unique_violation_is_duplicate_key() {
+    let (pool, _container) = setup_test_db().await;
+    let client_repo = ClientRepository::new(&pool);
+
+    use fc_platform::client::operations::events::ClientCreated;
+    use fc_platform::usecase::ExecutionContext;
+    use fc_platform::{PgUnitOfWork, UnitOfWork};
+
+    #[derive(serde::Serialize)]
+    struct CreateClientCommand {
+        name: String,
+    }
+    impl fc_platform::usecase::AuditMasked for CreateClientCommand {}
+
+    let uow = PgUnitOfWork::new(pool.clone());
+    let ctx = ExecutionContext::create("test-principal-id");
+    let commit = |client: Client| {
+        let uow = &uow;
+        let repo = &client_repo;
+        let ctx = &ctx;
+        async move {
+            let event = ClientCreated::new(ctx, &client.id, &client.name, &client.identifier, None);
+            let command = CreateClientCommand {
+                name: client.name.clone(),
+            };
+            uow.commit(&client, repo, event, &command)
+                .await
+                .into_result()
+        }
+    };
+
+    commit(Client::new("First", "same-identifier"))
+        .await
+        .expect("the first writer commits");
+    let loser = Client::new("Second", "same-identifier");
+    let loser_id = loser.id.clone();
+    let err = commit(loser).await.expect_err("the unique key is taken");
+    assert_eq!(err.http_status_code(), 409);
+    assert_eq!(err.code(), "DUPLICATE_KEY");
+    assert!(
+        err.message().contains(&format!("Client {loser_id}")),
+        "{}",
+        err.message()
+    );
+
+    let (events,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM msg_events WHERE subject LIKE $1")
+        .bind(format!("%{loser_id}%"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 0, "the losing write rolled back");
+}
+
 // ─── Dispatch Pool Repository Tests ───────────────────────────────────────
 
 #[tokio::test]
