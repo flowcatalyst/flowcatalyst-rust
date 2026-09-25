@@ -42,6 +42,10 @@ pub(crate) struct RunningConsumer {
     pub(crate) stop_poll: CancellationToken,
     /// Set once a poll loop has been spawned for this instance.
     pub(crate) poll_task_started: AtomicBool,
+    /// Cancelled when this instance's poll loop has exited (its last
+    /// receive finished and anything it got after `stop_poll` was handed
+    /// back). Shutdown waits on it after releasing group remainders.
+    pub(crate) poll_exited: CancellationToken,
     /// Heartbeat: the last completed successful poll, capacity pause or
     /// leadership pause. Seeded at creation (Go: `newRunningConsumer`).
     last_poll: Mutex<Instant>,
@@ -74,6 +78,7 @@ impl RunningConsumer {
             generation,
             stop_poll,
             poll_task_started: AtomicBool::new(false),
+            poll_exited: CancellationToken::new(),
             last_poll: Mutex::new(Instant::now()),
             polls_started: AtomicU64::new(0),
             polls_returned: AtomicU64::new(0),
