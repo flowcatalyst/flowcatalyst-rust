@@ -30,3 +30,19 @@ follow this one. Anything in this directory that is not Go's is listed below.
   was a stale snapshot). `openapi-ts.config.ts` reads it there instead of `../api/openapi.lock.json`;
   `pnpm api:generate` reproduces Go's committed `src/api/generated/` byte for byte. The root
   `justfile`'s `regen-sdks` no longer overwrites it with Rust's `/q/openapi`.
+
+### Page gating (owner decision #8)
+
+Go's mechanism is kept (`stores/permissions.ts`: `ROUTE_PERMISSIONS`, `canAccessPath`, `canSeeScope`,
+`landingPath`; the sidebar and the route guard share them; a role-less user reaches only `/profile`).
+On top of it:
+
+- `ROUTE_PERMISSIONS` uses the platform catalogue's codes. Go's SPA named several that no role grants
+  (`platform:iam:identity-provider:*`, `platform:iam:oauth-client:*`, `platform:admin:audit:view`,
+  `platform:admin:cors:view`, `platform:admin:settings:view`), so only a super-admin saw those pages.
+  A requirement may be a list (any one grants), as Rust's SPA had for create pages whose form also
+  edits, `/developer` and `/processes`.
+- `ANCHOR_ROUTES`: pages whose endpoints need anchor reach (clients, identity providers, email-domain
+  mappings, OAuth clients, CORS, login attempts, audit log) also need anchor tier.
+- The tier is read from `/auth/me`'s `scope` (a Rust addition to Go's body) into `User.scope`; when
+  present it decides `userScope` / `isUnscopedUser`, else Go's "no home client" inference stands.

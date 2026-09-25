@@ -20,6 +20,8 @@ interface LoginResponse {
 	permissions?: string[];
 	clientId: string | null;
 	ssoManaged?: boolean;
+	/** Tenancy tier; the Rust platform's /auth/me sends it, Go's does not. */
+	scope?: string;
 }
 
 // RawLoginResponse is the on-the-wire shape of /auth/login and the 2FA
@@ -72,6 +74,7 @@ function mapLoginResponseToUser(response: LoginResponse): User {
 		// user's roles. Empty when the backend doesn't ship them.
 		permissions: response.permissions ?? [],
 		ssoManaged: response.ssoManaged ?? false,
+		scope: response.scope ?? null,
 	};
 }
 

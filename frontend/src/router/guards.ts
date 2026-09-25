@@ -6,7 +6,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import {
 	usePermissionsStore,
-	getRoutePermission,
+	describeRoutePermission,
 	canAccessPath,
 	canSeeScope,
 	userScope,
@@ -228,7 +228,7 @@ export function createRoutePermissionGuard() {
 			permissionsStore.showPermissionDenied({
 				type: "route",
 				message: "You do not have permission to access this page.",
-				requiredPermission: getRoutePermission(to.path) ?? "",
+				requiredPermission: describeRoutePermission(to.path),
 				path: to.fullPath,
 			});
 		}

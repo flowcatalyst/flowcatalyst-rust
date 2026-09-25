@@ -10,6 +10,12 @@ export interface User {
 	permissions: string[];
 	/** Account authenticates via a federated IdP — password self-service is hidden. */
 	ssoManaged: boolean;
+	/**
+	 * Tenancy tier (ANCHOR / PARTNER / CLIENT) from /auth/me's `scope` — a
+	 * Rust addition to Go's body (owner decision #8) that gates anchor-only
+	 * pages. Absent (null) from a backend that doesn't send it.
+	 */
+	scope?: string | null;
 }
 
 export const useAuthStore = defineStore("auth", () => {
