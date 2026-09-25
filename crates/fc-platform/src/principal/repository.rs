@@ -1295,3 +1295,25 @@ impl PrincipalRepository {
         Ok(())
     }
 }
+
+impl PrincipalRepository {
+    /// Batch-lookup `(name, email)` by id (email empty for a service
+    /// account): the shallow read list pages need.
+    pub async fn find_names_and_emails_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, String)>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows: Vec<(String, String, Option<String>)> =
+            sqlx::query_as("SELECT id, name, email FROM iam_principals WHERE id = ANY($1)")
+                .bind(ids)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, email)| (id, (name, email.unwrap_or_default())))
+            .collect())
+    }
+}

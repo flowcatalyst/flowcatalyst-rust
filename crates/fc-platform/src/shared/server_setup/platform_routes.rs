@@ -926,6 +926,13 @@ pub fn build_platform_routes(
         delete_use_case: delete_role_use_case,
     };
 
+    let reset_approvals_state = crate::mfa::reset_approval_api::ResetApprovalsState {
+        approvals: Arc::new(crate::mfa::reset_approval::ResetApprovalRepository::new(
+            &repos.pool,
+        )),
+        principal_repo: repos.principal_repo.clone(),
+        emailer: password_reset_emailer.clone(),
+    };
     let password_reset_state = PasswordResetApiState {
         principal_repo: repos.principal_repo.clone(),
         password_service: auth.password.clone(),
@@ -1243,6 +1250,7 @@ pub fn build_platform_routes(
         public: public_api_state,
         password_reset: password_reset_state,
         webauthn: webauthn_state,
+        reset_approvals: reset_approvals_state,
         developer_credentials: crate::developer_credential::api::DeveloperCredentialsState {
             principal_repo: repos.principal_repo.clone(),
             set_use_case: Arc::new(

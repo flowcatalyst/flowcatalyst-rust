@@ -97,3 +97,103 @@ async fn an_administrator_resets_a_users_two_factor() {
         .await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+/// Go's lost-device reset approval queue (resetapproval/api/api.go): list
+/// pending requests, approve once (the user is emailed a reset link that
+/// clears their 2FA), refuse a second decision.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_client_administrator_decides_lost_device_resets() {
+    std::env::set_var("FLOWCATALYST_APP_KEY", APP_KEY);
+    let app = TestApp::setup().await;
+    let admin = app.anchor_admin_token().await;
+    let user = developer(&app, "stranded@flowcatalyst.test", false).await;
+    for (id, principal) in [
+        ("rar_0000000000001", &user.id),
+        ("rar_0000000000002", &user.id),
+    ] {
+        sqlx::query(
+            "INSERT INTO iam_reset_approval_requests (id, principal_id, client_id, status, reset_2fa, expires_at) \
+             VALUES ($1, $2, 'clt_0000000000001', 'PENDING', TRUE, NOW() + INTERVAL '1 day')",
+        )
+        .bind(id)
+        .bind(principal)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    }
+
+    let (status, list) = read_json(app.get("/api/reset-approvals", &admin).await).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let requests = list["requests"].as_array().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["email"], "stranded@flowcatalyst.test");
+    assert_eq!(requests[0]["clientId"], "clt_0000000000001");
+
+    // Another client's administrator can't reach it.
+    let other = app.client_user_token("clt_0000000000009");
+    let resp = app
+        .post(
+            "/api/reset-approvals/rar_0000000000001/approve",
+            &other,
+            json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/reset-approvals/rar_0000000000001/approve",
+            &admin,
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["message"],
+        "Reset approved — the user has been emailed a link"
+    );
+    let reset_2fa: bool = sqlx::query_scalar(
+        "SELECT reset_2fa FROM iam_password_reset_tokens WHERE principal_id = $1",
+    )
+    .bind(&user.id)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert!(reset_2fa);
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/reset-approvals/rar_0000000000001/deny",
+            &admin,
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "ALREADY_DECIDED");
+    let (status, body) = read_json(
+        app.post(
+            "/api/reset-approvals/rar_0000000000002/deny",
+            &admin,
+            json!({}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["message"], "Reset request denied");
+    let resp = app
+        .post(
+            "/api/reset-approvals/rar_0000000000404/deny",
+            &admin,
+            json!({}),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let (_, list) = read_json(app.get("/api/reset-approvals", &admin).await).await;
+    assert_eq!(list["requests"], json!([]));
+}

@@ -451,6 +451,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "043_developer_api_credentials",
             include_str!("../../../../migrations/043_developer_api_credentials.sql"),
         ),
+        // Go's 032: the lost-device reset approval queue.
+        (
+            "044_reset_approval_requests",
+            include_str!("../../../../migrations/044_reset_approval_requests.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -629,6 +634,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'iam_principals' \
                AND column_name = 'dev_client_secret_updated_at')",
+        ),
+        (
+            "044_reset_approval_requests",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'iam_reset_approval_requests')",
         ),
     ];
 

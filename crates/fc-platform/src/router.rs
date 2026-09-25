@@ -287,6 +287,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub two_factor: Arc<crate::mfa::TwoFactorLogin>,
     /// `/api/principals/developer-users`, `…/{id}/developer-credential`.
     pub developer_credentials: crate::developer_credential::api::DeveloperCredentialsState,
+    /// `/api/reset-approvals`.
+    pub reset_approvals: crate::mfa::reset_approval_api::ResetApprovalsState,
     /// `/auth/change-password*`, `/auth/login-history`.
     pub account: Arc<crate::mfa::AccountState>,
     /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
@@ -405,6 +407,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_API_PRINCIPALS,
                 crate::mfa::two_factor_admin_router(self.two_factor.clone()),
+            )
+            .nest(
+                "/api/reset-approvals",
+                crate::mfa::reset_approval_api::reset_approvals_router(self.reset_approvals),
             )
             .nest(
                 PATH_API_PRINCIPALS,

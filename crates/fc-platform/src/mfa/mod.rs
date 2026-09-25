@@ -25,6 +25,8 @@ pub mod login_api;
 pub mod notify;
 pub mod policy;
 pub mod repository;
+pub mod reset_approval;
+pub mod reset_approval_api;
 pub mod self_service_api;
 pub mod service;
 pub mod token;
