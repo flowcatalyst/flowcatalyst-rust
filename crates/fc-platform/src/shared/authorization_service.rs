@@ -900,6 +900,31 @@ pub mod checks {
         )
     }
 
+    /// Go `RequireUserAdmin` (shared/auth/auth.go:369-385) for a user in
+    /// client `target_client_id`: an anchor needs a user-write permission;
+    /// anyone else also reaches that client (403 `SCOPE_FORBIDDEN`), and a
+    /// client-less (platform) user is an anchor's alone (403
+    /// `ANCHOR_REQUIRED`). A client administrator is confined to its own
+    /// clients this way.
+    pub fn require_user_admin(context: &AuthContext, target_client_id: Option<&str>) -> Result<()> {
+        if context.is_anchor() {
+            return can_write_principals(context);
+        }
+        let Some(client_id) = target_client_id else {
+            return Err(PlatformError::forbidden_code(
+                "ANCHOR_REQUIRED",
+                "anchor scope required for platform users",
+            ));
+        };
+        if !context.can_access_client(client_id) {
+            return Err(PlatformError::forbidden_code(
+                "SCOPE_FORBIDDEN",
+                "no access to this user's client",
+            ));
+        }
+        can_write_principals(context)
+    }
+
     /// Principals, setting a user's roles (add, remove, replace):
     /// `platform:iam:user:assign-roles` itself (owner ruling 14; Java
     /// `Access.requireRoleAssigner`). Holding user create, update or delete
