@@ -311,7 +311,7 @@ async fn provisioned_service_account_reaches_only_its_application() {
     let (status, body) = read_json(
         app.post(
             &format!("/api/applications/{}/provision-service-account", app_a.id),
-            &app.anchor_token(),
+            &app.anchor_admin_token().await,
             json!({}),
         )
         .await,

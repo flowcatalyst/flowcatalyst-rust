@@ -644,6 +644,58 @@ pub mod checks {
         anchor_with(context, permissions::admin::CORS_ORIGIN_DELETE)
     }
 
+    /// Applications, create, update, activate, deactivate: any of the
+    /// application create/update/delete permissions (Go's
+    /// `CanWriteApplications`). The handlers keep their anchor check on top.
+    pub fn can_write_applications(context: &AuthContext) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::APPLICATION_CREATE,
+                permissions::admin::APPLICATION_UPDATE,
+                permissions::admin::APPLICATION_DELETE,
+            ],
+        )
+    }
+
+    /// Applications, delete (Go's `CanDeleteApplications`).
+    pub fn can_delete_applications(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::APPLICATION_DELETE)
+    }
+
+    /// Role administration through `/api/roles` and `/bff/roles`: anchor
+    /// reach and the role permission (owner decision #25, stricter than Go,
+    /// which asks the permission only).
+    pub fn can_administer_roles(context: &AuthContext, permission: &str) -> Result<()> {
+        anchor_with(context, permission)
+    }
+
+    /// Re-running the built-in role sync: anchor and any role write
+    /// permission (Java RolesBff sync-platform).
+    pub fn can_sync_platform_roles(context: &AuthContext) -> Result<()> {
+        require_anchor_scope(context)?;
+        require_any_permission(
+            context,
+            &[
+                permissions::iam::ROLE_CREATE,
+                permissions::iam::ROLE_UPDATE,
+                permissions::iam::ROLE_DELETE,
+            ],
+        )
+    }
+
+    /// Client-access grant and revoke: anchor reach and
+    /// `platform:iam:client-access:grant` / `:revoke` (owner decision #25;
+    /// Go asks anchor alone).
+    pub fn can_grant_client_access(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::iam::CLIENT_ACCESS_GRANT)
+    }
+
+    /// See [`can_grant_client_access`].
+    pub fn can_revoke_client_access(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::iam::CLIENT_ACCESS_REVOKE)
+    }
+
     /// Principals, the user-administration writes (create, update,
     /// activate, deactivate, password reset, application access): any of the
     /// user create/update/delete permissions, as Go's `CanWritePrincipals`

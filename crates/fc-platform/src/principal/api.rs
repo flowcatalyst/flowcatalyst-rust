@@ -1335,7 +1335,7 @@ pub async fn grant_client_access(
     use crate::principal::operations::GrantClientAccessCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_grant_client_access(&auth.0)?;
 
     let client_id = req.client_id.clone();
     let granted_at = chrono::Utc::now();
@@ -1391,7 +1391,7 @@ pub async fn revoke_client_access(
     use crate::principal::operations::RevokeClientAccessCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_revoke_client_access(&auth.0)?;
 
     let cmd = RevokeClientAccessCommand {
         user_id: id.clone(),

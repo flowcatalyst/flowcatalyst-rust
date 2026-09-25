@@ -312,6 +312,7 @@ pub async fn create_application<U: UnitOfWork>(
 ) -> Result<(StatusCode, Json<crate::shared::api_common::CreatedResponse>), PlatformError> {
     // Only anchor users can manage applications
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
 
     let command = CreateApplicationCommand {
         code: req.code,
@@ -445,6 +446,7 @@ pub async fn update_application<U: UnitOfWork>(
     Json(req): Json<UpdateApplicationRequest>,
 ) -> Result<StatusCode, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
 
     let command = UpdateApplicationCommand {
         id: id.clone(),
@@ -488,6 +490,7 @@ pub async fn delete_application<U: UnitOfWork>(
     };
 
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_delete_applications(&auth.0)?;
 
     // Pre-fetch the SAs owned by this application. The SA delete repo
     // (and migration 027 / 028) handles the rest of the cascade —
@@ -562,6 +565,7 @@ pub async fn activate_application<U: UnitOfWork>(
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
 
     let command = ActivateApplicationCommand { id: id.clone() };
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -610,6 +614,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
     };
 
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
 
     // Pre-fetch the dependents we'll cascade-deactivate so the work
     // inside the tx closure stays small. Reads are tolerable outside
@@ -772,6 +777,15 @@ pub async fn provision_service_account<U: UnitOfWork>(
     };
 
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    // Java 6068fe6b S1.2: it mints a service account and binds it.
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::SERVICE_ACCOUNT_CREATE,
+    )?;
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::APPLICATION_UPDATE,
+    )?;
 
     // Pre-validate: fail early before opening a tx. Mirrors the business
     // rule inside AttachServiceAccountToApplicationUseCase.
@@ -956,6 +970,15 @@ pub async fn provision_login_client<U: UnitOfWork>(
     use crate::auth::operations::CreateOAuthClientCommand;
 
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    // Java 6068fe6b S1.2: it mints an OAuth client for the application.
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::auth::OAUTH_CLIENT_CREATE,
+    )?;
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::APPLICATION_UPDATE,
+    )?;
 
     // Validate the request body before we touch the DB.
     if req.redirect_uris.is_empty() {
@@ -1264,6 +1287,10 @@ pub async fn update_client_config<U: UnitOfWork>(
     Json(req): Json<ClientConfigRequest>,
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::APPLICATION_UPDATE,
+    )?;
 
     let cmd = crate::application::operations::UpdateApplicationClientConfigCommand {
         application_id: id.clone(),
@@ -1334,6 +1361,10 @@ pub async fn enable_for_client<U: UnitOfWork>(
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::APPLICATION_ENABLE_CLIENT,
+    )?;
 
     let cmd = crate::application::operations::EnableApplicationForClientCommand {
         application_id: id.clone(),
@@ -1372,6 +1403,10 @@ pub async fn disable_for_client<U: UnitOfWork>(
     Path((id, client_id)): Path<(String, String)>,
 ) -> Result<Json<ClientConfigResponse>, PlatformError> {
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::APPLICATION_DISABLE_CLIENT,
+    )?;
 
     let cmd = crate::application::operations::DisableApplicationForClientCommand {
         application_id: id.clone(),

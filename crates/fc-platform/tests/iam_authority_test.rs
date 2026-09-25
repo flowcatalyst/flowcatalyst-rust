@@ -529,3 +529,120 @@ async fn platform_owner_routes_need_anchor_and_the_permission() {
     let (status, resp) = read_json(app.get("/api/anchor-domains", &domains).await).await;
     assert_eq!(status, StatusCode::OK, "{resp}");
 }
+
+// ── Decision #25: roles, client access, applications ─────────────────────
+
+/// `/api/roles`, `/bff/roles` writes and client-access grants need anchor
+/// and the permission; application writes and provisioning need their
+/// application, service-account or OAuth-client permission too.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn roles_client_access_and_applications_need_anchor_and_the_permission() {
+    let app = setup().await;
+    let clt = create_client(&app, "d25-clt").await;
+    let user = stored_user(&app, "d25@iam.test", UserScope::Partner, Some(&clt)).await;
+    let application = fc_platform::application::entity::Application::new("d25", "D25");
+    app.repos
+        .application_repo
+        .insert(&application)
+        .await
+        .unwrap();
+    let bare_anchor = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::iam::USER_READ],
+    );
+
+    let role_body = json!({
+        "applicationCode": "d25", "roleName": "clerk", "displayName": "Clerk", "permissions": []
+    });
+    let posts = [
+        ("/api/roles".to_string(), role_body.clone()),
+        ("/bff/roles".to_string(), role_body.clone()),
+        ("/bff/roles/sync-platform".to_string(), json!({})),
+        (
+            format!("/api/principals/{user}/client-access"),
+            json!({ "clientId": clt }),
+        ),
+        (
+            "/api/applications".to_string(),
+            json!({ "code": "d25b", "name": "D25b" }),
+        ),
+        (
+            format!(
+                "/api/applications/{}/provision-service-account",
+                application.id
+            ),
+            json!({}),
+        ),
+        (
+            format!(
+                "/api/applications/{}/provision-login-client",
+                application.id
+            ),
+            json!({ "redirectUris": ["https://d25.test/cb"] }),
+        ),
+        (
+            format!("/api/applications/{}/clients/{clt}/enable", application.id),
+            json!({}),
+        ),
+    ];
+    for (path, body) in &posts {
+        let (status, resp) = read_json(app.post(path, &bare_anchor, body.clone()).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {resp}");
+        assert_eq!(code(&resp), "PERMISSION_REQUIRED", "{path}");
+    }
+    let (status, resp) = read_json(
+        app.delete(
+            &format!("/api/principals/{user}/client-access/{clt}"),
+            &bare_anchor,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_REQUIRED");
+
+    // The role permission without anchor reach is refused on the tier.
+    let client_role_writer = caller(
+        &app,
+        UserScope::Client,
+        Some(&clt),
+        &[permissions::iam::ROLE_CREATE],
+    );
+    let (status, resp) = read_json(
+        app.post("/api/roles", &client_role_writer, role_body.clone())
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ANCHOR_REQUIRED");
+
+    // Both: the writes land.
+    let role_writer = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::iam::ROLE_CREATE],
+    );
+    let (status, resp) = read_json(app.post("/api/roles", &role_writer, role_body).await).await;
+    assert_eq!(status, StatusCode::CREATED, "{resp}");
+    let granter = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::iam::CLIENT_ACCESS_GRANT],
+    );
+    let other = create_client(&app, "d25-other").await;
+    let (status, resp) = read_json(
+        app.post(
+            &format!("/api/principals/{user}/client-access"),
+            &granter,
+            json!({ "clientId": other }),
+        )
+        .await,
+    )
+    .await;
+    assert!(status.is_success(), "{status}: {resp}");
+}

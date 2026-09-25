@@ -333,7 +333,10 @@ pub async fn create_role(
     auth: Authenticated,
     Json(req): Json<BffCreateRoleRequest>,
 ) -> Result<(axum::http::StatusCode, Json<CreatedResponse>), PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_CREATE,
+    )?;
 
     let cmd = CreateRoleCommand {
         application_code: req.application_code,
@@ -377,7 +380,10 @@ pub async fn update_role(
     Path(role_name): Path<String>,
     Json(req): Json<BffUpdateRoleRequest>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_UPDATE,
+    )?;
 
     // Resolve role name to ID
     let role = if role_name.contains(':') {
@@ -424,7 +430,10 @@ pub async fn delete_role(
     auth: Authenticated,
     Path(role_name): Path<String>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_DELETE,
+    )?;
 
     // Resolve role name to ID
     let role = if role_name.contains(':') {
@@ -708,7 +717,7 @@ pub async fn sync_platform_roles(
     State(state): State<BffRolesState>,
     auth: Authenticated,
 ) -> Result<axum::Json<SyncPlatformRolesResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_sync_platform_roles(&auth.0)?;
 
     let counts = state
         .role_sync_service

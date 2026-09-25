@@ -204,7 +204,10 @@ pub async fn create_role(
     use crate::role::operations::CreateRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_CREATE,
+    )?;
 
     let cmd = CreateRoleCommand {
         application_code: req.application_code,
@@ -349,7 +352,10 @@ pub async fn update_role(
     use crate::role::operations::UpdateRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_UPDATE,
+    )?;
 
     let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
@@ -396,7 +402,10 @@ pub async fn grant_permission(
     use crate::role::operations::UpdateRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_UPDATE,
+    )?;
 
     let mut role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
@@ -448,7 +457,10 @@ pub async fn revoke_permission(
     use crate::role::operations::UpdateRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_UPDATE,
+    )?;
 
     let mut role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
@@ -499,7 +511,10 @@ pub async fn delete_role(
     use crate::role::operations::DeleteRoleCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_DELETE,
+    )?;
 
     let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
