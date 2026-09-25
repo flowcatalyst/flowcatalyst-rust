@@ -608,6 +608,22 @@ pub fn build_platform_routes(
             ttl: time::Duration::seconds(86400),
         },
     };
+    // Portal identity plane (Go wire_routes.go: portalusersapi.State,
+    // portalauth.State, bridge.PortalBridge and the token endpoint's portal
+    // repos).
+    let portal_state = crate::portal::PortalState::new(crate::portal::PortalDeps {
+        pool: repos.pool.clone(),
+        clients: repos.client_repo.clone(),
+        oauth_clients: repos.oauth_client_repo.clone(),
+        identity_providers: repos.idp_repo.clone(),
+        auth_codes: repos.auth_code_repo.clone(),
+        password_service: auth.password.clone(),
+        unit_of_work: unit_of_work.clone(),
+        email_service: email_service.clone(),
+        encryption_service: encryption_service.clone(),
+        rate_limit_store: config.rate_limit_store.clone(),
+        external_base_url: config.password_reset_external_base_url.clone(),
+    });
     let oauth_state = OAuthState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
@@ -1193,6 +1209,7 @@ pub fn build_platform_routes(
         sdk_audit_batch: sdk_audit_batch_state,
         public: public_api_state,
         password_reset: password_reset_state,
+        portal: portal_state,
         webauthn: webauthn_state,
         dispatch_process: Some(DispatchProcessState {
             dispatch_job_repo: repos.dispatch_job_repo.clone(),

@@ -193,6 +193,12 @@ pub const PATH_API_ME: &str = "/api/me";
 pub const PATH_AUTH_CLIENT: &str = "/auth/client";
 pub const PATH_AUTH_PASSWORD_RESET: &str = "/auth/password-reset";
 
+// Portal identity plane (Go portalidentity/api + portalauth): the admin
+// surface and the public portal login surface.
+pub const PATH_API_PORTAL_USERS: &str = "/api/portal-users";
+pub const PATH_API_PORTAL_APPS: &str = "/api/portal-apps";
+pub const PATH_PORTAL: &str = "/portal";
+
 // OAuth / OIDC
 pub const PATH_OAUTH: &str = "/oauth";
 pub const PATH_WELL_KNOWN: &str = "/.well-known";
@@ -282,6 +288,9 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub sdk_audit_batch: SdkAuditBatchState,
     pub public: PublicApiState,
     pub password_reset: PasswordResetApiState,
+    /// The portal identity plane (`/api/portal-users`, `/api/portal-apps`,
+    /// `/portal/*`, and its hooks on the reset-token and OIDC routes).
+    pub portal: crate::portal::PortalState,
     pub webauthn: crate::webauthn::WebauthnApiState,
     /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
     /// is constructed inside `build()` so the platform's own OpenAPI document
@@ -641,6 +650,15 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                     .layer(distributed_password_reset_email_layer)
                     .layer(distributed_password_reset_layer)
                     .layer(auth_layer.clone()),
+            )
+            // Portal identity plane: the admin surface.
+            .nest(
+                PATH_API_PORTAL_USERS,
+                crate::portal::api::portal_users_router(self.portal.clone()),
+            )
+            .nest(
+                PATH_API_PORTAL_APPS,
+                crate::portal::api::portal_apps_router(self.portal),
             )
             // Batch ingest endpoints (merged into resource routers)
             .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))
