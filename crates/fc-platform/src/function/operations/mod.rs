@@ -12,6 +12,7 @@ pub mod create;
 pub mod delete;
 pub mod domains;
 pub mod events;
+pub mod mark_ready;
 pub mod promote;
 pub mod promote_plan;
 pub mod publish;
@@ -35,6 +36,7 @@ pub use delete::{DeleteCommand, DeleteFunctionUseCase};
 pub use domains::{
     ClaimCommand, ClaimFunctionDomainUseCase, ReleaseCommand, ReleaseFunctionDomainUseCase,
 };
+pub use mark_ready::{MarkVersionReadyCommand, MarkVersionReadyUseCase};
 pub use promote::{PromoteCommand, PromoteVersionUseCase, RemoveAliasCommand, RemoveAliasUseCase};
 pub use promote_plan::PromotePlan;
 pub use publish::{PublishCommand, PublishVersionUseCase};
@@ -168,6 +170,13 @@ impl<U: UnitOfWork> FunctionOperations<U> {
             unit_of_work,
             caller,
         }
+    }
+
+    /// Mark-ready on a given unit of work: a transaction-scoped one, since
+    /// the version is read under its row lock in the transaction it is
+    /// committed in.
+    pub fn mark_ready_in<V: UnitOfWork>(&self, unit_of_work: Arc<V>) -> MarkVersionReadyUseCase<V> {
+        MarkVersionReadyUseCase::new(self.functions.clone(), self.versions.clone(), unit_of_work)
     }
 
     pub fn remove_alias(&self, caller: Caller) -> RemoveAliasUseCase<U> {
