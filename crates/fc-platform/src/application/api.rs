@@ -965,6 +965,8 @@ pub async fn provision_application_service_account(
                 allowed_origins: Vec::new(),
                 service_account_principal_id: Some(sa_id.clone()),
                 created_by: Some(principal_id.clone()),
+                portal_client_id: None,
+                portal_app_id: None,
             };
             create_oauth_uc
                 .run(oauth_cmd, ctx)
@@ -1131,6 +1133,8 @@ pub async fn provision_application_login_client<U: UnitOfWork>(
         allowed_origins: req.allowed_origins.clone(),
         service_account_principal_id: None,
         created_by: Some(principal_id.to_owned()),
+        portal_client_id: None,
+        portal_app_id: None,
     };
     let ctx = ExecutionContext::create(principal_id);
     create_oauth_client_use_case

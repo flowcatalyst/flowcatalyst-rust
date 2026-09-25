@@ -643,8 +643,8 @@ pub mod checks {
     }
 
     /// Dispatch pools, any write (create, update, archive, suspend,
-    /// activate): one of `platform:messaging:dispatch-pool:create` /
-    /// `:update` / `:delete` (Go `CanWriteDispatchPools`, auth.go:561).
+    /// activate): one of the pool create/update/delete permissions (Go
+    /// `CanWriteDispatchPools`, auth.go:561).
     pub fn can_write_dispatch_pools(context: &AuthContext) -> Result<()> {
         require_any_permission(
             context,
