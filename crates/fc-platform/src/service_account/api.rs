@@ -474,6 +474,8 @@ pub async fn create_service_account<U: UnitOfWork>(
                 allowed_origins: vec![],
                 service_account_principal_id: Some(result.event.service_account_id.clone()),
                 created_by: Some(auth.0.principal_id.clone()),
+                portal_client_id: None,
+                portal_app_id: None,
             };
             let oauth_ctx = ExecutionContext::create(auth.0.principal_id.clone());
             state

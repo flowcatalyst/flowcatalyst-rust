@@ -1341,3 +1341,142 @@ async fn portal_login_is_budgeted_per_client_and_email() {
     .await;
     assert_eq!(other.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn oauth_clients_carry_the_portal_flags() {
+    let app = setup().await;
+    let admin = app.anchor_admin_token().await;
+    let client_id = client(&app, "portal-flags").await;
+    let other_client = client(&app, "portal-flags-other").await;
+
+    // A legacy client-wide portal: portalClientId, no app.
+    let created = assert_status(
+        app.post(
+            "/api/oauth-clients",
+            &admin,
+            json!({
+                "clientName": "Legacy Portal", "clientType": "PUBLIC", "pkceRequired": false,
+                "redirectUris": ["https://legacy.example.com/callback"], "portalClientId": client_id,
+            }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    assert_eq!(created["client"]["portalClientId"], client_id);
+    assert!(created["client"].get("portalAppId").is_none());
+    let legacy_row = created["client"]["id"].as_str().unwrap().to_string();
+    let legacy_client_id = created["client"]["clientId"].as_str().unwrap().to_string();
+
+    // The invite redirect validates against it; the portal signs in with no app gate.
+    let (status, user) = ensure(
+        &app,
+        &admin,
+        json!({
+            "clientId": client_id, "email": "legacy.user@example.com", "returnInviteLink": true,
+            "redirectUri": "https://legacy.example.com/callback",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{user}");
+    let body = set_password(
+        &app,
+        user["inviteUrl"].as_str().unwrap(),
+        "Correct-Legacy-Battery-5512",
+    )
+    .await;
+    assert_eq!(body["redirectUri"], "https://legacy.example.com/callback");
+    let resp = send_raw(
+        &app,
+        Request::get(format!(
+            "/portal/authorize?response_type=code&client_id={legacy_client_id}&redirect_uri={}&state=s1",
+            urlencoding::encode("https://legacy.example.com/callback")
+        ))
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let flow = query_param(&location(&resp), "flow").unwrap();
+    let body = assert_status(
+        post_public(&app, "/portal/auth/login", json!({ "flowId": flow, "email": "legacy.user@example.com", "password": "Correct-Legacy-Battery-5512" })).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert!(body["redirectUrl"]
+        .as_str()
+        .unwrap()
+        .starts_with("https://legacy.example.com/callback?code="));
+
+    // portalAppId links, and makes the app's client the portal owner.
+    let portal = create_app(&app, &admin, &client_id, "flags", json!({})).await;
+    let app_id = portal["portalApp"]["id"].as_str().unwrap().to_string();
+    let linked = assert_status(
+        app.post(
+            "/api/oauth-clients",
+            &admin,
+            json!({ "clientName": "Second", "clientType": "PUBLIC", "redirectUris": ["https://second.example.com/cb"], "portalAppId": app_id }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    assert_eq!(linked["client"]["portalClientId"], client_id);
+    assert_eq!(linked["client"]["portalAppId"], app_id);
+    let (status, body) = read_json(
+        app.post(
+            "/api/oauth-clients",
+            &admin,
+            json!({ "clientName": "Mismatch", "clientType": "PUBLIC", "portalAppId": app_id, "portalClientId": other_client }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str().unwrap()),
+        (StatusCode::BAD_REQUEST, "PORTAL_APP_CLIENT_MISMATCH")
+    );
+    let (status, body) = read_json(
+        app.post(
+            "/api/oauth-clients",
+            &admin,
+            json!({ "clientName": "Unknown", "clientType": "PUBLIC", "portalAppId": "pta_doesnotexist0" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"].as_str().unwrap()),
+        (StatusCode::NOT_FOUND, "PORTAL_APP_NOT_FOUND")
+    );
+
+    // Update: link, unlink, and clearing the portal owner clears the link.
+    let path = format!("/api/oauth-clients/{legacy_row}");
+    let (status, _) = read_json(
+        app.put(&path, &admin, json!({ "portalAppId": app_id }))
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let got = assert_status(app.get(&path, &admin).await, StatusCode::OK).await;
+    assert_eq!(got["portalAppId"], app_id);
+    let (status, _) = read_json(app.put(&path, &admin, json!({ "portalAppId": "" })).await).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let got = assert_status(app.get(&path, &admin).await, StatusCode::OK).await;
+    assert!(got.get("portalAppId").is_none());
+    assert_eq!(got["portalClientId"], client_id);
+    read_json(
+        app.put(&path, &admin, json!({ "portalAppId": app_id }))
+            .await,
+    )
+    .await;
+    let (status, _) = read_json(
+        app.put(&path, &admin, json!({ "portalClientId": "" }))
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let got = assert_status(app.get(&path, &admin).await, StatusCode::OK).await;
+    assert!(got.get("portalClientId").is_none() && got.get("portalAppId").is_none());
+}

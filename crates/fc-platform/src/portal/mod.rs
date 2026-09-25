@@ -30,7 +30,7 @@ pub mod token;
 
 use std::sync::Arc;
 
-pub use entity::{is_portal_subject, PortalApp, PortalIdentity};
+pub use entity::{is_portal_subject, trimmed_or_none, PortalApp, PortalIdentity};
 
 use crate::auth::authorization_code_repository::AuthorizationCodeRepository;
 use crate::auth::password_service::PasswordService;
@@ -151,6 +151,64 @@ pub fn portal_login_policy_from_env() -> RateLimitPolicy {
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
     RateLimitPolicy::new(std::time::Duration::from_secs(15 * 60), limit)
+}
+
+// ── The portal flags on OAuth clients (Go auth/api + auth/operations) ────
+
+/// Go `validatePlaneFlags`: a portal app can only be linked to a portal
+/// client. (Rust has no `apiAccess` flag, so Go's portal + apiAccess
+/// conflict cannot arise.)
+pub fn validate_oauth_client_plane(
+    client: &crate::OAuthClient,
+) -> std::result::Result<(), crate::usecase::UseCaseError> {
+    let is_portal = client
+        .portal_client_id
+        .as_deref()
+        .is_some_and(|p| !p.is_empty());
+    if client
+        .portal_app_id
+        .as_deref()
+        .is_some_and(|a| !a.is_empty())
+        && !is_portal
+    {
+        return Err(crate::usecase::UseCaseError::validation(
+            "PORTAL_APP_REQUIRES_PORTAL_CLIENT",
+            "a portal app can only be linked to a portal client (portalClientId)",
+        ));
+    }
+    Ok(())
+}
+
+/// Go `authapi.resolvePortalApp`: a linked portal app is authoritative for
+/// the portal owner — `portalAppId` (when non-empty) must name an existing
+/// app, and `portalClientId` becomes that app's client; a conflicting
+/// explicit `portalClientId` is refused.
+pub async fn resolve_oauth_client_portal_app(
+    apps: &PortalAppRepository,
+    portal_app_id: Option<&str>,
+    portal_client_id: &mut Option<String>,
+) -> Result<()> {
+    let Some(app_id) = portal_app_id.map(str::trim).filter(|a| !a.is_empty()) else {
+        return Ok(());
+    };
+    let app = apps
+        .find_by_id(app_id)
+        .await?
+        .ok_or_else(|| PlatformError::from(operations::not_found("PortalApp", app_id)))?;
+    if portal_client_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|pc| !pc.is_empty() && pc != app.client_id)
+    {
+        return Err(PlatformError::from(
+            crate::usecase::UseCaseError::validation(
+                "PORTAL_APP_CLIENT_MISMATCH",
+                "portalAppId belongs to a different client than portalClientId",
+            ),
+        ));
+    }
+    *portal_client_id = Some(app.client_id);
+    Ok(())
 }
 
 // ── Permission checks (Go shared/auth CanReadPortalUsers /

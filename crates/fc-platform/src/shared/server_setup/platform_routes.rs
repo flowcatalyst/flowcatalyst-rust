@@ -495,6 +495,9 @@ pub fn build_platform_routes(
     );
     let oauth_clients_state = OAuthClientsState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
+        portal_apps: Arc::new(crate::portal::repository::PortalAppRepository::new(
+            &repos.pool,
+        )),
         create_oauth_client_use_case,
         update_oauth_client_use_case,
         delete_oauth_client_use_case,

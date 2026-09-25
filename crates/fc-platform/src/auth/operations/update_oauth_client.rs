@@ -35,6 +35,12 @@ pub struct UpdateOAuthClientCommand {
     pub allowed_origins: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active: Option<bool>,
+    /// Empty clears the portal flag (and the portal app); a value sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_client_id: Option<String>,
+    /// Empty unlinks the portal app; a value links it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_app_id: Option<String>,
 }
 
 impl crate::usecase::AuditMasked for UpdateOAuthClientCommand {}
@@ -131,6 +137,16 @@ impl<U: UnitOfWork> UpdateOAuthClientUseCase<U> {
         if let Some(active) = command.active {
             client.active = active;
         }
+        if let Some(portal_client_id) = &command.portal_client_id {
+            client.portal_client_id = crate::portal::trimmed_or_none(Some(portal_client_id));
+            if client.portal_client_id.is_none() {
+                client.portal_app_id = None; // no portal, no portal app
+            }
+        }
+        if let Some(portal_app_id) = &command.portal_app_id {
+            client.portal_app_id = crate::portal::trimmed_or_none(Some(portal_app_id));
+        }
+        crate::portal::validate_oauth_client_plane(&client)?;
         client.updated_at = chrono::Utc::now();
 
         let event = OAuthClientUpdated::new(ctx, &client.id, &client.client_name);

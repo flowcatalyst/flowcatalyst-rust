@@ -37,6 +37,12 @@ pub struct CreateOAuthClientCommand {
     pub service_account_principal_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    /// Portal entry point owned by this tenant client (Go `PortalClientID`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_client_id: Option<String>,
+    /// The portal app this portal client fronts (Go `PortalAppID`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_app_id: Option<String>,
 }
 
 impl crate::usecase::AuditMasked for CreateOAuthClientCommand {}
@@ -141,6 +147,10 @@ impl<U: UnitOfWork> CreateOAuthClientUseCase<U> {
         client.allowed_origins = command.allowed_origins.clone();
         client.service_account_principal_id = command.service_account_principal_id.clone();
         client.created_by = command.created_by.clone();
+        client.portal_client_id =
+            crate::portal::trimmed_or_none(command.portal_client_id.as_deref());
+        client.portal_app_id = crate::portal::trimmed_or_none(command.portal_app_id.as_deref());
+        crate::portal::validate_oauth_client_plane(&client)?;
 
         let event =
             OAuthClientCreated::new(ctx, &client.id, &client.client_id, &client.client_name);
