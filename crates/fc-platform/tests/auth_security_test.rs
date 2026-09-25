@@ -201,3 +201,15 @@ async fn an_unpinned_multi_tenant_mapping_cannot_sign_in() {
     let resp = send(&app, oidc_login_request("pinned.test")).await;
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 }
+
+/// Owner ruling 2026-09-25, item 8 (Java 93367448): an unmapped domain is a
+/// 404 carrying `EMAIL_DOMAIN_NOT_MAPPED`.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn an_unmapped_domain_is_404_email_domain_not_mapped() {
+    let app = TestApp::setup().await;
+    let (status, body) = read_json(send(&app, oidc_login_request("nowhere.test")).await).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["code"], "EMAIL_DOMAIN_NOT_MAPPED", "{body}");
+    assert!(body["error"].as_str().unwrap().contains("nowhere.test"));
+}

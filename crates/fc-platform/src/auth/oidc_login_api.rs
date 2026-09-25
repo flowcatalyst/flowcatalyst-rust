@@ -328,16 +328,18 @@ pub async fn oidc_login(
     {
         Ok(Some(m)) => m,
         Ok(None) => {
-            return (
+            // A user's typo or a stale link, not a server fault (owner
+            // ruling 2026-09-25, item 8; Java 93367448). A mapped domain
+            // whose provider is broken stays a 500 below.
+            info!(domain = %domain, "OIDC login for an email domain with no mapping");
+            return coded_error(
                 StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!(
-                        "No authentication configuration found for domain: {}",
-                        domain
-                    ),
-                }),
-            )
-                .into_response();
+                "EMAIL_DOMAIN_NOT_MAPPED",
+                format!(
+                    "No authentication configuration found for domain: {}",
+                    domain
+                ),
+            );
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup email domain mapping");
