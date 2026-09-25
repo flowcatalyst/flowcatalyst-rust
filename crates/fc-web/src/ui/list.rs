@@ -173,6 +173,35 @@ pub async fn paginator(
     })
 }
 
+/// The result-size Select of a firehose list (events, dispatch jobs): the
+/// most recent `value` rows, no pagination (owner rule).
+#[derive(Clone, Debug)]
+pub struct ResultSize {
+    pub value: usize,
+    pub options: Vec<usize>,
+    /// The Select's tooltip ("Result size — most recent N events").
+    pub title: &'static str,
+}
+
+impl ResultSize {
+    /// The SPA's `sizeOptions` for events and dispatch jobs, default 200.
+    pub const OPTIONS: [usize; 5] = [50, 100, 200, 500, 1000];
+    pub const DEFAULT: usize = 200;
+
+    /// From the `size` query value; anything not offered falls back to the
+    /// default.
+    pub fn new(requested: Option<usize>, title: &'static str) -> Self {
+        let value = requested
+            .filter(|s| Self::OPTIONS.contains(s))
+            .unwrap_or(Self::DEFAULT);
+        Self {
+            value,
+            options: Self::OPTIONS.to_vec(),
+            title,
+        }
+    }
+}
+
 /// `FcTableToolbar`: the quick search on the left; Clear All and the
 /// Filters button (with its active-count badge) on the right. The toolbar
 /// is the list's GET form; `child` is the popover's filter fields, which
@@ -189,10 +218,13 @@ pub async fn table_toolbar(
     #[default] show_filters: bool,
     #[default] show_search: bool,
     #[default] hidden: Vec<(String, String)>,
+    #[default] size: Option<ResultSize>,
+    #[default] show_refresh: bool,
+    #[default] clear_href: Option<String>,
     #[default] child: Child<'_>,
 ) -> Result<impl View> {
     let popover_id = format!("{form_id}-filters");
-    let clear_href = action.clone();
+    let clear_href = clear_href.unwrap_or_else(|| action.clone());
     Ok(view! {
         <form id=(&form_id) method="get" action=(action) class="fc-table-toolbar">
             for (name, value) in hidden {
@@ -214,6 +246,18 @@ pub async fn table_toolbar(
                 }
             </div>
             <div class="fc-toolbar-end">
+                if let Some(size) = size {
+                    <select name="size" class="fc-select w-24" title=(size.title) aria-label=(size.title) onchange="this.form.requestSubmit()">
+                        for option in size.options {
+                            <option value=(option.to_string()) selected=(option == size.value)>(option.to_string())</option>
+                        }
+                    </select>
+                }
+                if show_refresh {
+                    <button type="submit" class="fc-icon-btn" title="Refresh" aria-label="Refresh">
+                        icon(data: iconify_icon!("lucide:refresh-cw"), size: Length::rem(1.0))
+                    </button>
+                }
                 if has_active_filters {
                     <a href=(clear_href) class=(Btn::Text)>
                         icon(data: iconify_icon!("lucide:funnel-x"), size: Length::rem(1.0))

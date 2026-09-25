@@ -52,6 +52,8 @@ pub struct WebDeps {
     pub(crate) platform_config_repo: Arc<PlatformConfigRepository>,
     pub(crate) application_repo: Arc<ApplicationRepository>,
     pub(crate) client_repo: Arc<ClientRepository>,
+    pub(crate) event_repo: Arc<fc_platform::EventRepository>,
+    pub(crate) dispatch_job_repo: Arc<fc_platform::DispatchJobRepository>,
 }
 
 impl WebDeps {
@@ -93,6 +95,8 @@ impl WebDeps {
             platform_config_repo: repos.platform_config_repo.clone(),
             application_repo: repos.application_repo.clone(),
             client_repo: repos.client_repo.clone(),
+            event_repo: repos.event_repo.clone(),
+            dispatch_job_repo: repos.dispatch_job_repo.clone(),
         }
     }
 }
