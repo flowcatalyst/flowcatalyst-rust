@@ -696,6 +696,231 @@ pub async fn create_user(
     Ok(Json(created.into()))
 }
 
+/// `POST /api/principals` request: Go's `CreatePrincipalRequest`
+/// (principal/api/dto.go:15-28). `email` and `scope` are required, as huma
+/// makes them (no `omitempty`).
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePrincipalRequest {
+    pub email: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Principal scope: `ANCHOR`, `PARTNER` or `CLIENT`
+    pub scope: String,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    /// `OIDC` creates a federated user with no password
+    #[serde(default)]
+    pub idp_type: Option<String>,
+    /// Send the new user an invitation (default true)
+    #[serde(default)]
+    pub send_invitation: Option<bool>,
+    /// Accepted for Go compatibility; Rust mints no invite link, so none is
+    /// returned
+    #[serde(default)]
+    pub return_invite_link: Option<bool>,
+    /// Where the invitee goes after setting a password (absolute http(s))
+    #[serde(default)]
+    pub invite_redirect_uri: Option<String>,
+}
+
+/// `POST /api/principals` response: Go's `CreatePrincipalResponse`.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePrincipalResponse {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invite_link: Option<String>,
+}
+
+/// Create a principal (Go `createPrincipal`, principal/api/api.go:365-391).
+///
+/// The scope and client are taken as given (no email-domain derivation;
+/// that is `POST /api/principals/users`). Anchors create any scope; a
+/// non-anchor administrator only CLIENT users in a client it can access,
+/// and every caller needs a user-write permission (Go `RequireUserAdmin`).
+#[utoipa::path(
+    post,
+    path = "",
+    tag = "principals",
+    operation_id = "createPrincipal",
+    request_body = CreatePrincipalRequest,
+    responses(
+        (status = 201, description = "Principal created", body = CreatePrincipalResponse),
+        (status = 400, description = "Validation error"),
+        (status = 403, description = "Forbidden"),
+        (status = 409, description = "Email exists")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn create_principal(
+    State(state): State<PrincipalsState>,
+    auth: Authenticated,
+    Json(req): Json<CreatePrincipalRequest>,
+) -> Result<(StatusCode, Json<CreatePrincipalResponse>), PlatformError> {
+    use crate::principal::operations::CreateUserCommand;
+    use crate::usecase::{ExecutionContext, UseCase};
+
+    let ctx = &auth.0;
+    if !ctx.is_anchor() && req.scope != "CLIENT" {
+        return Err(PlatformError::forbidden(
+            "Client administrators can only create client-scope users",
+        ));
+    }
+    let client_id = req
+        .client_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string);
+    require_user_admin(ctx, client_id.as_deref())?;
+    resolve_invite_redirect(req.invite_redirect_uri.as_deref())?;
+
+    // Go's CreateUser validation (principal/operations/create.go:39-65),
+    // ahead of the use case so its codes are Go's.
+    let email = req.email.trim().to_lowercase();
+    if email.is_empty() {
+        return Err(PlatformError::bad_request_code(
+            "EMAIL_REQUIRED",
+            "email is required",
+        ));
+    }
+    if !go_email_pattern().is_match(&email) {
+        return Err(PlatformError::bad_request_code(
+            "INVALID_EMAIL",
+            "email must be a valid address",
+        ));
+    }
+    let scope = match req.scope.as_str() {
+        "ANCHOR" => UserScope::Anchor,
+        "PARTNER" => UserScope::Partner,
+        "CLIENT" => UserScope::Client,
+        _ => {
+            return Err(PlatformError::bad_request_code(
+                "INVALID_SCOPE",
+                "scope must be ANCHOR, PARTNER, or CLIENT",
+            ))
+        }
+    };
+    if scope != UserScope::Anchor && client_id.is_none() {
+        return Err(PlatformError::bad_request_code(
+            "CLIENT_REQUIRED",
+            "clientId is required for PARTNER or CLIENT scope",
+        ));
+    }
+    if state.principal_repo.find_by_email(&email).await?.is_some() {
+        return Err(PlatformError::Coded {
+            status: StatusCode::CONFLICT,
+            code: "EMAIL_EXISTS".to_string(),
+            message: format!("User with email '{email}' already exists"),
+            details: Default::default(),
+        });
+    }
+
+    let idp_type = if req.idp_type.as_deref() == Some("OIDC") {
+        IdentityProviderType::Oidc
+    } else {
+        IdentityProviderType::Internal
+    };
+    let password = req.password.clone().filter(|p| !p.is_empty());
+    let cmd = CreateUserCommand {
+        email: email.clone(),
+        name: req.name.clone(),
+        scope,
+        client_id,
+        granted_client_ids: Vec::new(),
+        password: password.clone(),
+        enforce_password_complexity: None,
+        idp_type: Some(idp_type),
+    };
+    let event = state
+        .create_user_use_case
+        .run(cmd, ExecutionContext::create(&ctx.principal_id))
+        .await
+        .into_result()?;
+
+    // Go `notifyNewUser` (api.go:704-745): a passwordless internal user is
+    // sent an invitation unless the caller suppresses it.
+    let send_invitation = req.send_invitation.unwrap_or(true);
+    if send_invitation && password.is_none() && idp_type == IdentityProviderType::Internal {
+        if let Some(created) = state.principal_repo.find_by_id(&event.principal_id).await? {
+            if let Err(e) = state
+                .password_reset_emailer
+                .send_reset_email(&created)
+                .await
+            {
+                tracing::warn!(principal_id = %created.id, error = %e, "send account invite failed");
+            }
+        }
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreatePrincipalResponse {
+            id: event.principal_id,
+            invite_link: None,
+        }),
+    ))
+}
+
+/// Go's email check for a created principal (principal/operations/
+/// create.go `emailPattern`).
+fn go_email_pattern() -> &'static regex::Regex {
+    static PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    PATTERN.get_or_init(|| {
+        regex::Regex::new(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+            .expect("static email pattern")
+    })
+}
+
+/// Go `RequireUserAdmin` (shared/auth/auth.go:369-385): an anchor needs a
+/// user-write permission; anyone else also needs the target client, and
+/// may not create a clientless principal.
+fn require_user_admin(
+    ctx: &crate::AuthContext,
+    target_client_id: Option<&str>,
+) -> Result<(), PlatformError> {
+    if !ctx.is_anchor() {
+        let Some(client_id) = target_client_id else {
+            return Err(PlatformError::forbidden_code(
+                "ANCHOR_REQUIRED",
+                "anchor scope required for platform users",
+            ));
+        };
+        if !ctx.can_access_client(client_id) {
+            return Err(PlatformError::forbidden_code(
+                "SCOPE_FORBIDDEN",
+                "no access to this user's client",
+            ));
+        }
+    }
+    crate::checks::can_write_principals(ctx)
+}
+
+/// Go `resolveInviteRedirect` (principal/api/api.go:756-767): absent or
+/// blank is none; otherwise an absolute http(s) URL with a host and no
+/// user info.
+fn resolve_invite_redirect(raw: Option<&str>) -> Result<Option<String>, PlatformError> {
+    let Some(uri) = raw.map(str::trim).filter(|u| !u.is_empty()) else {
+        return Ok(None);
+    };
+    let valid = reqwest::Url::parse(uri).is_ok_and(|u| {
+        matches!(u.scheme(), "http" | "https")
+            && u.host_str().is_some_and(|h| !h.is_empty())
+            && u.username().is_empty()
+            && u.password().is_none()
+    });
+    if !valid {
+        return Err(PlatformError::bad_request_code(
+            "INVITE_REDIRECT_URI_INVALID",
+            "inviteRedirectUri must be an absolute http or https URL",
+        ));
+    }
+    Ok(Some(uri.to_string()))
+}
+
 /// A client reference — its `clt_` id or its identifier — as the client's
 /// id. Go `resolveClientRef` (principal/api/api.go:825-845): the id first,
 /// then the identifier lower-cased; an unknown reference is a 404
@@ -2180,7 +2405,7 @@ pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
         // `routes!(...)` groups handlers on the SAME path; `create_user` is
         // `/users` and `list_principals` is `""`, so they must be registered
         // separately or only one gets mounted (previously the cause of 405s).
-        .routes(routes!(list_principals))
+        .routes(routes!(list_principals, create_principal))
         .routes(routes!(create_user))
         .routes(routes!(sync_users))
         .routes(routes!(check_email_domain))
