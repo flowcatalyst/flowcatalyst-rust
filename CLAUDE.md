@@ -187,6 +187,36 @@ so creating an event via UoW would mean emitting an event about the event):
   exception that proves the rule: it is the audit record for the human
   action; the instance row inserted alongside is still the infrastructure
   path.
+- **Function-host heartbeat**: `POST /control/functions/heartbeat`
+  (`function/control_api.rs::heartbeat`) upserts the host's `fn_hosts` row
+  and purges hosts silent for over a day, in one transaction, through
+  `function/host_repository.rs::FunctionHostRepository::heartbeat`, with no
+  event and no audit row. A heartbeat is telemetry, every 15 s per host;
+  wrapping it in UoW would emit a domain event per beat and swamp the event
+  log. What a heartbeat *causes* is still a use case: a version the host
+  reports loaded becomes `READY` through `MarkVersionReadyUseCase`, with its
+  event and audit row.
+- **Function artifact uploads**: `PUT /api/functions/{address}/artifacts/{digest}`
+  (`function/version_api.rs::upload_artifact`, `function/artifact/upload.rs`)
+  streams the blob into the configured artifact store (file or S3), with no
+  event and no audit row. Storing a blob changes nothing a caller can observe
+  until a version is published against it, and that publish is a use case
+  with its event and audit row; an orphan blob is garbage, not state, which a
+  function delete collects. The route is still permission-gated
+  (`platform:function:version:publish`) like any other `/api/*` write.
+- **Lazy OAuth client-secret rehash**: after a client authenticates
+  successfully at `/oauth/token` against a secret stored in an older format,
+  `auth/oauth_api.rs::accept_client_secret` rewrites it to the current
+  `hashed:v1:` form through
+  `auth/oauth_client_repository.rs::rewrite_secret_ref` (and
+  `rewrite_previous_secret_ref` for the rotation-overlap secret; the
+  once-a-minute `touch_previous_secret_used` stamp is the same kind of
+  write). It upgrades the at-rest format of a secret the caller just proved
+  it holds, not the secret itself, and runs on the token endpoint's hot path,
+  so it emits no event and no audit row. It is best-effort (a failure is
+  logged; the authentication already succeeded) and conditional on the row
+  still holding the verified ref, so a concurrent rotation, which *is* a use
+  case, is never overwritten.
 
 These go directly to the repository. They are the platform's internal plumbing.
 
