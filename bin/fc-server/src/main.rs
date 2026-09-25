@@ -1199,12 +1199,10 @@ impl StreamProcessorShutdown {
 
 /// Spawn the outbox processor, gated on leadership.
 async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<()> {
-    use fc_outbox::http_dispatcher::HttpDispatcherConfig;
     use fc_outbox::repository::{OutboxRepository, OutboxTableConfig};
     use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
 
     let backend: OutboxBackend = env_or("FC_OUTBOX_DB_TYPE", "postgres").parse()?;
-    let poll_interval_ms: u64 = env_or_parse("FC_OUTBOX_POLL_INTERVAL_MS", 1000);
 
     let table_config = OutboxTableConfig {
         events_table: env_or("FC_OUTBOX_EVENTS_TABLE", "outbox_messages"),
@@ -1243,23 +1241,8 @@ async fn spawn_outbox_processor(mut active_rx: watch::Receiver<bool>) -> Result<
         }
     };
 
-    let api_base_url = env_or("FC_API_BASE_URL", "http://localhost:8080");
-    let api_token = std::env::var("FC_API_TOKEN").ok();
-
-    let config = EnhancedProcessorConfig {
-        poll_interval: Duration::from_millis(poll_interval_ms),
-        poll_batch_size: env_or_parse("FC_OUTBOX_BATCH_SIZE", 500),
-        api_batch_size: env_or_parse("FC_API_BATCH_SIZE", 100),
-        max_concurrent_groups: env_or_parse("FC_MAX_CONCURRENT_GROUPS", 10),
-        global_buffer_size: env_or_parse("FC_GLOBAL_BUFFER_SIZE", 1000),
-        max_in_flight: env_or_parse("FC_MAX_IN_FLIGHT", 5000),
-        http_config: HttpDispatcherConfig {
-            api_base_url,
-            api_token,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    // Go's variable names and defaults, with the earlier names as fallbacks.
+    let config = EnhancedProcessorConfig::from_env();
 
     let processor = Arc::new(EnhancedOutboxProcessor::new(config, outbox_repo)?);
 

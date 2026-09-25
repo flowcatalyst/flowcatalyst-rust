@@ -34,7 +34,6 @@ use tokio::signal;
 use tokio::sync::broadcast;
 use tracing::info;
 
-use fc_outbox::http_dispatcher::HttpDispatcherConfig;
 use fc_outbox::repository::OutboxRepository;
 use fc_outbox::repository::OutboxTableConfig;
 use fc_outbox::{EnhancedOutboxProcessor, EnhancedProcessorConfig, OutboxBackend};
@@ -61,7 +60,6 @@ async fn main() -> Result<()> {
 
     // Configuration
     let backend: OutboxBackend = env_or("FC_OUTBOX_DB_TYPE", "postgres").parse()?;
-    let poll_interval_ms: u64 = env_or_parse("FC_OUTBOX_POLL_INTERVAL_MS", 1000);
     let metrics_port: u16 = env_or_parse("FC_METRICS_PORT", 9090);
 
     let table_config = build_table_config();
@@ -74,35 +72,12 @@ async fn main() -> Result<()> {
     let outbox_repo = create_outbox_repository(backend, table_config).await?;
     info!("Outbox repository initialized ({})", backend);
 
-    // Enhanced mode (HTTP API with message group ordering)
-    let api_base_url = env_or("FC_API_BASE_URL", "http://localhost:8080");
-    let api_token = std::env::var("FC_API_TOKEN").ok();
-    let max_in_flight: u64 = env_or_parse("FC_MAX_IN_FLIGHT", 5000);
-    let global_buffer_size: usize = env_or_parse("FC_GLOBAL_BUFFER_SIZE", 1000);
-    let max_concurrent_groups: usize = env_or_parse("FC_MAX_CONCURRENT_GROUPS", 10);
-    let poll_batch_size: u32 = env_or_parse("FC_OUTBOX_BATCH_SIZE", 500);
-    let api_batch_size: usize = env_or_parse("FC_API_BATCH_SIZE", 100);
-
-    info!("Sending to {} with message group ordering", api_base_url);
+    // Go's variable names and defaults, with the earlier names as fallbacks.
+    let config = EnhancedProcessorConfig::from_env();
     info!(
-        "  max_in_flight: {}, buffer_size: {}, concurrent_groups: {}",
-        max_in_flight, global_buffer_size, max_concurrent_groups
+        "Sending to {} with message group ordering",
+        config.http_config.api_base_url
     );
-
-    let config = EnhancedProcessorConfig {
-        poll_interval: Duration::from_millis(poll_interval_ms),
-        poll_batch_size,
-        api_batch_size,
-        max_concurrent_groups,
-        global_buffer_size,
-        max_in_flight,
-        http_config: HttpDispatcherConfig {
-            api_base_url,
-            api_token,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
 
     let processor = Arc::new(EnhancedOutboxProcessor::new(config, outbox_repo)?);
 

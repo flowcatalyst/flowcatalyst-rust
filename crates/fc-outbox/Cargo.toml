@@ -21,6 +21,13 @@ serde_json = { workspace = true }
 bson = { version = "2.9", features = ["chrono-0_4"], optional = true }
 reqwest = { workspace = true }
 
+[dev-dependencies]
+# The SQLite and PostgreSQL repositories are always built for tests.
+sqlx = { workspace = true }
+axum = { workspace = true }
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
+
 [features]
 sqlite = ["dep:sqlx"]
 postgres = ["dep:sqlx"]

@@ -1,337 +1,148 @@
 //! Group Distributor
 //!
-//! Routes outbox items to appropriate MessageGroupProcessor based on message_group.
-//! Items without a group are dispatched directly (no ordering guarantee).
+//! Sends a message group's items one at a time, in order, as Go's
+//! `GroupDistributor` (`flowcatalyst-go/internal/outbox/group_distributor.go`):
+//!
+//! - each group has an in-memory FIFO of its claimed items, drained by one
+//!   task, so a group never has two items in flight;
+//! - at most `max_concurrent_groups` groups drain at once (0 = unbounded);
+//! - with block-on-error, the first item that fails stops the group: every
+//!   item still queued for it — and any submitted while it stops — is
+//!   released back to PENDING, so the next poll re-claims them in order behind
+//!   the failed one instead of delivering them ahead of it.
+//!
+//! Nothing here is the source of truth: every queued item is a row claimed
+//! IN_PROGRESS in the database, so a restart loses nothing (the rows are
+//! recovered to PENDING).
 
+use async_trait::async_trait;
 use fc_common::OutboxItem;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock};
-use tracing::{debug, info, warn};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
+use tokio::sync::Semaphore;
 
-use crate::error::OutboxError;
-use crate::message_group_processor::{
-    BatchMessageDispatcher, DispatchResult, MessageGroupProcessor, MessageGroupProcessorConfig,
-    ProcessorState, TrackedMessage,
-};
-
-/// Group distributor configuration
-#[derive(Debug, Clone)]
-pub struct GroupDistributorConfig {
-    /// Config for individual message group processors
-    pub processor_config: MessageGroupProcessorConfig,
-    /// Maximum number of active group processors
-    pub max_groups: usize,
-    /// Idle timeout before cleaning up a group processor (seconds)
-    pub group_idle_timeout_secs: u64,
+/// What the distributor does with a group's items.
+#[async_trait]
+pub trait GroupHandler: Send + Sync + 'static {
+    /// Sends one item and records its outcome. `true` lets the group continue.
+    async fn dispatch(&self, item: OutboxItem) -> bool;
+    /// Returns items the group stopped before sending to PENDING.
+    async fn release(&self, items: Vec<OutboxItem>);
 }
 
-impl Default for GroupDistributorConfig {
-    fn default() -> Self {
-        Self {
-            processor_config: MessageGroupProcessorConfig::default(),
-            max_groups: 10000,
-            group_idle_timeout_secs: 300, // 5 minutes
-        }
-    }
-}
-
-/// Group processor entry with metadata
-struct GroupEntry {
-    processor: Arc<MessageGroupProcessor>,
-    shutdown_tx: Option<oneshot::Sender<()>>,
-    last_activity: std::time::Instant,
+#[derive(Default)]
+struct GroupQueue {
+    pending: VecDeque<OutboxItem>,
 }
 
 /// Statistics for the distributor
 #[derive(Debug, Clone, Default)]
 pub struct DistributorStats {
+    /// Groups with a drain in progress.
     pub active_groups: usize,
-    pub total_messages_distributed: u64,
-    pub messages_without_group: u64,
-    pub blocked_groups: usize,
+    /// Items queued behind the item being sent.
+    pub queued_items: usize,
 }
 
-/// Group distributor - routes outbox items to per-group processors
+/// Routes grouped items to per-group serial drains.
 pub struct GroupDistributor {
-    config: GroupDistributorConfig,
-    dispatcher: Arc<dyn BatchMessageDispatcher>,
-    groups: Arc<RwLock<HashMap<String, GroupEntry>>>,
-    stats: Arc<RwLock<DistributorStats>>,
+    groups: Arc<Mutex<HashMap<String, GroupQueue>>>,
+    semaphore: Option<Arc<Semaphore>>,
+    block_on_error: bool,
 }
 
 impl GroupDistributor {
-    pub fn new(
-        config: GroupDistributorConfig,
-        dispatcher: Arc<dyn BatchMessageDispatcher>,
-    ) -> Self {
+    /// `max_concurrent_groups` of 0 leaves group concurrency unbounded.
+    pub fn new(max_concurrent_groups: usize, block_on_error: bool) -> Self {
         Self {
-            config,
-            dispatcher,
-            groups: Arc::new(RwLock::new(HashMap::new())),
-            stats: Arc::new(RwLock::new(DistributorStats::default())),
+            groups: Arc::default(),
+            semaphore: (max_concurrent_groups > 0)
+                .then(|| Arc::new(Semaphore::new(max_concurrent_groups))),
+            block_on_error,
         }
     }
 
-    /// Distribute an outbox item to the appropriate processor
-    pub async fn distribute(&self, item: OutboxItem) -> Result<(), OutboxError> {
-        let group_id = match &item.message_group {
-            Some(gid) => gid.clone(),
-            None => {
-                // No group - dispatch directly without ordering
-                let mut stats = self.stats.write().await;
-                stats.total_messages_distributed += 1;
-                stats.messages_without_group += 1;
-                drop(stats);
-
-                debug!("Item {} has no group, dispatching directly", item.id);
-                return self.dispatch_direct(item).await;
-            }
+    /// Queues `item` behind its group's earlier items, starting the group's
+    /// drain if none is running. Returns at once.
+    pub fn submit(&self, group: &str, item: OutboxItem, handler: Arc<dyn GroupHandler>) {
+        let start = {
+            let mut groups = self.groups.lock().unwrap_or_else(|e| e.into_inner());
+            let fresh = !groups.contains_key(group);
+            groups
+                .entry(group.to_string())
+                .or_default()
+                .pending
+                .push_back(item);
+            fresh
         };
-
-        // Get or create processor for this group
-        let processor = self.get_or_create_processor(&group_id).await?;
-
-        // Enqueue item
-        processor.enqueue(item).await?;
-
-        let mut stats = self.stats.write().await;
-        stats.total_messages_distributed += 1;
-
-        Ok(())
-    }
-
-    /// Get or create a processor for a message group
-    async fn get_or_create_processor(
-        &self,
-        group_id: &str,
-    ) -> Result<Arc<MessageGroupProcessor>, OutboxError> {
-        // First try read lock
-        {
-            let groups = self.groups.read().await;
-            if let Some(entry) = groups.get(group_id) {
-                return Ok(Arc::clone(&entry.processor));
-            }
-        }
-
-        // Need to create - acquire write lock
-        let mut groups = self.groups.write().await;
-
-        // Double-check after acquiring write lock
-        if let Some(entry) = groups.get(group_id) {
-            return Ok(Arc::clone(&entry.processor));
-        }
-
-        // Check if we're at capacity
-        if groups.len() >= self.config.max_groups {
-            warn!(
-                "Max groups reached ({}), cleaning up idle groups",
-                self.config.max_groups
-            );
-            self.cleanup_idle_groups_internal(&mut groups).await;
-
-            if groups.len() >= self.config.max_groups {
-                return Err(OutboxError::MaxGroupsReached);
-            }
-        }
-
-        // Create new processor
-        let (processor, shutdown_tx) = MessageGroupProcessor::new(
-            group_id.to_string(),
-            self.config.processor_config.clone(),
-            Arc::clone(&self.dispatcher),
-        );
-
-        let processor = Arc::new(processor);
-
-        // Spawn processor task
-        let processor_clone = Arc::clone(&processor);
-        tokio::spawn(async move {
-            processor_clone.run().await;
-        });
-
-        groups.insert(
-            group_id.to_string(),
-            GroupEntry {
-                processor: Arc::clone(&processor),
-                shutdown_tx: Some(shutdown_tx),
-                last_activity: std::time::Instant::now(),
-            },
-        );
-
-        let mut stats = self.stats.write().await;
-        stats.active_groups = groups.len();
-
-        info!("Created message group processor for {}", group_id);
-
-        Ok(processor)
-    }
-
-    /// Dispatch an item directly (for items without a group)
-    async fn dispatch_direct(&self, item: OutboxItem) -> Result<(), OutboxError> {
-        let batch_result = self.dispatcher.dispatch_batch(&[item]).await;
-
-        match batch_result.results.into_iter().next() {
-            Some(r) => match r.result {
-                DispatchResult::Success => Ok(()),
-                DispatchResult::Failure { error, retryable } => {
-                    Err(OutboxError::DispatchFailed { error, retryable })
-                }
-                DispatchResult::Blocked { reason } => Err(OutboxError::Blocked { reason }),
-            },
-            None => Err(OutboxError::NoDispatchResult),
+        if start {
+            let groups = Arc::clone(&self.groups);
+            let semaphore = self.semaphore.clone();
+            let group = group.to_string();
+            let block_on_error = self.block_on_error;
+            tokio::spawn(async move {
+                drain(groups, group, semaphore, block_on_error, handler).await;
+            });
         }
     }
 
-    /// Clean up idle group processors
-    async fn cleanup_idle_groups_internal(&self, groups: &mut HashMap<String, GroupEntry>) {
-        let threshold = std::time::Duration::from_secs(self.config.group_idle_timeout_secs);
-        let now = std::time::Instant::now();
-
-        let idle_groups: Vec<String> = groups
-            .iter()
-            .filter(|(_, entry)| now.duration_since(entry.last_activity) > threshold)
-            .map(|(k, _)| k.clone())
-            .collect();
-
-        for group_id in idle_groups {
-            if let Some(mut entry) = groups.remove(&group_id) {
-                // Check if queue is empty before removing
-                if entry.processor.queue_depth().await == 0 {
-                    if let Some(tx) = entry.shutdown_tx.take() {
-                        let _ = tx.send(());
-                    }
-                    info!("Cleaned up idle message group processor: {}", group_id);
-                } else {
-                    // Put it back - still has items
-                    groups.insert(group_id, entry);
-                }
-            }
-        }
-    }
-
-    /// Public cleanup method
-    pub async fn cleanup_idle_groups(&self) {
-        let mut groups = self.groups.write().await;
-        self.cleanup_idle_groups_internal(&mut groups).await;
-
-        let mut stats = self.stats.write().await;
-        stats.active_groups = groups.len();
-    }
-
-    /// Get statistics
-    pub async fn stats(&self) -> DistributorStats {
-        let stats = self.stats.read().await;
-        let groups = self.groups.read().await;
-
-        let blocked_count = {
-            let mut count = 0;
-            for entry in groups.values() {
-                if matches!(
-                    entry.processor.state().await,
-                    ProcessorState::Blocked { .. }
-                ) {
-                    count += 1;
-                }
-            }
-            count
-        };
-
+    pub fn stats(&self) -> DistributorStats {
+        let groups = self.groups.lock().unwrap_or_else(|e| e.into_inner());
         DistributorStats {
             active_groups: groups.len(),
-            blocked_groups: blocked_count,
-            ..stats.clone()
+            queued_items: groups.values().map(|q| q.pending.len()).sum(),
         }
     }
+}
 
-    /// Get list of blocked groups
-    pub async fn get_blocked_groups(&self) -> Vec<(String, String)> {
-        let groups = self.groups.read().await;
-        let mut blocked = Vec::new();
+async fn drain(
+    groups: Arc<Mutex<HashMap<String, GroupQueue>>>,
+    group: String,
+    semaphore: Option<Arc<Semaphore>>,
+    block_on_error: bool,
+    handler: Arc<dyn GroupHandler>,
+) {
+    // Bounded group concurrency: the drain waits here, its items stay queued.
+    let _permit = match semaphore {
+        Some(s) => s.acquire_owned().await.ok(),
+        None => None,
+    };
 
-        for (group_id, entry) in groups.iter() {
-            if let ProcessorState::Blocked { message_id, error } = entry.processor.state().await {
-                blocked.push((
-                    group_id.clone(),
-                    format!("msg={}, error={}", message_id, error),
-                ));
+    let mut stopped = false;
+    loop {
+        if stopped {
+            // Release everything queued, including items submitted while the
+            // group stops, then drop the group. The entry stays until the
+            // release is done, so nothing new starts a drain ahead of it.
+            let items: Vec<OutboxItem> = {
+                let mut guard = groups.lock().unwrap_or_else(|e| e.into_inner());
+                match guard.get_mut(&group) {
+                    Some(q) if !q.pending.is_empty() => q.pending.drain(..).collect(),
+                    _ => {
+                        guard.remove(&group);
+                        return;
+                    }
+                }
+            };
+            handler.release(items).await;
+            continue;
+        }
+
+        let item = {
+            let mut guard = groups.lock().unwrap_or_else(|e| e.into_inner());
+            match guard.get_mut(&group).and_then(|q| q.pending.pop_front()) {
+                Some(item) => item,
+                None => {
+                    // Drained: drop the entry so the map doesn't grow with
+                    // every group ever seen. A later submit re-creates it.
+                    guard.remove(&group);
+                    return;
+                }
             }
-        }
+        };
 
-        blocked
-    }
-
-    /// Unblock a specific group
-    pub async fn unblock_group(&self, group_id: &str) -> Result<(), OutboxError> {
-        let groups = self.groups.read().await;
-        if let Some(entry) = groups.get(group_id) {
-            entry.processor.unblock().await;
-            Ok(())
-        } else {
-            Err(OutboxError::GroupNotFound(group_id.to_string()))
-        }
-    }
-
-    /// Skip the blocking item in a group
-    pub async fn skip_blocking_message(
-        &self,
-        group_id: &str,
-    ) -> Result<Option<TrackedMessage>, OutboxError> {
-        let groups = self.groups.read().await;
-        if let Some(entry) = groups.get(group_id) {
-            Ok(entry.processor.skip_blocking_message().await)
-        } else {
-            Err(OutboxError::GroupNotFound(group_id.to_string()))
-        }
-    }
-
-    /// Pause a specific group
-    pub async fn pause_group(&self, group_id: &str) -> Result<(), OutboxError> {
-        let groups = self.groups.read().await;
-        if let Some(entry) = groups.get(group_id) {
-            entry.processor.pause().await;
-            Ok(())
-        } else {
-            Err(OutboxError::GroupNotFound(group_id.to_string()))
-        }
-    }
-
-    /// Resume a specific group
-    pub async fn resume_group(&self, group_id: &str) -> Result<(), OutboxError> {
-        let groups = self.groups.read().await;
-        if let Some(entry) = groups.get(group_id) {
-            entry.processor.resume().await;
-            Ok(())
-        } else {
-            Err(OutboxError::GroupNotFound(group_id.to_string()))
-        }
-    }
-
-    /// Get queue depth for a group
-    pub async fn group_queue_depth(&self, group_id: &str) -> Option<usize> {
-        let groups = self.groups.read().await;
-        if let Some(entry) = groups.get(group_id) {
-            Some(entry.processor.queue_depth().await)
-        } else {
-            None
-        }
-    }
-
-    /// Get all active group IDs
-    pub async fn active_groups(&self) -> Vec<String> {
-        let groups = self.groups.read().await;
-        groups.keys().cloned().collect()
-    }
-
-    /// Shutdown all processors
-    pub async fn shutdown(&self) {
-        let mut groups = self.groups.write().await;
-
-        for (group_id, mut entry) in groups.drain() {
-            if let Some(tx) = entry.shutdown_tx.take() {
-                let _ = tx.send(());
-            }
-            info!("Shutdown message group processor: {}", group_id);
+        if !handler.dispatch(item).await && block_on_error {
+            stopped = true;
         }
     }
 }
@@ -339,50 +150,17 @@ impl GroupDistributor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message_group_processor::{BatchDispatchResult, BatchItemResult};
-    use async_trait::async_trait;
     use chrono::Utc;
-    use fc_common::OutboxStatus;
+    use fc_common::{OutboxItemType, OutboxStatus};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
-    struct MockBatchDispatcher {
-        dispatch_count: AtomicUsize,
-    }
-
-    impl MockBatchDispatcher {
-        fn new() -> Self {
-            Self {
-                dispatch_count: AtomicUsize::new(0),
-            }
-        }
-
-        fn count(&self) -> usize {
-            self.dispatch_count.load(Ordering::SeqCst)
-        }
-    }
-
-    #[async_trait]
-    impl BatchMessageDispatcher for MockBatchDispatcher {
-        async fn dispatch_batch(&self, items: &[OutboxItem]) -> BatchDispatchResult {
-            self.dispatch_count.fetch_add(items.len(), Ordering::SeqCst);
-            BatchDispatchResult {
-                results: items
-                    .iter()
-                    .map(|item| BatchItemResult {
-                        item_id: item.id.clone(),
-                        result: DispatchResult::Success,
-                    })
-                    .collect(),
-            }
-        }
-    }
-
-    fn create_test_item(id: &str, group: Option<&str>) -> OutboxItem {
+    fn item(id: &str, group: &str) -> OutboxItem {
         OutboxItem {
             id: id.to_string(),
-            item_type: fc_common::OutboxItemType::Event,
-            message_group: group.map(String::from),
-            payload: serde_json::json!({"test": true}),
+            item_type: OutboxItemType::Event,
+            message_group: Some(group.to_string()),
+            payload: serde_json::json!({}),
             status: OutboxStatus::InProgress,
             retry_count: 0,
             created_at: Utc::now(),
@@ -394,82 +172,118 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_distribute_with_group() {
-        let dispatcher = Arc::new(MockBatchDispatcher::new());
-        let distributor =
-            GroupDistributor::new(GroupDistributorConfig::default(), dispatcher.clone());
+    #[derive(Default)]
+    struct Recorder {
+        fail: Vec<String>,
+        sent: Mutex<Vec<String>>,
+        released: Mutex<Vec<String>>,
+        running: AtomicUsize,
+        max_running: AtomicUsize,
+        delay: Duration,
+    }
 
-        distributor
-            .distribute(create_test_item("msg-1", Some("group-a")))
-            .await
-            .unwrap();
-        distributor
-            .distribute(create_test_item("msg-2", Some("group-a")))
-            .await
-            .unwrap();
-        distributor
-            .distribute(create_test_item("msg-3", Some("group-b")))
-            .await
-            .unwrap();
+    #[async_trait]
+    impl GroupHandler for Recorder {
+        async fn dispatch(&self, item: OutboxItem) -> bool {
+            let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_running.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(self.delay).await;
+            self.running.fetch_sub(1, Ordering::SeqCst);
+            self.sent.lock().unwrap().push(item.id.clone());
+            !self.fail.contains(&item.id)
+        }
+        async fn release(&self, items: Vec<OutboxItem>) {
+            self.released
+                .lock()
+                .unwrap()
+                .extend(items.into_iter().map(|i| i.id));
+        }
+    }
 
-        let stats = distributor.stats().await;
-        assert_eq!(stats.active_groups, 2);
-        assert_eq!(stats.total_messages_distributed, 3);
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        distributor.shutdown().await;
+    async fn settle(d: &GroupDistributor) {
+        for _ in 0..200 {
+            if d.stats().active_groups == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("distributor did not drain");
     }
 
     #[tokio::test]
-    async fn test_distribute_without_group() {
-        let dispatcher = Arc::new(MockBatchDispatcher::new());
-        let distributor =
-            GroupDistributor::new(GroupDistributorConfig::default(), dispatcher.clone());
-
-        distributor
-            .distribute(create_test_item("msg-1", None))
-            .await
-            .unwrap();
-        distributor
-            .distribute(create_test_item("msg-2", None))
-            .await
-            .unwrap();
-
-        let stats = distributor.stats().await;
-        assert_eq!(stats.active_groups, 0);
-        assert_eq!(stats.messages_without_group, 2);
-        assert_eq!(dispatcher.count(), 2);
-
-        distributor.shutdown().await;
+    async fn a_group_is_sent_in_order() {
+        let d = GroupDistributor::new(10, true);
+        let h = Arc::new(Recorder::default());
+        for id in ["a", "b", "c"] {
+            d.submit("g", item(id, "g"), h.clone());
+        }
+        settle(&d).await;
+        assert_eq!(*h.sent.lock().unwrap(), vec!["a", "b", "c"]);
     }
 
     #[tokio::test]
-    async fn test_active_groups() {
-        let dispatcher = Arc::new(MockBatchDispatcher::new());
-        let distributor =
-            GroupDistributor::new(GroupDistributorConfig::default(), dispatcher.clone());
+    async fn a_failure_stops_the_group_and_releases_the_rest() {
+        let d = GroupDistributor::new(10, true);
+        let h = Arc::new(Recorder {
+            fail: vec!["b".into()],
+            ..Default::default()
+        });
+        for id in ["a", "b", "c", "d"] {
+            d.submit("g", item(id, "g"), h.clone());
+        }
+        d.submit("other", item("x", "other"), h.clone());
+        settle(&d).await;
+        let mut sent = h.sent.lock().unwrap().clone();
+        sent.sort();
+        assert_eq!(sent, vec!["a", "b", "x"]);
+        assert_eq!(*h.released.lock().unwrap(), vec!["c", "d"]);
+    }
 
-        distributor
-            .distribute(create_test_item("msg-1", Some("group-1")))
-            .await
-            .unwrap();
-        distributor
-            .distribute(create_test_item("msg-2", Some("group-2")))
-            .await
-            .unwrap();
-        distributor
-            .distribute(create_test_item("msg-3", Some("group-3")))
-            .await
-            .unwrap();
+    #[tokio::test]
+    async fn without_block_on_error_a_failure_does_not_stop_the_group() {
+        let d = GroupDistributor::new(10, false);
+        let h = Arc::new(Recorder {
+            fail: vec!["a".into()],
+            ..Default::default()
+        });
+        for id in ["a", "b"] {
+            d.submit("g", item(id, "g"), h.clone());
+        }
+        settle(&d).await;
+        assert_eq!(*h.sent.lock().unwrap(), vec!["a", "b"]);
+        assert!(h.released.lock().unwrap().is_empty());
+    }
 
-        let groups = distributor.active_groups().await;
-        assert_eq!(groups.len(), 3);
-        assert!(groups.contains(&"group-1".to_string()));
-        assert!(groups.contains(&"group-2".to_string()));
-        assert!(groups.contains(&"group-3".to_string()));
+    #[tokio::test]
+    async fn group_concurrency_is_bounded() {
+        let d = GroupDistributor::new(2, true);
+        let h = Arc::new(Recorder {
+            delay: Duration::from_millis(20),
+            ..Default::default()
+        });
+        for g in 0..6 {
+            let group = format!("g{g}");
+            d.submit(&group, item(&format!("i{g}"), &group), h.clone());
+        }
+        settle(&d).await;
+        assert_eq!(h.sent.lock().unwrap().len(), 6);
+        assert_eq!(h.max_running.load(Ordering::SeqCst), 2);
+    }
 
-        distributor.shutdown().await;
+    #[tokio::test]
+    async fn items_submitted_while_a_group_stops_are_released_too() {
+        let d = Arc::new(GroupDistributor::new(10, true));
+        let h = Arc::new(Recorder {
+            fail: vec!["a".into()],
+            delay: Duration::from_millis(30),
+            ..Default::default()
+        });
+        d.submit("g", item("a", "g"), h.clone());
+        // Arrives while "a" is being sent; "a" then fails.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        d.submit("g", item("b", "g"), h.clone());
+        settle(&d).await;
+        assert_eq!(*h.sent.lock().unwrap(), vec!["a"]);
+        assert_eq!(*h.released.lock().unwrap(), vec!["b"]);
     }
 }

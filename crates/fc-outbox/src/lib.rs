@@ -1,10 +1,12 @@
+//! FlowCatalyst outbox processor: forwards the rows an application's SDK
+//! writes to its outbox table to the platform's batch APIs, as Go's
+//! `internal/outbox` does. See [`enhanced_processor`] for the behaviour.
+
 pub mod backend;
-pub mod buffer;
 pub mod enhanced_processor;
-pub mod error;
 pub mod group_distributor;
+pub mod group_state;
 pub mod http_dispatcher;
-pub mod message_group_processor;
 pub mod recovery;
 pub mod repository;
 
@@ -12,27 +14,24 @@ pub mod repository;
 pub mod mongo;
 #[cfg(feature = "mysql")]
 pub mod mysql;
-#[cfg(feature = "postgres")]
+#[cfg(any(feature = "postgres", test))]
 pub mod postgres;
-#[cfg(feature = "sqlite")]
+#[cfg(any(feature = "sqlite", test))]
 pub mod sqlite;
+
+#[cfg(test)]
+mod processor_tests;
 
 // Re-export key types
 pub use backend::{OutboxBackend, UnknownOutboxBackend};
-pub use buffer::{BufferFullError, GlobalBuffer, GlobalBufferConfig};
 pub use enhanced_processor::{EnhancedOutboxProcessor, EnhancedProcessorConfig, ProcessorMetrics};
-pub use error::OutboxError;
-pub use group_distributor::{DistributorStats, GroupDistributor, GroupDistributorConfig};
+pub use group_distributor::{DistributorStats, GroupDistributor, GroupHandler};
+pub use group_state::{GroupInfo, GroupStateManager, GroupStatus};
 pub use http_dispatcher::{
-    BatchRequest, BatchResponse, HttpDispatcher, HttpDispatcherConfig, ItemStatus,
-    OutboxDispatchResult,
-};
-pub use message_group_processor::{
-    BatchDispatchResult, BatchItemResult, BatchMessageDispatcher, DispatchResult,
-    MessageGroupProcessor, MessageGroupProcessorConfig, ProcessorState, TrackedMessage,
+    DispatchOutcome, HttpDispatcher, HttpDispatcherConfig, OutboxDispatcher, MAX_PLATFORM_BATCH,
 };
 pub use recovery::{RecoveryConfig, RecoveryTask};
-pub use repository::{OutboxRepository, OutboxTableConfig};
+pub use repository::{ClaimedBatch, InvalidRow, OutboxRepository, OutboxTableConfig};
 
 /// Leader election configuration. Re-exported from `fc_common` — a single
 /// unified type replacing the previous per-crate duplicates in fc-outbox and fc-standby.
