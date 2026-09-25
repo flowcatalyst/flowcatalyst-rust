@@ -397,6 +397,50 @@ interface is Java's, unchanged: no new manifest runtime value, desired state, or
 - fc-dev runs the platform and an in-process `fc-fnhost` together (the equivalent of Java's `fcdev`).
 - Local publish, deploy and invoke of a Rust hello guest, with signatures off only in dev mode.
 
+> **H8 outcome (2026-09-25).** Done on `feat/fn-h8-fcdev`.
+> - **`fc-dev` runs a function host** (`bin/fc-dev/src/functions.rs`), on by default; `--no-functions`
+>   or `FC_DEV_FUNCTIONS=false` turns it off. At start it provisions, idempotently and with fresh
+>   secrets every start, Java's two `FunctionDevBootstrap` clients: `fcdev-fn-host` (role
+>   `platform:function-host`) and `fcdev-fn-cli` (`platform:function-publisher` +
+>   `platform:messaging-admin`), each a SERVICE principal with anchor scope and all applications
+>   (no service-account row, as Java). It sets `FC_FN_POOL_URL=http://127.0.0.1:<fn port>`, starts
+>   fc-fnhost-core's `FnHost` (WASM runtime, both listeners) for pool `default` against the local
+>   platform, caches under `<data dir>/fn-cache`, writes `<data dir>/fn-cli.json` (0600) for the CLI,
+>   and prints both listeners in the banner. Ports: `--fn-port`/`FC_FN_PORT` 8090,
+>   `--fn-public-port`/`FC_FN_PUBLIC_PORT` 8091, `--fn-metrics-port`/`FC_FN_METRICS_PORT` 9091 (Java's).
+>   The host stops before the platform and the file is removed.
+> - **Dev-only shortcut:** a successful write under `/api/function*` triggers the host's reconcile
+>   at once, so `fn deploy` is `READY` and live in about a second instead of waiting out the 15 s poll.
+> - **`fc-dev fn`** (`bin/fc-dev/src/fn_cli/`), Java's names and flags: `init`, `build` (Rust only),
+>   `publish`, `deploy`, `promote`, `invoke`, `config get|set`, `secret set`. Credentials: flags, then
+>   `FLOWCATALYST_CLIENT_ID/_SECRET` (+ `FLOWCATALYST_PLATFORM_URL`), then `fn-cli.json`; `fc-dev fn`
+>   does not load `.env`. `fn init --runtime wasm --lang rust <dir>` renders `templates/function-rust`
+>   (compiled in) without `cargo generate`.
+> - `fc-dev init` now gives the application's service account webhook credentials (bearer token and
+>   signing secret, as `CreateServiceAccount`); without them a function with subscriptions or
+>   schedules is refused `APPLICATION_SIGNING_SECRET_REQUIRED`. The dev app key is set before the
+>   subcommands, so `fc-dev init` can seal them.
+> - Test: `functions_e2e_test.rs` runs fc-dev's platform wiring and host on a bundled Postgres (no
+>   Docker), `fc-dev init`, then `fn config set` / `secret set` / `publish` / `deploy` (twice) /
+>   `invoke` of the committed `hello.wasm` with the example's manifest, and checks the subscription
+>   targets the host.
+> - **Open (outside fc-dev):** a versioned call (`fn invoke <address>:<n>`) is refused `403
+>   PERMISSION_REQUIRED`. The host reads permissions from the token's `scope` claim, as Java's tokens
+>   carry them (`TokenIssuer`: `scope` = the permissions, space-separated); the Rust platform's
+>   `scope` is the principal's tier (`ANCHOR`). One of the two has to change.
+>
+> Local workflow:
+>
+> ```sh
+> fc-dev                                          # platform + function host (:8090)
+> fc-dev init --code shop --name Shop             # once: an application
+> fc-dev fn init --runtime wasm --lang rust hello && cd hello
+> fc-dev fn build                                 # cargo build --release --target wasm32-wasip2
+> fc-dev fn config set shop.default.hello GREETING=Hello
+> fc-dev fn deploy target/wasm32-wasip2/release/hello.wasm shop.default.hello
+> fc-dev fn invoke shop.default.hello --path /hello/world
+> ```
+
 ### Track G: guests
 
 **G1: `crates/fc-function-pdk`** (done; the Java-era `extism-pdk` scope is superseded by H4)
@@ -431,14 +475,14 @@ and `wit-bindgen =0.57.1` over `wit/flowcatalyst-function` (world `imports`).
   runs the executor on real pollables); end to end on the real host in
   `crates/fc-fnhost-core/tests/wasm_pdk.rs` against the committed `pdk.wasm` and `pdk-pure.wasm`.
 
-**G2: examples and templates** (done, except `fc-dev fn init`)
+**G2: examples and templates** (done; `fc-dev fn init` came with H8)
 
 - `examples/function-hello-rust`: an adapter (signed webhook in, JSON mapped, HTTPS call to an allowed
   carrier, event out, `retry` on outages) with `manifest.json` (`runtime: wasm`,
   `entrypoint: wasi_http_incoming_handler`), native unit tests and a README with build and publish
   steps. `wasm_pdk.rs` runs it, with its own manifest, on the real host (`hello.wasm`).
 - `templates/function-rust`: a `cargo generate` template.
-- Not built: `fc-dev fn init --runtime wasm --lang rust` (waits on H8's fc-dev integration).
+- `fc-dev fn init --runtime wasm --lang rust` renders the template (H8).
 - Java has no WASM hello yet (`examples/function-hello` is a JVM jar); this one runs on Rust hosts only.
 
 ## 6. Following Java work that hasn't landed

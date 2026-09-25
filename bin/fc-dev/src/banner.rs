@@ -13,17 +13,26 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// line — still has a few cells of right-hand padding.
 const INNER: usize = 60;
 
-pub fn print(api_port: u16, metrics_port: u16) {
+/// `fn_ports`: the function host's private and public ports, when it runs.
+pub fn print(api_port: u16, metrics_port: u16, fn_ports: Option<(u16, u16)>) {
     let upgrade = crate::version_check::cached_upgrade_available();
     let color = std::io::stderr().is_terminal();
     let mut out = std::io::stderr().lock();
-    let _ = render(&mut out, api_port, metrics_port, upgrade.as_deref(), color);
+    let _ = render(
+        &mut out,
+        api_port,
+        metrics_port,
+        fn_ports,
+        upgrade.as_deref(),
+        color,
+    );
 }
 
 fn render<W: Write>(
     out: &mut W,
     api_port: u16,
     metrics_port: u16,
+    fn_ports: Option<(u16, u16)>,
     upgrade: Option<&str>,
     color: bool,
 ) -> std::io::Result<()> {
@@ -70,6 +79,22 @@ fn render<W: Write>(
         c.plain,
         &c,
     )?;
+    if let Some((fn_port, public_port)) = fn_ports {
+        row(
+            out,
+            "functions",
+            &format!("http://127.0.0.1:{fn_port}/functions/…"),
+            c.plain,
+            &c,
+        )?;
+        row(
+            out,
+            "fn public",
+            &format!("http://<name>.localhost:{public_port}/"),
+            c.plain,
+            &c,
+        )?;
+    }
 
     // ─── bottom border ─────────────────────────────────────────────────
     writeln!(out, "{}└{}┘{}", c.dim, "─".repeat(INNER), c.reset,)?;
@@ -87,8 +112,8 @@ fn row<W: Write>(
     value_color: &str,
     c: &Colors,
 ) -> std::io::Result<()> {
-    // Content layout: 2-space left margin, 9-char label column, value, padding.
-    let label_col_width = 9;
+    // Content layout: 2-space left margin, 11-char label column, value, padding.
+    let label_col_width = 11;
     let left_margin = 2;
     let visible_value_width = display_width(value);
     let content_width = left_margin + label_col_width + visible_value_width;

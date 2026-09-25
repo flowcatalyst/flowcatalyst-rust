@@ -20,6 +20,8 @@ fc-stream = { path = "../../crates/fc-stream" }
 fc-standby = { path = "../../crates/fc-standby" }
 fc-platform = { path = "../../crates/fc-platform" }
 fc-mcp = { path = "../../crates/fc-mcp" }
+# The in-process function host `fc-dev` runs beside the platform (plan H8).
+fc-fnhost-core = { path = "../../crates/fc-fnhost-core" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
@@ -75,6 +77,12 @@ chrono = { workspace = true }
 # comes from fc-platform's password service.
 rand = { workspace = true }
 base64 = { version = "0.22" }
+# `fc-dev fn publish` sends the artifact's sha256 digest.
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [features]
 default = ["embedded-db"]
