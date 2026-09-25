@@ -8,6 +8,7 @@ mod support;
 use axum::http::StatusCode;
 use serde_json::{json, Value};
 
+use fc_platform::client::entity::Client;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::permissions;
 use support::{read_json, TestApp};
@@ -26,6 +27,31 @@ fn token_for(app: &TestApp, principal: &Principal, perms: &[&str]) -> String {
 
 fn anchor_user() -> Principal {
     Principal::new_user("anchor@flowcatalyst.test", UserScope::Anchor)
+}
+
+/// A client-scoped user whose token names its client as `id:identifier`.
+fn client_user(client_id: &str, identifier: &str) -> Principal {
+    let mut p = Principal::new_user("client@flowcatalyst.test", UserScope::Client)
+        .with_client_id(client_id);
+    p.client_identifier_map
+        .insert(client_id.to_string(), identifier.to_string());
+    p
+}
+
+fn partner_user(client_ids: &[&str]) -> Principal {
+    let mut p = Principal::new_user("partner@flowcatalyst.test", UserScope::Partner);
+    p.assigned_clients = client_ids.iter().map(|c| c.to_string()).collect();
+    p
+}
+
+async fn create_client(app: &TestApp, identifier: &str) -> String {
+    let client = Client::new(identifier.to_uppercase(), identifier);
+    app.repos
+        .client_repo
+        .insert(&client)
+        .await
+        .expect("insert client");
+    client.id
 }
 
 fn event_item(event_type: &str) -> Value {
@@ -118,4 +144,174 @@ async fn ingest_routes_require_the_batch_write_permissions() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+// ── Decision #24: ingest tenancy ────────────────────────────────────────────
+
+/// A non-anchor writes only under a client it can access: no client means
+/// its only client, or a refusal when it has several; an unknown
+/// `clientCode` is refused. Nothing of a refused batch is written.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
+    let app = TestApp::setup().await;
+    let acme = create_client(&app, "acme").await;
+    let other = create_client(&app, "other").await;
+
+    let single = token_for(
+        &app,
+        &client_user(&acme, "acme"),
+        &[EVENTS_WRITE, JOBS_WRITE],
+    );
+    let partner = token_for(
+        &app,
+        &partner_user(&[&acme, &other]),
+        &[EVENTS_WRITE, JOBS_WRITE],
+    );
+
+    // A single-client caller's absent client is its client, for both events
+    // and jobs, and on the single-event route too.
+    let (status, body) = post(
+        &app,
+        "/api/events/batch",
+        &single,
+        json!({"items": [event_item("t:a:b:single")]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = post(
+        &app,
+        "/api/dispatch-jobs/batch",
+        &single,
+        json!({"items": [job_item("t:a:b:single")]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = post(
+        &app,
+        "/api/events",
+        &single,
+        json!({"eventType": "t:a:b:single-one", "source": "t", "data": {}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["event"]["clientId"], json!(acme), "{body}");
+    let (client_id,): (Option<String>,) =
+        sqlx::query_as("SELECT client_id FROM msg_events WHERE type = 't:a:b:single'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(client_id.as_deref(), Some(acme.as_str()));
+    let (client_id,): (Option<String>,) =
+        sqlx::query_as("SELECT client_id FROM msg_dispatch_jobs WHERE code = 't:a:b:single'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(client_id.as_deref(), Some(acme.as_str()));
+
+    // A caller with several clients must name one.
+    let mut named = event_item("t:a:b:named");
+    named["clientId"] = json!(other);
+    for (path, body) in [
+        (
+            "/api/events/batch",
+            json!({"items": [named.clone(), event_item("t:a:b:unnamed")]}),
+        ),
+        (
+            "/api/dispatch-jobs/batch",
+            json!({"items": [job_item("t:a:b:unnamed")]}),
+        ),
+    ] {
+        let (status, body) = post(&app, path, &partner, body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("clientId is required"),
+            "{path}: {body}"
+        );
+    }
+
+    // An unknown clientCode is no client, refused; so is another tenant's.
+    let mut unknown = event_item("t:a:b:unknown");
+    unknown["clientCode"] = json!("no-such-tenant");
+    let (status, body) = post(
+        &app,
+        "/api/events/batch",
+        &single,
+        json!({"items": [unknown]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["message"], "No access to client: no-such-tenant");
+    let mut foreign = event_item("t:a:b:foreign");
+    foreign["clientCode"] = json!("other");
+    let (status, body) = post(
+        &app,
+        "/api/events/batch",
+        &single,
+        json!({"items": [foreign]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let mut foreign_job = job_item("t:a:b:foreign");
+    foreign_job["clientId"] = json!(other);
+    let (status, body) = post(
+        &app,
+        "/api/dispatch-jobs/batch",
+        &single,
+        json!({"items": [foreign_job]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    // None of the refused batches wrote anything.
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM msg_events WHERE type IN \
+             ('t:a:b:named', 't:a:b:unnamed', 't:a:b:unknown', 't:a:b:foreign')"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM msg_dispatch_jobs WHERE code <> 't:a:b:single'"
+        )
+        .await,
+        0
+    );
+
+    // A named, accessible client is written as named.
+    let (status, body) = post(
+        &app,
+        "/api/events/batch",
+        &partner,
+        json!({"items": [named]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // An anchor keeps today's behaviour: no client is platform-scoped, and
+    // an unknown code leaves the event unlinked.
+    let anchor = token_for(&app, &anchor_user(), &[EVENTS_WRITE]);
+    let mut unknown = event_item("t:a:b:anchor");
+    unknown["clientCode"] = json!("no-such-tenant");
+    let (status, body) = post(
+        &app,
+        "/api/events/batch",
+        &anchor,
+        json!({"items": [unknown]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (client_id,): (Option<String>,) =
+        sqlx::query_as("SELECT client_id FROM msg_events WHERE type = 't:a:b:anchor'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(client_id, None);
 }

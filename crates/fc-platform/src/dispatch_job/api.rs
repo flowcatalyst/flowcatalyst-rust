@@ -574,15 +574,8 @@ pub async fn create_dispatch_job(
         crate::permissions::admin::BATCH_DISPATCH_JOBS_WRITE,
     )?;
 
-    // Validate client access if specified
-    if let Some(ref cid) = req.client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden(format!(
-                "No access to client: {}",
-                cid
-            )));
-        }
-    }
+    // The client the job is written under (owner decision #24).
+    let client_id = crate::shared::caller_reach::require_writable_client(&auth.0, req.client_id)?;
 
     // Determine kind
     // Absent/empty means EVENT; anything else must be an exact kind (400).
@@ -622,9 +615,7 @@ pub async fn create_dispatch_job(
     if let Some(correlation_id) = req.correlation_id {
         job.correlation_id = Some(correlation_id);
     }
-    if let Some(client_id) = req.client_id {
-        job.client_id = Some(client_id);
-    }
+    job.client_id = client_id;
     if let Some(subscription_id) = req.subscription_id {
         job.subscription_id = Some(subscription_id);
     }
@@ -718,15 +709,9 @@ pub async fn batch_create_dispatch_jobs(
     let mut created_jobs: Vec<DispatchJob> = Vec::new();
 
     for job_req in req.jobs {
-        // Validate client access if specified
-        if let Some(ref cid) = job_req.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    cid
-                )));
-            }
-        }
+        // The client the job is written under (owner decision #24).
+        let client_id =
+            crate::shared::caller_reach::require_writable_client(&auth.0, job_req.client_id)?;
 
         // Determine kind
         // Absent/empty means EVENT; anything else must be an exact kind (400).
@@ -765,9 +750,7 @@ pub async fn batch_create_dispatch_jobs(
         if let Some(correlation_id) = job_req.correlation_id {
             job.correlation_id = Some(correlation_id);
         }
-        if let Some(client_id) = job_req.client_id {
-            job.client_id = Some(client_id);
-        }
+        job.client_id = client_id;
         if let Some(subscription_id) = job_req.subscription_id {
             job.subscription_id = Some(subscription_id);
         }

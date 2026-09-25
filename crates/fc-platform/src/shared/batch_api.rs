@@ -20,6 +20,7 @@ use crate::event::entity::{ContextData, Event};
 use crate::event::repository::EventRepository;
 use crate::permissions;
 use crate::shared::authorization_service::checks;
+use crate::shared::caller_reach;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -112,13 +113,16 @@ async fn batch_events(
     }
 
     // Every distinct `clientCode` on items without a `clientId`, resolved in
-    // one query. An unknown code leaves the event unlinked rather than
-    // failing the batch: the event is a fact (Go event/api/api.go:151-185).
+    // one query. For an anchor an unknown code leaves the event unlinked
+    // rather than failing the batch: the event is a fact (Go
+    // event/api/api.go:151-185). A non-anchor never writes an unlinked row
+    // (owner decision #24), so for it an unknown code is refused like one
+    // naming another tenant.
     let mut codes: Vec<String> = req
         .items
         .iter()
-        .filter(|i| i.client_id.is_none())
-        .filter_map(|i| i.client_code.clone().filter(|c| !c.is_empty()))
+        .filter(|i| caller_reach::non_blank(i.client_id.clone()).is_none())
+        .filter_map(|i| caller_reach::non_blank(i.client_code.clone()))
         .collect();
     codes.sort();
     codes.dedup();
@@ -126,7 +130,27 @@ async fn batch_events(
 
     let mut inserted_events = Vec::with_capacity(req.items.len());
 
+    // The whole batch is checked before anything is written: one item the
+    // caller may not write refuses the request.
     for item in req.items {
+        let client_id = match caller_reach::non_blank(item.client_id) {
+            Some(id) => Some(id),
+            None => match caller_reach::non_blank(item.client_code) {
+                Some(code) => match client_ids_by_code.get(&code) {
+                    Some(id) => Some(id.clone()),
+                    None if auth.0.is_anchor() => None,
+                    None => {
+                        return Err(PlatformError::forbidden_code(
+                            "FORBIDDEN",
+                            format!("No access to client: {code}"),
+                        ))
+                    }
+                },
+                None => None,
+            },
+        };
+        let client_id = caller_reach::require_writable_client(&auth.0, client_id)?;
+
         let mut event = Event::new(
             item.r#type,
             item.source.unwrap_or_default(),
@@ -146,11 +170,7 @@ async fn batch_events(
                 .unwrap_or_else(|| format!("{}-{}", event.event_type, event.id)),
         );
         event.message_group = item.message_group;
-        event.client_id = item.client_id.or_else(|| {
-            item.client_code
-                .as_deref()
-                .and_then(|code| client_ids_by_code.get(code).cloned())
-        });
+        event.client_id = client_id;
         event.context_data = context_entries(item.context_data);
 
         inserted_events.push(event);
