@@ -3,6 +3,10 @@
 #
 # Build from repo root:
 #   docker build --platform linux/amd64 -t flowcatalyst-rust .
+# The inhance ECS tasks (platform, worker and router) run ARM64: build with
+# --platform linux/arm64 for them. One image serves every task, the router
+# included (MESSAGE_ROUTER_ENABLED=true, PLATFORM_ENABLED=false selects the
+# router role, with no database) — see docs/parity/router-env-vs-go.md.
 
 # ── Stage 1: Build frontend ─────────────────────────────────────────
 FROM node:24-alpine AS frontend

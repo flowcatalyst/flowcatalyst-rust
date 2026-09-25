@@ -21,7 +21,7 @@
 //! # Environment Variables
 //!
 //! - `LOG_FORMAT`: Set to "json" for JSON output, anything else for text (default: text)
-//! - `RUST_LOG`: Standard log level filter (default: info)
+//! - `RUST_LOG`: Standard log level filter (default: Go's `FC_LOG_LEVEL`, else info)
 //!   Examples: `RUST_LOG=debug`, `RUST_LOG=fc_router=trace,tower_http=info`
 //!
 //! # Adding Context to Requests
@@ -60,16 +60,30 @@ use tracing_subscriber::{
 /// - "json" -> JSON output (for production/log aggregation)
 /// - anything else -> human-readable text (for development)
 ///
-/// Reads RUST_LOG env var for log level filtering (defaults to INFO).
+/// Reads RUST_LOG env var for log level filtering; when it is unset, Go's
+/// FC_LOG_LEVEL (debug/warn/error, default info).
 pub fn init_logging(_service_name: &str) {
     let log_format = std::env::var("LOG_FORMAT").unwrap_or_default();
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(go_log_level(std::env::var("FC_LOG_LEVEL").ok())));
 
     if log_format.eq_ignore_ascii_case("json") {
         init_json_logging(env_filter);
     } else {
         init_text_logging(env_filter);
+    }
+}
+
+/// Go's `FC_LOG_LEVEL` (`internal/logging`), the fallback when `RUST_LOG`
+/// is unset: `debug`, `warn`/`warning` and `error` in either case; anything
+/// else is `info`.
+fn go_log_level(raw: Option<String>) -> &'static str {
+    match raw.as_deref() {
+        Some("debug" | "DEBUG") => "debug",
+        Some("warn" | "WARN" | "warning" | "WARNING") => "warn",
+        Some("error" | "ERROR") => "error",
+        _ => "info",
     }
 }
 
@@ -121,5 +135,18 @@ mod tests {
         // Just verify the filter can be created
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
         drop(filter);
+    }
+
+    #[test]
+    fn go_log_level_names() {
+        assert_eq!(go_log_level(None), "info");
+        assert_eq!(go_log_level(Some("DEBUG".into())), "debug");
+        assert_eq!(go_log_level(Some("warning".into())), "warn");
+        assert_eq!(go_log_level(Some("ERROR".into())), "error");
+        assert_eq!(
+            go_log_level(Some("Debug".into())),
+            "info",
+            "Go matches exact cases only"
+        );
     }
 }
