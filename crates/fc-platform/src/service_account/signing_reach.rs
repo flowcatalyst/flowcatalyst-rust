@@ -377,7 +377,7 @@ pub(crate) mod tests {
 
     #[test]
     fn tenancy_must_cover_every_client_the_account_reaches() {
-        let a = SigningReach::new(caller(UserScope::Client, &["clt_a:acme"], &[]), None);
+        let a = SigningReach::new(caller(UserScope::Client, &["clt_a"], &[]), None);
         assert_eq!(a.may_use(&account(None, clients(&["clt_a"]))), Ok(()));
         assert_eq!(
             a.may_use(&account(None, clients(&["clt_a", "clt_b"]))),

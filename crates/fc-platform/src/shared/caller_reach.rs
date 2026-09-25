@@ -1,44 +1,24 @@
 //! Which clients a caller reaches, and under which client an ingested event
 //! or dispatch job is written (owner decision #24; Java
 //! `IngestApi.requireWritableClient`, security-fixes-2026-09-24 S3.2).
-//!
-//! The token's `clients` claim holds `*` for an anchor and `id:identifier`
-//! pairs otherwise (Go's shape, owner decision #3), so a client id matches
-//! an entry that is the id itself or the id followed by `:`.
 
 use crate::shared::authorization_service::AuthContext;
 use crate::shared::error::{PlatformError, Result};
 
-/// The client id an entry of the `clients` claim names: the part before its
-/// first `:` (a pair), or the whole entry. `*` names none.
-fn entry_client_id(entry: &str) -> Option<&str> {
-    let id = entry.split_once(':').map_or(entry, |(id, _)| id);
-    (!id.is_empty() && id != "*").then_some(id)
-}
-
 /// The client ids the caller holds explicitly (never `*`), in claim order.
 pub fn client_ids(ctx: &AuthContext) -> Vec<String> {
-    let mut ids: Vec<String> = Vec::new();
-    for id in ctx
-        .accessible_clients
+    ctx.accessible_clients
         .iter()
-        .filter_map(|c| entry_client_id(c))
-    {
-        if !ids.iter().any(|known| known == id) {
-            ids.push(id.to_string());
-        }
-    }
-    ids
+        .filter(|c| c.as_str() != "*")
+        .cloned()
+        .collect()
 }
 
-/// Whether the caller may act within client `client_id`: an anchor always;
-/// otherwise a `*` entry or an entry naming that client.
+/// Whether the caller may act within client `client_id`: an anchor always,
+/// otherwise as [`AuthContext::can_access_client`] says (Java
+/// `AuthContext.canAccessClient`).
 pub fn reaches_client(ctx: &AuthContext, client_id: &str) -> bool {
-    ctx.is_anchor()
-        || ctx
-            .accessible_clients
-            .iter()
-            .any(|c| c == "*" || entry_client_id(c) == Some(client_id))
+    ctx.is_anchor() || ctx.can_access_client(client_id)
 }
 
 /// Whether the caller reaches a resource owned by `client_id`, where `None`
@@ -90,20 +70,11 @@ pub fn require_writable_client(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PrincipalType, UserScope};
-    use std::collections::HashSet;
+    use crate::service_account::signing_reach::tests::caller;
+    use crate::UserScope;
 
     fn ctx(scope: UserScope, clients: &[&str]) -> AuthContext {
-        AuthContext {
-            principal_id: "prn_caller".into(),
-            principal_type: PrincipalType::Service,
-            scope,
-            email: None,
-            name: "caller".into(),
-            accessible_clients: clients.iter().map(|c| c.to_string()).collect(),
-            permissions: HashSet::new(),
-            roles: vec![],
-        }
+        caller(scope, clients, &[])
     }
 
     fn refused(r: Result<Option<String>>) -> String {
@@ -114,15 +85,17 @@ mod tests {
     }
 
     #[test]
-    fn pairs_name_their_client() {
-        let c = ctx(UserScope::Partner, &["clt_a:acme", "clt_b"]);
+    fn only_an_anchor_reaches_the_platform() {
+        let c = ctx(UserScope::Partner, &["clt_a", "clt_b"]);
         assert_eq!(client_ids(&c), vec!["clt_a", "clt_b"]);
         assert!(reaches_client(&c, "clt_a"));
-        assert!(reaches_client(&c, "clt_b"));
-        assert!(!reaches_client(&c, "clt_ac"));
-        assert!(!reaches_client(&c, "acme"));
+        assert!(!reaches_client(&c, "clt_c"));
         assert!(!reaches_scope(&c, None));
         assert!(reaches_scope(&ctx(UserScope::Anchor, &["*"]), None));
+        assert!(reaches_scope(
+            &ctx(UserScope::Anchor, &["*"]),
+            Some("clt_c")
+        ));
     }
 
     #[test]
@@ -141,7 +114,7 @@ mod tests {
 
     #[test]
     fn a_single_client_caller_defaults_to_its_client() {
-        let c = ctx(UserScope::Client, &["clt_a:acme"]);
+        let c = ctx(UserScope::Client, &["clt_a"]);
         assert_eq!(
             require_writable_client(&c, None).unwrap(),
             Some("clt_a".into())

@@ -29,13 +29,10 @@ fn anchor_user() -> Principal {
     Principal::new_user("anchor@flowcatalyst.test", UserScope::Anchor)
 }
 
-/// A client-scoped user whose token names its client as `id:identifier`.
-fn client_user(client_id: &str, identifier: &str) -> Principal {
-    let mut p = Principal::new_user("client@flowcatalyst.test", UserScope::Client)
-        .with_client_id(client_id);
-    p.client_identifier_map
-        .insert(client_id.to_string(), identifier.to_string());
-    p
+/// A client-scoped user of `client_id`. (`_identifier` is the client's
+/// identifier, which the token's `clients` claim may pair with the id.)
+fn client_user(client_id: &str, _identifier: &str) -> Principal {
+    Principal::new_user("client@flowcatalyst.test", UserScope::Client).with_client_id(client_id)
 }
 
 fn partner_user(client_ids: &[&str]) -> Principal {
@@ -863,10 +860,7 @@ async fn subscriptions_and_connections_name_only_accounts_the_caller_may_use() {
 
     let admin = token_for(
         &app,
-        // A bare client id: the subscription handlers' own client check
-        // (AuthContext::can_access_client) compares the claim entry whole,
-        // so an `id:identifier` pair would stop there before this check.
-        &Principal::new_user("admin@acme.test", UserScope::Client).with_client_id(&acme),
+        &client_user(&acme, "acme"),
         &[
             permissions::admin::SUBSCRIPTION_CREATE,
             permissions::admin::SUBSCRIPTION_UPDATE,
