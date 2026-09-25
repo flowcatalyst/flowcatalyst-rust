@@ -3,6 +3,10 @@
 //! Helpers for SDK applications that authenticate users via FlowCatalyst's
 //! OIDC server using the OAuth2 authorization code grant with PKCE.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -124,6 +128,31 @@ pub struct AuthorizeParams {
 pub struct OAuthClient {
     config: OAuthConfig,
     http: reqwest::Client,
+    /// Single-flight refresh: one exchange per refresh token, see
+    /// [`OAuthClient::refresh_token`].
+    refreshes: Mutex<HashMap<String, Arc<RefreshSlot>>>,
+}
+
+/// How long a completed refresh is reused for a caller that read the old
+/// refresh token just after the exchange finished.
+const REFRESH_MEMO: Duration = Duration::from_secs(10);
+
+/// One refresh exchange, shared by every caller presenting the same refresh
+/// token while it runs and for [`REFRESH_MEMO`] after it succeeds.
+#[derive(Default)]
+struct RefreshSlot {
+    outcome: tokio::sync::OnceCell<(Result<TokenResponse, String>, Instant)>,
+}
+
+impl RefreshSlot {
+    /// Settled and no longer reusable: a failure, or a success past the memo.
+    fn is_spent(&self, now: Instant) -> bool {
+        match self.outcome.get() {
+            Some((Ok(_), at)) => now.duration_since(*at) >= REFRESH_MEMO,
+            Some((Err(_), _)) => true,
+            None => false,
+        }
+    }
 }
 
 impl OAuthClient {
@@ -132,6 +161,7 @@ impl OAuthClient {
         Self {
             config,
             http: reqwest::Client::new(),
+            refreshes: Mutex::new(HashMap::new()),
         }
     }
 
@@ -210,7 +240,58 @@ impl OAuthClient {
     }
 
     /// Refresh an access token using a refresh token.
+    ///
+    /// Single-flight (owner ruling 5 of 2026-09-25). The platform rotates
+    /// refresh tokens and revokes the whole family when a rotated-out token is
+    /// presented again (beyond a 10 s leeway kept for exactly this race), so
+    /// concurrent requests of one session that each see the access token
+    /// expire must not each spend it. Callers presenting the same refresh
+    /// token join one in-flight exchange, and a successful result is reused
+    /// for 10 s by a caller that read the old token just after. A failure is
+    /// shared with the callers that joined it, never remembered. Per
+    /// `OAuthClient` (share one per process): instances behind a load
+    /// balancer still rely on the platform's leeway.
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<TokenResponse, AuthError> {
+        let slot = {
+            let mut slots = self.refreshes.lock().unwrap_or_else(|e| e.into_inner());
+            let now = Instant::now();
+            slots.retain(|_, slot| !slot.is_spent(now));
+            slots
+                .entry(refresh_token.to_string())
+                .or_default()
+                .clone()
+        };
+        let (outcome, _) = slot
+            .outcome
+            .get_or_init(|| async {
+                (
+                    self.exchange_refresh_token(refresh_token)
+                        .await
+                        .map_err(|e| match e {
+                            AuthError::TokenExchange(message) => message,
+                            other => other.to_string(),
+                        }),
+                    Instant::now(),
+                )
+            })
+            .await;
+        match outcome {
+            Ok(tokens) => Ok(tokens.clone()),
+            Err(message) => {
+                let mut slots = self.refreshes.lock().unwrap_or_else(|e| e.into_inner());
+                if slots
+                    .get(refresh_token)
+                    .is_some_and(|current| Arc::ptr_eq(current, &slot))
+                {
+                    slots.remove(refresh_token);
+                }
+                Err(AuthError::TokenExchange(message.clone()))
+            }
+        }
+    }
+
+    /// One `refresh_token` grant against `/oauth/token`.
+    async fn exchange_refresh_token(&self, refresh_token: &str) -> Result<TokenResponse, AuthError> {
         let base = self.config.issuer_url.trim_end_matches('/');
         let url = format!("{}/oauth/token", base);
 
@@ -430,8 +511,6 @@ pub struct UserInfoResponse {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-use std::collections::HashMap;
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Generate a random URL-safe string of the given length.
@@ -621,6 +700,110 @@ mod tests {
         assert!(url.contains("id_token_hint="));
         assert!(url.contains("state=s1"));
         assert!(url.contains('&'));
+    }
+
+    // ─── single-flight refresh ──────────────────────────────────────────
+
+    /// A token endpoint that counts requests and answers each after 50 ms
+    /// with tokens numbered by the request (`at-N`, `rt-N`).
+    async fn counting_token_endpoint() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let served = count.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let served = served.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    // Read the head, then the form body its Content-Length names.
+                    loop {
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&buf[..n]);
+                        let text = String::from_utf8_lossy(&request).to_string();
+                        if let Some(head_end) = text.find("\r\n\r\n") {
+                            let length = text[..head_end]
+                                .lines()
+                                .find_map(|l| {
+                                    let (k, v) = l.split_once(':')?;
+                                    k.eq_ignore_ascii_case("content-length")
+                                        .then(|| v.trim().parse::<usize>().ok())?
+                                })
+                                .unwrap_or(0);
+                            if request.len() >= head_end + 4 + length {
+                                break;
+                            }
+                        }
+                    }
+                    let n = served.fetch_add(1, Ordering::SeqCst) + 1;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let body = format!(
+                        r#"{{"access_token":"at-{n}","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-{n}"}}"#
+                    );
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        (format!("http://{addr}"), count)
+    }
+
+    #[tokio::test]
+    async fn concurrent_and_just_after_refreshes_of_one_token_make_one_exchange() {
+        use std::sync::atomic::Ordering;
+
+        let (issuer_url, requests) = counting_token_endpoint().await;
+        let client = OAuthClient::new(OAuthConfig {
+            issuer_url,
+            client_id: "app".to_string(),
+            client_secret: Some("s".to_string()),
+            ..OAuthConfig::default()
+        });
+
+        let (a, b) = tokio::join!(client.refresh_token("rt-old"), client.refresh_token("rt-old"));
+        let (a, b) = (a.unwrap(), b.unwrap());
+        assert_eq!(requests.load(Ordering::SeqCst), 1, "joined the in-flight exchange");
+        assert_eq!(a.access_token, b.access_token);
+
+        let c = client.refresh_token("rt-old").await.unwrap();
+        assert_eq!(requests.load(Ordering::SeqCst), 1, "reused the result just after");
+        assert_eq!(c.refresh_token, a.refresh_token);
+
+        client.refresh_token("rt-other").await.unwrap();
+        assert_eq!(
+            requests.load(Ordering::SeqCst),
+            2,
+            "a different refresh token is its own exchange"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_is_not_remembered() {
+        // Nothing listens on port 1: the exchange fails at connect.
+        let client = OAuthClient::new(OAuthConfig {
+            issuer_url: "http://127.0.0.1:1".to_string(),
+            client_id: "app".to_string(),
+            ..OAuthConfig::default()
+        });
+        assert!(client.refresh_token("rt").await.is_err());
+        assert!(
+            client.refreshes.lock().unwrap().is_empty(),
+            "a failure must not be reused by the next caller"
+        );
     }
 
     // ─── urlencoded helper ──────────────────────────────────────────────
