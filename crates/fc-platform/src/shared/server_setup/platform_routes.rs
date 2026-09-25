@@ -363,6 +363,7 @@ pub fn build_platform_routes(
     ));
     let principals_state = PrincipalsState {
         principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         client_repo: repos.client_repo.clone(),
         audit_service,
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
@@ -546,6 +547,7 @@ pub fn build_platform_routes(
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
         client_auth_config_repo: repos.client_auth_config_repo.clone(),
         idp_role_mapping_repo: repos.idp_role_mapping_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
         unit_of_work: unit_of_work.clone(),
         create_anchor_domain_use_case,
@@ -805,6 +807,7 @@ pub fn build_platform_routes(
     let edm_state = EmailDomainMappingsState {
         edm_repo: repos.edm_repo.clone(),
         idp_repo: repos.idp_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         create_use_case: create_edm_use_case,
         update_use_case: update_edm_use_case,
         delete_use_case: delete_edm_use_case,
@@ -906,6 +909,7 @@ pub fn build_platform_routes(
     };
     let service_accounts_state = ServiceAccountsState {
         repo: repos.service_account_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         create_use_case: create_sa_use_case,
         update_use_case: update_sa_use_case,
         delete_use_case: delete_sa_use_case,
@@ -913,6 +917,7 @@ pub fn build_platform_routes(
         regenerate_token_use_case,
         regenerate_secret_use_case,
         create_oauth_client_use_case: oauth_clients_state.create_oauth_client_use_case.clone(),
+        app_access: app_access.clone(),
     };
 
     let sync_dispatch_pools_use_case = Arc::new(
@@ -934,12 +939,6 @@ pub fn build_platform_routes(
         repos.application_repo.clone(),
         unit_of_work.clone(),
     ));
-    let sync_principals_use_case =
-        Arc::new(crate::principal::operations::SyncPrincipalsUseCase::new(
-            repos.principal_repo.clone(),
-            repos.application_repo.clone(),
-            unit_of_work.clone(),
-        ));
     let sync_scheduled_jobs_use_case = Arc::new(
         crate::scheduled_job::operations::SyncScheduledJobsUseCase::new(
             repos.scheduled_job_repo.clone(),
@@ -960,12 +959,14 @@ pub fn build_platform_routes(
         sync_event_types_use_case: sync_event_types_use_case.clone(),
         sync_subscriptions_use_case: sync_subscriptions_use_case.clone(),
         sync_dispatch_pools_use_case: sync_dispatch_pools_use_case.clone(),
-        sync_principals_use_case,
         sync_processes_use_case: sync_processes_use_case.clone(),
         sync_scheduled_jobs_use_case,
         sync_openapi_use_case: sync_openapi_use_case.clone(),
         app_access: app_access.clone(),
         trigger_objects: repos.function_trigger_object_repo.clone(),
+        principal_repo: repos.principal_repo.clone(),
+        application_repo: repos.application_repo.clone(),
+        unit_of_work: unit_of_work.clone(),
     };
 
     let sdk_audit_batch_state = SdkAuditBatchState {

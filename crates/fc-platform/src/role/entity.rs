@@ -194,10 +194,38 @@ impl AuthRole {
         self.source == RoleSource::Database
     }
 
+    /// The application this role belongs to: its `application_code`, or,
+    /// on a legacy row without one, the first segment of its name.
+    pub fn owning_application_code(&self) -> &str {
+        if !self.application_code.trim().is_empty() {
+            &self.application_code
+        } else {
+            self.name.split(':').next().unwrap_or(&self.name)
+        }
+    }
+
     /// Extract short role name from full name
     pub fn role_name(&self) -> &str {
         self.name.split(':').nth(1).unwrap_or(&self.name)
     }
+}
+
+/// The permissions in `permissions` that don't belong to `application_code`:
+/// a permission's first segment names its application, and a role may hold
+/// only its own application's (owner ruling 15; Java S1.5, a120e236). In
+/// order, without repeats.
+pub fn permissions_outside_application<'a>(
+    application_code: &str,
+    permissions: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut outside: Vec<String> = Vec::new();
+    for p in permissions {
+        let first = p.split(':').next().unwrap_or_default();
+        if first != application_code && !outside.iter().any(|o| o == p) {
+            outside.push(p.to_string());
+        }
+    }
+    outside
 }
 
 /// Convert from SeaORM model to domain entity
@@ -758,6 +786,15 @@ pub mod roles {
                 permissions::admin::CORS_ORIGIN_READ,
                 permissions::admin::CORS_ORIGIN_CREATE,
                 permissions::admin::CORS_ORIGIN_DELETE,
+                // Owner ruling 13 (2026-09-25, Java 458ebf3a): service
+                // accounts need these permissions, which no built-in role
+                // but super-admin held. What the holder may then give an
+                // account is bounded by the role ceiling.
+                permissions::admin::SERVICE_ACCOUNT_READ,
+                permissions::admin::SERVICE_ACCOUNT_CREATE,
+                permissions::admin::SERVICE_ACCOUNT_UPDATE,
+                permissions::admin::SERVICE_ACCOUNT_DELETE,
+                permissions::admin::SERVICE_ACCOUNT_MANAGE,
             ])
     }
 
@@ -809,6 +846,12 @@ pub mod roles {
                 permissions::admin::EMAIL_DOMAIN_MAPPING_CREATE,
                 permissions::admin::EMAIL_DOMAIN_MAPPING_UPDATE,
                 permissions::admin::EMAIL_DOMAIN_MAPPING_DELETE,
+                // Owner ruling 13 (Java 458ebf3a), as `platform:admin`.
+                permissions::admin::SERVICE_ACCOUNT_READ,
+                permissions::admin::SERVICE_ACCOUNT_CREATE,
+                permissions::admin::SERVICE_ACCOUNT_UPDATE,
+                permissions::admin::SERVICE_ACCOUNT_DELETE,
+                permissions::admin::SERVICE_ACCOUNT_MANAGE,
             ])
     }
 
@@ -823,6 +866,8 @@ pub mod roles {
                 permissions::iam::CLIENT_ACCESS_READ,
                 permissions::admin::IDENTITY_PROVIDER_READ,
                 permissions::admin::EMAIL_DOMAIN_MAPPING_READ,
+                // Owner ruling 13 (Java 458ebf3a).
+                permissions::admin::SERVICE_ACCOUNT_READ,
             ])
     }
 
@@ -979,6 +1024,8 @@ pub mod roles {
                 permissions::admin::EMAIL_DOMAIN_MAPPING_READ,
                 permissions::admin::CONFIG_READ,
                 permissions::admin::CORS_ORIGIN_READ,
+                // Owner ruling 13 (Java 458ebf3a).
+                permissions::admin::SERVICE_ACCOUNT_READ,
             ])
     }
 
@@ -1135,6 +1182,37 @@ mod tests {
     }
 
     #[test]
+    fn permissions_outside_their_application() {
+        assert!(permissions_outside_application(
+            "orders",
+            ["orders:order:create", "orders:order:view"]
+        )
+        .is_empty());
+        assert_eq!(
+            permissions_outside_application(
+                "orders",
+                [
+                    "orders:order:create",
+                    "platform:*:*:*",
+                    "hr:x:y",
+                    "platform:*:*:*"
+                ]
+            ),
+            vec!["platform:*:*:*".to_string(), "hr:x:y".to_string()]
+        );
+        // A prefix is not the application.
+        assert_eq!(
+            permissions_outside_application("orders", ["ordersx:a:b:c"]),
+            vec!["ordersx:a:b:c".to_string()]
+        );
+        let legacy = AuthRole {
+            application_code: String::new(),
+            ..AuthRole::new("hr", "clerk", "Clerk")
+        };
+        assert_eq!(legacy.owning_application_code(), "hr");
+    }
+
+    #[test]
     fn test_permission_matching() {
         let role = AuthRole::new("platform", "admin", "Platform Admin")
             .with_permission(permissions::admin::CLIENT_READ)
@@ -1192,6 +1270,25 @@ mod tests {
         let auth_ro = roles::auth_readonly();
         assert!(auth_ro.has_permission(permissions::auth::OAUTH_CLIENT_READ));
         assert!(!auth_ro.has_permission(permissions::auth::OAUTH_CLIENT_CREATE));
+
+        // Owner ruling 13: the service-account permissions.
+        for role in [roles::platform_admin(), roles::iam_admin()] {
+            for p in [
+                permissions::admin::SERVICE_ACCOUNT_READ,
+                permissions::admin::SERVICE_ACCOUNT_CREATE,
+                permissions::admin::SERVICE_ACCOUNT_UPDATE,
+                permissions::admin::SERVICE_ACCOUNT_DELETE,
+                permissions::admin::SERVICE_ACCOUNT_MANAGE,
+            ] {
+                assert!(role.permissions.contains(p), "{}: {p}", role.name);
+            }
+        }
+        for role in [roles::iam_readonly(), roles::viewer()] {
+            assert!(role
+                .permissions
+                .contains(permissions::admin::SERVICE_ACCOUNT_READ));
+            assert!(!role.has_permission(permissions::admin::SERVICE_ACCOUNT_UPDATE));
+        }
 
         let ai_ro = roles::ai_agent_readonly();
         assert!(ai_ro.has_permission(permissions::admin::EVENT_TYPE_READ));

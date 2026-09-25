@@ -59,6 +59,11 @@ pub struct SyncResultResponse {
     pub updated: u32,
     pub deleted: u32,
     pub synced_codes: Vec<String>,
+    /// Principal sync only: the emails whose `passwordHash` was ignored
+    /// because the user already existed (decision #22). Omitted when empty,
+    /// as Java's `passwordHashIgnored`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub password_hash_ignored: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +242,12 @@ pub struct SyncPrincipalInputRequest {
     /// Whether the user is active (default: true)
     #[serde(default = "default_active")]
     pub active: bool,
+    /// A pre-hashed password (bcrypt `$2y$`/`$2b$`, argon2i, argon2id),
+    /// stored verbatim on a user the sync creates and re-encoded at their
+    /// first login (Go sdksync/api.go:485-490). Ignored for a user that
+    /// already exists (decision #22); the response names those emails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_hash: Option<String>,
 }
 
 fn default_active() -> bool {
@@ -254,7 +265,6 @@ pub struct SdkSyncState {
     pub sync_event_types_use_case: Arc<SyncEventTypesUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_subscriptions_use_case: Arc<SyncSubscriptionsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_dispatch_pools_use_case: Arc<SyncDispatchPoolsUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_principals_use_case: Arc<SyncPrincipalsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_processes_use_case: Arc<SyncProcessesUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_scheduled_jobs_use_case: Arc<SyncScheduledJobsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<crate::usecase::PgUnitOfWork>>,
@@ -263,6 +273,13 @@ pub struct SdkSyncState {
     /// A function's own pool and jobs, which the pool and job syncs leave
     /// alone (`function-invocation.md` §4.2).
     pub trigger_objects: Arc<crate::function::trigger_object_repository::TriggerObjectRepository>,
+    /// The principal sync's users; also which synced emails already exist,
+    /// for `passwordHashIgnored`.
+    pub principal_repo: Arc<crate::PrincipalRepository>,
+    pub application_repo: Arc<crate::ApplicationRepository>,
+    /// The principal sync runs its rows, events and audit entries in one
+    /// transaction.
+    pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +401,7 @@ async fn sync_roles(
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_names,
+            password_hash_ignored: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }
@@ -449,6 +467,7 @@ async fn sync_event_types(
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_codes,
+            password_hash_ignored: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }
@@ -528,6 +547,7 @@ async fn sync_subscriptions(
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_codes,
+            password_hash_ignored: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }
@@ -612,6 +632,7 @@ async fn sync_dispatch_pools(
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_codes,
+            password_hash_ignored: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }
@@ -648,6 +669,13 @@ async fn sync_principals(
         .require_application_access(&auth.0, &app_code)
         .await?;
 
+    let password_hash_ignored = crate::principal::operations::password_hashes_ignored(
+        &state.principal_repo,
+        req.principals
+            .iter()
+            .map(|p| (p.email.as_str(), p.password_hash.as_deref())),
+    )
+    .await?;
     let command = SyncPrincipalsCommand {
         application_code: app_code,
         principals: req
@@ -658,16 +686,26 @@ async fn sync_principals(
                 name: p.name,
                 roles: p.roles,
                 active: p.active,
+                password_hash: p.password_hash,
             })
             .collect(),
         remove_unlisted: query.remove_unlisted,
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let (principal_repo, application_repo, caller) = (
+        state.principal_repo.clone(),
+        state.application_repo.clone(),
+        auth.0.clone(),
+    );
 
     match state
-        .sync_principals_use_case
-        .run(command, ctx)
+        .unit_of_work
+        .run(|session| async move {
+            SyncPrincipalsUseCase::new(principal_repo, application_repo, caller, session)
+                .run(command, ctx)
+                .await
+        })
         .await
         .into_result()
     {
@@ -677,6 +715,7 @@ async fn sync_principals(
             updated: event.updated,
             deleted: event.deactivated,
             synced_codes: event.synced_emails,
+            password_hash_ignored,
         })),
         Err(err) => Err(err.into()),
     }
@@ -842,6 +881,7 @@ async fn sync_processes(
             updated: event.updated,
             deleted: event.deleted,
             synced_codes: event.synced_codes,
+            password_hash_ignored: Vec::new(),
         })),
         Err(err) => Err(err.into()),
     }

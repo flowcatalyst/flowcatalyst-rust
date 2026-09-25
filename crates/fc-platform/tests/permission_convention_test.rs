@@ -37,6 +37,16 @@ const AUTH_CHECK_PATTERNS: &[&str] = &[
     "can_pause_",
     "can_resume_",
     "can_fire_",
+    // Client lifecycle (Go's CanActivateClients / CanSuspendClients /
+    // CanDeactivateClients) and client-access grants (owner decision #25).
+    "can_activate_",
+    "can_suspend_",
+    "can_deactivate_",
+    "can_grant_",
+    "can_revoke_",
+    // Role assignment and role administration (owner rulings 14, #25).
+    "can_assign_",
+    "can_administer_",
     // SDK sync endpoints (`/api/applications/{appCode}/*/sync`).
     "can_sync_",
     // AuthorizationService method calls

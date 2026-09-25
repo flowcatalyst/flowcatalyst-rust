@@ -3,6 +3,7 @@
 //! Role and permission management.
 
 pub mod api;
+pub mod ceiling;
 pub mod entity;
 pub mod operations;
 pub mod repository;

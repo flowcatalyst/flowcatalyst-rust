@@ -333,7 +333,15 @@ pub async fn create_role(
     auth: Authenticated,
     Json(req): Json<BffCreateRoleRequest>,
 ) -> Result<(axum::http::StatusCode, Json<CreatedResponse>), PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_CREATE,
+    )?;
+    // Owner ruling 14: only permissions the caller holds.
+    crate::role::ceiling::require_permissions(
+        Some(&auth.0),
+        req.permissions.iter().map(String::as_str),
+    )?;
 
     let cmd = CreateRoleCommand {
         application_code: req.application_code,
@@ -343,6 +351,9 @@ pub async fn create_role(
         permissions: req.permissions,
         client_managed: req.client_managed,
         source: crate::role::entity::RoleSource::Database,
+        // Owner ruling 15: a super-admin may use another application's
+        // permissions through the admin API.
+        cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
 
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -377,7 +388,10 @@ pub async fn update_role(
     Path(role_name): Path<String>,
     Json(req): Json<BffUpdateRoleRequest>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_UPDATE,
+    )?;
 
     // Resolve role name to ID
     let role = if role_name.contains(':') {
@@ -388,6 +402,17 @@ pub async fn update_role(
     .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
 
     let role_id = role.id.clone();
+    // Owner ruling 14: only permissions the caller holds may be added or
+    // removed.
+    if let Some(ref permissions) = req.permissions {
+        let before: Vec<String> = role.permissions.iter().cloned().collect();
+        crate::role::ceiling::require_permissions(
+            Some(&auth.0),
+            crate::role::ceiling::changed(&before, permissions)
+                .iter()
+                .map(String::as_str),
+        )?;
+    }
 
     let cmd = UpdateRoleCommand {
         role_id: role_id.clone(),
@@ -395,6 +420,7 @@ pub async fn update_role(
         description: req.description,
         permissions: req.permissions,
         client_managed: req.client_managed,
+        cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
 
     let ctx = ExecutionContext::from_auth(&auth.0);
@@ -424,7 +450,10 @@ pub async fn delete_role(
     auth: Authenticated,
     Path(role_name): Path<String>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_administer_roles(
+        &auth.0,
+        crate::permissions::iam::ROLE_DELETE,
+    )?;
 
     // Resolve role name to ID
     let role = if role_name.contains(':') {
@@ -433,6 +462,12 @@ pub async fn delete_role(
         state.role_repo.find_by_id(&role_name).await?
     }
     .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
+
+    // Owner ruling 14: deleting a role withdraws every permission it holds.
+    crate::role::ceiling::require_permissions(
+        Some(&auth.0),
+        role.permissions.iter().map(String::as_str),
+    )?;
 
     let cmd = DeleteRoleCommand {
         role_id: role.id.clone(),
@@ -708,7 +743,7 @@ pub async fn sync_platform_roles(
     State(state): State<BffRolesState>,
     auth: Authenticated,
 ) -> Result<axum::Json<SyncPlatformRolesResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_sync_platform_roles(&auth.0)?;
 
     let counts = state
         .role_sync_service

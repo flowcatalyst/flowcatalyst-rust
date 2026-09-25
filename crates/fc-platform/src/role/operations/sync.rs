@@ -130,6 +130,16 @@ impl<U: UnitOfWork> SyncRolesUseCase<U> {
             .find_by_application(&command.application_code)
             .await?;
 
+        // Owner ruling 15: an application's roles hold only its own
+        // permissions, and the SDK sync never gets the super-admin exception.
+        for input in &command.roles {
+            super::require_confined(
+                &command.application_code,
+                input.permissions.iter().map(String::as_str),
+                false,
+            )?;
+        }
+
         let mut created_count = 0u32;
         let mut updated_count = 0u32;
         let mut deleted_count = 0u32;

@@ -223,7 +223,7 @@ pub async fn create_client(
     use crate::client::operations::CreateClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_create_clients(&auth.0)?;
 
     let cmd = CreateClientCommand {
         name: req.name,
@@ -345,7 +345,7 @@ pub async fn update_client(
     use crate::client::operations::UpdateClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_update_clients(&auth.0)?;
 
     let cmd = UpdateClientCommand {
         client_id: id,
@@ -380,7 +380,7 @@ pub async fn delete_client(
     use crate::client::operations::DeleteClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_delete_clients(&auth.0)?;
 
     let cmd = DeleteClientCommand { client_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -419,7 +419,7 @@ pub async fn activate_client(
     use crate::client::operations::ActivateClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_activate_clients(&auth.0)?;
 
     let cmd = ActivateClientCommand {
         client_id: id.clone(),
@@ -462,7 +462,7 @@ pub async fn suspend_client(
     use crate::client::operations::SuspendClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_suspend_clients(&auth.0)?;
 
     let reason_for_log = req.reason.clone();
     let cmd = SuspendClientCommand {
@@ -515,7 +515,7 @@ pub async fn deactivate_client(
     use crate::client::operations::DeleteClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_deactivate_clients(&auth.0)?;
 
     let reason_for_log = req.reason.clone();
     let cmd = DeleteClientCommand {
@@ -641,7 +641,7 @@ pub async fn add_note(
     use crate::client::operations::AddClientNoteCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_update_clients(&auth.0)?;
 
     let cmd = AddClientNoteCommand {
         client_id: id.clone(),
@@ -751,7 +751,7 @@ pub async fn enable_application(
 ) -> Result<StatusCode, PlatformError> {
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_update_clients(&auth.0)?;
 
     let use_case = &state.enable_application_use_case;
 
@@ -788,7 +788,7 @@ pub async fn disable_application(
 ) -> Result<StatusCode, PlatformError> {
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_update_clients(&auth.0)?;
 
     let use_case = &state.disable_application_use_case;
 
@@ -824,7 +824,7 @@ pub async fn update_client_applications(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientApplicationsRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_update_clients(&auth.0)?;
 
     use crate::usecase::{ExecutionContext, UseCase};
 

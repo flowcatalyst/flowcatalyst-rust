@@ -332,7 +332,7 @@ async fn provisioned_service_account_is_anchor() {
                 "/api/applications/{}/provision-service-account",
                 application.id
             ),
-            &app.anchor_token(),
+            &app.anchor_admin_token().await,
             json!({}),
         )
         .await,

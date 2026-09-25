@@ -311,7 +311,7 @@ async fn provisioned_service_account_reaches_only_its_application() {
     let (status, body) = read_json(
         app.post(
             &format!("/api/applications/{}/provision-service-account", app_a.id),
-            &app.anchor_token(),
+            &app.anchor_admin_token().await,
             json!({}),
         )
         .await,
@@ -569,7 +569,7 @@ async fn all_applications_toggle() {
         .insert(&admin_principal)
         .await
         .unwrap();
-    let admin = token(&app, &admin_principal);
+    let admin = user_admin_token(&app, &admin_principal);
     let mut narrow_principal =
         Principal::new_user("tog-narrow@flowcatalyst.test", UserScope::Anchor);
     narrow_principal.all_applications = false;
@@ -578,7 +578,7 @@ async fn all_applications_toggle() {
         .insert(&narrow_principal)
         .await
         .unwrap();
-    let narrow = token(&app, &narrow_principal);
+    let narrow = user_admin_token(&app, &narrow_principal);
 
     let sa = Principal::new_service("sa_toggle", "SA Toggle", UserScope::Anchor);
     let sa_id = sa.id.clone();
@@ -666,6 +666,18 @@ async fn all_applications_toggle() {
 fn token(app: &TestApp, principal: &Principal) -> String {
     app.auth_service
         .generate_access_token(principal)
+        .expect("token")
+}
+
+/// A token granting the principal the user-update permission, which
+/// setting application access needs on top of anchor scope.
+fn user_admin_token(app: &TestApp, principal: &Principal) -> String {
+    app.auth_service
+        .generate_access_token_with_scope(
+            principal,
+            &[fc_platform::role::entity::permissions::iam::USER_UPDATE.to_string()],
+            None,
+        )
         .expect("token")
 }
 

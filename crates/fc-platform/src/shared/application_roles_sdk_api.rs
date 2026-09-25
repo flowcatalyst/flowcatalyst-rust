@@ -193,6 +193,8 @@ pub async fn create_role(
         permissions: req.permissions,
         client_managed: req.client_managed,
         source: RoleSource::Sdk,
+        // Owner ruling 15: never through the SDK.
+        cross_application: false,
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     state.create_use_case.run(cmd, ctx).await.into_result()?;

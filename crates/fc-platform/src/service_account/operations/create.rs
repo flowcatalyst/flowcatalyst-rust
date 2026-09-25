@@ -113,6 +113,15 @@ pub struct CreateServiceAccountCommand {
     /// access at all (owner ruling).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application_id: Option<String>,
+
+    /// Grant the account every application, present and future (Go's
+    /// `allApplications`, serviceaccount/operations/create.go:21-24). Off by
+    /// default: a new account starts with no application access. Can't be
+    /// combined with `application_id` (`ALL_APPLICATIONS_WITH_APPLICATION_ID`).
+    /// Only a caller that itself reaches every application may ask for it;
+    /// the handler checks that.
+    #[serde(default)]
+    pub all_applications: bool,
 }
 
 impl crate::usecase::AuditMasked for CreateServiceAccountCommand {}
@@ -164,6 +173,18 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
     type Event = CreateServiceAccountResult;
 
     async fn validate(&self, command: &CreateServiceAccountCommand) -> Result<(), UseCaseError> {
+        // Go create_credentials.go:80-84.
+        if command.all_applications
+            && command
+                .application_id
+                .as_deref()
+                .is_some_and(|id| !id.trim().is_empty())
+        {
+            return Err(UseCaseError::validation(
+                "ALL_APPLICATIONS_WITH_APPLICATION_ID",
+                "allApplications cannot be combined with applicationId",
+            ));
+        }
         let code = normalise_code(&command.code, command.application_id.is_none())?;
         if code.len() > 50 {
             return Err(UseCaseError::validation(
@@ -266,8 +287,9 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         service_account.application_id = command.application_id.clone();
         // No application access unless the account is made for one
         // application, which it then reaches alone (Go: all_applications
-        // false plus a single access row).
-        service_account.all_applications = false;
+        // false plus a single access row), or asks for all of them (Go
+        // create_credentials.go:118).
+        service_account.all_applications = command.all_applications;
         service_account.accessible_application_ids =
             command.application_id.clone().into_iter().collect();
         // An application's own service account is granted the seeded
@@ -332,6 +354,7 @@ mod tests {
             scope: Some(UserScope::Client),
             client_ids: vec!["client-123".to_string()],
             application_id: None,
+            all_applications: false,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

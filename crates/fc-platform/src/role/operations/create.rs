@@ -38,6 +38,12 @@ pub struct CreateRoleCommand {
     /// the SDK role API passes `Sdk`.
     #[serde(default)]
     pub source: RoleSource,
+
+    /// May the role hold another application's permissions? Only the admin
+    /// API sets this, for a super-admin (owner ruling 15); it is recorded in
+    /// the audit row when set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cross_application: bool,
 }
 
 impl crate::usecase::AuditMasked for CreateRoleCommand {}
@@ -107,6 +113,15 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
         let role_name = command.role_name.trim().to_lowercase();
         let display_name = command.display_name.trim();
 
+        // Owner ruling 15: only this application's permissions.
+        if let Err(e) = super::require_confined(
+            &app_code,
+            command.permissions.iter().map(String::as_str),
+            command.cross_application,
+        ) {
+            return UseCaseResult::failure(e);
+        }
+
         // Build role code
         let code = format!("{}:{}", app_code, role_name);
 
@@ -168,6 +183,7 @@ mod tests {
             permissions: vec!["orders:read".to_string(), "orders:write".to_string()],
             client_managed: false,
             source: RoleSource::Database,
+            cross_application: false,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
