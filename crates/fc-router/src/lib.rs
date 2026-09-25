@@ -14,6 +14,7 @@
 //! - API: HTTP API endpoints for monitoring, health, and message publishing
 
 pub mod api;
+pub mod bootstrap;
 pub mod circuit_breaker_registry;
 pub mod config_sync;
 pub mod error;
