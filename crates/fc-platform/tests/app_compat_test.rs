@@ -122,3 +122,121 @@ async fn create_client(app: &TestApp, identifier: &str) -> String {
         .expect("insert client");
     client.id
 }
+
+/// integral `SyncUsersToFlowCatalystCommand.php:589-599` through the Laravel
+/// SDK (`Principals::syncUsers`, `SyncPrincipalEntry::toArray`): one entry
+/// per call, `roles: []`, `active` omitted, the local bcrypt hash verbatim.
+/// Go: principal/api/sync.go:43-76, operations/sync_principals.go:68-246.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn integral_syncs_a_user_with_its_password_hash() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+    let hash = "$2y$10$eImiTXuWVxfM37uY4JANjQ==eImiTXuWVxfM37uY4JANjQ.abcdefg";
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/sync",
+            &token,
+            json!({"principals": [{
+                "email": "Jo.Bloggs@Inhance.test",
+                "name": "Jo Bloggs",
+                "roles": [],
+                "passwordHash": hash
+            }]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        body,
+        json!({"created": 1, "updated": 0, "deleted": 0, "syncedEmails": ["jo.bloggs@inhance.test"]})
+    );
+
+    let p = app
+        .repos
+        .principal_repo
+        .find_by_email("jo.bloggs@inhance.test")
+        .await
+        .unwrap()
+        .expect("synced user");
+    assert_eq!(p.name, "Jo Bloggs");
+    assert!(p.active);
+    assert_eq!(p.scope, UserScope::Client);
+    assert_eq!(p.client_id, None);
+    assert_eq!(
+        p.user_identity.as_ref().unwrap().password_hash.as_deref(),
+        Some(hash)
+    );
+    assert_eq!(
+        app.event_count_by_type("platform:iam:user:created").await,
+        1
+    );
+    assert_eq!(
+        app.event_count_by_type("platform:iam:principals:synced")
+            .await,
+        1
+    );
+    // The hash never reaches the audit log.
+    let (audit,): (Value,) = sqlx::query_as(
+        "SELECT operation_json FROM aud_logs WHERE operation = 'SyncUsersCommand' LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(audit["principals"][0]["passwordHash"], "***", "{audit}");
+
+    // A second sync updates: a new name and roles; an admin-assigned role
+    // survives; an omitted hash keeps the stored one.
+    let mut with_admin_role = p.clone();
+    with_admin_role.assign_role("platform:viewer");
+    app.repos
+        .principal_repo
+        .update(&with_admin_role)
+        .await
+        .unwrap();
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/sync",
+            &token,
+            json!({"principals": [{
+                "email": "jo.bloggs@inhance.test",
+                "name": "Jo B",
+                "roles": ["HR:Manager"]
+            }]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["created"], 0);
+    assert_eq!(body["updated"], 1);
+    let p = app
+        .repos
+        .principal_repo
+        .find_by_id(&p.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(p.name, "Jo B");
+    let mut roles: Vec<&str> = p.roles.iter().map(|r| r.role.as_str()).collect();
+    roles.sort();
+    assert_eq!(roles, vec!["hr:manager", "platform:viewer"]);
+    assert_eq!(
+        p.user_identity.as_ref().unwrap().password_hash.as_deref(),
+        Some(hash)
+    );
+    assert_eq!(
+        app.event_count_by_type("platform:iam:user:updated").await,
+        1
+    );
+
+    // An empty sync is a 400 (Go PRINCIPALS_REQUIRED).
+    let (status, body) = read_json(
+        app.post("/api/principals/sync", &token, json!({"principals": []}))
+            .await,
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+}

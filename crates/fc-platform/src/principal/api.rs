@@ -1349,6 +1349,78 @@ pub async fn delete_principal(
 // Status Management Endpoints
 // ============================================================================
 
+/// Platform-level user sync request (Go `SyncUsersRequest`,
+/// principal/api/sync.go:16-27).
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncUsersRequest {
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    pub principals: Vec<crate::principal::operations::SyncUserInput>,
+}
+
+/// Platform-level user sync response (Go sync.go:30-35, 70-75).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncUsersResponse {
+    pub created: u32,
+    pub updated: u32,
+    /// Users deactivated by the sync: always 0 (it removes nothing)
+    pub deleted: u32,
+    pub synced_emails: Vec<String>,
+}
+
+/// Sync users (declarative upsert by email; no application scope)
+///
+/// Go's `POST /api/principals/sync` (principal/api/api.go:94, sync.go:43-76):
+/// creates or updates each listed user, carrying a migrated password hash
+/// verbatim. Every row, event and audit entry commits in one transaction.
+#[utoipa::path(
+    post,
+    path = "/sync",
+    tag = "principals",
+    operation_id = "postApiPrincipalsSync",
+    request_body = SyncUsersRequest,
+    responses(
+        (status = 200, description = "Users synced", body = SyncUsersResponse),
+        (status = 400, description = "No principals given"),
+        (status = 403, description = "Insufficient permissions")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn sync_users(
+    State(state): State<PrincipalsState>,
+    auth: Authenticated,
+    Json(req): Json<SyncUsersRequest>,
+) -> Result<Json<SyncUsersResponse>, PlatformError> {
+    use crate::principal::operations::{SyncUsersCommand, SyncUsersUseCase};
+    use crate::usecase::{ExecutionContext, UseCase};
+
+    crate::checks::can_sync_principals(&auth.0)?;
+
+    let command = SyncUsersCommand {
+        principals: req.principals,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    let principal_repo = state.principal_repo.clone();
+    let event = state
+        .unit_of_work
+        .run(|session| async move {
+            SyncUsersUseCase::new(principal_repo, session)
+                .run(command, ctx)
+                .await
+        })
+        .await
+        .into_result()?;
+
+    Ok(Json(SyncUsersResponse {
+        created: event.created,
+        updated: event.updated,
+        deleted: event.deactivated,
+        synced_emails: event.synced_emails,
+    }))
+}
+
 /// Activate a principal
 ///
 /// Reactivates a deactivated principal.
@@ -1974,6 +2046,7 @@ pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
         // separately or only one gets mounted (previously the cause of 405s).
         .routes(routes!(list_principals))
         .routes(routes!(create_user))
+        .routes(routes!(sync_users))
         .routes(routes!(check_email_domain))
         .routes(routes!(get_principal, update_principal, delete_principal))
         .routes(routes!(activate_principal))

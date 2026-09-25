@@ -221,6 +221,13 @@ pub struct Principal {
     pub external_identity: Option<ExternalIdentity>,
 }
 
+/// The users one platform-level sync writes, persisted together
+/// (`POST /api/principals/sync`): each principal's row and role set.
+#[derive(Debug, Clone, Default)]
+pub struct PrincipalSyncBatch {
+    pub principals: Vec<Principal>,
+}
+
 /// External identity reference for OIDC-authenticated users
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

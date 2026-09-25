@@ -13,6 +13,7 @@ pub mod grant_client_access;
 pub mod reset_password;
 pub mod revoke_client_access;
 pub mod sync;
+pub mod sync_users;
 pub mod update;
 
 pub use activate::{ActivateUserCommand, ActivateUserUseCase};
@@ -28,4 +29,5 @@ pub use grant_client_access::{GrantClientAccessCommand, GrantClientAccessUseCase
 pub use reset_password::{ResetPasswordCommand, ResetPasswordUseCase};
 pub use revoke_client_access::{RevokeClientAccessCommand, RevokeClientAccessUseCase};
 pub use sync::{SyncPrincipalInput, SyncPrincipalsCommand, SyncPrincipalsUseCase};
+pub use sync_users::{SyncUserInput, SyncUsersCommand, SyncUsersUseCase};
 pub use update::{UpdateUserCommand, UpdateUserUseCase};
