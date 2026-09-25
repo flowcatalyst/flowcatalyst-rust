@@ -22,6 +22,7 @@ pub struct GoRoutesState {
     pub event_types: crate::event_type::go_api::EventTypeGoState,
     pub read_aliases: crate::shared::go_read_aliases_api::ReadAliasesState,
     pub sdk_sync: crate::shared::sdk_sync_go_api::SdkSyncGoState,
+    pub docs: crate::app_docs::api::DocsState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
@@ -54,7 +55,19 @@ impl GoRoutesState {
             repos.application_repo.clone(),
             repos.principal_repo.clone(),
         ));
+        let docs_repo = Arc::new(crate::app_docs::repository::AppDocsRepository::new(
+            &repos.pool,
+        ));
         Self {
+            docs: crate::app_docs::api::DocsState {
+                repo: docs_repo.clone(),
+                application_repo: repos.application_repo.clone(),
+                app_access: app_access.clone(),
+                sync_use_case: Arc::new(crate::app_docs::operations::sync::SyncAppDocsUseCase::new(
+                    docs_repo,
+                    uow.clone(),
+                )),
+            },
             sdk_sync: crate::shared::sdk_sync_go_api::SdkSyncGoState {
                 app_access,
                 client_repo: repos.client_repo.clone(),
@@ -218,6 +231,7 @@ impl GoRoutesState {
 /// All Go-parity routes, at their full paths.
 pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
     OpenApiRouter::new()
+        .merge(crate::app_docs::api::docs_router(state.docs))
         .merge(crate::shared::sdk_sync_go_api::sdk_sync_go_router(
             state.sdk_sync,
         ))

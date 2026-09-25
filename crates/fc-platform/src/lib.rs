@@ -18,6 +18,7 @@
 //! - `operations` - Use case operations (where applicable)
 
 // Core aggregates
+pub mod app_docs;
 pub mod application;
 pub mod application_openapi_spec;
 pub mod client;

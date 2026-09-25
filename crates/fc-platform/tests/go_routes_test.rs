@@ -1690,3 +1690,108 @@ async fn connections_and_processes_sync_as_go() {
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+// ── Documentation ────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn documentation_is_synced_and_read_as_go() {
+    use fc_platform::application::entity::Application;
+    let app = setup().await;
+    let admin = stored_admin_token(&app).await;
+    let application = Application::new("docsapp", "Docs App");
+    app.repos
+        .application_repo
+        .insert(&application)
+        .await
+        .unwrap();
+    let path = "/api/applications/docsapp/docs/sync";
+
+    let body = assert_status(
+        app.post(
+            path,
+            &admin,
+            json!({ "docs": [
+                { "slug": "getting-started", "content": "intro\n# Getting Started\nbody" },
+                { "slug": "faq", "title": "FAQ", "content": "q" }
+            ]}),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({ "applicationCode": "docsapp", "created": 2, "updated": 0, "deleted": 0,
+                "syncedCodes": ["getting-started", "faq"] })
+    );
+    let body = assert_status(
+        app.post(
+            path,
+            &admin,
+            json!({ "docs": [{ "slug": "faq", "content": "q2" }] }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(body["updated"], 1);
+    assert_eq!(body["deleted"], 1);
+
+    for (docs, code) in [
+        (json!([{ "slug": "Bad", "content": "" }]), "SLUG_INVALID"),
+        (
+            json!([{ "slug": "a", "content": "" }, { "slug": "a", "content": "" }]),
+            "SLUG_DUPLICATE",
+        ),
+        (
+            json!([{ "slug": "big", "content": "x".repeat(512 * 1024 + 1) }]),
+            "DOC_TOO_LARGE",
+        ),
+    ] {
+        let (s, b) = read_json(app.post(path, &admin, json!({ "docs": docs })).await).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+        assert_eq!(b["code"], code);
+    }
+    let (s, _) = read_json(
+        app.post(path, &nobody_token(&app), json!({ "docs": [] }))
+            .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    let index = assert_status(app.get("/api/docs", &admin).await, StatusCode::OK).await;
+    assert_eq!(index["platform"][0]["slug"], "platform-overview");
+    assert_eq!(index["platform"].as_array().unwrap().len(), 5);
+    assert_eq!(
+        index["applications"],
+        json!([{ "applicationCode": "docsapp", "applicationName": "Docs App",
+                 "docs": [{ "slug": "faq", "title": "faq" }] }])
+    );
+    let page = assert_status(
+        app.get("/api/docs/platform/identity-and-access", &admin)
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(page["title"], "Identity & Access");
+    let page = assert_status(
+        app.get("/api/docs/applications/docsapp/faq", &admin).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(
+        page,
+        json!({ "slug": "faq", "title": "faq", "content": "q2" })
+    );
+    for p in [
+        "/api/docs/platform/nope",
+        "/api/docs/applications/docsapp/nope",
+        "/api/docs/applications/nope/faq",
+    ] {
+        let (s, _) = read_json(app.get(p, &admin).await).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{p}");
+    }
+    let (s, _) = read_json(app.get("/api/docs", &nobody_token(&app)).await).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}

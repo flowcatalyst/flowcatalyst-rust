@@ -441,6 +441,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "050_connection_application_scope",
             include_str!("../../../../migrations/050_connection_application_scope.sql"),
         ),
+        // Go's 044: application-synced documentation.
+        (
+            "051_app_docs",
+            include_str!("../../../../migrations/051_app_docs.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -604,6 +609,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              AND EXISTS (SELECT 1 FROM pg_indexes \
              WHERE schemaname = 'public' \
                AND indexname = 'uq_msg_subscriptions_app_client_code')",
+        ),
+        // A database Go migrated to 044 has the table.
+        (
+            "051_app_docs",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'app_docs')",
         ),
     ];
 
