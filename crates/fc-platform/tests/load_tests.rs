@@ -381,7 +381,10 @@ async fn test_api_batch_events_throughput() {
     };
 
     let event_repo = Arc::new(EventRepository::new(&pool));
-    let sdk_events_state = SdkEventsState { event_repo };
+    let sdk_events_state = SdkEventsState {
+        event_repo,
+        client_repo: Arc::new(fc_platform::ClientRepository::new(&pool)),
+    };
     let app: Router = Router::new()
         .nest("/api/events", sdk_events_batch_router(sdk_events_state))
         .layer(AuthLayer::new(app_state));

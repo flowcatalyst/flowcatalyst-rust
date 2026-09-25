@@ -434,3 +434,73 @@ async fn integral_creates_users_by_client_code_and_anchor_scope() {
     assert_eq!(status, 400, "{body}");
     assert_eq!(body["error"], "ANCHOR_DOMAIN_REQUIRED");
 }
+
+/// One item as the Laravel SDK's outbox writes it (`CreateEventDto::
+/// toPayload`, src/Outbox/DTOs/CreateEventDto.php:230-245) and fc-outbox
+/// forwards it: hr's grading events carry `clientCode` from
+/// `FLOWCATALYST_CLIENT_CODE` (OutboxUnitOfWork.php:123-150) and `data` as a
+/// JSON string.
+fn hr_outbox_item(event_id: &str, client_code: &str) -> Value {
+    json!({
+        "specVersion": "1.0",
+        "type": "hr:grading:grading-record:submitted",
+        "source": "hr",
+        "subject": "grading.grading-record.123",
+        "data": "{\"gradingRecordId\":\"123\",\"status\":\"SUBMITTED\"}",
+        "correlationId": "corr-1",
+        "deduplicationId": format!("hr:grading:grading-record:submitted-{event_id}"),
+        "messageGroup": "grading:grading-record:123",
+        "clientCode": client_code,
+        "contextData": [
+            {"key": "principalId", "value": "prn_1"},
+            {"key": "executionId", "value": null},
+            {"key": "aggregateType", "value": "GradingRecord"}
+        ]
+    })
+}
+
+/// hr's `clientCode` resolves to the client's id, as Go does
+/// (event/api/api.go:151-185): an explicit `clientId` wins and an unknown
+/// code leaves the event unlinked but stored.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn hr_outbox_events_are_linked_to_their_client_by_code() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+    let inhance = create_client(&app, "inhance").await;
+    let other = create_client(&app, "other").await;
+
+    let mut explicit = hr_outbox_item("e3", "inhance");
+    explicit["clientId"] = json!(other);
+    let (status, body) = read_json(
+        app.post(
+            "/api/events/batch",
+            &token,
+            json!({"items": [
+                hr_outbox_item("e1", "inhance"),
+                hr_outbox_item("e2", "no-such-tenant"),
+                explicit
+            ]}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    assert!(results.iter().all(|r| r["status"] == "SUCCESS"), "{body}");
+
+    let rows: Vec<(String, Option<String>, Value)> = sqlx::query_as(
+        "SELECT deduplication_id, client_id, context_data FROM msg_events
+         WHERE type = 'hr:grading:grading-record:submitted' ORDER BY deduplication_id",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].1.as_deref(), Some(inhance.as_str()));
+    assert_eq!(rows[1].1, None, "an unknown code leaves the event unlinked");
+    assert_eq!(rows[2].1.as_deref(), Some(other.as_str()), "clientId wins");
+    assert_eq!(rows[0].2[0]["key"], "principalId");
+    assert_eq!(rows[0].2[1]["value"], "");
+}

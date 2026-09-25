@@ -960,6 +960,7 @@ pub fn build_platform_routes(
 
     let sdk_events_state = SdkEventsState {
         event_repo: repos.event_repo.clone(),
+        client_repo: repos.client_repo.clone(),
     };
     let debug_state = DebugState {
         event_repo: repos.event_repo.clone(),

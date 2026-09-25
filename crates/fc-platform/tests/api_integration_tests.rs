@@ -151,6 +151,7 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
 
     let sdk_events_state = SdkEventsState {
         event_repo: Arc::new(EventRepository::new(pool)),
+        client_repo: Arc::new(fc_platform::ClientRepository::new(pool)),
     };
 
     let sdk_dispatch_jobs_state = SdkDispatchJobsState {
