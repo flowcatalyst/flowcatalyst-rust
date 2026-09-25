@@ -565,6 +565,13 @@ pub async fn refresh_token(
             message: "Invalid or expired refresh token".to_string(),
         })?;
 
+    // A token issued to an OAuth client refreshes only through
+    // `/oauth/token`, which authenticates the client: this endpoint does
+    // not, so accepting one here would let a stolen confidential-client
+    // token be refreshed without the client secret (Go handleRefresh,
+    // auth/login/endpoint.go:352-360). Nothing is consumed.
+    refuse_client_bound(&stored_token)?;
+
     // Revoke the old token (token rotation for security)
     state.refresh_token_repo.revoke_by_hash(&token_hash).await?;
 
@@ -600,6 +607,17 @@ pub async fn refresh_token(
         expires_in: 3600,
         refresh_token: raw_token,
     }))
+}
+
+/// `/auth/refresh` accepts only a refresh token issued outside any OAuth
+/// client (a first-party login).
+fn refuse_client_bound(stored: &RefreshToken) -> Result<(), PlatformError> {
+    if stored.oauth_client_id.is_some() {
+        return Err(PlatformError::InvalidToken {
+            message: "Token was not issued to this client".to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Create the auth router
@@ -651,6 +669,22 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&AuthMethod::Oidc).unwrap(),
             "\"OIDC\""
+        );
+    }
+
+    /// Go handleRefresh (auth/login/endpoint.go:352-360): a token bound to
+    /// an OAuth client is refused with 401.
+    #[test]
+    fn refresh_refuses_a_token_issued_to_an_oauth_client() {
+        let (_, first_party) = RefreshToken::generate_token_pair("prn_1");
+        assert!(refuse_client_bound(&first_party).is_ok());
+
+        let bound = first_party.with_oauth_client("oc_agentplanner");
+        let err = refuse_client_bound(&bound).unwrap_err();
+        assert!(matches!(err, PlatformError::InvalidToken { .. }), "{err:?}");
+        assert_eq!(
+            axum::response::IntoResponse::into_response(err).status(),
+            StatusCode::UNAUTHORIZED
         );
     }
 
