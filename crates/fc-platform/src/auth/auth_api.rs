@@ -109,6 +109,9 @@ pub struct CurrentUserResponse {
     /// Principal ID
     pub id: String,
 
+    /// Principal ID, under Go's name (`principalId`)
+    pub principal_id: String,
+
     /// Principal type (USER, SERVICE)
     pub principal_type: String,
 
@@ -131,6 +134,18 @@ pub struct CurrentUserResponse {
 
     /// Assigned roles
     pub roles: Vec<String>,
+
+    /// Effective permissions: every permission the principal's roles grant,
+    /// de-duplicated and sorted, then `"*"` when they include the
+    /// super-admin `platform:*:*:*` (Go `buildPermissionList`,
+    /// auth/login/endpoint.go:437-450). The SPA gates pages on these.
+    pub permissions: Vec<String>,
+
+    /// Whether the account signs in through a federated identity provider
+    /// (a linked external identity, or an email domain mapped to an OIDC
+    /// provider); the SPA hides password self-service for it (Go
+    /// `ssoManaged`, auth/login/endpoint.go:616-634).
+    pub sso_managed: bool,
 }
 
 /// Auth service state
@@ -138,6 +153,8 @@ pub struct CurrentUserResponse {
 pub struct AuthState {
     pub auth_service: Arc<AuthService>,
     pub principal_repo: Arc<PrincipalRepository>,
+    /// Flattens roles to permissions for `/auth/me`
+    pub role_repo: Arc<crate::RoleRepository>,
     pub password_service: Arc<PasswordService>,
     pub refresh_token_repo: Arc<RefreshTokenRepository>,
     pub email_domain_mapping_repo: Arc<EmailDomainMappingRepository>,
@@ -408,24 +425,92 @@ pub async fn check_domain(
     )
 )]
 pub async fn get_current_user(
+    State(state): State<AuthState>,
     auth: Authenticated,
 ) -> Result<Json<CurrentUserResponse>, PlatformError> {
-    let ctx = &auth.0;
+    // Reload the principal so the answer is current rather than whatever the
+    // token was stamped with; a deactivated or deleted principal is not
+    // authenticated (Go handleMe, auth/login/endpoint.go:656-694).
+    let not_authenticated = || PlatformError::Unauthorized {
+        message: "Not authenticated".to_string(),
+    };
+    let principal = state
+        .principal_repo
+        .find_by_id(&auth.0.principal_id)
+        .await?
+        .filter(|p| p.active)
+        .ok_or_else(not_authenticated)?;
+
+    let roles = crate::auth::auth_service::role_names(&principal);
+    let (permissions, sso_managed) = tokio::try_join!(
+        effective_permissions(&state, &roles),
+        sso_managed(&state, &principal),
+    )?;
 
     Ok(Json(CurrentUserResponse {
-        id: ctx.principal_id.clone(),
-        principal_type: ctx.principal_type.as_str().to_string(),
-        email: ctx.email.clone(),
-        name: ctx.name.clone(),
-        scope: ctx.scope.as_str().to_string(),
-        client_id: if ctx.scope == crate::UserScope::Client {
-            ctx.accessible_clients.first().cloned()
-        } else {
-            None
-        },
-        clients: ctx.accessible_clients.clone(),
-        roles: ctx.roles.clone(),
+        id: principal.id.clone(),
+        principal_id: principal.id.clone(),
+        principal_type: principal.principal_type.as_str().to_string(),
+        email: principal.email().map(String::from),
+        name: principal.name.clone(),
+        scope: principal.scope.as_str().to_string(),
+        // Only a CLIENT-tier principal carries one: the SPA reads a missing
+        // clientId as "may act for other owners" (stores/permissions.ts).
+        client_id: principal
+            .client_id
+            .clone()
+            .filter(|_| principal.scope == crate::UserScope::Client),
+        clients: crate::auth::auth_service::clients_claim(&principal),
+        roles,
+        permissions,
+        sso_managed,
     }))
+}
+
+/// Go `buildPermissionList` (auth/login/endpoint.go:437-450) over the
+/// flattened role permissions, sorted.
+async fn effective_permissions(
+    state: &AuthState,
+    roles: &[String],
+) -> Result<Vec<String>, PlatformError> {
+    let mut permissions = state.role_repo.flatten_permissions(roles).await?;
+    if permissions
+        .iter()
+        .any(|p| p == crate::role::entity::permissions::ADMIN_ALL)
+    {
+        permissions.push("*".to_string());
+    }
+    Ok(permissions)
+}
+
+/// Go `ssoManaged` (auth/login/endpoint.go:616-634).
+async fn sso_managed(
+    state: &AuthState,
+    principal: &crate::Principal,
+) -> Result<bool, PlatformError> {
+    if principal.external_identity.is_some() {
+        return Ok(true);
+    }
+    let Some(domain) = principal
+        .email()
+        .and_then(|e| e.split_once('@'))
+        .map(|(_, d)| d)
+        .filter(|d| !d.is_empty())
+    else {
+        return Ok(false);
+    };
+    let Some(mapping) = state
+        .email_domain_mapping_repo
+        .find_by_email_domain(domain)
+        .await?
+    else {
+        return Ok(false);
+    };
+    Ok(state
+        .identity_provider_repo
+        .find_by_id(&mapping.identity_provider_id)
+        .await?
+        .is_some_and(|idp| idp.r#type == IdentityProviderType::Oidc))
 }
 
 /// Refresh token request

@@ -575,6 +575,7 @@ pub fn build_platform_routes(
     let embedded_auth_state = AuthState {
         auth_service: auth.auth.clone(),
         principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         password_service: auth.password.clone(),
         refresh_token_repo: repos.refresh_token_repo.clone(),
         email_domain_mapping_repo: repos.edm_repo.clone(),

@@ -558,3 +558,75 @@ async fn logout_with_client_id_and_no_id_token_hint() {
         "Invalid post_logout_redirect_uri: id_token_hint or client_id is required to verify post_logout_redirect_uri"
     );
 }
+
+/// `/auth/me` carries the effective permissions the SPA gates pages on:
+/// the principal's roles flattened, sorted, plus `"*"` for the super-admin
+/// wildcard (Go handleMe / buildPermissionList,
+/// auth/login/endpoint.go:437-450, 656-694), and `ssoManaged`.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn auth_me_lists_the_effective_permissions() {
+    use fc_platform::role::entity::AuthRole;
+
+    let app = TestApp::setup().await;
+    let viewer = AuthRole::new("hr", "viewer", "HR Viewer")
+        .with_permission("hr:staff:record:view")
+        .with_permission("hr:grading:record:view");
+    let editor = AuthRole::new("hr", "editor", "HR Editor")
+        .with_permission("hr:staff:record:view")
+        .with_permission("hr:staff:record:update");
+    for role in [&viewer, &editor] {
+        app.repos.role_repo.insert(role).await.expect("insert role");
+    }
+    let client_id = create_client(&app, "inhance").await;
+    let mut user =
+        Principal::new_user("me@inhance.test", UserScope::Client).with_client_id(&client_id);
+    user.assign_role("hr:viewer");
+    user.assign_role("hr:editor");
+    app.repos
+        .principal_repo
+        .insert(&user)
+        .await
+        .expect("insert user");
+    let token = app.auth_service.generate_session_token(&user).unwrap();
+
+    let (status, body) = read_json(app.get("/auth/me", &token).await).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["principalId"], user.id.as_str());
+    assert_eq!(body["id"], user.id.as_str());
+    assert_eq!(body["clientId"], client_id.as_str());
+    assert_eq!(
+        body["permissions"],
+        json!([
+            "hr:grading:record:view",
+            "hr:staff:record:update",
+            "hr:staff:record:view"
+        ])
+    );
+    assert_eq!(body["ssoManaged"], false);
+
+    // The super-admin wildcard adds the "*" sentinel.
+    let super_admin = AuthRole::new("platform", "test-super", "Super")
+        .with_permission(fc_platform::role::entity::permissions::ADMIN_ALL);
+    app.repos.role_repo.insert(&super_admin).await.unwrap();
+    let mut admin = Principal::new_user("root@flowcatalyst.test", UserScope::Anchor);
+    admin.assign_role("platform:test-super");
+    app.repos.principal_repo.insert(&admin).await.unwrap();
+    let token = app.auth_service.generate_session_token(&admin).unwrap();
+    let (status, body) = read_json(app.get("/auth/me", &token).await).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["permissions"], json!(["platform:*:*:*", "*"]));
+    assert!(body["clientId"].is_null());
+
+    // A deactivated principal is no longer authenticated here.
+    app.repos
+        .principal_repo
+        .update(&Principal {
+            active: false,
+            ..admin.clone()
+        })
+        .await
+        .unwrap();
+    let (status, _) = read_json(app.get("/auth/me", &token).await).await;
+    assert_eq!(status, 401);
+}
