@@ -19,7 +19,6 @@ use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::{Principal, UserIdentity, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::service_account::entity::RoleAssignment;
-use crate::shared::api_common::PaginationParams;
 use crate::shared::enum_str::parse_opt;
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
@@ -399,12 +398,23 @@ pub struct PrincipalListResponse {
     pub total: usize,
 }
 
-/// Query parameters for principals list
+/// Query parameters for principals list.
+///
+/// Every field is taken as a string, with no `#[serde(flatten)]`: a
+/// flattened struct makes serde_urlencoded hand every value over as a
+/// string, so a typed `Option<bool>` beside one rejects `?active=true`.
+/// Values are then read the way Go reads them
+/// (principal/api/api.go:130-140).
 #[derive(Debug, Deserialize, Default, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalsQuery {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
+    /// 0-based page (only with a page size)
+    pub page: Option<String>,
+
+    /// Page size; absent or `<= 0` returns every row, as Go does. `size`,
+    /// `limit` and `page_size` are accepted too.
+    #[serde(alias = "size", alias = "limit", alias = "page_size")]
+    pub page_size: Option<String>,
 
     /// Filter by type
     #[serde(rename = "type")]
@@ -423,8 +433,8 @@ pub struct PrincipalsQuery {
     /// specific user — `q` is a substring search and can return unrelated rows.
     pub email: Option<String>,
 
-    /// Filter by active status
-    pub active: Option<bool>,
+    /// Filter by active status: `true` or `false`; anything else is no filter
+    pub active: Option<String>,
 
     /// Filter by roles (comma-separated)
     pub roles: Option<String>,
@@ -434,6 +444,37 @@ pub struct PrincipalsQuery {
 
     /// Sort order (asc/desc)
     pub sort_order: Option<String>,
+}
+
+impl PrincipalsQuery {
+    /// Go: only the exact strings `true` and `false` filter
+    /// (api.go:172-177).
+    pub fn active_filter(&self) -> Option<bool> {
+        match self.active.as_deref() {
+            Some("true") => Some(true),
+            Some("false") => Some(false),
+            _ => None,
+        }
+    }
+
+    /// `(page, page_size)`; `None` when every row is wanted (Go
+    /// `paginate`, api.go:272-283: a page size `<= 0` returns everything).
+    pub fn paging(&self) -> Result<Option<(usize, usize)>, PlatformError> {
+        let int = |name: &str, v: Option<&str>| -> Result<i64, PlatformError> {
+            match v.map(str::trim).filter(|v| !v.is_empty()) {
+                None => Ok(0),
+                Some(v) => v
+                    .parse::<i64>()
+                    .map_err(|_| PlatformError::validation(format!("{name} must be an integer"))),
+            }
+        };
+        let size = int("pageSize", self.page_size.as_deref())?;
+        if size <= 0 {
+            return Ok(None);
+        }
+        let page = int("page", self.page.as_deref())?.max(0);
+        Ok(Some((page as usize, size as usize)))
+    }
 }
 
 /// Principals service state
@@ -744,7 +785,7 @@ pub async fn list_principals(
             query.client_id.as_deref(),
             parse_opt(query.scope.as_deref())?,
             parse_opt(query.principal_type.as_deref())?,
-            query.active,
+            query.active_filter(),
             query.q.as_deref(),
             query.email.as_deref(),
         )
@@ -766,8 +807,13 @@ pub async fn list_principals(
         .map(|p| p.into())
         // Roles filter (requires checking hydrated roles, stays in-memory)
         .filter(|p: &PrincipalResponse| match &query.roles {
-            Some(roles_str) if !roles_str.is_empty() => {
-                let required: Vec<&str> = roles_str.split(',').collect();
+            Some(roles_str) if !roles_str.trim().is_empty() => {
+                // Go splitCSV (api.go:239-247): trimmed, empties dropped.
+                let required: Vec<&str> = roles_str
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|r| !r.is_empty())
+                    .collect();
                 required
                     .iter()
                     .any(|r| p.roles.iter().any(|role| role == r))
@@ -776,40 +822,30 @@ pub async fn list_principals(
         })
         .collect();
 
-    // Sort
-    let sort_desc = query.sort_order.as_deref() == Some("desc");
+    // Go sortPrincipals (api.go:251-269): a stable ascending sort, reversed
+    // for "desc"; name and email compare case-insensitively.
     match query.sort_field.as_deref() {
-        Some("name") => filtered.sort_by(|a, b| {
-            let cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());
-            if sort_desc {
-                cmp.reverse()
-            } else {
-                cmp
-            }
-        }),
-        Some("email") => filtered.sort_by(|a, b| {
-            let cmp = a.email.cmp(&b.email);
-            if sort_desc {
-                cmp.reverse()
-            } else {
-                cmp
-            }
-        }),
-        _ => filtered.sort_by(|a, b| {
-            let cmp = a.created_at.cmp(&b.created_at);
-            if sort_desc {
-                cmp.reverse()
-            } else {
-                cmp
-            }
-        }),
+        Some("name") => filtered.sort_by_key(|p| p.name.to_lowercase()),
+        Some("email") => filtered.sort_by_key(|p| p.email.as_deref().unwrap_or("").to_lowercase()),
+        _ => filtered.sort_by(|a, b| a.created_at.cmp(&b.created_at)),
+    }
+    if query
+        .sort_order
+        .as_deref()
+        .is_some_and(|o| o.eq_ignore_ascii_case("desc"))
+    {
+        filtered.reverse();
     }
 
     let total = filtered.len();
-    let offset = query.pagination.offset() as usize;
-    let limit = query.pagination.limit() as usize;
-    let principals: Vec<PrincipalResponse> =
-        filtered.into_iter().skip(offset).take(limit).collect();
+    let principals: Vec<PrincipalResponse> = match query.paging()? {
+        None => filtered,
+        Some((page, size)) => filtered
+            .into_iter()
+            .skip(page.saturating_mul(size))
+            .take(size)
+            .collect(),
+    };
     Ok(Json(PrincipalListResponse { principals, total }))
 }
 
@@ -1956,6 +1992,71 @@ pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn principals_query(uri: &str) -> PrincipalsQuery {
+        let uri: axum::http::Uri = uri.parse().unwrap();
+        axum::extract::Query::<PrincipalsQuery>::try_from_uri(&uri)
+            .unwrap_or_else(|e| panic!("{uri}: {e}"))
+            .0
+    }
+
+    /// hr (`PrincipalDirectory.php:151`) and rfp
+    /// (`PlatformPrincipalDirectory.php:216`) send `?active=true`; hr's role
+    /// import (`ImportRolesRegisterCommand.php:275`) adds `type=USER`. No
+    /// page size, so every row comes back, as in Go.
+    #[test]
+    fn the_apps_list_query_parses_through_the_real_query_parser() {
+        let q = principals_query("/api/principals?active=true");
+        assert_eq!(q.active_filter(), Some(true));
+        assert_eq!(q.paging().unwrap(), None);
+
+        let q = principals_query("/api/principals?type=USER&active=true");
+        assert_eq!(q.principal_type.as_deref(), Some("USER"));
+        assert_eq!(q.active_filter(), Some(true));
+
+        let q = principals_query("/api/principals?active=false");
+        assert_eq!(q.active_filter(), Some(false));
+
+        // Go: anything but "true"/"false" is no filter.
+        assert_eq!(
+            principals_query("/api/principals?active=1").active_filter(),
+            None
+        );
+        assert_eq!(principals_query("/api/principals").active_filter(), None);
+    }
+
+    #[test]
+    fn a_page_size_pages_and_its_absence_returns_everything() {
+        let q = principals_query("/api/principals?page=2&pageSize=10");
+        assert_eq!(q.paging().unwrap(), Some((2, 10)));
+        // The Rust-era aliases still page.
+        assert_eq!(
+            principals_query("/api/principals?page=1&size=5")
+                .paging()
+                .unwrap(),
+            Some((1, 5))
+        );
+        assert_eq!(
+            principals_query("/api/principals?limit=7")
+                .paging()
+                .unwrap(),
+            Some((0, 7))
+        );
+        // Go paginate: a page size <= 0 returns every row.
+        assert_eq!(
+            principals_query("/api/principals?pageSize=0")
+                .paging()
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            principals_query("/api/principals?page=3").paging().unwrap(),
+            None
+        );
+        assert!(principals_query("/api/principals?pageSize=ten")
+            .paging()
+            .is_err());
+    }
     use crate::principal::entity::{Principal, PrincipalType, UserIdentity, UserScope};
     use crate::service_account::entity::RoleAssignment;
     use chrono::Utc;
