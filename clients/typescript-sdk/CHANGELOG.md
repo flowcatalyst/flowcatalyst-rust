@@ -32,6 +32,20 @@ incompatibly.
   neverthrow's `ok(true)` for a genuine delivery, or
   `err(WebhookSignatureError)` with its `code`. The same check, so the two
   never disagree; `verifyDeliverySignature` still throws, unchanged.
+- `CreateServiceAccountRequest.allApplications` (optional boolean) for
+  `api.createServiceAccount`. A new service account has no application
+  access; `allApplications: true` grants every application. The platform
+  answers 403 unless the caller itself reaches every application, and 400
+  `ALL_APPLICATIONS_WITH_APPLICATION_ID` alongside `applicationId`.
+- `passwordHashIgnored` (optional `string[]`) on the principal sync
+  results: `principals().sync()`, `principals().syncUsers()` and the
+  synchronizer's principals `CategorySyncResult`. A sync uses
+  `passwordHash` only to create a user and never changes an existing
+  user's password (owner decision 22 of 2026-09-25); the platform lists
+  the emails whose hash it ignored.
+- The vendored `openapi/openapi.json` carries both fields (hand-added to
+  the published spec, as the Java repo did), and `src/generated` is
+  regenerated from it.
 
 ### Changed
 - The Fastify OIDC session refresh is single-flight (owner ruling 5 of
