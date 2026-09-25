@@ -128,7 +128,6 @@ async fn applications_and_oauth_clients_list_every_row_by_default() {
     assert_eq!(status, 200);
 }
 
-#[allow(dead_code)]
 async fn create_client(app: &TestApp, identifier: &str) -> String {
     let client = Client::new(identifier.to_uppercase(), identifier);
     app.repos
@@ -332,4 +331,106 @@ async fn a_synced_laravel_user_signs_in_and_is_rehashed() {
     )
     .await;
     assert_eq!(status, 200);
+}
+
+/// integral `CreateUserUseCase.php:110-122` (packages_root/.../
+/// integral-service-v2): a tenant user is created with the tenant's **code**
+/// as `clientId`; an `@inhanceapps.com` user with `scope: "ANCHOR"`. Go
+/// resolves the code (resolveClientRef, principal/api/api.go:825-845) and
+/// honours the requested tier (deriveUserScope, api.go:780-819).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn integral_creates_users_by_client_code_and_anchor_scope() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+    let client_id = create_client(&app, "inhance").await;
+    app.repos
+        .anchor_domain_repo
+        .insert(&fc_platform::auth::config_entity::AnchorDomain::new(
+            "inhanceapps.com",
+        ))
+        .await
+        .expect("insert anchor domain");
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &token,
+            json!({
+                "email": "tenant.user@example.test",
+                "name": "Tenant User",
+                "password": "abcdefghijklmnopqrstuvwxyzABCDEF",
+                "clientId": "inhance",
+                "enforcePasswordComplexity": false
+            }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["clientId"], client_id.as_str(), "{body}");
+    assert_eq!(body["scope"], "CLIENT");
+
+    // The clt_ id works as well.
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &token,
+            json!({"email": "second@example.test", "name": "Second",
+                   "password": "abcdefghijklmnopqrstuvwxyzABCDEF",
+                   "clientId": client_id, "enforcePasswordComplexity": false}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["clientId"], client_id.as_str());
+
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &token,
+            json!({
+                "email": "staff@inhanceapps.com",
+                "name": "Staff",
+                "password": "abcdefghijklmnopqrstuvwxyzABCDEF",
+                "enforcePasswordComplexity": false,
+                "scope": "ANCHOR"
+            }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["scope"], "ANCHOR");
+    assert!(body["clientId"].is_null(), "{body}");
+
+    // An unknown code fails closed with Go's 404.
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &token,
+            json!({"email": "x@example.test", "name": "X", "password": "abcdefghijklmnop",
+                   "clientId": "no-such-tenant", "enforcePasswordComplexity": false}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 404, "{body}");
+    assert_eq!(body["error"], "Client_NOT_FOUND");
+    assert_eq!(body["message"], "Client not found: no-such-tenant");
+
+    // ANCHOR on a domain that isn't an anchor domain is refused.
+    let (status, body) = read_json(
+        app.post(
+            "/api/principals/users",
+            &token,
+            json!({"email": "y@example.test", "name": "Y", "password": "abcdefghijklmnop",
+                   "enforcePasswordComplexity": false, "scope": "ANCHOR"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["error"], "ANCHOR_DOMAIN_REQUIRED");
 }

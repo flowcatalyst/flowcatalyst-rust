@@ -38,9 +38,15 @@ pub struct CreateUserRequest {
     /// Display name
     pub name: String,
 
-    /// Client ID (for client-bound users)
+    /// The user's client: its `clt_` id or its identifier (e.g. `inhance`),
+    /// resolved as Go's `resolveClientRef` does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+
+    /// Requested tier: `ANCHOR`, `PARTNER` or `CLIENT` (the default). The
+    /// email domain only confirms a privileged tier, never grants one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 
     /// When false, the platform skips its password complexity rules
     /// (uppercase/lowercase/digit/special) and only enforces a 2-character
@@ -481,6 +487,8 @@ impl PrincipalsQuery {
 #[derive(Clone)]
 pub struct PrincipalsState {
     pub principal_repo: Arc<PrincipalRepository>,
+    /// Resolves a user-create `clientId` given as an id or an identifier
+    pub client_repo: Arc<crate::ClientRepository>,
     /// Resolved application scopes, cached per principal; dropped when a
     /// principal's application access changes so the change applies at once.
     pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
@@ -574,71 +582,53 @@ pub async fn create_user(
         None => IdentityProviderType::Internal,
     };
 
-    // Resolve scope + client association from email domain.
-    let (scope, primary_client_id, granted_client_ids) = if is_anchor_domain {
-        // Anchor: ignore any client_id on the request.
-        (UserScope::Anchor, None, Vec::new())
-    } else if let Some(ref m) = mapping {
-        match m.scope_type {
-            crate::email_domain_mapping::entity::ScopeType::Anchor => {
-                (UserScope::Anchor, None, Vec::new())
-            }
-            crate::email_domain_mapping::entity::ScopeType::Partner => {
-                let client_id = req.client_id.as_deref().ok_or_else(|| {
-                    PlatformError::validation("clientId is required for partner users")
-                })?;
-                let allowed = m.granted_client_ids.iter().any(|c| c == client_id)
-                    || m.primary_client_id.as_deref() == Some(client_id);
-                if !allowed {
-                    return Err(PlatformError::validation(format!(
-                        "clientId {} is not allowed for partner domain {}",
-                        client_id, domain
-                    )));
-                }
+    // Resolve the client reference (clt_ id or identifier) before the tier,
+    // so mapping allow-lists compare canonical ids (Go createUser,
+    // principal/api/api.go:594-606).
+    let req_client_id = match req.client_id.as_deref().map(str::trim) {
+        Some(r) if !r.is_empty() => Some(resolve_client_ref(&state, r).await?),
+        _ => None,
+    };
+    let (scope, primary_client_id) = derive_user_scope(
+        req.scope.as_deref(),
+        is_anchor_domain,
+        mapping.as_ref(),
+        req_client_id,
+    )?;
 
-                // Partner-merge: if a user already exists for this email, emit
-                // a ClientAccessGranted event via the grant use case rather
-                // than a fresh UserCreated. Keeps events + audit logs accurate.
-                if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
-                    let already_linked = existing.client_id.as_deref() == Some(client_id)
-                        || existing.assigned_clients.iter().any(|c| c == client_id);
-                    if already_linked {
-                        return Err(PlatformError::duplicate("Principal", "email", &req.email));
-                    }
-                    let cmd = GrantClientAccessCommand {
-                        user_id: existing.id.clone(),
-                        client_id: client_id.to_string(),
-                    };
-                    let ctx = ExecutionContext::create(&auth.0.principal_id);
-                    state
-                        .grant_client_access_use_case
-                        .run(cmd, ctx)
-                        .await
-                        .into_result()?;
-                    let refreshed = state
-                        .principal_repo
-                        .find_by_id(&existing.id)
-                        .await?
-                        .or_not_found("Principal", &existing.id)?;
-                    return Ok(Json(refreshed.into()));
-                }
-
-                // New partner user — home client + single grant for the
-                // requested client.
-                (
-                    UserScope::Partner,
-                    Some(client_id.to_string()),
-                    vec![client_id.to_string()],
-                )
+    // Partner-merge: if a user already exists for this email, emit a
+    // ClientAccessGranted event via the grant use case rather than a fresh
+    // UserCreated. Keeps events + audit logs accurate.
+    let granted_client_ids = if scope == UserScope::Partner {
+        let client_id = primary_client_id.clone().unwrap_or_default();
+        if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
+            let already_linked = existing.client_id.as_deref() == Some(client_id.as_str())
+                || existing.assigned_clients.iter().any(|c| c == &client_id);
+            if already_linked {
+                return Err(PlatformError::duplicate("Principal", "email", &req.email));
             }
-            crate::email_domain_mapping::entity::ScopeType::Client => {
-                let primary = req.client_id.clone().or(m.primary_client_id.clone());
-                (UserScope::Client, primary, m.granted_client_ids.clone())
-            }
+            let cmd = GrantClientAccessCommand {
+                user_id: existing.id.clone(),
+                client_id: client_id.clone(),
+            };
+            let ctx = ExecutionContext::create(&auth.0.principal_id);
+            state
+                .grant_client_access_use_case
+                .run(cmd, ctx)
+                .await
+                .into_result()?;
+            let refreshed = state
+                .principal_repo
+                .find_by_id(&existing.id)
+                .await?
+                .or_not_found("Principal", &existing.id)?;
+            return Ok(Json(refreshed.into()));
         }
+        // New partner user — home client + single grant for the requested
+        // client.
+        vec![client_id]
     } else {
-        // Unmapped domain → client-scoped, use request's client_id verbatim.
-        (UserScope::Client, req.client_id.clone(), Vec::new())
+        Vec::new()
     };
 
     let cmd = CreateUserCommand {
@@ -701,6 +691,103 @@ pub async fn create_user(
     }
 
     Ok(Json(created.into()))
+}
+
+/// A client reference — its `clt_` id or its identifier — as the client's
+/// id. Go `resolveClientRef` (principal/api/api.go:825-845): the id first,
+/// then the identifier lower-cased; an unknown reference is a 404
+/// `Client_NOT_FOUND`, never a silently mis-scoped user.
+async fn resolve_client_ref(
+    state: &PrincipalsState,
+    reference: &str,
+) -> Result<String, PlatformError> {
+    if let Some(client) = state.client_repo.find_by_id(reference).await? {
+        return Ok(client.id);
+    }
+    if let Some(client) = state
+        .client_repo
+        .find_by_identifier(&reference.to_lowercase())
+        .await?
+    {
+        return Ok(client.id);
+    }
+    Err(PlatformError::Coded {
+        status: StatusCode::NOT_FOUND,
+        code: "Client_NOT_FOUND".to_string(),
+        message: format!("Client not found: {reference}"),
+        details: Default::default(),
+    })
+}
+
+/// The new user's tier and home client. Go `deriveUserScope`
+/// (principal/api/api.go:780-819): the requested tier wins (CLIENT when
+/// absent) and the email domain can only confirm a privileged one:
+/// - ANCHOR needs a registered anchor domain or an ANCHOR mapping, and
+///   carries no client;
+/// - PARTNER needs a PARTNER mapping and a client it allows;
+/// - CLIENT takes the requested client, else a CLIENT mapping's primary.
+pub fn derive_user_scope(
+    requested: Option<&str>,
+    is_anchor_domain: bool,
+    mapping: Option<&crate::email_domain_mapping::entity::EmailDomainMapping>,
+    client_id: Option<String>,
+) -> Result<(UserScope, Option<String>), PlatformError> {
+    use crate::email_domain_mapping::entity::ScopeType;
+    let scope = requested
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_uppercase)
+        .unwrap_or_else(|| "CLIENT".to_string());
+    match scope.as_str() {
+        "ANCHOR" => {
+            let anchor_mapped = mapping.is_some_and(|m| m.scope_type == ScopeType::Anchor);
+            if !is_anchor_domain && !anchor_mapped {
+                return Err(PlatformError::bad_request_code(
+                    "ANCHOR_DOMAIN_REQUIRED",
+                    "ANCHOR scope requires the email's domain to be a registered anchor domain",
+                ));
+            }
+            Ok((UserScope::Anchor, None))
+        }
+        "PARTNER" => {
+            let Some(m) = mapping.filter(|m| m.scope_type == ScopeType::Partner) else {
+                return Err(PlatformError::bad_request_code(
+                    "PARTNER_DOMAIN_REQUIRED",
+                    "PARTNER scope requires a PARTNER email-domain mapping for the email's domain",
+                ));
+            };
+            let Some(client_id) = client_id.filter(|c| !c.is_empty()) else {
+                return Err(PlatformError::bad_request_code(
+                    "CLIENT_REQUIRED",
+                    "clientId is required for partner users",
+                ));
+            };
+            let allowed = m.primary_client_id.as_deref() == Some(client_id.as_str())
+                || m.granted_client_ids.contains(&client_id);
+            if !allowed {
+                return Err(PlatformError::bad_request_code(
+                    "CLIENT_NOT_ALLOWED",
+                    format!(
+                        "clientId {client_id} is not allowed for partner domain {}",
+                        m.email_domain
+                    ),
+                ));
+            }
+            Ok((UserScope::Partner, Some(client_id)))
+        }
+        "CLIENT" => {
+            let client_id = client_id.or_else(|| {
+                mapping
+                    .filter(|m| m.scope_type == ScopeType::Client)
+                    .and_then(|m| m.primary_client_id.clone())
+            });
+            Ok((UserScope::Client, client_id))
+        }
+        _ => Err(PlatformError::bad_request_code(
+            "INVALID_SCOPE",
+            "scope must be ANCHOR, PARTNER, or CLIENT",
+        )),
+    }
 }
 
 /// Get principal by ID
@@ -2065,6 +2152,124 @@ pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mapping(
+        scope_type: crate::email_domain_mapping::entity::ScopeType,
+        primary: Option<&str>,
+        granted: &[&str],
+    ) -> crate::email_domain_mapping::entity::EmailDomainMapping {
+        let mut m = crate::email_domain_mapping::entity::EmailDomainMapping::new(
+            "acme.test",
+            "idp_1",
+            scope_type,
+        );
+        m.primary_client_id = primary.map(String::from);
+        m.granted_client_ids = granted.iter().map(|g| g.to_string()).collect();
+        m
+    }
+
+    fn code(r: Result<(UserScope, Option<String>), PlatformError>) -> String {
+        match r {
+            Err(PlatformError::Coded { code, status, .. }) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                code
+            }
+            other => panic!("expected a coded 400, got {other:?}"),
+        }
+    }
+
+    /// Go `deriveUserScope` (principal/api/api.go:780-819), case by case.
+    #[test]
+    fn user_scope_is_derived_as_go_derives_it() {
+        use crate::email_domain_mapping::entity::ScopeType;
+        let clt = || Some("clt_1".to_string());
+
+        // Absent → CLIENT with the requested client; an anchor domain alone
+        // doesn't make an anchor.
+        assert_eq!(
+            derive_user_scope(None, true, None, clt()).unwrap(),
+            (UserScope::Client, clt())
+        );
+        // CLIENT falls back to a CLIENT mapping's primary.
+        let client_map = mapping(ScopeType::Client, Some("clt_9"), &["clt_8"]);
+        assert_eq!(
+            derive_user_scope(Some("client"), false, Some(&client_map), None).unwrap(),
+            (UserScope::Client, Some("clt_9".to_string()))
+        );
+        // ANCHOR needs the anchor domain (or an ANCHOR mapping); no client.
+        assert_eq!(
+            derive_user_scope(Some("ANCHOR"), true, None, clt()).unwrap(),
+            (UserScope::Anchor, None)
+        );
+        let anchor_map = mapping(ScopeType::Anchor, None, &[]);
+        assert_eq!(
+            derive_user_scope(Some(" anchor "), false, Some(&anchor_map), None).unwrap(),
+            (UserScope::Anchor, None)
+        );
+        assert_eq!(
+            code(derive_user_scope(Some("ANCHOR"), false, None, None)),
+            "ANCHOR_DOMAIN_REQUIRED"
+        );
+        // PARTNER needs a PARTNER mapping and an allowed client.
+        let partner_map = mapping(ScopeType::Partner, Some("clt_1"), &["clt_2"]);
+        assert_eq!(
+            derive_user_scope(
+                Some("PARTNER"),
+                false,
+                Some(&partner_map),
+                Some("clt_2".into())
+            )
+            .unwrap(),
+            (UserScope::Partner, Some("clt_2".to_string()))
+        );
+        assert_eq!(
+            code(derive_user_scope(Some("PARTNER"), false, None, clt())),
+            "PARTNER_DOMAIN_REQUIRED"
+        );
+        assert_eq!(
+            code(derive_user_scope(
+                Some("PARTNER"),
+                false,
+                Some(&partner_map),
+                None
+            )),
+            "CLIENT_REQUIRED"
+        );
+        assert_eq!(
+            code(derive_user_scope(
+                Some("PARTNER"),
+                false,
+                Some(&partner_map),
+                Some("clt_3".into())
+            )),
+            "CLIENT_NOT_ALLOWED"
+        );
+        assert_eq!(
+            code(derive_user_scope(Some("ADMIN"), false, None, None)),
+            "INVALID_SCOPE"
+        );
+    }
+
+    /// integral's `CreateUserUseCase.php:110-122` body, through the Laravel
+    /// SDK's `CreateUserRequest::toArray()`.
+    #[test]
+    fn integrals_create_user_body_deserializes() {
+        let req: CreateUserRequest = serde_json::from_value(serde_json::json!({
+            "email": "a@inhanceapps.com",
+            "name": "A",
+            "password": "x",
+            "enforcePasswordComplexity": false,
+            "scope": "ANCHOR"
+        }))
+        .unwrap();
+        assert_eq!(req.scope.as_deref(), Some("ANCHOR"));
+        let req: CreateUserRequest = serde_json::from_value(serde_json::json!({
+            "email": "b@tenant.test", "name": "B", "password": "x",
+            "clientId": "inhance", "enforcePasswordComplexity": false
+        }))
+        .unwrap();
+        assert_eq!(req.client_id.as_deref(), Some("inhance"));
+    }
 
     fn principals_query(uri: &str) -> PrincipalsQuery {
         let uri: axum::http::Uri = uri.parse().unwrap();

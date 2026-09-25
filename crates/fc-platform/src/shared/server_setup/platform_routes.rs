@@ -352,6 +352,7 @@ pub fn build_platform_routes(
     ));
     let principals_state = PrincipalsState {
         principal_repo: repos.principal_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         audit_service,
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
         email_domain_mapping_repo: repos.edm_repo.clone(),
