@@ -136,13 +136,22 @@ async function baseFetch<T>(
 		const code =
 			(typeof error.error === "string" && error.error) || error.code;
 
+		// No session at all is a 403 `UNAUTHENTICATED` (Go's answer, which
+		// the platform matches); it means what a 401 means here: sign in
+		// again. A 403 with any other code is a permission refusal.
+		const sessionEnded =
+			response.status === 401 ||
+			(response.status === 403 && code === "UNAUTHENTICATED");
+
 		// Emit error event for 401/403
-		if (response.status === 401 || response.status === 403) {
+		if (sessionEnded) {
+			emitApiError(401, message);
+		} else if (response.status === 403) {
 			emitApiError(response.status, message);
 		}
 
 		// Show error banner for non-auth errors unless the caller opted out.
-		if (response.status !== 401 && !suppressGlobalErrorToast) {
+		if (!sessionEnded && !suppressGlobalErrorToast) {
 			toast.error(summaryForStatus(response.status), message);
 		}
 

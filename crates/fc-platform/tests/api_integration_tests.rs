@@ -385,10 +385,11 @@ async fn test_unauthorized_request() {
         .unwrap();
 
     let status = response.status();
+    // No credential: Go's 403 `UNAUTHENTICATED`.
     assert_eq!(
         status.as_u16(),
-        401,
-        "Expected 401 Unauthorized, got {}",
+        403,
+        "Expected 403 UNAUTHENTICATED, got {}",
         status
     );
 }

@@ -102,17 +102,95 @@ impl std::ops::Deref for Authenticated {
     }
 }
 
-/// Error response for authentication failures
+/// Error response for authentication failures, as Go's `Authenticator`
+/// and permission helpers answer them (shared/middleware/middleware.go,
+/// shared/auth/auth.go):
+/// - 401: a bearer token that does not validate (bad signature, expired,
+///   an identity-only token): `{"error": "invalid_token",
+///   "error_description": …}` with `WWW-Authenticate: Bearer
+///   error="invalid_token"` (`writeInvalidTokenError`);
+/// - 403: no credential, or a session cookie that no longer signs anyone
+///   in: `{"error": "UNAUTHENTICATED", "message": "authentication
+///   required"}` (`usecase.Authorization("UNAUTHENTICATED", …)`).
+///
+/// The function routes keep their contract (owner decision #5): a 401
+/// `UNAUTHORIZED` with `code`, carried as a
+/// [`FunctionContractError`](crate::shared::error::FunctionContractError).
 #[derive(Debug)]
 pub struct AuthError {
     pub status: StatusCode,
     pub message: String,
 }
 
+impl AuthError {
+    /// A bearer token that does not authenticate: 401 `invalid_token`.
+    pub fn invalid_token(description: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: description.into(),
+        }
+    }
+
+    /// No credential (or a stale session cookie): 403 `UNAUTHENTICATED`.
+    pub fn unauthenticated(legacy_message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: legacy_message.into(),
+        }
+    }
+}
+
+/// Go's `error_description` for a bearer that fails validation.
+fn invalid_token_description(e: &crate::PlatformError) -> String {
+    match e {
+        crate::PlatformError::TokenExpired => {
+            "token has invalid claims: token is expired".to_string()
+        }
+        crate::PlatformError::InvalidToken { message } => message.clone(),
+        other => other.to_string(),
+    }
+}
+
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
-        let body = ApiError::new("UNAUTHORIZED", self.message);
-        (self.status, Json(body)).into_response()
+        use crate::shared::error::FunctionContractError;
+        let contract = FunctionContractError {
+            status: if self.status == StatusCode::FORBIDDEN {
+                StatusCode::UNAUTHORIZED
+            } else {
+                self.status
+            },
+            code: "UNAUTHORIZED".to_string(),
+            message: self.message.clone(),
+            details: None,
+            retry_after_secs: None,
+        };
+        let mut response = match self.status {
+            StatusCode::UNAUTHORIZED => (
+                StatusCode::UNAUTHORIZED,
+                [(
+                    axum::http::header::WWW_AUTHENTICATE,
+                    r#"Bearer error="invalid_token""#,
+                )],
+                Json(serde_json::json!({
+                    "error": "invalid_token",
+                    "error_description": self.message,
+                })),
+            )
+                .into_response(),
+            StatusCode::FORBIDDEN => (
+                StatusCode::FORBIDDEN,
+                Json(ApiError::new("UNAUTHENTICATED", "authentication required")),
+            )
+                .into_response(),
+            status => (
+                status,
+                Json(ApiError::new("INTERNAL", "Internal server error")),
+            )
+                .into_response(),
+        };
+        response.extensions_mut().insert(contract);
+        response
     }
 }
 
@@ -186,10 +264,8 @@ async fn authenticate(
             stale_session: false,
         }),
         Presented::Bearer(token) => {
-            let unauthorized = |e: crate::PlatformError| AuthError {
-                status: StatusCode::UNAUTHORIZED,
-                message: e.to_string(),
-            };
+            let unauthorized =
+                |e: crate::PlatformError| AuthError::invalid_token(invalid_token_description(&e));
             let claims = app_state
                 .auth_service
                 .validate_token(&token)
@@ -247,14 +323,13 @@ where
 
         match authenticate(&app_state, parts).await? {
             Authentication::Context(context) => Ok(Authenticated(context)),
-            Authentication::Anonymous { stale_session } => Err(AuthError {
-                status: StatusCode::UNAUTHORIZED,
-                message: if stale_session {
-                    "Session expired or invalid".to_string()
+            Authentication::Anonymous { stale_session } => {
+                Err(AuthError::unauthenticated(if stale_session {
+                    "Session expired or invalid"
                 } else {
-                    "Missing authentication token".to_string()
-                },
-            }),
+                    "Missing authentication token"
+                }))
+            }
         }
     }
 }
@@ -536,7 +611,11 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            err.status,
+            StatusCode::FORBIDDEN,
+            "no credential: Go's 403 UNAUTHENTICATED"
+        );
         assert!(err.message.contains("Missing authentication token"));
     }
 
@@ -548,7 +627,11 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            err.status,
+            StatusCode::FORBIDDEN,
+            "no credential: Go's 403 UNAUTHENTICATED"
+        );
         assert!(err.message.contains("Missing authentication token"));
     }
 
@@ -562,7 +645,11 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            err.status,
+            StatusCode::FORBIDDEN,
+            "no credential: Go's 403 UNAUTHENTICATED"
+        );
     }
 
     #[tokio::test]
@@ -653,7 +740,11 @@ mod tests {
         let err = Authenticated::from_request_parts(&mut parts, &())
             .await
             .unwrap_err();
-        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            err.status,
+            StatusCode::FORBIDDEN,
+            "no credential: Go's 403 UNAUTHENTICATED"
+        );
         assert!(err.message.contains("Session"), "{}", err.message);
 
         let mut parts = make_parts_with_app_state(None, Some(&format!("fc_session={}", token)));
@@ -675,7 +766,11 @@ mod tests {
         let err = Authenticated::from_request_parts(&mut parts, &())
             .await
             .unwrap_err();
-        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            err.status,
+            StatusCode::FORBIDDEN,
+            "no credential: Go's 403 UNAUTHENTICATED"
+        );
     }
 
     #[tokio::test]
@@ -726,7 +821,11 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            err.status,
+            StatusCode::FORBIDDEN,
+            "no credential: Go's 403 UNAUTHENTICATED"
+        );
     }
 
     #[test]

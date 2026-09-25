@@ -328,7 +328,11 @@ async fn the_session_cookie_is_the_subject_reloaded_per_request() {
     let resp = app.get_with_session("/auth/me", &cookie).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let resp = app.get_with_session("/api/event-types", &cookie).await;
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a signed-out session: Go's 403 UNAUTHENTICATED"
+    );
 }
 
 /// An access token replayed as the cookie is no session, even for an

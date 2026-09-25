@@ -70,7 +70,7 @@ async fn client_scoped_token_cannot_write_anchor_only_resources() {
 /// Unauthenticated requests must be 401 on authenticated endpoints.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn unauthenticated_requests_rejected_with_401() {
+async fn unauthenticated_requests_rejected_with_403_unauthenticated() {
     let app = TestApp::setup().await;
 
     let paths = &[
@@ -87,8 +87,8 @@ async fn unauthenticated_requests_rejected_with_401() {
         let resp = app.get_unauth(path).await;
         assert_eq!(
             resp.status(),
-            StatusCode::UNAUTHORIZED,
-            "GET {} unauthenticated should 401, got {}",
+            StatusCode::FORBIDDEN,
+            "GET {} unauthenticated should be Go's 403 UNAUTHENTICATED, got {}",
             path,
             resp.status()
         );
@@ -97,7 +97,7 @@ async fn unauthenticated_requests_rejected_with_401() {
 
 /// The raw debug views expose every tenant's event and dispatch-job
 /// payloads. They were once mounted with no authentication at all; they
-/// must be 401 without a token and 403 without Go's view-raw permissions
+/// must be 403 `UNAUTHENTICATED` without a token (Go) and 403 without Go's view-raw permissions
 /// (`platform:messaging:event:view-raw` / `dispatch-job:view-raw`), and
 /// open to an anchor admin.
 #[tokio::test]
@@ -116,8 +116,8 @@ async fn raw_debug_views_require_authentication_and_view_raw() {
         let resp = app.get_unauth(path).await;
         assert_eq!(
             resp.status(),
-            StatusCode::UNAUTHORIZED,
-            "GET {path} unauthenticated"
+            StatusCode::FORBIDDEN,
+            "GET {path} unauthenticated (Go's 403 UNAUTHENTICATED)"
         );
 
         let resp = app.get(path, &client_token).await;
