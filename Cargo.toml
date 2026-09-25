@@ -14,6 +14,8 @@ members = [
     "crates/fc-fnhost-core",
     "crates/fc-function-signing",
     "crates/fc-http-listener",
+    "crates/fc-web",
+    "crates/fc-web/bundle",
     "bin/fc-dev",
     "bin/fc-mcp-server",
     "bin/fc-router",
