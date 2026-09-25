@@ -153,7 +153,7 @@ impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
         }
 
         // 4. Hard-cutover domain gate: if the principal's domain has been
-        //    mapped to a federated IdP since the passkey was registered, the
+        //    mapped to an OIDC IdP since the passkey was registered, the
         //    passkey is no longer usable — the IdP owns identity.
         let email = principal.email().ok_or_else(|| {
             UseCaseError::business_rule(
@@ -164,9 +164,8 @@ impl<U: UnitOfWork> AuthenticatePasskeyUseCase<U> {
         let domain = email.split('@').nth(1).unwrap_or("").to_lowercase();
         if self
             .email_domain_mapping_repo
-            .find_by_email_domain(&domain)
+            .is_federated_domain(&domain)
             .await?
-            .is_some()
         {
             return Err(UseCaseError::business_rule(
                 "DOMAIN_FEDERATED",

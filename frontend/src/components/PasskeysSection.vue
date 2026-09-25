@@ -37,7 +37,9 @@ async function onRegister() {
 	error.value = null;
 	successMessage.value = null;
 	try {
-		const name = newPasskeyName.value.trim() || undefined;
+		// The platform requires a name (Go's NAME_REQUIRED); a blank field
+		// gets a generic one rather than failing after the ceremony.
+		const name = newPasskeyName.value.trim() || "Passkey";
 		await registerPasskey(name);
 		successMessage.value = "Passkey added.";
 		newPasskeyName.value = "";

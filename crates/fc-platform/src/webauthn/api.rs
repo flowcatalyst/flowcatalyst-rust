@@ -80,8 +80,11 @@ pub struct RegisterCompleteRequest {
     /// User-supplied label (e.g. "Andrew's iPhone").
     pub name: Option<String>,
     /// The `PublicKeyCredential` returned by `navigator.credentials.create()`.
+    /// Read only once the ceremony is found, as Go does, so an unknown
+    /// ceremony is reported as such whatever the credential holds.
     #[schema(value_type = Object)]
-    pub credential: RegisterPublicKeyCredential,
+    #[serde(default)]
+    pub credential: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -112,8 +115,10 @@ pub struct AuthenticateBeginResponse {
 pub struct AuthenticateCompleteRequest {
     pub state_id: String,
     /// The `PublicKeyCredential` returned by `navigator.credentials.get()`.
+    /// Read only once the ceremony is found (see [`RegisterCompleteRequest`]).
     #[schema(value_type = Object)]
-    pub credential: PublicKeyCredential,
+    #[serde(default)]
+    pub credential: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -136,13 +141,14 @@ pub struct CredentialSummary {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Every failed passkey sign-in answers alike, as Go's (webauthn/api/api.go
+/// `invalidCredentials`): 403 `INVALID_CREDENTIALS`, `Invalid credentials.`
 fn invalid_credentials() -> Response {
     (
-        StatusCode::UNAUTHORIZED,
+        StatusCode::FORBIDDEN,
         Json(serde_json::json!({
             "error": "INVALID_CREDENTIALS",
-            "code": "INVALID_CREDENTIALS",
-            "message": "passkey authentication failed",
+            "message": "Invalid credentials.",
         })),
     )
         .into_response()
@@ -246,13 +252,26 @@ pub async fn register_complete(
     // Session cookie only (Java 6a06a7f0 S2.4): a bearer, possibly
     // delegated to an OAuth client, never manages the user's passkeys.
     auth.0.require_session_user()?;
+    // Go's order (webauthn/api/api.go registerComplete): the name, then the
+    // ceremony, then the credential.
+    if req.name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+        return Err(PlatformError::bad_request_code(
+            "NAME_REQUIRED",
+            "a passkey name is required",
+        ));
+    }
     let consumed = state
         .ceremony_repo
         .consume_registration(&req.state_id)
         .await?
         .ok_or_else(|| {
-            PlatformError::bad_request("registration ceremony state not found or expired")
+            PlatformError::bad_request_code(
+                "STATE_NOT_FOUND",
+                "registration ceremony state not found or expired",
+            )
         })?;
+    let credential: RegisterPublicKeyCredential = serde_json::from_value(req.credential)
+        .map_err(|e| PlatformError::bad_request_code("INVALID_CREDENTIAL", e.to_string()))?;
 
     if consumed.principal_id != auth.0.principal_id {
         return Err(PlatformError::Forbidden {
@@ -270,7 +289,7 @@ pub async fn register_complete(
     let cmd = RegisterPasskeyCommand {
         principal_id: consumed.principal_id,
         name: req.name,
-        registration_response: req.credential,
+        registration_response: credential,
         registration_state: Some(consumed.state),
     };
 
@@ -417,8 +436,20 @@ pub async fn authenticate_complete(
     // principal once the credential is loaded; for tracing/event metadata
     // we'll start as anonymous and the use case can re-bind.
     let ctx = ExecutionContext::create("anonymous");
+    let Ok(credential) = serde_json::from_value::<PublicKeyCredential>(req.credential) else {
+        record_user_login_attempt(
+            &state.login_attempt_repo,
+            None,
+            None,
+            ip,
+            LoginOutcome::Failure,
+            Some("INVALID_CREDENTIALS"),
+        )
+        .await;
+        return invalid_credentials();
+    };
     let cmd = AuthenticatePasskeyCommand {
-        authentication_response: req.credential,
+        authentication_response: credential,
         authentication_state: Some(consumed.state),
     };
 

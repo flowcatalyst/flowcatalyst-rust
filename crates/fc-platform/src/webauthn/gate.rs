@@ -1,7 +1,10 @@
 //! Domain gate — passkeys are only available for internal-auth principals.
 //!
-//! A domain is considered federated if it has any row in
-//! `email_domain_mapping` (see `project_passkeys_scope.md`). Federated
+//! A domain is federated when it is mapped to an OIDC (external) identity
+//! provider. A mapping to an INTERNAL provider does not federate it: Go's
+//! `fcdev init` maps the anchor domain to an INTERNAL provider, and Go never
+//! refuses those users passkeys (Go gates password login only on OIDC
+//! providers, auth/login/endpoint.go `SSO_REQUIRED`). Federated
 //! domains MUST NOT be issued passkey challenges or have credentials
 //! returned to them — the IdP owns identity. The check is enforced both at
 //! the `begin` handlers (refuse to issue a challenge) and inside the
@@ -21,13 +24,14 @@ pub fn extract_domain(email: &str) -> Result<String> {
         })
 }
 
-/// Returns `Ok(())` if the domain is internal (no mapping). Returns
-/// `BadRequest` if the domain maps to a federated IdP — callers should
+/// Returns `Ok(())` if the domain is internal (unmapped, or mapped to an
+/// INTERNAL provider). Returns `BadRequest` if the domain maps to an OIDC
+/// IdP — callers should
 /// surface a generic enumeration-safe response, not the underlying reason
 /// (see `enumeration_defence.rs`).
 pub async fn ensure_internal_auth(email: &str, repo: &EmailDomainMappingRepository) -> Result<()> {
     let domain = extract_domain(email)?;
-    if repo.find_by_email_domain(&domain).await?.is_some() {
+    if repo.is_federated_domain(&domain).await? {
         return Err(PlatformError::bad_request(
             "passkeys are not available for this domain".to_string(),
         ));

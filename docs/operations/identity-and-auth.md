@@ -139,7 +139,7 @@ For Amazon SES: use SMTP credentials (not API). Set `FC_SMTP_HOST=email-smtp.eu-
 
 Not yet shipped. The data model is planned around `iam_user_authenticators` so adding MFA doesn't require a migration when it happens. WebAuthn is the intended first authenticator type (passkey + security key support); the `webauthn` aggregate exists in the codebase already as the data model.
 
-Note: passkeys are intended only for tenants **without** an IDP (the IDP owns identity for federated users). The presence of an `email_domain_mapping` to an IDP gates passkey enrolment off.
+Note: passkeys are intended only for tenants **without** an external IDP (the IDP owns identity for federated users). An `email_domain_mapping` to an **OIDC** identity provider gates passkeys off; a mapping to an INTERNAL provider (Go's `fcdev init` creates one for the anchor domain) does not.
 
 ---
 
