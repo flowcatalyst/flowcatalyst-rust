@@ -13,6 +13,7 @@ import {
 } from "@/api/identity-providers";
 import { clientsApi, type Client } from "@/api/clients";
 import { rolesApi, type Role } from "@/api/roles";
+import { methodLabel, type TwoFactorMethod } from "@/api/twofactor";
 import { getErrorMessage } from "@/utils/errors";
 import { useReturnTo } from "@/composables/useReturnTo";
 
@@ -37,7 +38,18 @@ const editForm = ref({
 	primaryClientId: null as string | null,
 	requiredOidcTenantId: "" as string,
 	syncRolesFromIdp: false,
+	require2fa: false,
+	allowed2faMethods: [] as TwoFactorMethod[],
+	rememberDeviceEnabled: false,
+	rememberDeviceDays: 30,
 });
+
+function toggle2faMethod(method: TwoFactorMethod, on: boolean) {
+	const set = new Set(editForm.value.allowed2faMethods);
+	if (on) set.add(method);
+	else set.delete(method);
+	editForm.value.allowed2faMethods = [...set];
+}
 
 // Client autocomplete
 const filteredClients = ref<Client[]>([]);
@@ -73,6 +85,13 @@ const isValid = computed(() => {
 		return false;
 	}
 	if (isOidcMultiTenant.value && !editForm.value.requiredOidcTenantId.trim()) {
+		return false;
+	}
+	if (
+		show2faControls.value &&
+		editForm.value.require2fa &&
+		editForm.value.allowed2faMethods.length === 0
+	) {
 		return false;
 	}
 	return true;
@@ -117,6 +136,10 @@ function resetEditForm() {
 			primaryClientId: mapping.value.primaryClientId || null,
 			requiredOidcTenantId: mapping.value.requiredOidcTenantId || "",
 			syncRolesFromIdp: mapping.value.syncRolesFromIdp ?? false,
+			require2fa: mapping.value.require2fa ?? false,
+			allowed2faMethods: [...(mapping.value.allowed2faMethods ?? [])],
+			rememberDeviceEnabled: mapping.value.rememberDeviceEnabled ?? false,
+			rememberDeviceDays: mapping.value.rememberDeviceDays || 30,
 		};
 		if (mapping.value.primaryClientId) {
 			selectedPrimaryClient.value =
@@ -145,6 +168,12 @@ const isOidcMultiTenant = computed(() => {
 const isExternalIdp = computed(() => {
 	return provider.value?.type === "OIDC";
 });
+
+// 2FA only applies to internal-auth (password) domains: the linked provider
+// must be loaded and must not be OIDC.
+const show2faControls = computed(
+	() => !!provider.value && provider.value.type !== "OIDC",
+);
 
 const showRolePicker = computed(() => {
 	return isExternalIdp.value && editForm.value.scopeType !== "ANCHOR";
@@ -223,19 +252,20 @@ async function saveChanges() {
 			updateData['syncRolesFromIdp'] = editForm.value.syncRolesFromIdp;
 		}
 
-		const updated = await emailDomainMappingsApi.update(
-			mapping.value.id,
-			updateData,
-		);
-		mapping.value = updated;
-
-		// Update the selected client display
-		if (updated.primaryClientId) {
-			selectedPrimaryClient.value =
-				clients.value.find((c) => c.id === updated.primaryClientId) || null;
-		} else {
-			selectedPrimaryClient.value = null;
+		// The second-factor policy (internal-auth domains only)
+		if (show2faControls.value) {
+			updateData['require2fa'] = editForm.value.require2fa;
+			updateData['allowed2faMethods'] = editForm.value.require2fa
+				? editForm.value.allowed2faMethods
+				: [];
+			updateData['rememberDeviceEnabled'] = editForm.value.rememberDeviceEnabled;
+			updateData['rememberDeviceDays'] = editForm.value.rememberDeviceDays;
 		}
+
+		// 204 No Content: refetch the mapping rather than reading the reply.
+		await emailDomainMappingsApi.update(mapping.value.id, updateData);
+		mapping.value = await emailDomainMappingsApi.get(mapping.value.id);
+		resetEditForm();
 
 		isEditing.value = false;
 		toast.success("Success", "Email domain mapping updated successfully");
@@ -377,6 +407,37 @@ function getPrimaryClientName(): string {
               </span>
             </div>
 
+            <template v-if="show2faControls">
+              <div class="field-group">
+                <label>Two-Factor Authentication</label>
+                <span class="field-value">
+                  <Tag
+                    :value="mapping.require2fa ? 'Required' : 'Optional'"
+                    :severity="mapping.require2fa ? 'success' : 'secondary'"
+                  />
+                </span>
+              </div>
+
+              <div class="field-group" v-if="mapping.require2fa">
+                <label>Allowed 2FA Methods</label>
+                <div v-if="mapping.allowed2faMethods?.length" class="role-chips">
+                  <Chip
+                    v-for="m in mapping.allowed2faMethods"
+                    :key="m"
+                    :label="methodLabel(m)"
+                  />
+                </div>
+                <span class="field-value muted" v-else>None</span>
+              </div>
+
+              <div class="field-group" v-if="mapping.require2fa">
+                <label>Remember Device</label>
+                <span class="field-value">
+                  {{ mapping.rememberDeviceEnabled ? `Allowed (${mapping.rememberDeviceDays} days)` : 'Off' }}
+                </span>
+              </div>
+            </template>
+
             <div class="field-group">
               <label>Created</label>
               <span class="field-value">{{ formatDate(mapping.createdAt) }}</span>
@@ -498,6 +559,77 @@ function getPrimaryClientName(): string {
                 login. Synced roles are filtered by the allowed roles list above.
               </small>
             </div>
+
+            <!-- Two-factor authentication (internal-auth domains only) -->
+            <template v-if="show2faControls">
+              <div class="field">
+                <label for="require2fa">Require Two-Factor Authentication</label>
+                <div class="toggle-row">
+                  <ToggleSwitch inputId="require2fa" v-model="editForm.require2fa" />
+                  <span class="toggle-label">{{ editForm.require2fa ? 'Required' : 'Optional' }}</span>
+                </div>
+                <small class="field-help">
+                  Applies to password sign-in for this domain. Passkey sign-in is unaffected;
+                  federated (SSO) users are never prompted.
+                </small>
+              </div>
+
+              <div v-if="editForm.require2fa" class="field">
+                <label>Allowed 2FA Methods</label>
+                <div class="checkbox-group">
+                  <div class="checkbox-row">
+                    <Checkbox
+                      inputId="method-totp"
+                      :modelValue="editForm.allowed2faMethods.includes('TOTP')"
+                      binary
+                      @update:modelValue="(on: boolean) => toggle2faMethod('TOTP', on)"
+                    />
+                    <label for="method-totp">Authenticator app</label>
+                  </div>
+                  <div class="checkbox-row">
+                    <Checkbox
+                      inputId="method-email"
+                      :modelValue="editForm.allowed2faMethods.includes('EMAIL_PIN')"
+                      binary
+                      @update:modelValue="(on: boolean) => toggle2faMethod('EMAIL_PIN', on)"
+                    />
+                    <label for="method-email">Email code</label>
+                  </div>
+                </div>
+              </div>
+
+              <Message
+                v-if="editForm.require2fa && editForm.allowed2faMethods.length === 0"
+                severity="warn"
+                :closable="false"
+              >
+                Select at least one method.
+              </Message>
+
+              <div v-if="editForm.require2fa" class="field">
+                <label for="rememberDeviceEnabled">Allow "remember this device"</label>
+                <div class="toggle-row">
+                  <ToggleSwitch
+                    inputId="rememberDeviceEnabled"
+                    v-model="editForm.rememberDeviceEnabled"
+                  />
+                  <span class="toggle-label">{{
+                    editForm.rememberDeviceEnabled ? 'Allowed' : 'Off'
+                  }}</span>
+                </div>
+              </div>
+
+              <div v-if="editForm.require2fa && editForm.rememberDeviceEnabled" class="field">
+                <label for="rememberDeviceDays">Remember for (days)</label>
+                <InputNumber
+                  inputId="rememberDeviceDays"
+                  v-model="editForm.rememberDeviceDays"
+                  :min="1"
+                  :max="365"
+                  showButtons
+                />
+              </div>
+            </template>
 
             <Message v-if="editForm.scopeType === 'ANCHOR'" severity="info" :closable="false">
               Anchor users have platform admin access and can access all clients.
@@ -727,6 +859,22 @@ function getPrimaryClientName(): string {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.checkbox-group {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field .checkbox-row label {
+  font-weight: 400;
 }
 
 .toggle-label {

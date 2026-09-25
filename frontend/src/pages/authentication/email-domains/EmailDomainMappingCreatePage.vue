@@ -13,6 +13,7 @@ import {
 } from "@/api/identity-providers";
 import { clientsApi, type Client } from "@/api/clients";
 import { rolesApi, type Role } from "@/api/roles";
+import type { TwoFactorMethod } from "@/api/twofactor";
 import { getErrorMessage } from "@/utils/errors";
 
 const router = useRouter();
@@ -35,7 +36,24 @@ const form = ref({
 	primaryClientId: null as string | null,
 	requiredOidcTenantId: "" as string,
 	syncRolesFromIdp: false,
+	require2fa: false,
+	allowed2faMethods: [] as TwoFactorMethod[],
+	rememberDeviceEnabled: false,
+	rememberDeviceDays: 30,
 });
+
+// 2FA only applies to internal-auth (password) domains: a provider must be
+// selected and it must not be OIDC.
+const show2faControls = computed(
+	() => !!selectedProvider.value && selectedProvider.value.type !== "OIDC",
+);
+
+function toggle2faMethod(method: TwoFactorMethod, on: boolean) {
+	const set = new Set(form.value.allowed2faMethods);
+	if (on) set.add(method);
+	else set.delete(method);
+	form.value.allowed2faMethods = [...set];
+}
 
 const isSelectedProviderMultiTenant = computed(() => {
 	return selectedProvider.value?.oidcMultiTenant === true;
@@ -89,6 +107,12 @@ const isValid = computed(() => {
 	if (
 		isSelectedProviderMultiTenant.value &&
 		!form.value.requiredOidcTenantId.trim()
+	)
+		return false;
+	if (
+		show2faControls.value &&
+		form.value.require2fa &&
+		form.value.allowed2faMethods.length === 0
 	)
 		return false;
 	return true;
@@ -167,6 +191,16 @@ async function createMapping() {
 			syncRolesFromIdp: showRolePicker.value
 				? form.value.syncRolesFromIdp
 				: undefined,
+			...(show2faControls.value
+				? {
+						require2fa: form.value.require2fa,
+						allowed2faMethods: form.value.require2fa
+							? form.value.allowed2faMethods
+							: [],
+						rememberDeviceEnabled: form.value.rememberDeviceEnabled,
+						rememberDeviceDays: form.value.rememberDeviceDays,
+					}
+				: {}),
 		};
 
 		const created = await emailDomainMappingsApi.create(requestData);
@@ -348,6 +382,72 @@ async function createMapping() {
           </small>
         </div>
 
+        <!-- Two-factor authentication (internal-auth domains only) -->
+        <template v-if="show2faControls">
+          <div class="field">
+            <label for="require2fa">Require Two-Factor Authentication</label>
+            <div class="toggle-row">
+              <ToggleSwitch inputId="require2fa" v-model="form.require2fa" />
+              <span class="toggle-label">{{ form.require2fa ? 'Required' : 'Optional' }}</span>
+            </div>
+            <small class="field-help">
+              Applies to password sign-in for this domain. Passkey sign-in is unaffected;
+              federated (SSO) users are never prompted.
+            </small>
+          </div>
+
+          <div v-if="form.require2fa" class="field">
+            <label>Allowed 2FA Methods</label>
+            <div class="checkbox-group">
+              <div class="checkbox-row">
+                <Checkbox
+                  inputId="method-totp"
+                  :modelValue="form.allowed2faMethods.includes('TOTP')"
+                  binary
+                  @update:modelValue="(on: boolean) => toggle2faMethod('TOTP', on)"
+                />
+                <label for="method-totp">Authenticator app</label>
+              </div>
+              <div class="checkbox-row">
+                <Checkbox
+                  inputId="method-email"
+                  :modelValue="form.allowed2faMethods.includes('EMAIL_PIN')"
+                  binary
+                  @update:modelValue="(on: boolean) => toggle2faMethod('EMAIL_PIN', on)"
+                />
+                <label for="method-email">Email code</label>
+              </div>
+            </div>
+          </div>
+
+          <Message
+            v-if="form.require2fa && form.allowed2faMethods.length === 0"
+            severity="warn"
+            :closable="false"
+          >
+            Select at least one method.
+          </Message>
+
+          <div v-if="form.require2fa" class="field">
+            <label for="rememberDeviceEnabled">Allow "remember this device"</label>
+            <div class="toggle-row">
+              <ToggleSwitch inputId="rememberDeviceEnabled" v-model="form.rememberDeviceEnabled" />
+              <span class="toggle-label">{{ form.rememberDeviceEnabled ? 'Allowed' : 'Off' }}</span>
+            </div>
+          </div>
+
+          <div v-if="form.require2fa && form.rememberDeviceEnabled" class="field">
+            <label for="rememberDeviceDays">Remember for (days)</label>
+            <InputNumber
+              inputId="rememberDeviceDays"
+              v-model="form.rememberDeviceDays"
+              :min="1"
+              :max="365"
+              showButtons
+            />
+          </div>
+        </template>
+
         <Message v-if="form.scopeType === 'ANCHOR'" severity="info" :closable="false">
           Anchor users have platform admin access and can access all clients.
         </Message>
@@ -492,6 +592,22 @@ async function createMapping() {
 .toggle-label {
   font-size: 14px;
   color: #475569;
+}
+
+.checkbox-group {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field .checkbox-row label {
+  font-weight: 400;
 }
 
 :deep(.p-picklist) {
