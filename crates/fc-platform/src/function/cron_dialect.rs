@@ -8,7 +8,8 @@
 //! either day field is a bare `*`/`?`, a day must match both; when both are
 //! restricted, **either** one. Its publish check and its scheduler use that
 //! same reader, so a five-field cron (the manifest schema's own example) is
-//! refused at publish with `CRON_INVALID`. The code wins: six fields.
+//! refused at publish with `CRON_INVALID`. Rust accepts five as well (owner
+//! decision 5): seconds 0, stored as six.
 //!
 //! **What the Rust scheduler runs.** The poller evaluates stored crons with
 //! the `cron` crate, which reads the same six fields but numbers the days of
@@ -186,14 +187,18 @@ mod tests {
 
     #[test]
     fn javas_errors_pass_through() {
-        assert_eq!(
-            scheduler_crons("0 * * * *").unwrap_err().0,
-            "CRON_INVALID_SHAPE"
-        );
+        assert_eq!(scheduler_crons("0 * * *").unwrap_err().0, "CRON_INVALID");
         assert_eq!(
             scheduler_crons("0 0 0 * * 7").unwrap_err().0,
-            "INVALID_CRON"
+            "CRON_INVALID"
         );
+    }
+
+    /// A 5-field cron is stored with seconds 0.
+    #[test]
+    fn five_fields_are_stored_as_six() {
+        assert_eq!(crons("*/15 * * * *"), vec!["0 */15 * * * *"]);
+        assert_eq!(crons("0 9 * * 1-5"), vec!["0 0 9 * * MON,TUE,WED,THU,FRI"]);
     }
 
     /// Every rendering is also valid Java, and parses in the scheduler.

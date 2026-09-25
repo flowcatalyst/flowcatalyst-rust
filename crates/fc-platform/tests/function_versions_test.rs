@@ -797,7 +797,7 @@ async fn publish_checks_and_the_manifest_check() {
     // The check route lists every problem, in Java's order, and writes nothing.
     let schedules = json!({"runtime": "wasm", "entrypoint": "handle", "endpoints": webhook,
         "subscriptions": [{"eventType": "billing:invoices:invoice:created", "path": "/events/x"}],
-        "schedules": [{"cron": "0 * * * *", "timezone": "Mars/Olympus", "path": "/events/tick"}]});
+        "schedules": [{"cron": "0 * * *", "timezone": "Mars/Olympus", "path": "/events/tick"}]});
     let (status, check) = post(
         &r,
         &format!("{path}/manifest/check"),
@@ -824,8 +824,8 @@ async fn publish_checks_and_the_manifest_check() {
     );
     assert_eq!(
         check["errors"][1]["message"],
-        "cron expression '0 * * * *' invalid: cron expression must have 6 \
-         whitespace-separated fields (sec min hour dom mon dow), got 5: '0 * * * *'"
+        "cron expression '0 * * *' invalid: cron expression must have 5 or 6 \
+         whitespace-separated fields ([sec] min hour dom mon dow), got 4: '0 * * *'"
     );
     assert_eq!(check["errors"][0]["details"], json!({}));
     assert!(

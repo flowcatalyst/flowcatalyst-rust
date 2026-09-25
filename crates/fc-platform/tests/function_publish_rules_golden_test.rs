@@ -26,15 +26,35 @@ fn table(name: &str) -> Vec<(String, Value)> {
     cases.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
+/// Java's answers, with owner decision 5's deviations applied: one code,
+/// `CRON_INVALID`, for every refusal (Java's `INVALID_CRON` and
+/// `CRON_INVALID_SHAPE` are internal, it publishes `CRON_INVALID`), and a
+/// five-field cron accepted (seconds 0), so the shape message names both
+/// counts.
 #[test]
 fn cron_expressions_parse_as_java_parses_them() {
+    let mut five_fields = 0;
     for (text, want) in table("cron") {
         let got = match parse_cron(&text) {
             Ok(()) => "OK".to_string(),
             Err((code, message)) => format!("{code} {message}"),
         };
-        assert_eq!(got, want.as_str().unwrap(), "{text:?}");
+        let fields = text.split_whitespace().count();
+        let want = want.as_str().unwrap();
+        let want = if fields == 5 && !text.trim_start().starts_with('@') {
+            five_fields += 1;
+            "OK".to_string()
+        } else {
+            want.replacen("INVALID_CRON ", "CRON_INVALID ", 1)
+                .replacen("CRON_INVALID_SHAPE ", "CRON_INVALID ", 1)
+                .replace(
+                    "must have 6 whitespace-separated fields (sec min hour dom mon dow)",
+                    "must have 5 or 6 whitespace-separated fields ([sec] min hour dom mon dow)",
+                )
+        };
+        assert_eq!(got, want, "{text:?}");
     }
+    assert_eq!(five_fields, 1, "Java's table has one five-field cron");
 }
 
 #[test]

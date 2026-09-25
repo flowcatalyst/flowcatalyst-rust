@@ -160,7 +160,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "cron": { "type": "string", "minLength": 1, "description": "The cron expression." },
+          "cron": { "type": "string", "minLength": 1, "description": "The cron expression: 6 fields (sec min hour dom mon dow) or 5 (min hour dom mon dow, seconds 0). Day of week 0-6 with 0 = Sunday, or sun-sat; when both day fields are restricted, either matches. Anything else is CRON_INVALID." },
           "timezone": { "type": "string", "description": "An optional IANA timezone name." },
           "path": {
             "type": "string",

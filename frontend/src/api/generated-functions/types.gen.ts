@@ -198,6 +198,9 @@ export type ManifestSubscription = {
 };
 
 export type ManifestSchedule = {
+    /**
+     * 6 fields (sec min hour dom mon dow) or 5 (min hour dom mon dow, seconds 0); anything else is CRON_INVALID
+     */
     cron: string;
     timezone?: string;
     path: string;

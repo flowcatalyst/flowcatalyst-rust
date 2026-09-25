@@ -3,6 +3,13 @@
 //! (`scheduledjob/cron/CronExpression.parse`, validation only) and Java's
 //! `ZoneId.of`.
 //!
+//! **Beyond Java (owner decision 5):** a manifest cron may have 5 fields
+//! (`minute hour day-of-month month day-of-week`) or Java's 6; with 5 the
+//! seconds are `0`, and the stored cron (what the scheduler, which reads
+//! six, evaluates) is the text with `0 ` in front. Every refusal has one
+//! code, `CRON_INVALID` (Java splits `INVALID_CRON` / `CRON_INVALID_SHAPE`
+//! internally and publishes `CRON_INVALID`).
+//!
 //! The grammar is ported with Java's field bit sets ([`JavaCron`]): publish
 //! refuses what Java refuses, with the same messages, and promote wiring
 //! translates what Java accepts into what the Rust scheduler evaluates the
@@ -13,6 +20,9 @@ use std::str::FromStr;
 
 /// The six fields `second minute hour day-of-month month day-of-week`.
 const FIELD_COUNT: usize = 6;
+
+/// The one code every cron refusal carries.
+pub const CRON_INVALID: &str = "CRON_INVALID";
 
 struct Bounds {
     min: u32,
@@ -79,9 +89,10 @@ fn is_regex_space(c: char) -> bool {
 /// both day fields; when neither has it, either one.
 pub const STAR_BIT: u64 = 1 << 63;
 
-/// A parsed Java cron expression (Java `CronExpression`): the stripped text,
-/// its six fields as written, and each field's bit set (bit `n` for value
-/// `n`, plus [`STAR_BIT`] on the day fields). Day of week 0 is Sunday.
+/// A parsed Java cron expression (Java `CronExpression`): the text as the
+/// scheduler stores it (stripped; a 5-field one with `0 ` seconds in
+/// front), its six fields, and each field's bit set (bit `n` for value `n`,
+/// plus [`STAR_BIT`] on the day fields). Day of week 0 is Sunday.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JavaCron {
     pub expression: String,
@@ -89,9 +100,9 @@ pub struct JavaCron {
     pub bits: [u64; FIELD_COUNT],
 }
 
-/// Java `CronExpression.parse`: `Ok` or `(code, message)`, the code
-/// `INVALID_CRON` (blank, descriptor, per-expression zone, malformed field)
-/// or `CRON_INVALID_SHAPE` (not six fields).
+/// Java `CronExpression.parse`, plus 5-field crons: `Ok` or `(code,
+/// message)`, the code always [`CRON_INVALID`] (blank, descriptor,
+/// per-expression zone, neither 5 nor 6 fields, a malformed field).
 pub fn parse_cron(text: &str) -> Result<(), (&'static str, String)> {
     parse_java_cron(text).map(|_| ())
 }
@@ -99,39 +110,46 @@ pub fn parse_cron(text: &str) -> Result<(), (&'static str, String)> {
 /// [`parse_cron`], keeping what it parsed.
 pub fn parse_java_cron(text: &str) -> Result<JavaCron, (&'static str, String)> {
     if super::java_is_blank(text) {
-        return Err(("INVALID_CRON", "cron expressions cannot be empty".into()));
+        return Err((CRON_INVALID, "cron expressions cannot be empty".into()));
     }
     // Java's `strip()`: `Character.isWhitespace` at both ends.
     let expr = text.trim_matches(|c: char| super::java_is_blank(c.encode_utf8(&mut [0; 4])));
     if expr.starts_with('@') {
         return Err((
-            "INVALID_CRON",
+            CRON_INVALID,
             format!("cron expression '{expr}': descriptors are not supported"),
         ));
     }
     if expr.starts_with("TZ=") || expr.starts_with("CRON_TZ=") {
         return Err((
-            "INVALID_CRON",
+            CRON_INVALID,
             format!(
                 "cron expression '{expr}': a per-expression time zone is not supported; \
                  use the job's timezone"
             ),
         ));
     }
-    let fields: Vec<&str> = expr
+    let mut fields: Vec<&str> = expr
         .split(is_regex_space)
         .filter(|f| !f.is_empty())
         .collect();
-    if fields.len() != FIELD_COUNT {
-        return Err((
-            "CRON_INVALID_SHAPE",
-            format!(
-                "cron expression must have 6 whitespace-separated fields \
-                 (sec min hour dom mon dow), got {}: '{expr}'",
-                fields.len()
-            ),
-        ));
-    }
+    let expression = match fields.len() {
+        FIELD_COUNT => expr.to_string(),
+        // No seconds field: they are 0, and the stored form says so.
+        5 => {
+            fields.insert(0, "0");
+            format!("0 {expr}")
+        }
+        n => {
+            return Err((
+                CRON_INVALID,
+                format!(
+                    "cron expression must have 5 or 6 whitespace-separated fields \
+                     ([sec] min hour dom mon dow), got {n}: '{expr}'"
+                ),
+            ))
+        }
+    };
     let bounds = [
         &SECONDS,
         &MINUTES,
@@ -143,10 +161,10 @@ pub fn parse_java_cron(text: &str) -> Result<JavaCron, (&'static str, String)> {
     let mut bits = [0u64; FIELD_COUNT];
     for (i, (field, bounds)) in fields.iter().zip(bounds).enumerate() {
         bits[i] = field_bits(field, bounds)
-            .map_err(|why| ("INVALID_CRON", format!("cron expression '{expr}': {why}")))?;
+            .map_err(|why| (CRON_INVALID, format!("cron expression '{expr}': {why}")))?;
     }
     Ok(JavaCron {
-        expression: expr.to_string(),
+        expression,
         fields: std::array::from_fn(|i| fields[i].to_string()),
         bits,
     })
@@ -389,25 +407,28 @@ mod tests {
         }
         assert_eq!(
             err("  "),
-            ("INVALID_CRON", "cron expressions cannot be empty".into())
+            ("CRON_INVALID", "cron expressions cannot be empty".into())
         );
         assert_eq!(
             err("@hourly"),
             (
-                "INVALID_CRON",
+                "CRON_INVALID",
                 "cron expression '@hourly': descriptors are not supported".into()
             )
         );
-        assert_eq!(err("TZ=UTC 0 * * * * *").0, "INVALID_CRON");
-        assert_eq!(
-            err("0 * * * *"),
-            (
-                "CRON_INVALID_SHAPE",
-                "cron expression must have 6 whitespace-separated fields (sec min hour dom mon dow), \
-                 got 5: '0 * * * *'"
-                    .into()
-            )
-        );
+        assert_eq!(err("TZ=UTC 0 * * * * *").0, "CRON_INVALID");
+        for (text, n) in [("0 * * *", 4), ("0 0 * * * * *", 7)] {
+            assert_eq!(
+                err(text),
+                (
+                    "CRON_INVALID",
+                    format!(
+                        "cron expression must have 5 or 6 whitespace-separated fields \
+                         ([sec] min hour dom mon dow), got {n}: '{text}'"
+                    )
+                )
+            );
+        }
         let cases = [
             ("60 * * * * *", "end of range (60) above maximum (59): 60"),
             ("0 0 0 0 * *", "beginning of range (0) below minimum (1): 0"),
@@ -428,10 +449,34 @@ mod tests {
         for (text, why) in cases {
             assert_eq!(
                 err(text),
-                ("INVALID_CRON", format!("cron expression '{text}': {why}")),
+                ("CRON_INVALID", format!("cron expression '{text}': {why}")),
                 "{text}"
             );
         }
+    }
+
+    /// Five fields are six with seconds 0, and are stored that way; six
+    /// are stored as written (stripped).
+    #[test]
+    fn five_fields_mean_seconds_zero() {
+        let five = parse_java_cron(" 30 9 * * 1-5 ").unwrap();
+        let six = parse_java_cron("0 30 9 * * 1-5").unwrap();
+        assert_eq!(five.expression, "0 30 9 * * 1-5");
+        assert_eq!(five.fields, six.fields);
+        assert_eq!(five.bits, six.bits);
+        assert_eq!(
+            parse_java_cron("0\t30 9 * * *").unwrap().expression,
+            "0\t30 9 * * *"
+        );
+        assert_eq!(parse_java_cron("*/5 * * * *").unwrap().fields[0], "0");
+        assert_eq!(
+            err("61 * * * *"),
+            (
+                "CRON_INVALID",
+                "cron expression '61 * * * *': end of range (61) above maximum (59): 61".into()
+            ),
+            "a 5-field cron's first field is the minute"
+        );
     }
 
     #[test]
