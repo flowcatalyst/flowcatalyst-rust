@@ -82,6 +82,7 @@ How the second factor meets each sign-in, as Go:
 | GET `/auth/login-history` | `endpoint.go:146`, `session_history.go` |
 | `/auth/login` refuses an OIDC-mapped domain (`SSO_REQUIRED`) | `endpoint.go:481-498` |
 | GET `/api/reset-approvals`, POST `/{id}/approve`, `/{id}/deny` | `resetapproval/api/api.go:42-44` |
+| POST `/api/principals/users` and `/api/principals`: `sendInvitation`, `returnInviteLink` (answered as `inviteLink`), `inviteRedirectUri`, the "account created" welcome | `principal/api/api.go:365-391, 620-760` (`notifyNewUser`) |
 
 ### Developer credentials (`crates/fc-platform/src/developer_credential/`)
 
@@ -128,7 +129,7 @@ How the second factor meets each sign-in, as Go:
 |---|---|---|
 | `041_mfa_tables` | 031 | `iam_user_mfa_methods`, `iam_user_mfa_recovery_codes`, `iam_mfa_email_pins`, `iam_mfa_trusted_devices`, the mapping's `require_2fa` / `remember_device_*` and `tnt_email_domain_mapping_2fa_methods` |
 | `042_password_reset_token_purpose` | 031, 032, 033, 041, 051 | `iam_password_reset_tokens.{purpose, reset_2fa, requires_factor, factor_attempts, redirect_uri}` and the purpose CHECK |
-| `043_developer_api_credentials` | 039 | `iam_principals.dev_client_secret_ref`, `dev_client_secret_updated_at` |
+| `052_developer_api_credentials` | 039 | `iam_principals.dev_client_secret_ref`, `dev_client_secret_updated_at` |
 | `044_reset_approval_requests` | 032 | `iam_reset_approval_requests` |
 | `046_portal_identities` | 041, 043 | `portal_identities`, `portal_login_flows`, portal flags on OAuth clients and OIDC login states |
 | `047_portal_apps` | 053 | `portal_apps`, `portal_identity_apps`, `oauth_clients.portal_app_id`, invite columns |
@@ -161,31 +162,19 @@ registered in `core_migrations` with a probe for the pre-tracker backfill.
 
 ## Remaining
 
-Routes: none of Go's 385 is unserved once `feat/api-core` lands `POST /api/principals`
-(405 here). Behaviour still differing or unbuilt:
+Routes: all 385 of Go's are served (`POST /api/principals` arrived with the
+`feat/api-core` merge). Behaviour still differing or unbuilt:
 
-- **Create-user invites** (`feat/api-core` owns `principal/api.rs::create_user`):
-  Go's `sendInvitation`, `returnInviteLink` (the response's `inviteLink`) and
-  `inviteRedirectUri`, and the "account created" welcome email for a user
-  created with a password. `PasswordResetEmailer::invite_link` and
-  `send_invite` are ready for it. **integral uses these**
-  (`CreateFlowCatalystUserCommand`, `--invite-link`, `--invite-redirect-uri`,
-  `--send-invite`, on `POST /api/principals/users`).
 - The principal response lacks Go's `hasDeveloperCredential`,
   `developerCredentialUpdatedAt` and (detail read) `twoFactorMethods`; the
   developer-users list carries the first two.
 - Go's NIST password policy (`passwordpolicy`) for users, and Go's branded
   email theme.
-- The client IP: Rust's `ClientIp` never falls back to the socket peer (see
-  the harness notes), so direct connections get no per-(email, IP) backoff.
 - `GET /auth/oidc/login`'s error shapes (`DOMAIN_REQUIRED`,
   `OIDC_NOT_CONFIGURED`).
 - Expired email PINs, trusted devices, reset tokens and portal login flows are
   never purged (the repositories have `purge_expired`; nothing schedules it —
   Java ruling I-Q17).
-- `role/api.rs` still holds `feat/functions`' own grant/revoke handlers
-  (`GrantRolePermissionUseCase`), no longer routed: the Go-path routes now run
-  `permission_grants`' use cases. One of the two should go.
 - Requeue, cancel and complete are gated on `dispatch-job:view`, as Go (a view
   permission for a write): worth a ruling.
 - `fc-router`'s config sync against `/api/dispatch/router-config`: it maps an
@@ -218,11 +207,8 @@ routes:
   here; `feat/api-core` adds it) cascade into undefined captures.
 - `/auth/me`'s fields and the roleless profile-only 403 (`NO_PLATFORM_ROLE`)
   belong to the agents on `/auth/me` and `shared/middleware.rs`.
-- The login backoff keys on the client IP: Rust's `ClientIp` reads only a
-  trusted `X-Forwarded-For`, never the socket peer, so a direct connection has
-  no IP (no per-(email, IP) backoff, no `ipAddress` in the sign-in history).
-  Go falls back to the peer address. `shared/middleware.rs` is owned
-  elsewhere.
+- The client IP for the login backoff: fixed since by `feat/api-core`
+  (`ClientIp` falls back to the socket peer, as Go).
 - `GET /auth/oidc/login` without `domain` answers axum's plain-text query error
   (Go: JSON `DOMAIN_REQUIRED`), and an internal domain answers a plain message
   (Go: `OIDC_NOT_CONFIGURED`).
@@ -257,7 +243,7 @@ pre-existing SPA bug, not touched here).
 
 ## Appendix: every Go route in scope
 
-Status: **had** — Rust served it at `2561978b`; **ported** — added on this branch (or its alias added); **pending** — not on this branch. Go file paths are under `internal/`.
+Status: **had** — Rust served it at `2561978b`; **ported** — added on this branch (or its alias added); the one `feat/api-core` route is marked. Go file paths are under `internal/`.
 
 | Status | Method | Path | Go |
 |---|---|---|---|
@@ -435,7 +421,7 @@ Status: **had** — Rust served it at `2561978b`; **ported** — added on this b
 | ported | DELETE | `/api/portal-users/{id}/apps/{portalAppCode}` | `platform/portalidentity/api/api.go:80` |
 | ported | POST | `/api/portal-users/{id}/deactivate` | `platform/portalidentity/api/api.go:77` |
 | had | GET | `/api/principals` | `platform/principal/api/api.go:90` |
-| pending (`feat/api-core`) | POST | `/api/principals` | `platform/principal/api/api.go:91` |
+| ported (`feat/api-core`) | POST | `/api/principals` | `platform/principal/api/api.go:91` |
 | ported | POST | `/api/principals/bulk-import` | `platform/principal/api/api.go:93` |
 | had | GET | `/api/principals/check-email-domain` | `platform/principal/api/api.go:103` |
 | ported | GET | `/api/principals/developer-users` | `platform/principal/api/api.go:116` |
