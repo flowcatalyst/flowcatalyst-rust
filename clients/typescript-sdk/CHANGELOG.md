@@ -67,9 +67,9 @@ incompatibly.
   returns). The platform honours a supplied dispatch-job id, so a batch the
   outbox processor resends after losing the platform's answer is recognised
   instead of creating the job a second time. No signature changed.
-- Licence: MPL-2.0 (was Apache-2.0), by owner ruling. MPL-2.0 is
-  file-level copyleft, so applications that depend on the SDK are not
-  affected.
+- Licence: Apache-2.0, as published (owner decision of 2026-09-25, which
+  reverses the earlier move to MPL-2.0). The package now ships the
+  Apache-2.0 `LICENSE` text, which the published source lacked.
 
 ## 0.11.27 and earlier
 
