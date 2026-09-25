@@ -112,27 +112,34 @@ pub struct IdentityProvidersState {
     pub encryption_service: Option<Arc<EncryptionService>>,
 }
 
-/// Encrypt the client secret from a create/update request into its stored
-/// `encrypted:` form. This happens before the command is built, so the
-/// plaintext never reaches the command (which the unit of work writes to the
-/// audit log). A blank value means "not provided". Without a key the request
-/// is a 400 `ENCRYPTION_NOT_CONFIGURED`, as in Java
-/// (identityprovider/api/ClientSecretEncryption.java:71-72); the secret is
-/// never stored in plaintext.
+/// The stored form of the client secret from a create/update request, as
+/// Go's `encryptSecretRef` (identityprovider/api/api.go): a secret-manager
+/// reference (`aws-sm://…`, `env://…`, …) or an `encrypted:` value is kept
+/// as sent; a plaintext is encrypted. This happens before the command is
+/// built, so the plaintext never reaches the command (which the unit of work
+/// writes to the audit log). A blank value means "not provided". Without a
+/// key a plaintext is a 400 `ENCRYPTION_NOT_CONFIGURED`; an unknown
+/// `<scheme>://` is a 400 `UNSUPPORTED_SECRET_SCHEME`. A secret is never
+/// stored in plaintext.
 pub(crate) fn seal_client_secret(
     secret: Option<String>,
     enc: Option<&EncryptionService>,
 ) -> Result<Option<String>, PlatformError> {
+    use crate::shared::secret_ref::{seal_secret_ref, SecretRefError};
     secret
         .filter(|s| !s.trim().is_empty())
-        .map(|s| {
-            let enc = enc.ok_or_else(|| {
-                PlatformError::bad_request_code(
-                    "ENCRYPTION_NOT_CONFIGURED",
-                    "cannot store OIDC client secret: FLOWCATALYST_APP_KEY is not configured",
-                )
-            })?;
-            Ok(enc.encrypt_ref(&s)?)
+        .map(|s| match seal_secret_ref(enc, &s) {
+            Ok(stored) => Ok(stored),
+            Err(SecretRefError::NotConfigured) => Err(PlatformError::bad_request_code(
+                "ENCRYPTION_NOT_CONFIGURED",
+                "cannot store OIDC client secret: FLOWCATALYST_APP_KEY is not configured",
+            )),
+            Err(e @ SecretRefError::UnsupportedScheme { .. }) => Err(
+                PlatformError::bad_request_code("UNSUPPORTED_SECRET_SCHEME", e.to_string()),
+            ),
+            Err(e) => Err(PlatformError::internal(format!(
+                "encrypt OIDC client secret: {e}"
+            ))),
         })
         .transpose()
 }

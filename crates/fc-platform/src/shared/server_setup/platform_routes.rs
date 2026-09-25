@@ -573,6 +573,11 @@ pub fn build_platform_routes(
     if encryption_service.is_none() {
         warn!("FLOWCATALYST_APP_KEY not set — stored secrets can be neither written nor read");
     }
+    // Opens stored secrets wherever they are used: `encrypted:` values and
+    // secret-manager references (`aws-sm://…`, `env://…`), one cache.
+    let secret_resolver = Arc::new(crate::shared::secret_ref::SecretResolver::platform(
+        encryption_service.clone(),
+    ));
     let oidc_login_state = OidcLoginApiState {
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
         identity_provider_repo: repos.idp_repo.clone(),
@@ -585,7 +590,7 @@ pub fn build_platform_routes(
         oauth_client_repo: repos.oauth_client_repo.clone(),
         external_base_url: config.oidc_login_external_base_url,
         session_cookie: session_cookie.clone(),
-        encryption_service: encryption_service.clone(),
+        secret_resolver: secret_resolver.clone(),
     };
 
     let backoff_policy = Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env());
@@ -1012,7 +1017,8 @@ pub fn build_platform_routes(
         crate::service_account::outbound_credentials::OutboundCredentialsResolver::new(
             repos.service_account_repo.clone(),
             encryption_service.clone(),
-        ),
+        )
+        .with_secret_resolver(secret_resolver.clone()),
     );
     // ── Function registry ─────────────────────────────────────────────────
     // Java reads the FC_FN_DEFAULT_* limits once at startup and refuses to
