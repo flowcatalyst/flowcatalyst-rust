@@ -409,18 +409,6 @@ pub fn build_platform_routes(
         create_use_case: create_role_use_case,
         update_use_case: update_role_use_case,
         delete_use_case: delete_role_use_case,
-        grant_permission_use_case: Arc::new(
-            crate::role::operations::GrantRolePermissionUseCase::new(
-                repos.role_repo.clone(),
-                unit_of_work.clone(),
-            ),
-        ),
-        revoke_permission_use_case: Arc::new(
-            crate::role::operations::RevokeRolePermissionUseCase::new(
-                repos.role_repo.clone(),
-                unit_of_work.clone(),
-            ),
-        ),
     };
 
     let sync_subscriptions_use_case = Arc::new(
