@@ -143,12 +143,12 @@ pub async fn list_cors_origins(
     operation_id = "getApiPlatformCorsAllowed",
     responses(
         (status = 200, description = "Allowed origins list", body = AllowedOriginsResponse)
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
+/// Public, as in Go: the allowed origins are what a browser is told anyway,
+/// and the handler consults no principal.
 pub async fn get_allowed_origins(
     State(state): State<CorsState>,
-    _auth: Authenticated,
 ) -> Result<Json<AllowedOriginsResponse>, PlatformError> {
     let origins = state.cors_repo.get_allowed_origins().await?;
     Ok(Json(AllowedOriginsResponse { origins }))

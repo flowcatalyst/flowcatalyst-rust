@@ -144,15 +144,10 @@ pub async fn get_openid_configuration(
         introspection_endpoint: Some(format!("{}/oauth/introspect", base_url)),
         revocation_endpoint: Some(format!("{}/oauth/revoke", base_url)),
         jwks_uri: format!("{}/.well-known/jwks.json", base_url),
-        response_types_supported: vec![
-            "code".to_string(),
-            "token".to_string(),
-            "id_token".to_string(),
-            "code token".to_string(),
-            "code id_token".to_string(),
-            "token id_token".to_string(),
-            "code token id_token".to_string(),
-        ],
+        // The authorization-code flow only, as Go's discovery document
+        // (auth/oauthapi/discovery.go:53): /oauth/authorize refuses every
+        // other response type.
+        response_types_supported: vec!["code".to_string()],
         subject_types_supported: vec!["public".to_string()],
         id_token_signing_alg_values_supported: vec!["RS256".to_string()],
         scopes_supported: vec![

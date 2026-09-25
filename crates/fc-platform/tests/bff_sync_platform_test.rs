@@ -33,7 +33,7 @@ async fn sync_platform_targets_the_platform_only() {
         StatusCode::BAD_REQUEST,
     )
     .await;
-    assert_eq!(aimed["code"], "PLATFORM_SYNC_ONLY", "{aimed}");
+    assert_eq!(aimed["error"], "PLATFORM_SYNC_ONLY", "{aimed}");
     assert_eq!(
         event_type_count(&app, "orders").await,
         0,

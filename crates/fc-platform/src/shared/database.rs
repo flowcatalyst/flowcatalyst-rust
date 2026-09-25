@@ -441,6 +441,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "039_dispatch_job_queue_and_attempt_request",
             include_str!("../../../../migrations/039_dispatch_job_queue_and_attempt_request.sql"),
         ),
+        // Go's 042: the OAuth client flag that makes an interactive login's
+        // access token authority-bearing (owner decisions #3/#20).
+        (
+            "043_oauth_client_api_access",
+            include_str!("../../../../migrations/043_oauth_client_api_access.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -604,6 +610,13 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              AND EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'msg_dispatch_job_attempts' \
                AND column_name = 'request_info')",
+        ),
+        // A database Go migrated (its 042) already has the column.
+        (
+            "043_oauth_client_api_access",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'oauth_clients' \
+               AND column_name = 'api_access')",
         ),
     ];
 

@@ -32,22 +32,32 @@ impl SessionCookieConfig {
         }
     }
 
-    /// The session cookie carrying `token`.
+    /// The session cookie carrying `token`, with both `Max-Age` and
+    /// `Expires` as Go sets them (auth/login/endpoint.go `completeLogin`).
     pub fn build_cookie(&self, token: String) -> Cookie<'static> {
+        self.build_cookie_at(token, time::OffsetDateTime::now_utc())
+    }
+
+    fn build_cookie_at(&self, token: String, now: time::OffsetDateTime) -> Cookie<'static> {
         Cookie::build((self.name.clone(), token))
             .path("/")
             .http_only(true)
             .secure(self.secure)
             .same_site(self.same_site)
             .max_age(self.ttl)
+            .expires(now + self.ttl)
             .build()
     }
 
-    /// A cookie that clears the session cookie (empty value, `Max-Age=0`).
+    /// A cookie that clears the session cookie (empty value, `Max-Age=0`),
+    /// flagged like the cookie it clears, as Go's logout
+    /// (auth/login/endpoint.go `handleLogout`).
     pub fn clear_cookie(&self) -> Cookie<'static> {
         Cookie::build((self.name.clone(), ""))
             .path("/")
             .http_only(true)
+            .secure(self.secure)
+            .same_site(self.same_site)
             .max_age(time::Duration::ZERO)
             .build()
     }
@@ -80,19 +90,29 @@ mod tests {
 
     #[test]
     fn build_cookie_header_is_stable() {
+        let now = time::OffsetDateTime::from_unix_timestamp(1790330400).unwrap(); // 2026-09-25 10:00 UTC
+        let expires = "Expires=Sat, 26 Sep 2026 10:00:00 GMT";
         assert_eq!(
-            config(true, "Lax").build_cookie("tok".into()).to_string(),
-            "fc_session=tok; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=86400"
+            config(true, "Lax")
+                .build_cookie_at("tok".into(), now)
+                .to_string(),
+            format!(
+                "fc_session=tok; HttpOnly; SameSite=Lax; Secure; Path=/; Max-Age=86400; {expires}"
+            )
         );
         assert_eq!(
             config(false, "strict")
-                .build_cookie("tok".into())
+                .build_cookie_at("tok".into(), now)
                 .to_string(),
-            "fc_session=tok; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400"
+            format!("fc_session=tok; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400; {expires}")
         );
         assert_eq!(
-            config(true, "None").build_cookie("tok".into()).to_string(),
-            "fc_session=tok; HttpOnly; SameSite=None; Secure; Path=/; Max-Age=86400"
+            config(true, "None")
+                .build_cookie_at("tok".into(), now)
+                .to_string(),
+            format!(
+                "fc_session=tok; HttpOnly; SameSite=None; Secure; Path=/; Max-Age=86400; {expires}"
+            )
         );
     }
 
@@ -100,7 +120,7 @@ mod tests {
     fn clear_cookie_header_is_stable() {
         assert_eq!(
             config(true, "Strict").clear_cookie().to_string(),
-            "fc_session=; HttpOnly; Path=/; Max-Age=0"
+            "fc_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0"
         );
     }
 }

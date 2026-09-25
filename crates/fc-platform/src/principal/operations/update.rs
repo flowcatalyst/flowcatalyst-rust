@@ -126,7 +126,7 @@ impl<U: UnitOfWork> UpdateUserUseCase<U> {
             .find_by_id(&command.principal_id)
             .await
             .or_not_found(
-                "USER_NOT_FOUND",
+                "PRINCIPAL_NOT_FOUND",
                 format!("User with ID '{}' not found", command.principal_id),
             )?;
 

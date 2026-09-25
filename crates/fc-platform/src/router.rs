@@ -627,6 +627,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_OAUTH,
                 oauth_router(self.oauth)
+                    .layer(axum::middleware::map_response(
+                        crate::auth::oauth_api::oauth_errors_no_store,
+                    ))
                     .layer(distributed_oauth_token_layer)
                     .layer(oauth_layer.clone()),
             )
@@ -705,6 +708,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                     }
                 }),
             );
+
+        // Extractor rejections (unreadable body, query or path) answer in
+        // Go's envelope: 400 `VALIDATION`, or `invalid_request` on /oauth.
+        let app = app.layer(axum::middleware::from_fn(
+            crate::shared::rejection::go_rejections,
+        ));
 
         // SPA serving (if static_dir is configured). No static_dir: no root
         // handler. The binary can add its own (fc-dev uses embedded assets,

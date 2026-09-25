@@ -63,6 +63,9 @@ pub struct MeState {
     /// Used to resolve the caller's application-access list, which the
     /// JWT-derived `AuthContext` does not carry.
     pub principal_repo: Arc<PrincipalRepository>,
+    /// Reads a bearer's own `clients` / `applications` claims for
+    /// `/api/me`, which reports the credential's reach, not the row's.
+    pub auth_service: Arc<crate::AuthService>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -74,14 +77,42 @@ pub struct WhoamiResponse {
     /// "ANCHOR", "TENANT", "SERVICE", etc.
     pub scope: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     pub active: bool,
     /// Role codes assigned to this principal (resolved at request time).
     pub roles: Vec<String>,
-    /// Client IDs this principal can act inside.
+    /// The caller's effective permissions, sorted.
+    pub permissions: Vec<String>,
+    /// Client IDs this principal can act inside: a bearer's `clients` claim
+    /// as minted (`*`, or `id:identifier` pairs); for a session, the
+    /// principal's home and granted clients.
     pub accessible_client_ids: Vec<String>,
-    /// Application IDs this principal can act against.
+    /// Application IDs this principal can act against (the credential's
+    /// `applications`, codes stripped, `*` dropped).
     pub accessible_application_ids: Vec<String>,
+    /// Whether the credential reaches every application; the list is then
+    /// no restriction.
+    pub all_applications: bool,
+}
+
+/// Go `ParseApplicationsClaim` (shared/auth/application_scope.go:23-41):
+/// the ids of an `applications` claim (`id:code` → `id`) and whether it
+/// holds the `*` sentinel.
+fn parse_applications_claim(entries: &[String]) -> (Vec<String>, bool) {
+    let mut all = false;
+    let mut ids = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if entry == "*" {
+            all = true;
+            continue;
+        }
+        let id = entry.split_once(':').map_or(entry.as_str(), |(id, _)| id);
+        if !id.is_empty() {
+            ids.push(id.to_string());
+        }
+    }
+    (ids, all)
 }
 
 /// List clients accessible to the authenticated user
@@ -245,30 +276,64 @@ async fn list_my_client_applications(
 )]
 async fn whoami(
     State(state): State<MeState>,
+    headers: axum::http::HeaderMap,
     auth: Authenticated,
 ) -> Result<Json<WhoamiResponse>, PlatformError> {
     let ctx = &auth.0;
-    // `accessible_application_ids` isn't carried in the JWT-derived
-    // `AuthContext`, so resolve it from the principal row. Anchors don't
-    // need the list — they implicitly access every application — but it's
-    // still cheap to include it where present.
-    let accessible_application_ids = state
-        .principal_repo
-        .find_by_id(&ctx.principal_id)
-        .await?
-        .map(|p| p.accessible_application_ids)
-        .unwrap_or_default();
+    // Go `whoami` (shared/me/me.go:57-110): roles, permissions, clients and
+    // applications are the CREDENTIAL's, so a token narrowed to one
+    // application reports that application only; the row supplies the
+    // identity fields. A session is reloaded from the row on every request
+    // (Go `BuildClaims`), so its reach is the row's.
+    let principal = state.principal_repo.find_by_id(&ctx.principal_id).await?;
+    let bearer_claims = match ctx.credential {
+        crate::shared::authorization_service::Credential::BearerToken => headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::auth::auth_service::extract_bearer_token)
+            .and_then(|token| state.auth_service.validate_token(token).ok()),
+        crate::shared::authorization_service::Credential::SessionCookie => None,
+    };
+    let (accessible_client_ids, (accessible_application_ids, all_applications)) =
+        match (&bearer_claims, &principal) {
+            (Some(claims), _) => {
+                let (ids, all) = parse_applications_claim(&claims.applications);
+                (
+                    claims.clients.clone(),
+                    (ids, all || claims.all_applications),
+                )
+            }
+            (None, Some(p)) => {
+                let mut clients = p.assigned_clients.clone();
+                if let Some(home) = p.client_id.as_ref().filter(|c| !c.is_empty()) {
+                    clients.push(home.clone());
+                }
+                let (ids, all) =
+                    parse_applications_claim(&crate::auth::auth_service::applications_claim(p));
+                (clients, (ids, all || p.all_applications))
+            }
+            (None, None) => (Vec::new(), (Vec::new(), false)),
+        };
+    let mut permissions: Vec<String> = ctx.permissions.iter().cloned().collect();
+    permissions.sort();
 
     Ok(Json(WhoamiResponse {
         principal_id: ctx.principal_id.clone(),
-        principal_type: ctx.principal_type.as_str().to_string(),
+        principal_type: principal
+            .as_ref()
+            .map_or(ctx.principal_type.as_str(), |p| p.principal_type.as_str())
+            .to_string(),
         scope: ctx.scope.as_str().to_string(),
-        name: ctx.name.clone(),
-        email: ctx.email.clone(),
+        name: principal
+            .as_ref()
+            .map_or_else(|| ctx.name.clone(), |p| p.name.clone()),
+        email: ctx.email.clone().filter(|e| !e.is_empty()),
         active: true,
         roles: ctx.roles.clone(),
-        accessible_client_ids: ctx.accessible_clients.clone(),
+        permissions,
+        accessible_client_ids,
         accessible_application_ids,
+        all_applications,
     }))
 }
 

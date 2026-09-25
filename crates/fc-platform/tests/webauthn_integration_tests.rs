@@ -15,9 +15,24 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
 use fc_platform::email_domain_mapping::entity::ScopeType;
+use fc_platform::identity_provider::entity::{IdentityProvider, IdentityProviderType};
 use fc_platform::shared::database::{create_pool, run_migrations, MigrationProfile};
 use fc_platform::webauthn::gate::ensure_internal_auth;
-use fc_platform::{EmailDomainMapping, EmailDomainMappingRepository};
+use fc_platform::{EmailDomainMapping, EmailDomainMappingRepository, IdentityProviderRepository};
+
+/// An identity provider of `idp_type`, stored; its id.
+async fn identity_provider(
+    pool: &sqlx::PgPool,
+    code: &str,
+    idp_type: IdentityProviderType,
+) -> String {
+    let idp = IdentityProvider::new(code, code, idp_type);
+    IdentityProviderRepository::new(pool)
+        .insert(&idp)
+        .await
+        .expect("insert identity provider");
+    idp.id
+}
 
 async fn setup_test_db() -> (sqlx::PgPool, testcontainers::ContainerAsync<Postgres>) {
     let container = Postgres::default()
@@ -100,7 +115,8 @@ async fn gate_rejects_federated_domain() {
     let (pool, _c) = setup_test_db().await;
     let edm_repo = EmailDomainMappingRepository::new(&pool);
 
-    let mapping = EmailDomainMapping::new("federated.com", "idp_FAKE12345678", ScopeType::Anchor);
+    let oidc = identity_provider(&pool, "entra", IdentityProviderType::Oidc).await;
+    let mapping = EmailDomainMapping::new("federated.com", &oidc, ScopeType::Anchor);
     edm_repo.insert(&mapping).await.expect("insert mapping");
 
     let err = ensure_internal_auth("user@federated.com", &edm_repo)
@@ -116,6 +132,23 @@ async fn gate_rejects_federated_domain() {
     );
 }
 
+/// Go's `fcdev init` maps the anchor domain to an INTERNAL provider; its
+/// users keep passkeys (only an OIDC mapping federates a domain).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn gate_allows_a_domain_mapped_to_an_internal_provider() {
+    let (pool, _c) = setup_test_db().await;
+    let edm_repo = EmailDomainMappingRepository::new(&pool);
+
+    let internal = identity_provider(&pool, "internal", IdentityProviderType::Internal).await;
+    let mapping = EmailDomainMapping::new("anchor.com", &internal, ScopeType::Anchor);
+    edm_repo.insert(&mapping).await.expect("insert mapping");
+
+    ensure_internal_auth("admin@anchor.com", &edm_repo)
+        .await
+        .expect("a domain mapped to an INTERNAL provider keeps passkeys");
+}
+
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn gate_normalises_domain_case_when_matching_mapping() {
@@ -125,7 +158,8 @@ async fn gate_normalises_domain_case_when_matching_mapping() {
     // Mappings are stored lowercased (see EmailDomainMapping::new); the gate
     // must lowercase the email domain before lookup so mixed-case email
     // inputs aren't mistakenly treated as internal.
-    let mapping = EmailDomainMapping::new("acme.com", "idp_FAKE87654321", ScopeType::Anchor);
+    let oidc = identity_provider(&pool, "okta", IdentityProviderType::Oidc).await;
+    let mapping = EmailDomainMapping::new("acme.com", &oidc, ScopeType::Anchor);
     edm_repo.insert(&mapping).await.expect("insert mapping");
 
     assert!(ensure_internal_auth("USER@ACME.COM", &edm_repo)

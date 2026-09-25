@@ -390,10 +390,11 @@ async fn test_unauthorized_request() {
         .unwrap();
 
     let status = response.status();
+    // No credential: Go's 403 `UNAUTHENTICATED`.
     assert_eq!(
         status.as_u16(),
-        401,
-        "Expected 401 Unauthorized, got {}",
+        403,
+        "Expected 403 UNAUTHENTICATED, got {}",
         status
     );
 }
@@ -490,7 +491,7 @@ async fn test_batch_events_exceeds_limit() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(status.as_u16(), 400, "{json}");
-    assert_eq!(json["code"], "BATCH_TOO_LARGE", "{json}");
+    assert_eq!(json["error"], "BATCH_TOO_LARGE", "{json}");
 }
 
 #[tokio::test]

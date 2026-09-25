@@ -6,6 +6,11 @@
 //! ruling (the `__Host-fc_session` → `fc_session` rename): Rust names its
 //! session cookie `fc_session` as Go does (owner decision #26), so here a
 //! renamed cookie would be a finding, not a normalisation.
+//!
+//! One rule is this port's own: rule 0 drops a body's top-level `$schema`
+//! member (huma's `"<base>/<Model>.json"` link) on both sides before the
+//! others run. Rust does not emit it, and no consumer reads it (owner
+//! decision #30, provisional).
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -68,7 +73,7 @@ pub fn normalise(record: &StepRecord, vars: &Vars, base_url: &str, step: &Step) 
     let mut body = if redirect {
         Value::String("«redirect»".into())
     } else {
-        normalise_node(&body_of(record), &labels, base_url)
+        normalise_node(&drop_schema_link(body_of(record)), &labels, base_url)
     };
     apply_unordered(&mut body, &step.unordered);
     apply_ignore(&mut body, &step.ignore);
@@ -129,6 +134,16 @@ pub fn mask_cookie(set_cookie: &str) -> String {
         format!("{name}=«cookie»; {}", attrs.join("; "))
     };
     EXPIRES_ATTR.replace_all(&masked, "${1}«time»").into_owned()
+}
+
+/// Rule 0 (owner decision #30, provisional): a body's top-level `$schema`
+/// member, which Go's huma adds to every JSON response and Rust omits, is
+/// dropped on both sides.
+pub fn drop_schema_link(mut body: Value) -> Value {
+    if let Value::Object(map) = &mut body {
+        map.shift_remove("$schema");
+    }
+    body
 }
 
 fn body_of(record: &StepRecord) -> Value {
@@ -379,6 +394,24 @@ mod tests {
         assert_eq!(out.body["createdAt"], "«time»");
         assert_eq!(out.body["message"], "at 2026-05-24T08:30:00.123456Z");
         assert_eq!(out.body["exp"], "«time»");
+    }
+
+    #[test]
+    fn rule0_drops_the_top_level_schema_link_only() {
+        let out = normalise(
+            &record(
+                200,
+                json!({"$schema": format!("{BASE}/ErrorModel.json"), "error": "X",
+                       "nested": {"$schema": "kept"}}),
+            ),
+            &vars(),
+            BASE,
+            &plain_step(),
+        );
+        assert_eq!(
+            out.body,
+            json!({"error": "X", "nested": {"$schema": "kept"}})
+        );
     }
 
     #[test]

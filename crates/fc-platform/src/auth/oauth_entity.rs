@@ -115,6 +115,14 @@ pub struct OAuthClient {
     #[serde(default = "default_true")]
     pub active: bool,
 
+    /// A trusted first-party client whose interactive logins receive an
+    /// authority-bearing access token (`token_use: api`), narrowed to the
+    /// client's applications; every other client's logins receive an
+    /// identity-only token (Go `OAuthClient.APIAccess`, migration 042 /
+    /// Rust 043). Read here; set through the database.
+    #[serde(default)]
+    pub api_access: bool,
+
     /// Audit fields
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -148,6 +156,7 @@ impl OAuthClient {
             allowed_origins: vec![],
             service_account_principal_id: None,
             active: true,
+            api_access: false,
             created_at: now,
             updated_at: now,
             created_by: None,

@@ -65,6 +65,13 @@ pub const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(75);
 /// (a streamed upload: without a byte for this long). Fixed.
 pub const REQUEST_READ: Duration = Duration::from_secs(30);
 
+/// The remote address of the connection a request arrived on, inserted into
+/// every request's extensions (the platform's client-IP fallback when no
+/// `X-Forwarded-For` is present, as Go's `ratelimit.ClientIP` falls back to
+/// `RemoteAddr`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerAddr(pub std::net::SocketAddr);
+
 /// Boxed error, as hyper and tower use.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -182,6 +189,7 @@ where
     B::Error: Into<BoxError>,
 {
     let conn = Arc::new(ConnState::new());
+    let peer = stream.peer_addr().ok().map(PeerAddr);
     let io = TokioIo::new(PhaseIo {
         inner: stream,
         conn: conn.clone(),
@@ -190,6 +198,7 @@ where
         inner: Arc::new(service),
         conn: conn.clone(),
         timeouts: timeouts.clone(),
+        peer,
     };
     let builder = auto::Builder::new(TokioExecutor::new());
     let connection = builder.serve_connection(io, service);
@@ -435,6 +444,7 @@ struct Timed<S> {
     inner: Arc<S>,
     conn: Arc<ConnState>,
     timeouts: ListenerTimeouts,
+    peer: Option<PeerAddr>,
 }
 
 impl<S, B> hyper::service::Service<Request<Incoming>> for Timed<S>
@@ -453,7 +463,10 @@ where
     fn call(&self, request: Request<Incoming>) -> Self::Future {
         let started = self.conn.on_request();
         let in_flight = InFlight(self.conn.clone());
-        let (parts, body) = request.into_parts();
+        let (mut parts, body) = request.into_parts();
+        if let Some(peer) = self.peer {
+            parts.extensions.insert(peer);
+        }
         let window = self.timeouts.request_read;
         let body = if (self.timeouts.streamed_upload)(&parts.method, &parts.uri) {
             DeadlineBody::stall(body, window)

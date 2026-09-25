@@ -672,6 +672,11 @@ pub fn function_control_router(state: FunctionControlState) -> Router {
             get(download_artifact),
         )
         .with_state(state)
+        // The function contract's errors (owner decision #5), not the
+        // platform routes' Go envelope.
+        .layer(axum::middleware::map_response(
+            crate::shared::error::keep_function_contract,
+        ))
 }
 
 #[cfg(test)]

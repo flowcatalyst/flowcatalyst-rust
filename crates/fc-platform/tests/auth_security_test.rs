@@ -79,7 +79,7 @@ async fn multi_tenant_mappings_must_pin_the_tenant_on_save() {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{pin:?}: {body}");
-        assert_eq!(body["code"], "TENANT_PIN_REQUIRED", "{body}");
+        assert_eq!(body["error"], "TENANT_PIN_REQUIRED", "{body}");
     }
     let (status, body) = read_json(
         app.post(
@@ -104,7 +104,7 @@ async fn multi_tenant_mappings_must_pin_the_tenant_on_save() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "TENANT_PIN_REQUIRED", "{body}");
+    assert_eq!(body["error"], "TENANT_PIN_REQUIRED", "{body}");
 
     // A single-tenant provider needs no pin...
     let (status, body) = read_json(
@@ -130,7 +130,7 @@ async fn multi_tenant_mappings_must_pin_the_tenant_on_save() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "TENANT_PIN_REQUIRED", "{body}");
+    assert_eq!(body["error"], "TENANT_PIN_REQUIRED", "{body}");
 
     // Switching the single-tenant provider to multi-tenant is refused while
     // its unpinned mapping exists.
@@ -144,7 +144,7 @@ async fn multi_tenant_mappings_must_pin_the_tenant_on_save() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "TENANT_PIN_REQUIRED", "{body}");
+    assert_eq!(body["error"], "TENANT_PIN_REQUIRED", "{body}");
     assert!(
         body["message"].as_str().unwrap().contains("beta.test"),
         "{body}"
@@ -193,7 +193,7 @@ async fn an_unpinned_multi_tenant_mapping_cannot_sign_in() {
 
     let (status, body) = read_json(send(&app, oidc_login_request("legacy.test")).await).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert_eq!(body["code"], "TENANT_NOT_PINNED", "{body}");
+    assert_eq!(body["error"], "TENANT_NOT_PINNED", "{body}");
 
     let mut pinned = EmailDomainMapping::new("pinned.test", &multi, ScopeType::Anchor);
     pinned.required_oidc_tenant_id = Some("tenant-a".to_string());
@@ -210,8 +210,8 @@ async fn an_unmapped_domain_is_404_email_domain_not_mapped() {
     let app = TestApp::setup().await;
     let (status, body) = read_json(send(&app, oidc_login_request("nowhere.test")).await).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(body["code"], "EMAIL_DOMAIN_NOT_MAPPED", "{body}");
-    assert!(body["error"].as_str().unwrap().contains("nowhere.test"));
+    assert_eq!(body["error"], "EMAIL_DOMAIN_NOT_MAPPED", "{body}");
+    assert!(body["message"].as_str().unwrap().contains("nowhere.test"));
 }
 
 /// A user in the database, with a password, for the session tests.
@@ -328,7 +328,11 @@ async fn the_session_cookie_is_the_subject_reloaded_per_request() {
     let resp = app.get_with_session("/auth/me", &cookie).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let resp = app.get_with_session("/api/event-types", &cookie).await;
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a signed-out session: Go's 403 UNAUTHENTICATED"
+    );
 }
 
 /// An access token replayed as the cookie is no session, even for an
@@ -765,10 +769,10 @@ async fn refresh_rotation_is_atomic_with_family_reuse_detection() {
     .await
     .unwrap();
     let (status, body) = refresh(&app, &second).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     for token in [&third_a, &third_b] {
         let (status, body) = refresh(&app, token).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     }
 }
 
