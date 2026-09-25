@@ -1608,3 +1608,63 @@ async fn test_postgres_rate_limit_store_allows_exactly_the_limit() {
         "each key has its own budget"
     );
 }
+
+// ─── Platform event-type catalogue seeding ───────────────────────────────
+
+/// Startup seeding writes the catalogue as Go's seeder does: every code
+/// once, source UI and status CURRENT, a `1.0` schema when one is supplied,
+/// and a re-run only refreshes names (never duplicates, never a second
+/// schema version).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn platform_event_type_catalogue_seeds_as_go() {
+    let (pool, _container) = setup_test_db().await;
+    let defs = fc_platform::seed::platform_event_types::definitions();
+
+    fc_platform::shared::database::seed_platform_event_types(&pool)
+        .await
+        .expect("first seed");
+    sqlx::query(
+        "UPDATE msg_event_types SET name = 'stale' WHERE code = 'platform:admin:client:created'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    fc_platform::shared::database::seed_platform_event_types(&pool)
+        .await
+        .expect("second seed");
+
+    let codes: Vec<String> = defs.iter().map(|d| d.code.clone()).collect();
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM msg_event_types WHERE code = ANY($1)")
+            .bind(&codes)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count as usize, defs.len());
+
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT name, source, status FROM msg_event_types WHERE code = 'platform:admin:client:created'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        Some((
+            "Client Created".to_string(),
+            "UI".to_string(),
+            "CURRENT".to_string()
+        ))
+    );
+
+    let (versions,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM msg_event_type_spec_versions sv \
+         JOIN msg_event_types et ON et.id = sv.event_type_id \
+         WHERE et.code = 'platform:iam:user:created'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(versions, 1, "one 1.0 schema, attached once");
+}

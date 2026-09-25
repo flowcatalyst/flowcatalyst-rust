@@ -161,6 +161,9 @@ pub async fn run(args: InitArgs) -> Result<()> {
     fc_platform::shared::database::seed_platform_application(&pool)
         .await
         .context("seed platform application")?;
+    fc_platform::shared::database::seed_platform_event_types(&pool)
+        .await
+        .context("seed platform event types")?;
     fc_platform::shared::default_processes::seed_default_processes(&pool)
         .await
         .context("seed default processes")?;

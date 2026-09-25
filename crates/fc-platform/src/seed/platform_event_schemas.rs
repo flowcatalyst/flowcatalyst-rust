@@ -468,6 +468,18 @@ pub fn schemas() -> HashMap<&'static str, Value> {
         ]),
     );
 
+    m.insert(
+        "platform:admin:connection:synced",
+        obj(&[
+            req_str("applicationCode"),
+            opt_str("clientId"),
+            req_u32("created"),
+            req_u32("updated"),
+            req_u32("deleted"),
+            req_str_array("syncedCodes"),
+        ]),
+    );
+
     // ─── platform:admin:dispatch-pool ───────────────────────────────────
     m.insert(
         "platform:admin:dispatch-pool:created",
@@ -550,7 +562,281 @@ pub fn schemas() -> HashMap<&'static str, Value> {
         ]),
     );
 
+    emitted_beyond_go_catalogue(&mut m);
+
     m
+}
+
+/// Schemas for the event types the platform emits that Go's seeded
+/// catalogue lacks. The entries above are Go's catalogue verbatim (codes,
+/// names and schemas, `internal/platform/seed/event_schemas.go`), which
+/// predates several renames: Go emits e.g. `platform:admin:client:*` while
+/// seeding `platform:iam:client:*`. These describe each emitted event's
+/// `data` exactly (Go's `ToDataJSON`), so a subscription can reference every
+/// type the platform actually emits.
+fn emitted_beyond_go_catalogue(m: &mut HashMap<&'static str, Value>) {
+    let id_and = |id: &'static str, more: &[Prop]| {
+        let mut props = vec![req_str(id)];
+        props.extend_from_slice(more);
+        obj(&props)
+    };
+
+    // Client (Go emits `platform:admin:client:*`; the catalogue has iam).
+    m.insert(
+        "platform:admin:client:created",
+        id_and("clientId", &[req_str("name"), req_str("identifier")]),
+    );
+    m.insert(
+        "platform:admin:client:updated",
+        id_and("clientId", &[req_str("name")]),
+    );
+    m.insert("platform:admin:client:activated", id_and("clientId", &[]));
+    m.insert(
+        "platform:admin:client:suspended",
+        id_and("clientId", &[req_str("reason")]),
+    );
+    m.insert(
+        "platform:admin:client:deleted",
+        id_and("clientId", &[req_str("identifier")]),
+    );
+    m.insert(
+        "platform:admin:client:note-added",
+        id_and("clientId", &[req_str("category"), req_str("text")]),
+    );
+    m.insert(
+        "platform:iam:client:applications-updated",
+        id_and(
+            "clientId",
+            &[
+                nullable_str_array("enabledApplicationIds"),
+                nullable_str_array("enabledAdded"),
+                nullable_str_array("disabledRemoved"),
+            ],
+        ),
+    );
+    m.insert(
+        "platform:iam:application:client-config-updated",
+        obj(&[
+            req_str("applicationId"),
+            req_str("clientId"),
+            req_str("configId"),
+            opt_bool("enabled"),
+            opt_str("baseUrlOverride"),
+            req_bool("configChanged"),
+        ]),
+    );
+
+    // Service account deactivation.
+    m.insert(
+        "platform:iam:serviceaccount:deactivated",
+        id_and("serviceAccountId", &[]),
+    );
+
+    // Role (Go emits `platform:admin:role:*`).
+    for code in [
+        "platform:admin:role:created",
+        "platform:admin:role:updated",
+        "platform:admin:role:deleted",
+    ] {
+        m.insert(code, id_and("roleId", &[req_str("name")]));
+    }
+    m.insert(
+        "platform:admin:roles:synced",
+        obj(&[
+            req_u32("created"),
+            req_u32("updated"),
+            req_u32("removed"),
+            req_u32("total"),
+            opt_str("applicationCode"),
+            opt_str_array("syncedCodes"),
+        ]),
+    );
+
+    // Anchor domain and auth config (Go emits them under platform:admin).
+    for code in [
+        "platform:admin:anchor-domain:created",
+        "platform:admin:anchor-domain:updated",
+        "platform:admin:anchor-domain:deleted",
+    ] {
+        m.insert(code, id_and("anchorDomainId", &[req_str("domain")]));
+    }
+    for code in [
+        "platform:admin:auth-config:created",
+        "platform:admin:auth-config:updated",
+        "platform:admin:auth-config:deleted",
+    ] {
+        m.insert(code, id_and("authConfigId", &[req_str("emailDomain")]));
+    }
+
+    // IdP role mapping.
+    m.insert(
+        "platform:admin:idp-role-mapping:created",
+        id_and(
+            "mappingId",
+            &[
+                req_str("idpType"),
+                req_str("idpRoleName"),
+                req_str("platformRoleName"),
+            ],
+        ),
+    );
+    m.insert(
+        "platform:admin:idp-role-mapping:deleted",
+        id_and("mappingId", &[req_str("idpRoleName")]),
+    );
+
+    // OAuth client.
+    m.insert(
+        "platform:admin:oauth-client:created",
+        id_and(
+            "oauthClientId",
+            &[req_str("clientId"), req_str("clientName")],
+        ),
+    );
+    m.insert(
+        "platform:admin:oauth-client:updated",
+        id_and("oauthClientId", &[req_str("clientName")]),
+    );
+    m.insert(
+        "platform:admin:oauth-client:deleted",
+        id_and("oauthClientId", &[req_str("clientId")]),
+    );
+    for code in [
+        "platform:admin:oauth-client:activated",
+        "platform:admin:oauth-client:deactivated",
+        "platform:admin:oauth-client:previous-secret-revoked",
+    ] {
+        m.insert(code, id_and("oauthClientId", &[]));
+    }
+    m.insert(
+        "platform:admin:oauth-client:secret-rotated",
+        id_and("oauthClientId", &[opt_str("previousSecretExpiresAt")]),
+    );
+
+    // Identity provider and email domain mapping (Go's emitted names).
+    for code in [
+        "platform:admin:identity-provider:created",
+        "platform:admin:identity-provider:updated",
+        "platform:admin:identity-provider:deleted",
+    ] {
+        m.insert(code, id_and("identityProviderId", &[req_str("code")]));
+    }
+    for code in [
+        "platform:admin:email-domain-mapping:created",
+        "platform:admin:email-domain-mapping:updated",
+        "platform:admin:email-domain-mapping:deleted",
+    ] {
+        m.insert(code, id_and("mappingId", &[req_str("emailDomain")]));
+    }
+
+    // Platform config.
+    m.insert(
+        "platform:admin:platform-config:property-set",
+        id_and(
+            "configId",
+            &[
+                req_str("applicationCode"),
+                req_str("section"),
+                req_str("property"),
+            ],
+        ),
+    );
+    m.insert(
+        "platform:admin:platform-config:access-granted",
+        id_and(
+            "accessId",
+            &[
+                req_str("applicationCode"),
+                req_str("roleCode"),
+                req_bool("canWrite"),
+            ],
+        ),
+    );
+    m.insert(
+        "platform:admin:platform-config:access-revoked",
+        id_and(
+            "accessId",
+            &[req_str("applicationCode"), req_str("roleCode")],
+        ),
+    );
+
+    // Process.
+    m.insert(
+        "platform:admin:process:created",
+        id_and("processId", &[req_str("code"), req_str("name")]),
+    );
+    m.insert(
+        "platform:admin:process:updated",
+        id_and("processId", &[req_str("name")]),
+    );
+    for code in [
+        "platform:admin:process:archived",
+        "platform:admin:process:deleted",
+    ] {
+        m.insert(code, id_and("processId", &[req_str("code")]));
+    }
+    m.insert(
+        "platform:admin:processes:synced",
+        obj(&[
+            req_str("applicationCode"),
+            req_u32("created"),
+            req_u32("updated"),
+            req_u32("deleted"),
+            req_str_array("syncedCodes"),
+        ]),
+    );
+
+    // Scheduled job.
+    for code in [
+        "platform:admin:scheduled-job:created",
+        "platform:admin:scheduled-job:updated",
+        "platform:admin:scheduled-job:paused",
+        "platform:admin:scheduled-job:resumed",
+        "platform:admin:scheduled-job:archived",
+        "platform:admin:scheduled-job:deleted",
+    ] {
+        m.insert(code, id_and("scheduledJobId", &[req_str("code")]));
+    }
+    m.insert(
+        "platform:admin:scheduled-job:fired-manually",
+        id_and("scheduledJobId", &[req_str("code"), req_str("instanceId")]),
+    );
+    m.insert(
+        "platform:admin:scheduledjobs:synced",
+        obj(&[
+            req_str("applicationCode"),
+            nullable_str_array("created"),
+            nullable_str_array("updated"),
+            nullable_str_array("archived"),
+        ]),
+    );
+
+    // Passkey.
+    m.insert(
+        "platform:admin:passkey:registered",
+        id_and("credentialId", &[req_str("userId"), opt_str("name")]),
+    );
+    for code in [
+        "platform:admin:passkey:authenticated",
+        "platform:admin:passkey:revoked",
+    ] {
+        m.insert(code, id_and("credentialId", &[req_str("userId")]));
+    }
+
+    // Application OpenAPI spec sync.
+    m.insert(
+        "platform:developer:application-openapi:synced",
+        obj(&[
+            req_str("applicationId"),
+            req_str("applicationCode"),
+            req_str("specId"),
+            req_str("version"),
+            req_str("specHash"),
+            opt_str("archivedPriorVersion"),
+            req_bool("hasBreaking"),
+            req_bool("unchanged"),
+        ]),
+    );
 }
 
 /// Look up the schema for a given event type code.
@@ -603,6 +889,29 @@ fn opt_u32(name: &'static str) -> Prop {
         name,
         json!({"type": ["integer", "null"], "minimum": 0}),
         false,
+    )
+}
+
+fn opt_bool(name: &'static str) -> Prop {
+    (name, json!({"type": ["boolean", "null"]}), false)
+}
+
+/// A list that may be absent (Go's `omitempty`).
+fn opt_str_array(name: &'static str) -> Prop {
+    (
+        name,
+        json!({"type": ["array", "null"], "items": {"type": "string"}}),
+        false,
+    )
+}
+
+/// A list that is always present but `null` when empty (Go appends to a nil
+/// slice).
+fn nullable_str_array(name: &'static str) -> Prop {
+    (
+        name,
+        json!({"type": ["array", "null"], "items": {"type": "string"}}),
+        true,
     )
 }
 
@@ -672,14 +981,39 @@ mod tests {
     }
 
     #[test]
-    fn only_two_subdomains() {
+    fn only_platform_subdomains() {
         let schemas = schemas();
         for code in schemas.keys() {
             assert!(
-                code.starts_with("platform:iam:") || code.starts_with("platform:admin:"),
+                code.starts_with("platform:iam:")
+                    || code.starts_with("platform:admin:")
+                    || code == &"platform:developer:application-openapi:synced",
                 "Event type '{}' must use platform:iam or platform:admin prefix",
                 code,
             );
+        }
+    }
+
+    /// Every type a platform use case emits can be subscribed to.
+    #[test]
+    fn every_emitted_go_event_type_is_catalogued() {
+        let schemas = schemas();
+        for code in [
+            "platform:admin:client:created",
+            "platform:admin:role:created",
+            "platform:admin:roles:synced",
+            "platform:admin:anchor-domain:updated",
+            "platform:admin:identity-provider:created",
+            "platform:admin:email-domain-mapping:created",
+            "platform:admin:oauth-client:secret-rotated",
+            "platform:admin:platform-config:property-set",
+            "platform:admin:scheduled-job:fired-manually",
+            "platform:admin:passkey:authenticated",
+            "platform:admin:connection:synced",
+            "platform:iam:serviceaccount:deactivated",
+            "platform:iam:client:applications-updated",
+        ] {
+            assert!(schemas.contains_key(code), "{code} is not catalogued");
         }
     }
 

@@ -909,6 +909,23 @@ pub async fn seed_platform_application(pool: &PgPool) -> crate::shared::error::R
     Ok(())
 }
 
+/// Seed the platform's event-type catalogue, as Go does on every start
+/// (`seed/event_types.go` `seedPlatformEventTypes`). See
+/// [`EventTypeRepository::seed_catalogue`](crate::event_type::repository::EventTypeRepository::seed_catalogue).
+///
+/// Bootstrap-only, like [`seed_builtin_roles`]: it runs before HTTP serving
+/// begins, has no executing principal, and writes no events (see CLAUDE.md
+/// "Built-in role seeding").
+pub async fn seed_platform_event_types(pool: &PgPool) -> crate::shared::error::Result<()> {
+    let repo = crate::event_type::repository::EventTypeRepository::new(pool);
+    let defs = crate::seed::platform_event_types::definitions();
+    let inserted = repo.seed_catalogue(&defs).await?;
+    if inserted > 0 {
+        info!(inserted, total = defs.len(), "Seeded platform event types");
+    }
+    Ok(())
+}
+
 pub async fn seed_builtin_roles(pool: &PgPool) -> crate::shared::error::Result<()> {
     use crate::role::entity::roles;
     use crate::role::repository::RoleRepository;

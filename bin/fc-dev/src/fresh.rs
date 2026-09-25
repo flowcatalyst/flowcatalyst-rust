@@ -132,7 +132,10 @@ pub async fn run(args: FreshArgs) -> Result<()> {
 
     // Two statements — sqlx's `query()` is a prepared statement and
     // rejects multi-command SQL, so run them individually.
-    if let Err(e) = sqlx::query("DROP SCHEMA public CASCADE").execute(&pool).await {
+    if let Err(e) = sqlx::query("DROP SCHEMA public CASCADE")
+        .execute(&pool)
+        .await
+    {
         warn!(error = %e, "DROP SCHEMA failed");
         return Err(anyhow::anyhow!("DROP SCHEMA failed: {}", e));
     }
@@ -157,6 +160,9 @@ pub async fn run(args: FreshArgs) -> Result<()> {
     fc_platform::shared::database::seed_platform_application(&pool)
         .await
         .context("seed platform application")?;
+    fc_platform::shared::database::seed_platform_event_types(&pool)
+        .await
+        .context("seed platform event types")?;
     fc_platform::shared::default_processes::seed_default_processes(&pool)
         .await
         .context("seed default processes")?;
@@ -165,7 +171,10 @@ pub async fn run(args: FreshArgs) -> Result<()> {
     // them here (only for this process) keeps the seeder's existing
     // single source of truth without splitting the API in two.
     std::env::set_var("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL", &args.admin_email);
-    std::env::set_var("FLOWCATALYST_BOOTSTRAP_ADMIN_PASSWORD", &args.admin_password);
+    std::env::set_var(
+        "FLOWCATALYST_BOOTSTRAP_ADMIN_PASSWORD",
+        &args.admin_password,
+    );
     fc_platform::shared::bootstrap_admin::bootstrap_admin_user(&pool)
         .await
         .context("bootstrap admin user")?;

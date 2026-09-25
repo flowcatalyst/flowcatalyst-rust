@@ -246,6 +246,11 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
+    // Go seeds the platform event-type catalogue on every start.
+    fc_platform::shared::database::seed_platform_event_types(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Platform event type seeding failed: {}", e))?;
+
     fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
         .await
         .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
