@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use super::answer::{outcome_for, HttpAnswer};
-use super::bearer::TokenClaims;
+use super::bearer::{TokenClaims, SCOPE_WILDCARD};
 use super::public_routes::{self, LIVE};
 use super::route_path::RoutePath;
 use super::{cors, latin1, webhook, Shared};
@@ -477,7 +477,11 @@ fn has_reach(claims: &TokenClaims, entry: &Entry) -> bool {
     let Some(client_id) = &entry.client_id else {
         return false;
     };
-    if !claims.clients.contains(client_id) {
+    if !claims
+        .clients
+        .iter()
+        .any(|c| c == client_id || c == SCOPE_WILDCARD)
+    {
         return false;
     }
     match &entry.application_id {

@@ -638,6 +638,7 @@ pub struct Claims {
     pub roles: Vec<String>,
     pub applications: Vec<String>,
     pub all_applications: bool,
+    pub token_use: Option<String>,
     pub expires_in_seconds: i64,
 }
 
@@ -652,6 +653,7 @@ impl Claims {
             roles: Vec::new(),
             applications: Vec::new(),
             all_applications: true,
+            token_use: None,
             expires_in_seconds: 300,
         }
     }
@@ -659,6 +661,11 @@ impl Claims {
     pub fn applications(mut self, applications: &[&str], all: bool) -> Self {
         self.applications = applications.iter().map(|s| s.to_string()).collect();
         self.all_applications = all;
+        self
+    }
+
+    pub fn token_use(mut self, token_use: &str) -> Self {
+        self.token_use = Some(token_use.into());
         self
     }
 
@@ -820,6 +827,7 @@ pub fn mint(key: &RsaPrivateKey, kid: &str, issuer: &str, claims: &Claims) -> St
         "roles": claims.roles,
         "applications": claims.applications,
         "all_applications": claims.all_applications,
+        "token_use": claims.token_use,
     });
     let input = format!(
         "{}.{}",

@@ -17,6 +17,12 @@ use sha2::{Digest, Sha256};
 use super::jwks::{JwksKeySource, BASE64_URL};
 use crate::clock::SharedClock;
 
+/// `token_use` of a token that identifies a user but grants no API access.
+const TOKEN_USE_IDENTITY: &str = "identity";
+
+/// The `clients` / `applications` entry meaning every one.
+pub const SCOPE_WILDCARD: &str = "*";
+
 /// The claims read off a verified token (Java `TokenClaims`, minus `email`
 /// and `name`, which the host never passes on).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,10 +33,12 @@ pub struct TokenClaims {
     pub principal_type: Option<String>,
     /// `tier` (`ANCHOR` / `PARTNER` / `CLIENT`).
     pub tier: Option<String>,
+    /// Client ids (from `"{id}:{label}"` pairs), or `*` for every client.
     pub clients: Vec<String>,
     pub roles: Vec<String>,
+    /// Application ids; a `*` entry sets `all_applications` instead.
     pub applications: Vec<String>,
-    /// `all_applications`.
+    /// `all_applications`, or `applications` holding `*`.
     pub all_applications: bool,
     /// `scope`, split on whitespace.
     pub permissions: Vec<String>,
@@ -215,6 +223,13 @@ fn verify(
             .collect(),
         _ => Vec::new(),
     };
+    // An identity token (issued to relying parties without API access, and
+    // to portal identities) is not an API credential: the platform refuses
+    // it as a bearer, and so must a function endpoint, or a relying party
+    // could replay a user's identity token at an `auth: platform` endpoint.
+    if string("token_use").as_deref() == Some(TOKEN_USE_IDENTITY) {
+        return Err("an identity token is not an API credential".to_owned());
+    }
     let permissions = match string("scope") {
         Some(scope) if !crate::java::is_blank(&scope) => scope
             .split([' ', '\t', '\n', '\u{000B}', '\u{000C}', '\r'])
@@ -223,16 +238,34 @@ fn verify(
             .collect(),
         _ => Vec::new(),
     };
+    let applications = scope_ids(list("applications"));
     Ok(TokenClaims {
         subject,
         principal_type: string("type"),
         tier: string("tier"),
-        clients: list("clients"),
+        clients: scope_ids(list("clients")),
         roles: list("roles"),
-        applications: list("applications"),
-        all_applications: matches!(claims.get("all_applications"), Some(Value::Bool(true))),
+        all_applications: matches!(claims.get("all_applications"), Some(Value::Bool(true)))
+            || applications.iter().any(|a| a == SCOPE_WILDCARD),
+        applications: applications
+            .into_iter()
+            .filter(|a| a != SCOPE_WILDCARD)
+            .collect(),
         permissions,
     })
+}
+
+/// `clients` / `applications` arrive as `"{id}:{label}"` pairs (or the `*`
+/// wildcard); the reach check and the function see bare ids, as the
+/// platform's own authenticator does. A bare id (an older token) is kept.
+fn scope_ids(entries: Vec<String>) -> Vec<String> {
+    entries
+        .into_iter()
+        .map(|entry| match entry.split_once(':') {
+            Some((id, _label)) => id.to_owned(),
+            None => entry,
+        })
+        .collect()
 }
 
 /// A NumericDate claim in milliseconds; a non-number is malformed.

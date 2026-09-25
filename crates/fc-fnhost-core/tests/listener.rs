@@ -459,6 +459,53 @@ async fn h4_platform_bearer_token() {
     assert_eq!(jwks.jwks_requests(), 2);
 }
 
+/// The platform issues `clients` / `applications` as `"{id}:{label}"` pairs
+/// (or `*`); the function sees bare ids, and an identity token is no API
+/// credential.
+#[tokio::test]
+async fn h4_scope_pairs_are_ids_and_identity_tokens_are_refused() {
+    let jwks = TestJwks::start().await;
+    let h = bearer_harness(&jwks).await;
+    let path = fpath(ADDR, "/api/x");
+    let get = |token: String| {
+        let h = &h;
+        let path = path.clone();
+        async move {
+            h.get(&path, &[("Authorization", &format!("Bearer {token}"))])
+                .await
+        }
+    };
+
+    let paired = get(jwks.mint(
+        &Claims::new("prn_1", "CLIENT", "x", &["clt_1:acme"])
+            .applications(&["app_1:orders", "app_2:billing"], false)
+            .token_use("api"),
+    ))
+    .await;
+    assert_eq!(paired.status, 200, "{}", paired.text());
+    let caller = &paired.json()["caller"];
+    assert_eq!(caller["clientId"], "clt_1");
+    assert_eq!(caller["clients"], json!(["clt_1"]));
+    assert_eq!(caller["applications"], json!(["app_1", "app_2"]));
+    assert_eq!(caller["allApplications"], false);
+
+    let wildcard =
+        get(jwks.mint(&Claims::new("prn_1", "PARTNER", "x", &["*"]).applications(&["*"], false)))
+            .await;
+    assert_eq!(wildcard.status, 200, "{}", wildcard.text());
+    assert_eq!(wildcard.json()["caller"]["clients"], json!(["*"]));
+    assert_eq!(wildcard.json()["caller"]["applications"], json!([]));
+    assert_eq!(wildcard.json()["caller"]["allApplications"], true);
+
+    let identity =
+        get(jwks.mint(&Claims::new("prn_1", "ANCHOR", "x", &[]).token_use("identity"))).await;
+    assert_eq!(identity.status, 401);
+    assert_eq!(
+        identity.json()["message"],
+        "an identity token is not an API credential"
+    );
+}
+
 #[tokio::test]
 async fn h4_every_claim_reaches_the_principal() {
     let jwks = TestJwks::start().await;
@@ -1080,6 +1127,33 @@ async fn h11_versioned_invoke() {
             .await
             .status,
         200
+    );
+    // the pair form the platform actually issues, and its wildcards
+    for (claims, why) in [
+        (
+            Claims::new("prn_p", "CLIENT", invoke, &["clt_1:acme"])
+                .applications(&["app_1:orders"], false),
+            "pairs",
+        ),
+        (
+            Claims::new("prn_w", "PARTNER", invoke, &["*"]).applications(&["*"], false),
+            "wildcards",
+        ),
+    ] {
+        let resp = h
+            .get(&fpath(ADDR, ":2/x"), &[("Authorization", &bearer(claims))])
+            .await;
+        assert_eq!(resp.status, 200, "{why}: {}", resp.text());
+    }
+    let other_pair = bearer(
+        Claims::new("prn_p", "CLIENT", invoke, &["clt_1:acme"])
+            .applications(&["app_OTHER:x"], false),
+    );
+    assert_eq!(
+        h.get(&fpath(ADDR, ":2/x"), &[("Authorization", &other_pair)])
+            .await
+            .status,
+        404
     );
 
     // a webhook endpoint is reachable versioned without a signature
