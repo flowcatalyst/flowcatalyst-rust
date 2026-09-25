@@ -454,7 +454,7 @@ async fn upload_publish_list_get_and_retire() {
     assert_error(
         &get(&r, &format!("{path}/versions/9"), &t).await,
         StatusCode::NOT_FOUND,
-        "FunctionVersion_NOT_FOUND",
+        "FUNCTION_VERSION_NOT_FOUND",
     );
 
     // Status and config read the real versions now.
@@ -587,7 +587,7 @@ async fn upload_checks_run_in_javas_order() {
         None,
     )
     .await;
-    assert_error(&got, StatusCode::NOT_FOUND, "Function_NOT_FOUND");
+    assert_error(&got, StatusCode::NOT_FOUND, "FUNCTION_NOT_FOUND");
     // Then the digest's shape, then the declared length.
     let got = upload(&r, "billing.svc.up", "sha256:ABC", &t, bytes.clone(), None).await;
     assert_error(&got, StatusCode::BAD_REQUEST, "DIGEST_INVALID");
@@ -734,7 +734,7 @@ async fn publish_refuses_bad_refs_unreachable_disabled_and_bad_manifests() {
     assert_error(
         &post(&r, path, &other_client, publish_body("oci://r/c", &digest)).await,
         StatusCode::NOT_FOUND,
-        "Function_NOT_FOUND",
+        "FUNCTION_NOT_FOUND",
     );
     let viewer = token(&app, UserScope::Anchor, &[], &[FUNCTION_VIEW]).await;
     assert_error(

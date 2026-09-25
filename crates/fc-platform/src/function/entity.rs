@@ -198,7 +198,7 @@ impl Function {
     /// Deletes a named pointer (Java `Function.removeAlias`); returns the
     /// version it pointed at. `live` is never removable: promote another
     /// version instead (`409 ALIAS_PROTECTED`); an alias the function does
-    /// not have is `404 Alias_NOT_FOUND`, never a no-op.
+    /// not have is `404 ALIAS_NOT_FOUND`, never a no-op.
     pub fn remove_alias(
         &mut self,
         alias: &str,
@@ -1038,7 +1038,7 @@ mod tests {
         let err = f.remove_alias("nope", Utc::now()).unwrap_err();
         assert_eq!(
             (err.http_status_code(), err.code(), err.message()),
-            (404, "Alias_NOT_FOUND", "Alias not found: nope")
+            (404, "ALIAS_NOT_FOUND", "Alias not found: nope")
         );
         assert_eq!(f.remove_alias("qa", Utc::now()).unwrap(), v.id);
         assert_eq!(f.version_id_of("qa"), None);

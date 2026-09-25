@@ -3,7 +3,7 @@
 //!
 //! **Promote**, in Java's order: the alias name (`400 ALIAS_INVALID`, before
 //! anything is read), load and reach (`404`), the version (`404
-//! FunctionVersion_NOT_FOUND`), `409 VERSION_NOT_READY` for a version no
+//! FUNCTION_VERSION_NOT_FOUND`), `409 VERSION_NOT_READY` for a version no
 //! host has verified yet (a retired one falls through to
 //! `VERSION_RETIRED`), `409 SETTINGS_MISSING`, the promote plan, then the
 //! function's own `VERSION_RETIRED`, `FUNCTION_DISABLED` and
@@ -29,7 +29,7 @@
 //! the alias change back too.
 //!
 //! **Remove alias** deletes a named pointer: `409 ALIAS_PROTECTED` for
-//! `live`, `404 Alias_NOT_FOUND` for one the function lacks. HTTP-only, no
+//! `live`, `404 ALIAS_NOT_FOUND` for one the function lacks. HTTP-only, no
 //! wiring.
 
 use std::sync::Arc;

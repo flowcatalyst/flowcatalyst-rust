@@ -122,13 +122,14 @@ impl PlatformError {
     }
 
     /// Go's `httperror.NotFound(resource, id)` (shared/httperror/
-    /// httperror.go:91-96): 404 `<Resource>_NOT_FOUND`, the resource name
-    /// as given (Go does not upper-case it, so `Config_NOT_FOUND`), and
-    /// `<Resource> not found: <id>`.
+    /// httperror.go:91-96): 404 `<RESOURCE>_NOT_FOUND` and `<Resource> not
+    /// found: <id>`. The code is UPPER_SNAKE (the free function
+    /// `not_found_code`), as every other code is (owner decision 5); Go and
+    /// Java append `_NOT_FOUND` to the resource name as given.
     pub fn not_found_code(resource: &str, id: impl std::fmt::Display) -> Self {
         Self::Coded {
             status: StatusCode::NOT_FOUND,
-            code: format!("{resource}_NOT_FOUND"),
+            code: not_found_code(resource),
             message: format!("{resource} not found: {id}"),
             details: Default::default(),
         }
@@ -192,6 +193,50 @@ impl PlatformError {
 }
 
 pub type Result<T> = std::result::Result<T, PlatformError>;
+
+/// The not-found code for a resource type name: `<RESOURCE>_NOT_FOUND` in
+/// UPPER_SNAKE (`FunctionVersion` → `FUNCTION_VERSION_NOT_FOUND`), the one
+/// place such a code is built from a name.
+pub fn not_found_code(resource: &str) -> String {
+    let mut code = String::with_capacity(resource.len() + 12);
+    let mut previous: Option<char> = None;
+    for c in resource.chars() {
+        let boundary = c.is_ascii_uppercase()
+            && previous.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit());
+        if boundary {
+            code.push('_');
+        }
+        if c == ' ' || c == '-' {
+            code.push('_');
+        } else {
+            code.push(c.to_ascii_uppercase());
+        }
+        previous = Some(c);
+    }
+    code.push_str("_NOT_FOUND");
+    code
+}
+
+#[cfg(test)]
+mod not_found_code_tests {
+    use super::not_found_code;
+
+    #[test]
+    fn resource_names_become_upper_snake() {
+        for (resource, code) in [
+            ("Function", "FUNCTION_NOT_FOUND"),
+            ("FunctionVersion", "FUNCTION_VERSION_NOT_FOUND"),
+            ("FunctionDomain", "FUNCTION_DOMAIN_NOT_FOUND"),
+            ("FunctionSecret", "FUNCTION_SECRET_NOT_FOUND"),
+            ("Alias", "ALIAS_NOT_FOUND"),
+            ("Config", "CONFIG_NOT_FOUND"),
+            ("OAuthClient", "OAUTH_CLIENT_NOT_FOUND"),
+            ("EVENT_TYPE", "EVENT_TYPE_NOT_FOUND"),
+        ] {
+            assert_eq!(not_found_code(resource), code, "{resource}");
+        }
+    }
+}
 
 /// Extension trait for `Option<T>` to convert `None` into `PlatformError::not_found`.
 ///

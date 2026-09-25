@@ -605,7 +605,7 @@ pub async fn emit_events(
 
 /// The artifact of the version desired state told the host to run,
 /// streamed from the blob store: memory never scales with the artifact.
-/// `404 FunctionVersion_NOT_FOUND` for an unknown version and for one whose
+/// `404 FUNCTION_VERSION_NOT_FOUND` for an unknown version and for one whose
 /// artifact is not `platform://`. No `Digest` header: the host knows the
 /// digest from desired state and recomputes it.
 pub async fn download_artifact(

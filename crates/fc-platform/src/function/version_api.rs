@@ -8,7 +8,7 @@
 //! `platform:function:version:publish`; promote and alias removal by
 //! `platform:function:alias:promote`; the reads by
 //! `platform:function:function:view`. A function out of reach is
-//! `404 Function_NOT_FOUND` everywhere, never a 403.
+//! `404 FUNCTION_NOT_FOUND` everywhere, never a 403.
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
@@ -552,7 +552,7 @@ pub struct AliasResponse {
         (status = 200, body = PublishResponse, description = "The same digest and manifest are already published: that version, nothing written"),
         (status = 400, description = "ARTIFACT_REF_REQUIRED, ARTIFACT_REF_INVALID, DIGEST_INVALID, a manifest code, SIGNATURE_REQUIRED, SIGNATURE_REJECTED or a publish check"),
         (status = 403, description = "PERMISSION_REQUIRED or SIGNER_NOT_PERMITTED"),
-        (status = 404, description = "Function_NOT_FOUND, also when out of reach"),
+        (status = 404, description = "FUNCTION_NOT_FOUND, also when out of reach"),
         (status = 409, description = "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the digest under another manifest) or PUBLIC_ROUTE_TAKEN"),
         (status = 422, description = "ARTIFACT_REF_MISMATCH or ARTIFACT_NOT_UPLOADED"),
         (status = 503, description = "ARTIFACT_STORE_NOT_CONFIGURED"),
@@ -726,7 +726,7 @@ pub async fn list_versions(
         (status = 200, body = VersionResponse),
         (status = 400, description = "ADDRESS_INVALID or VERSION_INVALID"),
         (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or FUNCTION_VERSION_NOT_FOUND"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -774,7 +774,7 @@ async fn version_or_not_found(
         (status = 200, body = VersionResponse),
         (status = 400, description = "ADDRESS_INVALID or VERSION_INVALID"),
         (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or FUNCTION_VERSION_NOT_FOUND"),
         (status = 409, description = "VERSION_IS_LIVE or VERSION_ALIASED. Retiring a retired version is a no-op: 200 with it, nothing written"),
     ),
     security(("bearer_auth" = []))
@@ -824,7 +824,7 @@ pub async fn retire_version(
         (status = 200, body = PromoteResponse),
         (status = 400, description = "ALIAS_INVALID, ADDRESS_INVALID or INVALID_JSON"),
         (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or FUNCTION_VERSION_NOT_FOUND"),
         (status = 409, description = "VERSION_NOT_READY, SETTINGS_MISSING, VERSION_RETIRED, FUNCTION_DISABLED or PUBLIC_ROUTE_TAKEN. An alias already naming the version is a no-op: 200 with changed false"),
         (status = 412, description = "ALIAS_VERSION_CONFLICT: expectedVersion / If-Match no longer names the alias's version"),
     ),
@@ -900,7 +900,7 @@ pub async fn promote(
         (status = 204),
         (status = 400, description = "ADDRESS_INVALID"),
         (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or Alias_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or ALIAS_NOT_FOUND"),
         (status = 409, description = "ALIAS_PROTECTED"),
     ),
     security(("bearer_auth" = []))

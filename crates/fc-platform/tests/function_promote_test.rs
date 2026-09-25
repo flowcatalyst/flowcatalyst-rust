@@ -789,7 +789,11 @@ async fn promote_and_remove_alias_codes() {
         "VERSION_NOT_READY",
     );
     let missing = promote(&r, &t, path, "live", 99).await;
-    assert_error(&missing, StatusCode::NOT_FOUND, "FunctionVersion_NOT_FOUND");
+    assert_error(
+        &missing,
+        StatusCode::NOT_FOUND,
+        "FUNCTION_VERSION_NOT_FOUND",
+    );
     assert_eq!(
         missing.1["message"],
         "FunctionVersion not found: billing.svc.codes#99"
@@ -797,7 +801,7 @@ async fn promote_and_remove_alias_codes() {
     assert_error(
         &promote(&r, &t, "/api/functions/billing.svc.nope", "live", 1).await,
         StatusCode::NOT_FOUND,
-        "Function_NOT_FOUND",
+        "FUNCTION_NOT_FOUND",
     );
 
     sqlx::query("UPDATE fn_versions SET state = 'READY', ready_at = NOW() WHERE function_id = $1")
@@ -929,7 +933,7 @@ async fn promote_and_remove_alias_codes() {
         None,
     )
     .await;
-    assert_error(&unknown, StatusCode::NOT_FOUND, "Alias_NOT_FOUND");
+    assert_error(&unknown, StatusCode::NOT_FOUND, "ALIAS_NOT_FOUND");
     assert_eq!(unknown.1["message"], "Alias not found: nope");
     let (status, _) = send(&r, Method::DELETE, &format!("{path}/aliases/qa"), &t, None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);

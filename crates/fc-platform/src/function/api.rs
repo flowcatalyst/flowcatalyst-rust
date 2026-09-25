@@ -5,7 +5,7 @@
 //!
 //! Each write handler is a permission check, a command built from the body,
 //! a use case run, and a response. Reads go to the repositories and apply
-//! reach themselves: a function out of reach is `404 Function_NOT_FOUND`,
+//! reach themselves: a function out of reach is `404 FUNCTION_NOT_FOUND`,
 //! never a 403 (the one [`Caller::can_reach`] the use cases use too).
 //!
 //! Every write handler calls `checks::require_permission` (Java
@@ -519,7 +519,7 @@ pub async fn create_function(
     responses(
         (status = 200, body = FunctionResponse),
         (status = 400, description = "ADDRESS_INVALID"),
-        (status = 404, description = "Function_NOT_FOUND, also when out of reach"),
+        (status = 404, description = "FUNCTION_NOT_FOUND, also when out of reach"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -850,7 +850,7 @@ async fn config_response(
     responses(
         (status = 200, body = ConfigResponse),
         (status = 400, description = "ADDRESS_INVALID or VERSION_INVALID"),
-        (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or FUNCTION_VERSION_NOT_FOUND"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -1007,7 +1007,7 @@ pub async fn put_secret(
     ),
     responses(
         (status = 204), (status = 400), (status = 403),
-        (status = 404, description = "Function_NOT_FOUND or FunctionSecret_NOT_FOUND"),
+        (status = 404, description = "FUNCTION_NOT_FOUND or FUNCTION_SECRET_NOT_FOUND"),
         (status = 503, description = "ENCRYPTION_UNCONFIGURED"),
     ),
     security(("bearer_auth" = []))

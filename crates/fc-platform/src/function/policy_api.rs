@@ -227,7 +227,7 @@ pub async fn get_policy(
     responses(
         (status = 200, body = PolicyResponse),
         (status = 400, description = "SIGNER_INVALID, RUNTIME_INVALID, SIGNER_DUPLICATE or CEILING_INVALID"),
-        (status = 403), (status = 404, description = "Client_NOT_FOUND"),
+        (status = 403), (status = 404, description = "CLIENT_NOT_FOUND"),
     ),
     security(("bearer_auth" = []))
 )]

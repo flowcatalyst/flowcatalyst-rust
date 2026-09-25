@@ -340,7 +340,7 @@ impl LockedRead<NextVersionOf> for FunctionVersionRepository {
     type Output = i32;
 
     /// Java `nextVersion`: locks the function row, then `max + 1`; `404
-    /// Function_NOT_FOUND` when the function is gone.
+    /// FUNCTION_NOT_FOUND` when the function is gone.
     async fn read_locked(&self, query: &NextVersionOf, tx: &mut DbTx<'_>) -> Result<i32> {
         let locked: Option<(String,)> =
             sqlx::query_as("SELECT id FROM fn_functions WHERE id = $1 FOR UPDATE")
@@ -350,7 +350,7 @@ impl LockedRead<NextVersionOf> for FunctionVersionRepository {
         if locked.is_none() {
             return Err(PlatformError::Coded {
                 status: axum::http::StatusCode::NOT_FOUND,
-                code: "Function_NOT_FOUND".to_string(),
+                code: "FUNCTION_NOT_FOUND".to_string(),
                 message: format!("Function not found: {}", query.0),
                 details: Default::default(),
             });

@@ -253,7 +253,7 @@ impl<U: UnitOfWork> UseCase for DeleteFunctionSecretUseCase<U> {
 }
 
 impl<U: UnitOfWork> DeleteFunctionSecretUseCase<U> {
-    /// 404 `FunctionSecret_NOT_FOUND` when the key was never set.
+    /// 404 `FUNCTION_SECRET_NOT_FOUND` when the key was never set.
     async fn prepare(
         &self,
         command: &DeleteSecretCommand,

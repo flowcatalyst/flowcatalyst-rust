@@ -1136,7 +1136,7 @@ async fn an_artifact_streams_from_the_store_and_anything_else_is_404() {
         .get("/control/functions/artifacts/fnv_nosuch", Some(&h.host))
         .await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
-    assert_eq!(r.error(), "FunctionVersion_NOT_FOUND");
+    assert_eq!(r.error(), "FUNCTION_VERSION_NOT_FOUND");
     let oci = publish(&h, &f, 2, "arts", Some("oci://registry/x@sha256:00")).await;
     let r = h
         .get(

@@ -738,7 +738,7 @@ export type DeleteFunctionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -776,7 +776,7 @@ export type GetFunctionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -814,7 +814,7 @@ export type UpdateFunctionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -848,7 +848,7 @@ export type GetFunctionStatusErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -907,7 +907,7 @@ export type ListFunctionVersionsErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -945,7 +945,7 @@ export type PublishFunctionVersionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -995,7 +995,7 @@ export type CheckManifestErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1037,7 +1037,7 @@ export type GetFunctionVersionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1079,7 +1079,7 @@ export type RetireFunctionVersionErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1121,7 +1121,7 @@ export type DeleteFunctionAliasErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, Alias_NOT_FOUND
+     * FUNCTION_NOT_FOUND, ALIAS_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1173,7 +1173,7 @@ export type PromoteFunctionAliasErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1215,7 +1215,7 @@ export type ListFunctionAliasesErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1257,7 +1257,7 @@ export type UploadFunctionArtifactErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1312,7 +1312,7 @@ export type GetFunctionConfigErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1355,7 +1355,7 @@ export type SetFunctionConfigErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1398,7 +1398,7 @@ export type ListFunctionSecretsErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionVersion_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1440,7 +1440,7 @@ export type DeleteFunctionSecretErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND, FunctionSecret_NOT_FOUND
+     * FUNCTION_NOT_FOUND, FUNCTION_SECRET_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1486,7 +1486,7 @@ export type SetFunctionSecretErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1684,7 +1684,7 @@ export type ReleaseFunctionDomainErrors = {
      */
     403: ErrorResponse;
     /**
-     * FunctionDomain_NOT_FOUND
+     * FUNCTION_DOMAIN_NOT_FOUND
      */
     404: ErrorResponse;
     /**
@@ -1726,7 +1726,7 @@ export type GetFunctionDomainErrors = {
      */
     403: ErrorResponse;
     /**
-     * FunctionDomain_NOT_FOUND
+     * FUNCTION_DOMAIN_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1768,7 +1768,7 @@ export type ListFunctionRoutesErrors = {
      */
     403: ErrorResponse;
     /**
-     * Function_NOT_FOUND
+     * FUNCTION_NOT_FOUND
      */
     404: ErrorResponse;
 };
@@ -1914,7 +1914,7 @@ export type DownloadFunctionArtifactErrors = {
      */
     403: ErrorResponse;
     /**
-     * FunctionVersion_NOT_FOUND
+     * FUNCTION_VERSION_NOT_FOUND
      */
     404: ErrorResponse;
     /**
