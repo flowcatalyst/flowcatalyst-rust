@@ -9,7 +9,9 @@ function localise() {
   for (const el of document.querySelectorAll("time[data-local]")) {
     if (!el.textContent.endsWith(" UTC")) continue;
     const at = new Date(el.getAttribute("datetime"));
-    if (!Number.isNaN(at.getTime())) el.textContent = at.toLocaleString();
+    if (Number.isNaN(at.getTime())) continue;
+    // data-local="date": `toLocaleDateString()`, as the SPA's list columns.
+    el.textContent = el.dataset.local === "date" ? at.toLocaleDateString() : at.toLocaleString();
   }
 }
 

@@ -7,3 +7,4 @@ mod event_types;
 mod login;
 mod nav;
 mod shell;
+mod subscriptions;
