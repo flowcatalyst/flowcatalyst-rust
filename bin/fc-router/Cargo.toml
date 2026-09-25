@@ -6,11 +6,7 @@ license.workspace = true
 
 [dependencies]
 fc-common = { path = "../../crates/fc-common" }
-fc-router = { path = "../../crates/fc-router" }
-fc-queue = { path = "../../crates/fc-queue", features = ["sqs", "postgres", "nats"] }
-aws-config = { workspace = true }
-aws-sdk-sqs = { workspace = true }
-sqlx = { workspace = true }
+fc-router = { path = "../../crates/fc-router", features = ["backends"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -18,9 +14,14 @@ anyhow = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
-async-trait = { workspace = true }
-serde_json = { workspace = true }
 dotenvy = "0.15.7"
+
+[dev-dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
 
 [features]
 default = []

@@ -396,6 +396,10 @@ pub struct QueueManager {
     /// cycle for no correctness reason; "a poll task is running for every
     /// configured consumer" is what "started consuming" means here.
     consumers_started: AtomicBool,
+
+    /// Handed to every pool this manager creates (ledger A-01) — see
+    /// [`QueueManagerBuilder::settled_reporter`].
+    settled_reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
 }
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
@@ -420,6 +424,7 @@ pub struct QueueManagerBuilder {
     poll_timeout: std::time::Duration,
     rebuild_timeout: std::time::Duration,
     deferral_budget: usize,
+    settled_reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
 }
 
 impl QueueManagerBuilder {
@@ -438,7 +443,17 @@ impl QueueManagerBuilder {
             poll_timeout: QueueManager::DEFAULT_POLL_TIMEOUT,
             rebuild_timeout: QueueManager::DEFAULT_REBUILD_TIMEOUT,
             deferral_budget: QueueManager::DEFAULT_DEFERRAL_BUDGET,
+            settled_reporter: None,
         }
+    }
+
+    /// Ledger A-01 (Go `Manager.SetSettledReporter`): every pool this
+    /// manager creates ACKs BLOCK_ON_ERROR siblings behind a terminally
+    /// failed head and reports them through `reporter`. Unset, the siblings
+    /// are handed back to the broker. See [`crate::settled`].
+    pub fn settled_reporter(mut self, reporter: Arc<dyn crate::settled::SettledReporter>) -> Self {
+        self.settled_reporter = Some(reporter);
+        self
     }
 
     /// Capacity deferrals one consumer may have outstanding before it stops
@@ -559,6 +574,7 @@ impl QueueManagerBuilder {
             strict_routing: self.strict_routing,
             is_leader: AtomicBool::new(true),
             consumers_started: AtomicBool::new(false),
+            settled_reporter: self.settled_reporter,
         }
     }
 }

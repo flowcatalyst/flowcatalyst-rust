@@ -29,7 +29,7 @@ struct Cli {
     /// Directory with a prebuilt Go fc-server (skips the Go build).
     #[arg(long, env = "HARNESS_GO_BIN_DIR")]
     go_bin_dir: Option<PathBuf>,
-    /// Directory with the Rust fc-server, fc-router-bin and
+    /// Directory with the Rust fc-server and
     /// fc-outbox-processor (default target/debug of this workspace).
     #[arg(long, env = "HARNESS_RUST_BIN_DIR")]
     rust_bin_dir: Option<PathBuf>,
