@@ -691,57 +691,91 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 }),
             );
 
-        // SPA serving (if static_dir is configured)
-        let app = if let Some(ref static_dir) = self.static_dir {
-            let index_path = std::path::PathBuf::from(static_dir).join("index.html");
-            if index_path.exists() {
-                use axum::http::header::CACHE_CONTROL;
-                use axum::http::HeaderValue;
-                use tower_http::services::{ServeDir, ServeFile};
-                use tower_http::set_header::SetResponseHeaderLayer;
-
-                tracing::info!(dir = %static_dir, "Serving static frontend files with SPA fallback");
-
-                let assets_dir = std::path::PathBuf::from(static_dir).join("assets");
-                let assets_service = tower::ServiceBuilder::new()
-                    .layer(SetResponseHeaderLayer::overriding(
-                        CACHE_CONTROL,
-                        HeaderValue::from_static("public, max-age=31536000, immutable"),
-                    ))
-                    .service(ServeDir::new(&assets_dir));
-
-                // SPA routes that conflict with API nests (e.g., /auth/login vs POST /auth/login).
-                // Without these, the /auth nest returns 405 for GET requests the SPA should handle.
-                let spa_index = index_path.clone();
-                let spa_handler = get(move || {
-                    let path = spa_index.clone();
-                    async move {
-                        match tokio::fs::read_to_string(&path).await {
-                            Ok(html) => axum::response::Html(html).into_response(),
-                            Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        }
-                    }
-                });
-
-                app.route("/auth/login", spa_handler.clone())
-                    .route("/auth/forgot-password", spa_handler.clone())
-                    .route("/auth/reset-password", spa_handler)
-                    .nest_service("/assets", assets_service)
-                    .fallback_service(
-                        ServeDir::new(static_dir).fallback(ServeFile::new(index_path)),
-                    )
-            } else {
-                tracing::warn!(dir = %static_dir, "Static dir set but index.html not found");
-                app
-            }
-        } else {
-            // No static_dir — don't add a root handler. The binary can add its own
-            // (fc-dev uses embedded assets, fc-server/fc-platform-server may redirect to Swagger).
-            app
+        // SPA serving (if static_dir is configured). No static_dir: no root
+        // handler. The binary can add its own (fc-dev uses embedded assets,
+        // fc-server/fc-platform-server may redirect to Swagger).
+        let app = match self.static_dir {
+            Some(ref static_dir) => serve_spa(app, static_dir),
+            None => app,
         };
 
         (app, openapi)
     }
+}
+
+/// Serve the SPA in `static_dir` under `app`: hashed `/assets/*` immutable,
+/// the shell never cacheable, and the shell as the fallback for any path no
+/// route claims. A directory without `index.html` serves nothing.
+pub fn serve_spa(app: Router, static_dir: &str) -> Router {
+    let index_path = std::path::PathBuf::from(static_dir).join("index.html");
+    if index_path.exists() {
+        use axum::http::header::CACHE_CONTROL;
+        use axum::http::HeaderValue;
+        use tower_http::services::{ServeDir, ServeFile};
+        use tower_http::set_header::SetResponseHeaderLayer;
+
+        tracing::info!(dir = %static_dir, "Serving static frontend files with SPA fallback");
+
+        let assets_dir = std::path::PathBuf::from(static_dir).join("assets");
+        let assets_service = tower::ServiceBuilder::new()
+            .layer(SetResponseHeaderLayer::overriding(
+                CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
+            ))
+            .service(ServeDir::new(&assets_dir));
+
+        // SPA routes that conflict with API nests (e.g., /auth/login vs POST /auth/login).
+        // Without these, the /auth nest returns 405 for GET requests the SPA should handle.
+        let spa_index = index_path.clone();
+        let spa_handler = get(move || {
+            let path = spa_index.clone();
+            async move {
+                match tokio::fs::read_to_string(&path).await {
+                    Ok(html) => (
+                        [(CACHE_CONTROL, SPA_SHELL_CACHE_CONTROL)],
+                        axum::response::Html(html),
+                    )
+                        .into_response(),
+                    Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }
+        });
+
+        // The shell — `/`, `/index.html` by name, and the SPA
+        // fallback for any other path — is never cacheable, so a
+        // browser never keeps a stale SPA after a deploy (Java
+        // 8fd35a8b). Every other static file keeps default caching.
+        let fallback_service = tower::ServiceBuilder::new()
+            .layer(SetResponseHeaderLayer::overriding(
+                CACHE_CONTROL,
+                |res: &axum::http::Response<_>| {
+                    is_html(res.headers())
+                        .then(|| HeaderValue::from_static(SPA_SHELL_CACHE_CONTROL))
+                },
+            ))
+            .service(ServeDir::new(static_dir).fallback(ServeFile::new(index_path)));
+
+        app.route("/auth/login", spa_handler.clone())
+            .route("/auth/forgot-password", spa_handler.clone())
+            .route("/auth/reset-password", spa_handler)
+            .nest_service("/assets", assets_service)
+            .fallback_service(fallback_service)
+    } else {
+        tracing::warn!(dir = %static_dir, "Static dir set but index.html not found");
+        app
+    }
+}
+
+/// `Cache-Control` of every SPA shell response (index.html, whether asked
+/// for by name, as `/`, or as the fallback for a client-side route). Hashed
+/// `/assets/*` keep `public, max-age=31536000, immutable`.
+pub const SPA_SHELL_CACHE_CONTROL: &str = "no-cache, no-store, must-revalidate";
+
+fn is_html(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("text/html"))
 }
 
 // =============================================================================
@@ -753,4 +787,63 @@ async fn health_handler() -> Json<serde_json::Value> {
         "status": "UP",
         "version": env!("CARGO_PKG_VERSION")
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{header::CACHE_CONTROL, Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn cache_control(app: &Router, path: &str) -> (StatusCode, Option<String>) {
+        let res = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let cc = res
+            .headers()
+            .get(CACHE_CONTROL)
+            .map(|v| v.to_str().unwrap().to_string());
+        (res.status(), cc)
+    }
+
+    /// Java 8fd35a8b: every shell response is never cacheable; hashed
+    /// assets stay immutable and other static files keep default caching.
+    #[tokio::test]
+    async fn the_spa_shell_is_never_cacheable_and_assets_stay_immutable() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), "<html>shell</html>").unwrap();
+        std::fs::write(dir.path().join("robots.txt"), "User-agent: *").unwrap();
+        std::fs::create_dir(dir.path().join("assets")).unwrap();
+        std::fs::write(dir.path().join("assets/index-abc123.js"), "1").unwrap();
+        let app = serve_spa(Router::new(), dir.path().to_str().unwrap());
+
+        let shell = Some(SPA_SHELL_CACHE_CONTROL.to_string());
+        for path in [
+            "/",
+            "/index.html",
+            "/applications/app_1",
+            "/auth/login",
+            "/auth/reset-password",
+        ] {
+            assert_eq!(
+                cache_control(&app, path).await,
+                (StatusCode::OK, shell.clone()),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            cache_control(&app, "/assets/index-abc123.js").await,
+            (
+                StatusCode::OK,
+                Some("public, max-age=31536000, immutable".to_string())
+            )
+        );
+        assert_eq!(
+            cache_control(&app, "/robots.txt").await,
+            (StatusCode::OK, None)
+        );
+    }
 }
