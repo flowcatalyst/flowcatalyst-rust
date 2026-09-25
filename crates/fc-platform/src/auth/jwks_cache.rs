@@ -160,6 +160,21 @@ impl JwksCache {
     }
 }
 
+#[cfg(test)]
+impl JwksCache {
+    /// Cache `jwks` for `issuer_url` as if just fetched (tests only: no
+    /// network).
+    pub(crate) async fn seed(&self, issuer_url: &str, jwks: Jwks) {
+        self.cache.write().await.insert(
+            issuer_url.to_string(),
+            CachedJwks {
+                jwks,
+                fetched_at: Utc::now(),
+            },
+        );
+    }
+}
+
 impl Default for JwksCache {
     fn default() -> Self {
         Self::new(900) // 15 minute default TTL

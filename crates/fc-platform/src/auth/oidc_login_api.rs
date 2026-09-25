@@ -958,6 +958,8 @@ enum IdTokenError {
     MissingClaim(&'static str),
     #[error("Invalid issuer for multi-tenant IDP: {0}")]
     InvalidIssuer(String),
+    #[error("ID token audience {0} does not include this client")]
+    InvalidAudience(serde_json::Value),
     #[error("Nonce mismatch")]
     NonceMismatch,
     #[error("No email claim in ID token")]
@@ -1040,7 +1042,9 @@ async fn validate_id_token_with_jwks(
         // we'll validate manually with pattern matching after decode.
         // Setting iss to None skips validation (empty set would reject all issuers).
         validation.iss = None;
-        validation.validate_aud = false; // audience may vary per tenant
+        // Only the issuer varies per tenant; `aud` is checked by hand below
+        // (jsonwebtoken's check runs with the issuer's, which is off here).
+        validation.validate_aud = false;
     } else {
         validation.set_issuer(&[issuer_url]);
         validation.set_audience(&[expected_client_id]);
@@ -1065,6 +1069,13 @@ async fn validate_id_token_with_jwks(
     // For multi-tenant: manually validate issuer against pattern
     if idp.oidc_multi_tenant && !is_valid_issuer_for_idp(idp, &issuer) {
         return Err(IdTokenError::InvalidIssuer(issuer));
+    }
+    // ...and the audience against our registered client id: it is OUR
+    // client_id at every tenant, so skipping it would accept an ID token
+    // minted for a different relying party at the same IdP (Go
+    // `VerifyIDToken`, bridge/oidc.go:246-260).
+    if idp.oidc_multi_tenant && !audience_contains(&payload["aud"], expected_client_id) {
+        return Err(IdTokenError::InvalidAudience(payload["aud"].clone()));
     }
 
     // Validate nonce
@@ -1127,6 +1138,16 @@ async fn validate_id_token_with_jwks(
 }
 
 /// Validate issuer against IDP configuration (exact match or pattern)
+/// Whether an `aud` claim, in either RFC 7519 form (a string or an array
+/// of strings), names `client_id` (Go `audienceContains`).
+fn audience_contains(aud: &serde_json::Value, client_id: &str) -> bool {
+    match aud {
+        serde_json::Value::String(a) => a == client_id,
+        serde_json::Value::Array(auds) => auds.iter().any(|a| a.as_str() == Some(client_id)),
+        _ => false,
+    }
+}
+
 fn is_valid_issuer_for_idp(idp: &IdentityProvider, issuer: &str) -> bool {
     // Exact match against configured issuer URL
     if let Some(ref issuer_url) = idp.oidc_issuer_url {
@@ -1619,4 +1640,106 @@ pub fn oidc_login_router(state: OidcLoginApiState) -> Router {
         )
         .route("/oidc/session/end", get(session_end))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::jwks_cache::{JwkKey, Jwks};
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use serde_json::json;
+
+    const TENANT_ISSUER: &str = "https://login.microsoftonline.com/tenant-a/v2.0";
+
+    /// A multi-tenant Entra-style IdP whose client id is `our-client`, and
+    /// the key its JWKS (seeded, no network) publishes.
+    async fn multi_tenant_idp() -> (IdentityProvider, JwksCache, EncodingKey) {
+        use rsa::{pkcs8::DecodePublicKey, traits::PublicKeyParts, RsaPublicKey};
+        let (private_pem, public_pem) =
+            crate::auth::auth_service::AuthConfig::generate_rsa_keys(None).unwrap();
+        let public = RsaPublicKey::from_public_key_pem(&public_pem).unwrap();
+        let jwk = JwkKey {
+            kty: "RSA".to_string(),
+            key_use: Some("sig".to_string()),
+            kid: Some("k1".to_string()),
+            alg: Some("RS256".to_string()),
+            n: Some(URL_SAFE_NO_PAD.encode(public.n().to_bytes_be())),
+            e: Some(URL_SAFE_NO_PAD.encode(public.e().to_bytes_be())),
+            x: None,
+            y: None,
+            crv: None,
+        };
+        let mut idp = IdentityProvider::new("entra", "Entra", IdentityProviderType::Oidc);
+        idp.oidc_issuer_url = Some("https://login.microsoftonline.com/common/v2.0".to_string());
+        idp.oidc_client_id = Some("our-client".to_string());
+        idp.oidc_multi_tenant = true;
+        idp.oidc_issuer_pattern =
+            Some(r"^https://login\.microsoftonline\.com/[^/]+/v2\.0$".to_string());
+        let cache = JwksCache::new(900);
+        cache
+            .seed(
+                idp.oidc_issuer_url.as_deref().unwrap(),
+                Jwks { keys: vec![jwk] },
+            )
+            .await;
+        let key = EncodingKey::from_rsa_pem(private_pem.as_bytes()).unwrap();
+        (idp, cache, key)
+    }
+
+    fn id_token(key: &EncodingKey, aud: serde_json::Value) -> String {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("k1".to_string());
+        let now = chrono::Utc::now().timestamp();
+        encode(
+            &header,
+            &json!({
+                "iss": TENANT_ISSUER,
+                "sub": "ext-sub",
+                "aud": aud,
+                "exp": now + 300,
+                "iat": now,
+                "nonce": "n-1",
+                "email": "ada@acme.test",
+                "tid": "tenant-a"
+            }),
+            key,
+        )
+        .unwrap()
+    }
+
+    /// Go `VerifyIDToken` (bridge/oidc.go:246-260): a multi-tenant IdP
+    /// re-applies the audience check, so an ID token minted for another
+    /// relying party at the same IdP is refused.
+    #[tokio::test]
+    async fn multi_tenant_id_token_must_name_our_client() {
+        let (idp, cache, key) = multi_tenant_idp().await;
+
+        for aud in [json!("our-client"), json!(["other", "our-client"])] {
+            let claims =
+                validate_id_token_with_jwks(&id_token(&key, aud.clone()), &idp, "n-1", &cache)
+                    .await
+                    .unwrap_or_else(|e| panic!("{aud}: {e}"));
+            assert_eq!(claims.tenant_id.as_deref(), Some("tenant-a"));
+        }
+
+        for aud in [json!("someone-else"), json!(["someone-else"]), json!(null)] {
+            let err =
+                validate_id_token_with_jwks(&id_token(&key, aud.clone()), &idp, "n-1", &cache)
+                    .await
+                    .unwrap_err();
+            assert!(
+                matches!(err, IdTokenError::InvalidAudience(_)),
+                "{aud}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn audience_contains_reads_both_forms() {
+        assert!(audience_contains(&json!("c"), "c"));
+        assert!(audience_contains(&json!(["a", "c"]), "c"));
+        assert!(!audience_contains(&json!(["a"]), "c"));
+        assert!(!audience_contains(&json!("a"), "c"));
+        assert!(!audience_contains(&json!(null), "c"));
+    }
 }
