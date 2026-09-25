@@ -1,8 +1,10 @@
 # Topcoat trial: a server-rendered Rust admin UI
 
-**Status:** trial, 2026-09-25. Branch `trial/topcoat`. Nothing here ships in
-`fc-server`/`fc-platform-server` or the Docker image; the UI only mounts in
-`fc-dev` built with `--features web`.
+**Status:** trial, 2026-09-25, on `main` behind a feature. Nothing here ships
+in `fc-server`/`fc-platform-server` or the Docker image; the UI only mounts in
+`fc-dev` built with `--features web`. `crates/fc-web` is excluded from the
+Cargo workspace, so `cargo build`/`test`/`clippy --workspace` (and CI) never
+compile it. To drop the trial, see [Removing the trial](#removing-the-trial).
 
 **Question:** can [Topcoat](https://github.com/tokio-rs/topcoat) (tokio-rs,
 v0.9: server-rendered components, a small browser runtime, Tailwind via the
@@ -19,7 +21,7 @@ no Node/npm toolchain?
 | FlowCatalyst components | `crates/fc-web/src/ui.rs`: `page_header`, `filter_select`, `search_input`, `cursor_pager`, `tag`, `code_chips`, `confirm_dialog`, `json_block`, `local_time`, `empty_state`, flash messages |
 | App shell | `crates/fc-web/src/app/shell.rs`: navy sidebar (themed logo, permission-filtered nav, collapse), user menu, layout |
 | Auth convention test | `crates/fc-web/tests/auth_convention_test.rs` |
-| Asset bundler for fc-dev | `crates/fc-web/bundle` (`fc-web-bundle`) |
+| Asset bundle | written by the process itself on the first start after a build: `crates/fc-web/src/assets.rs` |
 
 How it fits together:
 
@@ -112,15 +114,28 @@ copying it:
 
 ```sh
 cargo build -p fc-dev --features web
-cargo run -p fc-web-bundle -- target/debug/fc-dev   # writes target/debug/assets
-target/debug/fc-dev                                  # then open http://localhost:8080/ui
+target/debug/fc-dev          # then open http://localhost:8080/ui
 ```
 
-- Re-run `fc-web-bundle` after changing Tailwind classes. The stylesheet is a
-  hashed asset, so a stale bundle serves a 404 for it.
-- `topcoat asset bundle` can't be used here. It builds the binary itself and
-  has no `--features` flag, which is why `fc-web-bundle` exists.
-- `FC_WEB_ASSETS_DIR` overrides where the bundle is looked up.
+- **Assets bundle themselves.** On the first start after a build, fc-web
+  scans its own executable for Topcoat's `asset!` declarations and writes
+  the bundle to `target/debug/fc-web-assets/<key>` (the key derives from the
+  executable's path, size and mtime; older bundles are removed). That takes
+  well under a second, and a rebuild can never serve a stale stylesheet.
+  `topcoat asset bundle` can't be used: it builds the binary itself and has
+  no `--features` flag.
+- The bundle copies files from where the build left them (the Tailwind
+  output under `target/`, the Topcoat runtime in `~/.cargo/registry`), so a
+  `web` binary works on the machine that built it, which is the only way
+  fc-dev is meant to use it. `FC_WEB_ASSETS_DIR` points at a prebuilt bundle
+  instead.
+- **Tests:** fc-web is outside the workspace, so run its tests against its
+  own manifest (sharing the workspace's target dir and, if you like, its
+  lockfile, `cp Cargo.lock crates/fc-web/`; both are git-ignored):
+
+  ```sh
+  CARGO_TARGET_DIR=target cargo test --manifest-path crates/fc-web/Cargo.toml
+  ```
 - Offline builds need two things:
   - `TAILWIND_CLI=/path/to/tailwindcss`. Otherwise the build downloads Tailwind
     v4.3.2 into `target/topcoat/cache`.
@@ -183,17 +198,19 @@ Postgres.
    - Each of these cost a compile cycle to understand.
 3. **Asset bundling in an embedded setup.**
    - The bundler scans the final binary, and `topcoat asset bundle` can't
-     pass cargo features, hence the extra `fc-web-bundle` crate.
-   - Adding `topcoat-asset` as a direct dependency of `fc-web` broke the
-     font macros, because they switch to `::topcoat_asset` paths whenever
-     that crate is a dependency.
-   - The bundle is files on disk next to the executable. fc-dev's
-     single-binary story (rust-embed) needs one of two solutions:
-     - embed the bundle directory, or
-     - use Topcoat's hosted-manifest mode.
+     pass cargo features. The first pass needed a separate `fc-web-bundle`
+     tool and a manual re-bundle after every class change; fc-web now
+     bundles itself at startup (`src/assets.rs`).
+   - `topcoat-asset` as a direct dependency switches Topcoat's asset macros
+     to `::topcoat_asset` paths. As an *optional* dependency that broke the
+     font macros (the path was emitted while the crate wasn't linked); as a
+     normal dependency it is fine.
+   - The bundle is files on disk, copied from the build machine's paths, so
+     a `web` build is not a distributable single binary. Shipping it would
+     need the bundle embedded (or Topcoat's hosted-manifest mode).
 4. **The dev loop is slower than Vite.**
-   - It takes about 4 s to rebuild, then an fc-dev restart, then a re-bundle
-     whenever classes change.
+   - It takes about 4 s to rebuild, then an fc-dev restart (the bundle is
+     rewritten on that start).
    - `topcoat dev` would automate this but can't pass features either.
      fc-web does call `notify_ready`, so it works once that is solved.
 5. **Build-script pitfall.** Printing `cargo:rerun-if-env-changed` (for
@@ -283,7 +300,33 @@ The risk is Topcoat's youth, not the model:
 **Next steps if we continue:**
 
 - Click-through of the unverified pieces (above).
-- Embed the asset bundle so fc-dev stays a single binary.
+- Embed the asset bundle if a `web` build ever has to be distributed.
 - Port the list pages with the most repetition first (events, dispatch jobs,
   subscriptions) to grow the component kit.
 - Retire the matching Vue routes and BFF endpoints one by one.
+
+## Removing the trial
+
+fc-web touches nothing outside these places, so dropping it is a small,
+mechanical diff:
+
+1. Delete `crates/fc-web`.
+2. In `bin/fc-dev/Cargo.toml`, remove the `fc-web` optional dependency and
+   the `web` feature.
+3. In `bin/fc-dev/src/main.rs`, remove every `#[cfg(feature = "web")]` item
+   (`grep -n 'feature = "web"'`): the `WebDeps` construction and its log
+   line, the two `fallback_service(fc_web::service(…))` branches (keep the
+   `#[cfg(not(feature = "web"))]` fallback, minus its attribute, in the
+   embedded branch), and the `notify_dev_ready` spawn.
+4. In the root `Cargo.toml`, remove `"crates/fc-web"` (and its comment) from
+   `exclude`; in `.gitignore`, the two `crates/fc-web/` lines.
+5. Remove the "fc-web (Topcoat UI trial)" section and the fc-web mention in
+   "Frontend UI Conventions" from `CLAUDE.md`, and delete
+   `docs/topcoat-trial.md` and `docs/topcoat-handover.md`.
+6. `cargo build -p fc-dev` to refresh `Cargo.lock` (Topcoat's packages drop
+   out of it).
+
+The `fc-platform` extractions stay: `authenticate_headers`,
+`password_login`, `resolve_auth_method`, `load_login_theme`,
+`event_type::access` and `PlatformError::status_code` are ordinary platform
+functions that the axum handlers call themselves.
