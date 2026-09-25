@@ -75,6 +75,7 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       principals, service accounts' batch permissions, service accounts not tied to an application)
 - [ ] Same RSA signing key, issuer and `FLOWCATALYST_APP_KEY` as Go
 - [ ] App service accounts hold `platform:messaging:batch:events-write` (and `dispatch-jobs-write`)
-- [ ] Prod env names read by Rust (see `inhance/iac/compute/flowcatalyst.ts`, `fc-router.ts`)
+- [ ] Prod env names read by Rust (see `inhance/iac/compute/flowcatalyst.ts`, `fc-router.ts`); platform and worker
+      tasks: `feat/platform-env`, `docs/parity/platform-env-vs-go.md` (no IaC change needed)
 - [ ] Rotate the leaked passwords; click Redact after the deploy
 - [ ] SDK cutover steps in `docs/sdks.md`
