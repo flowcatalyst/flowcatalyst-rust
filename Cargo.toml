@@ -14,8 +14,6 @@ members = [
     "crates/fc-fnhost-core",
     "crates/fc-function-signing",
     "crates/fc-http-listener",
-    "crates/fc-web",
-    "crates/fc-web/bundle",
     "bin/fc-dev",
     "bin/fc-mcp-server",
     "bin/fc-router",
@@ -32,6 +30,10 @@ members = [
 exclude = [
     "crates/fc-fnhost-core/tests/guests",
     "crates/fc-function-pdk",
+    # The Topcoat UI trial: only fc-dev's optional `web` feature builds it,
+    # so `--workspace` builds, CI and the Docker image never compile it (its
+    # build script downloads Tailwind). See docs/topcoat-trial.md.
+    "crates/fc-web",
     "examples",
     "spikes",
     "templates",

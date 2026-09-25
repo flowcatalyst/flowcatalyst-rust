@@ -3392,15 +3392,9 @@ dependencies = [
  "serde_json",
  "tokio",
  "topcoat",
+ "topcoat-asset",
  "tower",
  "tracing",
-]
-
-[[package]]
-name = "fc-web-bundle"
-version = "0.1.0"
-dependencies = [
- "topcoat-asset",
 ]
 
 [[package]]

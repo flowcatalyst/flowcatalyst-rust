@@ -1,23 +1,34 @@
 [package]
 name = "fc-web"
-version.workspace = true
+version = "0.1.0"
 edition = "2024"
-license.workspace = true
+license = "AGPL-3.0-or-later"
 description = "FlowCatalyst server-rendered admin UI (Topcoat trial)"
+publish = false
 
+# Excluded from the workspace (see the root Cargo.toml): only fc-dev's `web`
+# feature builds this crate, so workspace keys can't be inherited and the
+# versions below mirror the workspace's.
+#
+# Topcoat is pinned exactly: it is pre-1.0 and says to expect breaking
+# changes, so an upgrade is a planned task.
 [dependencies]
 fc-platform = { path = "../fc-platform" }
-topcoat = { version = "0.9.0", features = ["tower", "tailwind", "icon-iconify"] }
-tokio = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tower = { workspace = true }
+topcoat = { version = "=0.9.0", features = ["tower", "tailwind", "icon-iconify"] }
+# The bundler writes the asset bundle at startup (see `assets.rs`). A direct
+# dependency switches Topcoat's asset macros to `::topcoat_asset` paths, so
+# it must not be optional.
+topcoat-asset = { version = "=0.9.0", features = ["bundler"] }
+tokio = { version = "1.44", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+tower = { version = "0.5", features = ["util"] }
 http = "1"
 http-body = "1"
 form_urlencoded = "1"
 bytes = "1"
-chrono = { workspace = true }
-tracing = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
 
 [build-dependencies]
-topcoat = { version = "0.9.0", default-features = false, features = ["tailwind", "icon-iconify"] }
+topcoat = { version = "=0.9.0", default-features = false, features = ["tailwind", "icon-iconify"] }

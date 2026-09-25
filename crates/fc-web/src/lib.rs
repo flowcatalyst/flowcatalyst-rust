@@ -11,10 +11,10 @@
 //! re-renders drop request extensions. See [`auth`].
 
 mod app;
+mod assets;
 pub mod auth;
 mod ui;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -28,7 +28,7 @@ use fc_platform::{
     AnchorDomainRepository, ApplicationRepository, AuditLogRepository, ClientRepository, EmailDomainMappingRepository, EventTypeRepository,
     IdentityProviderRepository, PgUnitOfWork, PlatformConfigRepository, PrincipalRepository,
 };
-use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
+use topcoat::asset::RouterBuilderAssetExt;
 use topcoat::cookie::RouterBuilderCookieExt;
 use topcoat::router::tower::{TowerRoute, TowerService};
 use topcoat::router::{Compression, Router, RouterBuilderDiscoverExt};
@@ -101,18 +101,6 @@ pub(crate) fn deps(cx: &topcoat::context::Cx) -> &WebDeps {
     topcoat::context::app_context::<Arc<WebDeps>>(cx)
 }
 
-/// Where the asset bundle lives: `FC_WEB_ASSETS_DIR`, else `assets/` next
-/// to the executable (where `topcoat asset bundle` writes it).
-fn asset_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("FC_WEB_ASSETS_DIR") {
-        return PathBuf::from(dir);
-    }
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|p| p.join("assets")))
-        .unwrap_or_else(|| PathBuf::from("assets"))
-}
-
 /// The UI as a tower service, for axum's `fallback_service`. Requests no
 /// UI route claims go to `spa`.
 pub fn service<S, ResBody>(deps: WebDeps, spa: S) -> TowerService
@@ -128,13 +116,8 @@ where
     ResBody::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     let mut builder = Router::builder().discover();
-    match AssetBundle::load_dir(asset_dir()) {
-        Ok(bundle) => builder = builder.assets(bundle),
-        Err(e) => tracing::warn!(
-            error = %e,
-            dir = %asset_dir().display(),
-            "fc-web asset bundle not found; run `topcoat asset bundle` (styles and scripts will 404)"
-        ),
+    if let Some(bundle) = assets::load() {
+        builder = builder.assets(bundle);
     }
     let router: Router = builder
         .app_context(Arc::new(deps))

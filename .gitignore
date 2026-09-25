@@ -52,3 +52,7 @@ localstack-data/
 /clients/typescript-sdk/dist
 /clients/typescript-sdk/dist
 /clients/typescript-sdk/dist
+
+# fc-web is excluded from the workspace; its standalone test runs write these
+/crates/fc-web/Cargo.lock
+/crates/fc-web/target/
