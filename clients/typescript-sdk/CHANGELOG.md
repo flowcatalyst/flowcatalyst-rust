@@ -27,6 +27,11 @@ incompatibly.
 - `FlowCatalystClient.accessToken()`: the platform bearer token the client
   authenticates with (the caller's token in user-token mode, else the
   client-credentials token).
+- `checkDeliverySignature(params)`: the result-returning form of
+  `verifyDeliverySignature` (owner ruling 11 of 2026-09-25). It returns
+  neverthrow's `ok(true)` for a genuine delivery, or
+  `err(WebhookSignatureError)` with its `code`. The same check, so the two
+  never disagree; `verifyDeliverySignature` still throws, unchanged.
 
 ### Changed
 - The Fastify OIDC session refresh is single-flight (owner ruling 5 of

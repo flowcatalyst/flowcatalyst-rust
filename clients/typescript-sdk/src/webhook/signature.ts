@@ -26,6 +26,7 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { err, ok, type Result } from "neverthrow";
 
 export type WebhookSignatureErrorCode =
 	| "missing_secret"
@@ -168,4 +169,23 @@ function parseTimestamp(timestamp: string): number | null {
 	const ms = Date.parse(timestamp);
 	if (Number.isNaN(ms)) return null;
 	return Math.floor(ms / 1000);
+}
+
+/**
+ * {@link verifyDeliverySignature}, returning the outcome instead of throwing, so a
+ * handler branches on it: `ok(true)` for a genuine delivery, `err(WebhookSignatureError)`
+ * saying exactly what failed. The same check, so the two never disagree.
+ */
+export function checkDeliverySignature(
+	params: VerifyDeliverySignatureParams,
+): Result<true, WebhookSignatureError> {
+	try {
+		verifyDeliverySignature(params);
+		return ok(true);
+	} catch (e) {
+		if (e instanceof WebhookSignatureError) {
+			return err(e);
+		}
+		throw e;
+	}
 }
