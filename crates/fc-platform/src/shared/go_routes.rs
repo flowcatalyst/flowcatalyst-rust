@@ -16,6 +16,7 @@ use crate::usecase::PgUnitOfWork;
 pub struct GoRoutesState {
     pub role_permissions: crate::role::permission_api::RolePermissionsState,
     pub router_config: crate::shared::router_config_api::RouterConfigState,
+    pub edm_lookup: crate::email_domain_mapping::lookup_api::EdmLookupState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
@@ -29,7 +30,26 @@ impl GoRoutesState {
         // on a bad SQS configuration (internal/server/run.go:69).
         let queue_settings = crate::shared::dispatch_queue::QueueSettings::from_env()
             .unwrap_or_else(|e| panic!("dispatch queue settings: {e}"));
+        let edm_move_repo = Arc::new(
+            crate::email_domain_mapping::provider_move_repository::ProviderMoveRepository::new(
+                &repos.pool,
+                repos.principal_repo.clone(),
+            ),
+        );
         Self {
+            edm_lookup: crate::email_domain_mapping::lookup_api::EdmLookupState {
+                edm_repo: repos.edm_repo.clone(),
+                idp_repo: repos.idp_repo.clone(),
+                move_use_case: Arc::new(
+                    crate::email_domain_mapping::operations::move_provider::MoveMappingToProviderUseCase::new(
+                        repos.edm_repo.clone(),
+                        repos.idp_repo.clone(),
+                        repos.principal_repo.clone(),
+                        edm_move_repo,
+                        uow.clone(),
+                    ),
+                ),
+            },
             router_config: crate::shared::router_config_api::RouterConfigState {
                 repo: Arc::new(
                     crate::dispatch_pool::router_config_repository::RouterConfigRepository::new(
@@ -94,6 +114,9 @@ impl GoRoutesState {
 /// All Go-parity routes, at their full paths.
 pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
     OpenApiRouter::new()
+        .merge(crate::email_domain_mapping::lookup_api::edm_lookup_router(
+            state.edm_lookup,
+        ))
         .merge(crate::shared::router_config_api::router_config_router(
             state.router_config,
         ))

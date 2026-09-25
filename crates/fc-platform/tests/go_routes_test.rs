@@ -774,3 +774,212 @@ async fn the_router_config_lists_pools_and_tenant_queues() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// ── Email-domain mappings ────────────────────────────────────────────────
+
+async fn create_idp(app: &TestApp, admin: &str, code: &str) -> String {
+    let body = assert_status(
+        app.post(
+            "/api/identity-providers",
+            admin,
+            json!({ "code": code, "name": code, "type": "INTERNAL", "oidcMultiTenant": false }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    body["id"].as_str().expect("idp id").to_string()
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn email_domain_mappings_are_created_looked_up_and_moved_as_go() {
+    let app = setup().await;
+    let admin = app.anchor_admin_token().await;
+    let idp_y = create_idp(&app, &admin, "parity-idp-y").await;
+
+    // Go does not require the provider to exist yet.
+    let created = assert_status(
+        app.post(
+            "/api/email-domain-mappings",
+            &admin,
+            json!({ "emailDomain": "parity.example.test", "identityProviderId": "idp_parity_x",
+                    "scopeType": "CLIENT", "primaryClientId": "clt_x" }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+    let edm_id = created["id"].as_str().unwrap().to_string();
+
+    for (body, status, code) in [
+        (
+            json!({ "emailDomain": "parity.example.test", "identityProviderId": "idp_x", "scopeType": "ANCHOR" }),
+            StatusCode::CONFLICT,
+            "DOMAIN_ALREADY_MAPPED",
+        ),
+        (
+            json!({ "emailDomain": "nodot", "identityProviderId": "idp_x", "scopeType": "ANCHOR" }),
+            StatusCode::BAD_REQUEST,
+            "INVALID_EMAIL_DOMAIN",
+        ),
+        (
+            json!({ "emailDomain": "a.example.test", "identityProviderId": "idp_x", "scopeType": "GLOBAL" }),
+            StatusCode::BAD_REQUEST,
+            "INVALID_SCOPE_TYPE",
+        ),
+        (
+            json!({ "emailDomain": "b.example.test", "identityProviderId": "idp_x", "scopeType": "PARTNER" }),
+            StatusCode::BAD_REQUEST,
+            "PRIMARY_CLIENT_REQUIRED",
+        ),
+    ] {
+        let (s, b) = read_json(app.post("/api/email-domain-mappings", &admin, body).await).await;
+        assert_eq!(s, status, "{b}");
+        assert_eq!(b["code"], code);
+    }
+
+    // Lookup: no auth needed; {found:false} when absent; 400 without a domain.
+    let found = assert_status(
+        app.get_unauth("/api/email-domain-mappings/lookup?domain=parity.example.test")
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(found["id"], edm_id.as_str());
+    let missing = assert_status(
+        app.get_unauth("/api/email-domain-mappings/lookup?domain=nope.example.test")
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(missing, json!({ "found": false }));
+    let (s, b) = read_json(app.get_unauth("/api/email-domain-mappings/lookup").await).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(b["code"], "DOMAIN_REQUIRED");
+
+    // By domain: anchor + view permission.
+    let got = assert_status(
+        app.get(
+            "/api/email-domain-mappings/by-domain/parity.example.test",
+            &admin,
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(got["id"], edm_id.as_str());
+    let (s, _) = read_json(
+        app.get(
+            "/api/email-domain-mappings/by-domain/nope.example.test",
+            &admin,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = read_json(
+        app.get(
+            "/api/email-domain-mappings/by-domain/parity.example.test",
+            &app.anchor_token(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    // A federated user of the domain, with an IdP-synced and an admin role.
+    sqlx::query(
+        "INSERT INTO iam_principals (id, type, scope, name, active, email, email_domain, idp_type, external_idp_id) \
+         VALUES ('prn_fed', 'USER', 'CLIENT', 'Fed', true, 'fed@parity.example.test', 'parity.example.test', 'OIDC', 'ext-1')",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO iam_principal_roles (principal_id, role_name, assignment_source) \
+         VALUES ('prn_fed', 'parity:synced', 'IDP_SYNC'), ('prn_fed', 'parity:kept', 'ADMIN_ASSIGNED')",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let moved = assert_status(
+        app.post(
+            &format!("/api/email-domain-mappings/{edm_id}/move-provider"),
+            &admin,
+            json!({ "identityProviderId": idp_y }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(
+        moved,
+        json!({
+            "mappingId": edm_id,
+            "emailDomain": "parity.example.test",
+            "fromIdentityProviderId": "idp_parity_x",
+            "toIdentityProviderId": idp_y,
+            "usersReset": 1
+        })
+    );
+    let (idp_type, ext): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT idp_type, external_idp_id FROM iam_principals WHERE id = 'prn_fed'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(idp_type.as_deref(), Some("INTERNAL"));
+    assert_eq!(ext, None);
+    let roles: Vec<(String,)> =
+        sqlx::query_as("SELECT role_name FROM iam_principal_roles WHERE principal_id = 'prn_fed'")
+            .fetch_all(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(roles, vec![("parity:kept".to_string(),)]);
+    assert_eq!(
+        app.event_count_by_type("platform:admin:email-domain-mapping:provider-changed")
+            .await,
+        1
+    );
+
+    for (id, body, status) in [
+        (
+            edm_id.as_str(),
+            json!({ "identityProviderId": idp_y }),
+            StatusCode::CONFLICT,
+        ),
+        (
+            edm_id.as_str(),
+            json!({ "identityProviderId": "idp_none" }),
+            StatusCode::NOT_FOUND,
+        ),
+        (edm_id.as_str(), json!({}), StatusCode::BAD_REQUEST),
+        (
+            "edm_nope",
+            json!({ "identityProviderId": idp_y }),
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (s, b) = read_json(
+            app.post(
+                &format!("/api/email-domain-mappings/{id}/move-provider"),
+                &admin,
+                body,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(s, status, "{b}");
+    }
+    let (s, _) = read_json(
+        app.post(
+            &format!("/api/email-domain-mappings/{edm_id}/move-provider"),
+            &nobody_token(&app),
+            json!({ "identityProviderId": idp_y }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}

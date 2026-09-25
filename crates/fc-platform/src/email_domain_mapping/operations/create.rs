@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use super::events::EmailDomainMappingCreated;
 use crate::email_domain_mapping::entity::{EmailDomainMapping, ScopeType};
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use crate::EmailDomainMappingRepository;
 use crate::IdentityProviderRepository;
 
@@ -71,6 +69,7 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
                 "Email domain is required",
             ));
         }
+        super::create_rules::validate_domain(&email_domain)?;
 
         if command.identity_provider_id.trim().is_empty() {
             return Err(UseCaseError::validation(
@@ -78,6 +77,10 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
                 "Identity provider ID is required",
             ));
         }
+        super::create_rules::validate_scope(
+            command.scope_type,
+            command.primary_client_id.as_deref(),
+        )?;
 
         Ok(())
     }
@@ -117,18 +120,13 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
     ) -> Result<EmailDomainMappingCreated, UseCaseError> {
         let email_domain = command.email_domain.trim().to_lowercase();
 
-        // Verify identity provider exists
+        // Go does not require the identity provider to exist yet
+        // (emaildomainmapping/operations/create.go); a known multi-tenant
+        // one still needs the tenant pin below.
         let idp = self
             .idp_repo
             .find_by_id(&command.identity_provider_id)
-            .await
-            .or_not_found(
-                "IDENTITY_PROVIDER_NOT_FOUND",
-                format!(
-                    "Identity provider '{}' not found",
-                    command.identity_provider_id
-                ),
-            )?;
+            .await?;
 
         // Check for duplicate email domain
         if self
@@ -138,7 +136,7 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
             .is_some()
         {
             return Err(UseCaseError::business_rule(
-                "EMAIL_DOMAIN_ALREADY_MAPPED",
+                "DOMAIN_ALREADY_MAPPED",
                 format!("Email domain '{}' is already mapped", email_domain),
             ));
         }
@@ -153,7 +151,7 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
         mapping.required_oidc_tenant_id = command.required_oidc_tenant_id.clone();
         mapping.allowed_role_ids = command.allowed_role_ids.clone();
         mapping.sync_roles_from_idp = command.sync_roles_from_idp;
-        super::require_tenant_pin(idp.oidc_multi_tenant, &mapping)?;
+        super::require_tenant_pin(idp.is_some_and(|i| i.oidc_multi_tenant), &mapping)?;
 
         if let Err(e) = self.edm_repo.insert(&mapping).await {
             return Err(UseCaseError::commit(format!(

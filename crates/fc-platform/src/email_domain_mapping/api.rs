@@ -61,7 +61,10 @@ pub struct EmailDomainMappingResponse {
 }
 
 impl EmailDomainMappingResponse {
-    fn from_entity(m: EmailDomainMapping, identity_provider_name: Option<String>) -> Self {
+    pub(crate) fn from_entity(
+        m: EmailDomainMapping,
+        identity_provider_name: Option<String>,
+    ) -> Self {
         Self {
             id: m.id,
             email_domain: m.email_domain,
@@ -158,7 +161,7 @@ pub async fn create_email_domain_mapping(
     let cmd = CreateEmailDomainMappingCommand {
         email_domain: req.email_domain,
         identity_provider_id: req.identity_provider_id,
-        scope_type: req.scope_type.parse()?,
+        scope_type: super::lookup_api::parse_scope_type(&req.scope_type)?,
         primary_client_id: req.primary_client_id,
         additional_client_ids: req.additional_client_ids.unwrap_or_default(),
         granted_client_ids: req.granted_client_ids.unwrap_or_default(),
