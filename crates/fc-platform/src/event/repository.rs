@@ -98,6 +98,29 @@ pub struct EventRepository {
     pool: PgPool,
 }
 
+/// Each event's `created_at`, strictly increasing in batch order at the
+/// column's microsecond precision. The stream fan-out reads events `ORDER BY
+/// created_at` and gives their dispatch jobs the event's `created_at`, which
+/// the scheduler orders a message group by — so a batch must keep its order
+/// there. Go stamps each event with its own `time.Now()` (event.New); one
+/// `NOW()` for the whole batch made every member of a group tie, and the
+/// group went out in whatever order the fan-out happened to read it
+/// (delivery run 3, `router-restart`: g3 and g4 delivered 10 first).
+fn batch_created_at(times: impl Iterator<Item = DateTime<Utc>>) -> Vec<DateTime<Utc>> {
+    use chrono::DurationRound;
+    let tick = chrono::TimeDelta::microseconds(1);
+    let mut out: Vec<DateTime<Utc>> = Vec::new();
+    for t in times {
+        let t = t.duration_trunc(tick).unwrap_or(t);
+        let t = match out.last() {
+            Some(prev) if t <= *prev => *prev + tick,
+            _ => t,
+        };
+        out.push(t);
+    }
+    out
+}
+
 impl EventRepository {
     pub fn new(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
@@ -139,6 +162,7 @@ impl EventRepository {
         let mut message_groups: Vec<Option<String>> = Vec::with_capacity(events.len());
         let mut client_ids: Vec<Option<String>> = Vec::with_capacity(events.len());
         let mut context_datas: Vec<Option<serde_json::Value>> = Vec::with_capacity(events.len());
+        let created_ats = batch_created_at(events.iter().map(|e| e.created_at));
 
         for event in events {
             ids.push(event.id.as_str());
@@ -169,8 +193,8 @@ impl EventRepository {
                 $1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[],
                 $5::varchar[], $6::timestamptz[], $7::jsonb[],
                 $8::varchar[], $9::varchar[], $10::varchar[],
-                $11::varchar[], $12::varchar[], $13::jsonb[]
-            ), NOW()
+                $11::varchar[], $12::varchar[], $13::jsonb[], $14::timestamptz[]
+            )
             ON CONFLICT DO NOTHING"#,
         )
         .bind(&ids)
@@ -186,6 +210,7 @@ impl EventRepository {
         .bind(&message_groups as &[Option<String>])
         .bind(&client_ids as &[Option<String>])
         .bind(&context_datas as &[Option<serde_json::Value>])
+        .bind(&created_ats)
         .execute(&self.pool)
         .await?;
 
@@ -535,5 +560,43 @@ impl EventRepository {
         .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod batch_created_at_tests {
+    use super::*;
+    use chrono::DurationRound;
+
+    /// Events stamped in the same microsecond (or out of order) still get
+    /// strictly increasing `created_at`s in batch order, so the fan-out
+    /// keeps a batch's message groups in the order they were sent.
+    #[test]
+    fn a_batch_keeps_its_order_in_created_at() {
+        let t = DateTime::parse_from_rfc3339("2026-09-25T10:00:00.000001500Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let us = chrono::TimeDelta::microseconds(1);
+        let got = batch_created_at([t, t, t - us, t + us * 5, t + us * 5].into_iter());
+        let base = t.duration_trunc(us).unwrap();
+        assert_eq!(
+            got,
+            vec![base, base + us, base + us * 2, base + us * 5, base + us * 6]
+        );
+        assert!(got.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn distinct_times_are_kept() {
+        let t = Utc::now();
+        let ms = chrono::TimeDelta::milliseconds(1);
+        let times = vec![t, t + ms, t + ms * 2];
+        let got = batch_created_at(times.clone().into_iter());
+        let us = chrono::TimeDelta::microseconds(1);
+        let want: Vec<_> = times
+            .iter()
+            .map(|x| x.duration_trunc(us).unwrap())
+            .collect();
+        assert_eq!(got, want);
     }
 }
