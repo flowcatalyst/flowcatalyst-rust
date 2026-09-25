@@ -674,3 +674,97 @@ async fn email_codes_and_remembered_devices() {
     let (_, body, _) = login(&app, email, None).await;
     assert_eq!(body["status"], "ok", "{body}");
 }
+
+/// Go `handleChangePassword` + `handleLoginHistory`: the current password,
+/// then a current second factor when the user has one; afterwards the old
+/// password is dead and remembered devices and refresh tokens are gone.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_user_changes_their_password_with_their_second_factor() {
+    with_app_key();
+    let app = TestApp::setup().await;
+    let email = "change@flowcatalyst.test";
+    seed_user(&app, email).await;
+    let session = session_for(&app, email).await;
+    let new_password = "Brand-New-Secret-7!";
+
+    let change = |body: Value| {
+        let session = session.clone();
+        let app = &app;
+        async move {
+            read_json(
+                app.send_with_session(Method::POST, "/auth/change-password", &session, Some(body))
+                    .await,
+            )
+            .await
+        }
+    };
+
+    let (status, body) =
+        change(json!({ "currentPassword": "wrong", "newPassword": new_password })).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["code"], "INVALID_CURRENT_PASSWORD");
+
+    let (secret, _) = enrol_totp(&app, &session).await;
+    let (status, body) =
+        change(json!({ "currentPassword": PASSWORD, "newPassword": new_password })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "MFA_REQUIRED");
+    assert_eq!(body["methods"], json!(["TOTP"]));
+
+    let (status, body) = read_json(
+        app.send_with_session(
+            Method::POST,
+            "/auth/change-password/send-email-code",
+            &session,
+            None::<()>,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["code"], "NO_EMAIL_2FA");
+
+    let code = totp_code(&secret, chrono::Utc::now().timestamp()).unwrap();
+    let (status, body) = change(json!({
+        "currentPassword": PASSWORD, "newPassword": new_password, "code": code
+    }))
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["message"], "Your password has been changed.");
+
+    let resp = post_public(
+        &app,
+        "/auth/login",
+        json!({ "email": email, "password": PASSWORD }),
+        None,
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "the old password is dead"
+    );
+    let resp = post_public(
+        &app,
+        "/auth/login",
+        json!({ "email": email, "password": new_password }),
+        None,
+    )
+    .await;
+    let (status, body) = read_json(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "mfa_required", "{body}");
+
+    let (status, history) =
+        read_json(app.get_with_session("/auth/login-history", &session).await).await;
+    assert_eq!(status, StatusCode::OK, "{history}");
+    let attempts = history["attempts"].as_array().unwrap();
+    // Newest first: the old password's failure, then the first sign-in
+    // (the new password's sign-in is still owed its second factor).
+    assert_eq!(attempts.len(), 2, "{history}");
+    assert_eq!(attempts[0]["attemptType"], "USER_LOGIN");
+    assert_eq!(attempts[0]["outcome"], "FAILURE");
+    assert_eq!(attempts[0]["failureReason"], "INVALID_CREDENTIALS");
+    assert_eq!(attempts[1]["outcome"], "SUCCESS");
+}

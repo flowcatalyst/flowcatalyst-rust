@@ -145,6 +145,24 @@ impl LoginAttemptRepository {
         rows.into_iter().map(LoginAttempt::try_from).collect()
     }
 
+    /// The `limit` most recent attempts for an identifier, newest first: the
+    /// user's own sign-in history (Go `FindRecentByIdentifier`).
+    pub async fn find_recent_by_identifier(
+        &self,
+        identifier: &str,
+        limit: i64,
+    ) -> Result<Vec<LoginAttempt>> {
+        let rows = sqlx::query_as::<_, LoginAttemptRow>(
+            "SELECT * FROM iam_login_attempts WHERE identifier = $1 \
+             ORDER BY attempted_at DESC, id DESC LIMIT $2",
+        )
+        .bind(identifier)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(LoginAttempt::try_from).collect()
+    }
+
     /// Last successful login attempt timestamp for an identifier. Used by the
     /// backoff helper to compute "failures since the last good login".
     pub async fn last_success_at(&self, identifier: &str) -> Result<Option<DateTime<Utc>>> {

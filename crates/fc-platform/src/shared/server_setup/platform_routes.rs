@@ -1234,6 +1234,11 @@ pub fn build_platform_routes(
         public: public_api_state,
         password_reset: password_reset_state,
         webauthn: webauthn_state,
+        account: Arc::new(crate::mfa::AccountState {
+            two_factor: two_factor.clone(),
+            password_service: auth.password.clone(),
+            refresh_token_repo: repos.refresh_token_repo.clone(),
+        }),
         two_factor,
         dispatch_process: Some(DispatchProcessState {
             dispatch_job_repo: repos.dispatch_job_repo.clone(),

@@ -285,6 +285,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub webauthn: crate::webauthn::WebauthnApiState,
     /// Two-factor sign-in and self-service (`/auth/2fa/*`).
     pub two_factor: Arc<crate::mfa::TwoFactorLogin>,
+    /// `/auth/change-password*`, `/auth/login-history`.
+    pub account: Arc<crate::mfa::AccountState>,
     /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
     /// is constructed inside `build()` so the platform's own OpenAPI document
     /// (returned by `build()` itself) can be stored against the seeded
@@ -644,6 +646,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_AUTH,
                 crate::mfa::two_factor_self_service_router(self.two_factor),
             )
+            .nest(PATH_AUTH, crate::mfa::account_router(self.account))
             .nest(
                 PATH_AUTH_CLIENT,
                 client_selection_router(self.client_selection).layer(auth_layer.clone()),
