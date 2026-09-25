@@ -8,3 +8,4 @@ mod login;
 mod nav;
 mod roles;
 mod shell;
+mod subscriptions;
