@@ -72,7 +72,7 @@ class OutboxManager
         $activeDriver = $driver ?? $this->driver;
 
         $id = TsidGenerator::generate();
-        $payload = json_encode($job->toPayload());
+        $payload = json_encode(self::dispatchJobPayload($job, $id));
         $now = date('Y-m-d H:i:s');
 
         $message = $this->buildMessage(
@@ -154,7 +154,7 @@ class OutboxManager
             $id = TsidGenerator::generate();
             $ids[] = $id;
 
-            $payload = json_encode($job->toPayload());
+            $payload = json_encode(self::dispatchJobPayload($job, $id));
 
             $messages[] = $this->buildMessage(
                 $id,
@@ -239,6 +239,19 @@ class OutboxManager
         $activeDriver->insertBatch($messages);
 
         return $ids;
+    }
+
+    /**
+     * A dispatch job's outbox payload: the DTO's fields plus `id`, the outbox
+     * row's own id (a 13-character TSID). The platform honours a supplied job
+     * id, so a batch the outbox processor resends after losing the answer
+     * can't create the job twice.
+     *
+     * @return array<string, mixed>
+     */
+    private static function dispatchJobPayload(CreateDispatchJobDto $job, string $id): array
+    {
+        return ['id' => $id] + $job->toPayload();
     }
 
     /**
