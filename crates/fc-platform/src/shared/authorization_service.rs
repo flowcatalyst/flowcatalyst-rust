@@ -713,6 +713,14 @@ pub mod checks {
         )
     }
 
+    /// Principals, setting a user's roles (add, remove, replace):
+    /// `platform:iam:user:assign-roles` itself (owner ruling 14; Java
+    /// `Access.requireRoleAssigner`). Holding user create, update or delete
+    /// no longer changes roles; the role ceiling then bounds which roles.
+    pub fn can_assign_principal_roles(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::iam::USER_ASSIGN_ROLES)
+    }
+
     /// Principals, delete: `platform:iam:user:delete`, as Go's
     /// `CanDeletePrincipals`.
     pub fn can_delete_principals(context: &AuthContext) -> Result<()> {

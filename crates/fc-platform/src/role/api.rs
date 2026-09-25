@@ -208,6 +208,11 @@ pub async fn create_role(
         &auth.0,
         crate::permissions::iam::ROLE_CREATE,
     )?;
+    // Owner ruling 14: only permissions the caller holds.
+    crate::role::ceiling::require_permissions(
+        Some(&auth.0),
+        req.permissions.iter().map(String::as_str),
+    )?;
 
     let cmd = CreateRoleCommand {
         application_code: req.application_code,
@@ -363,6 +368,17 @@ pub async fn update_role(
         state.role_repo.find_by_id(&role_name).await?
     }
     .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
+    // Owner ruling 14: only permissions the caller holds may be added or
+    // removed.
+    if let Some(ref permissions) = req.permissions {
+        let before: Vec<String> = role.permissions.iter().cloned().collect();
+        crate::role::ceiling::require_permissions(
+            Some(&auth.0),
+            crate::role::ceiling::changed(&before, permissions)
+                .iter()
+                .map(String::as_str),
+        )?;
+    }
 
     let cmd = UpdateRoleCommand {
         role_id: role.id,
@@ -414,6 +430,10 @@ pub async fn grant_permission(
     }
     .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
 
+    if !role.permissions.contains(&req.permission) {
+        // Owner ruling 14: only a permission the caller holds.
+        crate::role::ceiling::require_permissions(Some(&auth.0), [req.permission.as_str()])?;
+    }
     role.grant_permission(req.permission);
     let cmd = UpdateRoleCommand {
         role_id: role.id.clone(),
@@ -469,6 +489,10 @@ pub async fn revoke_permission(
     }
     .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
 
+    if role.permissions.contains(&permission) {
+        // Owner ruling 14: removal counts too.
+        crate::role::ceiling::require_permissions(Some(&auth.0), [permission.as_str()])?;
+    }
     role.revoke_permission(&permission);
     let cmd = UpdateRoleCommand {
         role_id: role.id.clone(),
@@ -522,6 +546,11 @@ pub async fn delete_role(
         state.role_repo.find_by_id(&role_name).await?
     }
     .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
+    // Owner ruling 14: deleting a role withdraws every permission it holds.
+    crate::role::ceiling::require_permissions(
+        Some(&auth.0),
+        role.permissions.iter().map(String::as_str),
+    )?;
 
     let cmd = DeleteRoleCommand { role_id: role.id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);

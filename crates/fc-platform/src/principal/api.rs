@@ -487,6 +487,8 @@ impl PrincipalsQuery {
 #[derive(Clone)]
 pub struct PrincipalsState {
     pub principal_repo: Arc<PrincipalRepository>,
+    /// Role definitions, for the role ceiling.
+    pub role_repo: Arc<crate::RoleRepository>,
     /// Resolves a user-create `clientId` given as an id or an identifier
     pub client_repo: Arc<crate::ClientRepository>,
     /// Resolved application scopes, cached per principal; dropped when a
@@ -1097,6 +1099,7 @@ pub async fn assign_role(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_assign_principal_roles(&auth.0)?;
 
     // Additive assign: take existing roles + new role, run through UoW.
     let principal = state
@@ -1104,10 +1107,12 @@ pub async fn assign_role(
         .find_by_id(&id)
         .await?
         .or_not_found("Principal", &id)?;
-    let mut roles: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
+    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
+    let mut roles = before.clone();
     if !roles.iter().any(|r| r == &req.role) {
         roles.push(req.role.clone());
     }
+    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &roles).await?;
 
     let cmd = AssignUserRolesCommand {
         user_id: id.clone(),
@@ -1154,12 +1159,17 @@ pub async fn batch_assign_roles(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_assign_principal_roles(&auth.0)?;
 
     let principal = state
         .principal_repo
         .find_by_id(&id)
         .await?
         .or_not_found("Principal", &id)?;
+
+    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
+    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &req.roles)
+        .await?;
 
     let old_roles: std::collections::HashSet<String> =
         principal.roles.iter().map(|r| r.role.clone()).collect();
@@ -1227,18 +1237,21 @@ pub async fn remove_role(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_assign_principal_roles(&auth.0)?;
 
     let principal = state
         .principal_repo
         .find_by_id(&id)
         .await?
         .or_not_found("Principal", &id)?;
+    let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
     let roles: Vec<String> = principal
         .roles
         .iter()
         .filter(|r| r.role != role)
         .map(|r| r.role.clone())
         .collect();
+    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &roles).await?;
 
     let cmd = AssignUserRolesCommand {
         user_id: id.clone(),
@@ -1506,10 +1519,12 @@ pub async fn sync_users(
     };
     let ctx = ExecutionContext::from_auth(&auth.0);
     let principal_repo = state.principal_repo.clone();
+    let role_repo = state.role_repo.clone();
+    let caller = auth.0.clone();
     let event = state
         .unit_of_work
         .run(|session| async move {
-            SyncUsersUseCase::new(principal_repo, session)
+            SyncUsersUseCase::new(principal_repo, role_repo, caller, session)
                 .run(command, ctx)
                 .await
         })

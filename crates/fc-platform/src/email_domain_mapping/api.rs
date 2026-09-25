@@ -97,6 +97,8 @@ pub struct EmailDomainMappingsListResponse {
 pub struct EmailDomainMappingsState {
     pub edm_repo: Arc<EmailDomainMappingRepository>,
     pub idp_repo: Arc<IdentityProviderRepository>,
+    /// Role definitions, for the role ceiling on `allowedRoleIds`.
+    pub role_repo: Arc<crate::RoleRepository>,
     pub create_use_case: Arc<
         crate::email_domain_mapping::operations::CreateEmailDomainMappingUseCase<
             crate::usecase::PgUnitOfWork,
@@ -142,6 +144,16 @@ pub async fn create_email_domain_mapping(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_create_email_domain_mappings(&auth.0)?;
+    // Owner ruling 14: `allowedRoleIds` decides which roles an IdP login
+    // may hand out, so it is bounded by the role ceiling.
+    let allowed_role_ids = req.allowed_role_ids.unwrap_or_default();
+    crate::role::ceiling::require_role_ref_change(
+        &auth.0,
+        &state.role_repo,
+        &[],
+        &allowed_role_ids,
+    )
+    .await?;
 
     let cmd = CreateEmailDomainMappingCommand {
         email_domain: req.email_domain,
@@ -151,7 +163,7 @@ pub async fn create_email_domain_mapping(
         additional_client_ids: req.additional_client_ids.unwrap_or_default(),
         granted_client_ids: req.granted_client_ids.unwrap_or_default(),
         required_oidc_tenant_id: req.required_oidc_tenant_id,
-        allowed_role_ids: req.allowed_role_ids.unwrap_or_default(),
+        allowed_role_ids,
         sync_roles_from_idp: req.sync_roles_from_idp.unwrap_or(false),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -302,6 +314,18 @@ pub async fn update_email_domain_mapping(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::can_update_email_domain_mappings(&auth.0)?;
+    // Owner ruling 14, as on create; a missing mapping is the use case's 404.
+    if let Some(after) = req.allowed_role_ids.as_deref() {
+        if let Some(existing) = state.edm_repo.find_by_id(&id).await? {
+            crate::role::ceiling::require_role_ref_change(
+                &auth.0,
+                &state.role_repo,
+                &existing.allowed_role_ids,
+                after,
+            )
+            .await?;
+        }
+    }
 
     let cmd = UpdateEmailDomainMappingCommand {
         mapping_id: id,

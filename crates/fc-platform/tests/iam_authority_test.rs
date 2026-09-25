@@ -646,3 +646,317 @@ async fn roles_client_access_and_applications_need_anchor_and_the_permission() {
     .await;
     assert!(status.is_success(), "{status}: {resp}");
 }
+
+// ── Rulings 13 + 14: the role ceiling ────────────────────────────────────
+
+/// Seed the built-in roles a test hands out (the harness runs no start-up
+/// role seeding).
+async fn seed_roles(app: &TestApp, roles: Vec<fc_platform::role::entity::AuthRole>) {
+    for role in roles {
+        if app
+            .repos
+            .role_repo
+            .find_by_name(&role.name)
+            .await
+            .unwrap()
+            .is_none()
+        {
+            app.repos.role_repo.insert(&role).await.unwrap();
+        }
+    }
+}
+
+/// An anchor caller holding the built-in `platform:iam-admin` permissions
+/// plus `extra`.
+fn iam_admin(app: &TestApp, extra: &[&str]) -> String {
+    let role = fc_platform::role::entity::roles::iam_admin();
+    let mut perms: Vec<&str> = role.permissions.iter().map(String::as_str).collect();
+    perms.extend_from_slice(extra);
+    caller(app, UserScope::Anchor, None, &perms)
+}
+
+async fn roles_of(app: &TestApp, id: &str) -> Vec<String> {
+    let mut roles: Vec<String> = app
+        .repos
+        .principal_repo
+        .find_by_id(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .roles
+        .iter()
+        .map(|r| r.role.clone())
+        .collect();
+    roles.sort();
+    roles
+}
+
+/// Setting a user's roles needs `user:assign-roles`; the caller may add or
+/// remove only roles within its own permissions; kept roles are not checked.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn user_roles_are_bounded_by_the_callers_own_permissions() {
+    use fc_platform::role::entity::roles;
+    let app = setup().await;
+    seed_roles(
+        &app,
+        vec![roles::super_admin(), roles::iam_readonly(), roles::viewer()],
+    )
+    .await;
+    let mut target = Principal::new_user("ceiling@iam.test", UserScope::Anchor);
+    target.assign_role("platform:super-admin");
+    app.repos.principal_repo.insert(&target).await.unwrap();
+    let id = target.id.clone();
+    let path = format!("/api/principals/{id}/roles");
+
+    // user:update alone no longer changes roles.
+    let updater = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::iam::USER_UPDATE],
+    );
+    let (status, resp) = read_json(
+        app.put(
+            &path,
+            &updater,
+            json!({ "roles": ["platform:super-admin"] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_REQUIRED");
+
+    let admin = iam_admin(&app, &[]);
+    // A role within: added, the super-admin role kept untouched.
+    let (status, resp) = read_json(
+        app.put(
+            &path,
+            &admin,
+            json!({ "roles": ["platform:super-admin", "platform:iam-readonly"] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(
+        roles_of(&app, &id).await,
+        vec!["platform:iam-readonly", "platform:super-admin"]
+    );
+
+    // Removing the super-admin role counts: refused, named.
+    let (status, resp) = read_json(
+        app.put(&path, &admin, json!({ "roles": ["platform:iam-readonly"] }))
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
+    assert!(resp["message"]
+        .as_str()
+        .unwrap()
+        .contains("platform:super-admin"));
+
+    // Adding a role above (viewer holds admin permissions iam-admin lacks),
+    // through each route.
+    let (status, resp) = read_json(
+        app.post(&path, &admin, json!({ "role": "platform:viewer" }))
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
+    let (status, resp) = read_json(
+        app.delete(&format!("{path}/platform:super-admin"), &admin)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
+    assert_eq!(
+        roles_of(&app, &id).await,
+        vec!["platform:iam-readonly", "platform:super-admin"]
+    );
+
+    // A super-admin may.
+    let super_admin = caller(&app, UserScope::Anchor, None, &[permissions::ADMIN_ALL]);
+    let (status, resp) = read_json(
+        app.put(&path, &super_admin, json!({ "roles": ["platform:viewer"] }))
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(roles_of(&app, &id).await, vec!["platform:viewer"]);
+}
+
+/// A service account's roles: service-account:update, and the same ceiling.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn service_account_roles_are_bounded_by_the_callers_own_permissions() {
+    use fc_platform::role::entity::roles;
+    let app = setup().await;
+    seed_roles(&app, vec![roles::super_admin(), roles::iam_readonly()]).await;
+    let admin = app.anchor_admin_token().await;
+    let (_, body) = create_sa(&app, &admin, json!({ "code": "sa-ceiling", "name": "C" })).await;
+    let id = body["serviceAccount"]["id"].as_str().unwrap().to_string();
+    let path = format!("/api/service-accounts/{id}/roles");
+
+    let sa_admin = iam_admin(&app, &[]);
+    let (status, resp) = read_json(
+        app.put(
+            &path,
+            &sa_admin,
+            json!({ "roles": ["platform:super-admin"] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
+    let (status, resp) = read_json(
+        app.put(
+            &path,
+            &sa_admin,
+            json!({ "roles": ["platform:iam-readonly"] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+}
+
+/// The platform-level user sync, IdP role mappings, email-domain allowed
+/// roles and role permission edits are bounded the same way.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn sync_mappings_and_role_edits_are_bounded() {
+    use fc_platform::role::entity::roles;
+    let app = setup().await;
+    seed_roles(&app, vec![roles::super_admin(), roles::iam_readonly()]).await;
+    let admin = iam_admin(&app, &[]);
+
+    // Platform sync: a role above refuses the whole sync; nothing is written.
+    let (status, resp) = read_json(
+        app.post(
+            "/api/principals/sync",
+            &admin,
+            json!({ "principals": [
+                { "email": "ok@iam.test", "name": "Ok", "roles": ["platform:iam-readonly"] },
+                { "email": "up@iam.test", "name": "Up", "roles": ["platform:super-admin"] }
+            ] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
+    assert!(app
+        .repos
+        .principal_repo
+        .find_by_email("ok@iam.test")
+        .await
+        .unwrap()
+        .is_none());
+    // Within, and application roles (unknown here): accepted as today.
+    let (status, resp) = read_json(
+        app.post(
+            "/api/principals/sync",
+            &admin,
+            json!({ "principals": [
+                { "email": "ok@iam.test", "name": "Ok", "roles": ["platform:iam-readonly", "hr:manager"] }
+            ] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+
+    // IdP role mapping to a role above.
+    let (status, resp) = read_json(
+        app.post(
+            "/api/idp-role-mappings",
+            &admin,
+            json!({ "idpType": "OIDC", "idpRoleName": "Admins", "platformRoleName": "platform:super-admin" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
+
+    // Email-domain allowedRoleIds naming a role above, by id.
+    let super_admin_id = app
+        .repos
+        .role_repo
+        .find_by_name("platform:super-admin")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let (status, resp) = read_json(
+        app.post(
+            "/api/email-domain-mappings",
+            &admin,
+            json!({
+                "emailDomain": "ceiling.test", "identityProviderId": "idp_x",
+                "scopeType": "ANCHOR", "allowedRoleIds": [super_admin_id]
+            }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ROLE_ABOVE_CALLER");
+
+    // Role permission edits: only permissions the caller holds.
+    let (status, resp) = read_json(
+        app.post(
+            "/api/roles",
+            &admin,
+            json!({
+                "applicationCode": "platform", "roleName": "sneaky", "displayName": "Sneaky",
+                "permissions": ["platform:*:*:*"]
+            }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_ABOVE_CALLER");
+    let (status, resp) = read_json(
+        app.post(
+            "/api/roles",
+            &admin,
+            json!({
+                "applicationCode": "platform", "roleName": "helper", "displayName": "Helper",
+                "permissions": ["platform:iam:user:view"]
+            }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{resp}");
+    let (status, resp) = read_json(
+        app.post(
+            "/api/roles/platform:helper/permissions",
+            &admin,
+            json!({ "permission": "platform:*:*:*" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_ABOVE_CALLER");
+    let (status, resp) = read_json(
+        app.put(
+            "/bff/roles/platform:helper",
+            &admin,
+            json!({ "permissions": ["platform:iam:user:view", "platform:admin:client:view"] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_ABOVE_CALLER");
+}

@@ -221,6 +221,22 @@ impl RoleRepository {
         self.hydrate_roles(rows).await
     }
 
+    /// The roles named by `refs`, each either a role name or a role id, in
+    /// one query (email-domain `allowedRoleIds` hold either).
+    pub async fn find_by_names_or_ids(&self, refs: &[String]) -> Result<Vec<AuthRole>> {
+        if refs.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows = sqlx::query_as::<_, RoleRow>(
+            "SELECT * FROM iam_roles WHERE name = ANY($1) OR id = ANY($1)",
+        )
+        .bind(refs)
+        .fetch_all(&self.pool)
+        .await?;
+
+        self.hydrate_roles(rows).await
+    }
+
     /// The permissions a set of role names grants, de-duplicated and sorted
     /// (Go `flattenPermissions`, auth/provider/provider.go:141-164: unknown
     /// role names contribute nothing).

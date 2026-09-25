@@ -13,8 +13,10 @@
 //! - a new user is created CLIENT-tier with no home client, with the entry's
 //!   name, active flag, roles and hash. One `platform:iam:user:created` event.
 //!
-//! Roles are lower-cased and neither prefixed nor checked. Nothing is
-//! removed for unlisted users. A `platform:iam:principals:synced` rollup
+//! Roles are lower-cased and not prefixed. The role ceiling (owner ruling
+//! 14) bounds them: the caller may add or remove only roles whose every
+//! platform permission it holds, else 403 `ROLE_ABOVE_CALLER` and nothing is
+//! written. Nothing is removed for unlisted users. A `platform:iam:principals:synced` rollup
 //! closes the sync. Run inside [`crate::usecase::PgUnitOfWork::run`], the
 //! rows, every event and every audit entry commit in one transaction, as
 //! Go's `CommitSync` does.
@@ -27,9 +29,11 @@ use std::sync::Arc;
 
 use super::events::{PrincipalsSynced, UserCreated, UserUpdated};
 use crate::principal::entity::{Principal, PrincipalSyncBatch, UserScope};
+use crate::role::ceiling;
 use crate::service_account::entity::{AssignmentSource, RoleAssignment};
+use crate::shared::authorization_service::AuthContext;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
-use crate::PrincipalRepository;
+use crate::{PrincipalRepository, RoleRepository};
 
 /// One user in a platform-level sync.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,13 +72,23 @@ impl crate::usecase::AuditMasked for SyncUsersCommand {}
 
 pub struct SyncUsersUseCase<U: UnitOfWork> {
     principal_repo: Arc<PrincipalRepository>,
+    role_repo: Arc<RoleRepository>,
+    /// Who runs the sync, for the role ceiling.
+    caller: AuthContext,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> SyncUsersUseCase<U> {
-    pub fn new(principal_repo: Arc<PrincipalRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        principal_repo: Arc<PrincipalRepository>,
+        role_repo: Arc<RoleRepository>,
+        caller: AuthContext,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             principal_repo,
+            role_repo,
+            caller,
             unit_of_work,
         }
     }
@@ -160,6 +174,17 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
             .map(|p| (p.email().unwrap_or_default().to_lowercase(), p))
             .collect();
 
+        // What each listed user holds now, for the role ceiling.
+        let stored_roles: HashMap<String, Vec<String>> = existing
+            .iter()
+            .map(|(email, p)| {
+                (
+                    email.clone(),
+                    p.roles.iter().map(|r| r.role.clone()).collect(),
+                )
+            })
+            .collect();
+
         // Keyed by email so a repeated entry updates the user the earlier one
         // created or loaded, in order.
         let mut order: Vec<String> = Vec::new();
@@ -222,6 +247,21 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
             }
             saved.insert(email.clone(), principal);
         }
+
+        // Owner ruling 14: every role the sync adds or removes, on any user,
+        // must be within the caller's own permissions.
+        let mut changed: Vec<String> = Vec::new();
+        for email in &order {
+            let before = stored_roles.get(email).cloned().unwrap_or_default();
+            let after: Vec<String> = saved[email].roles.iter().map(|r| r.role.clone()).collect();
+            for role in ceiling::changed(&before, &after) {
+                if !changed.contains(&role) {
+                    changed.push(role);
+                }
+            }
+        }
+        let definitions = ceiling::definitions(&self.role_repo, &changed).await?;
+        ceiling::require_roles(Some(&self.caller), &changed, &definitions)?;
 
         let batch = PrincipalSyncBatch {
             principals: order.iter().filter_map(|e| saved.remove(e)).collect(),

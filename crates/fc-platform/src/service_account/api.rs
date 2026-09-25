@@ -244,6 +244,8 @@ pub struct AssignRolesResponse {
 #[derive(Clone)]
 pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
     pub repo: Arc<ServiceAccountRepository>,
+    /// Role definitions, for the role ceiling.
+    pub role_repo: Arc<crate::RoleRepository>,
     pub create_use_case: Arc<CreateServiceAccountUseCase<U>>,
     pub update_use_case: Arc<UpdateServiceAccountUseCase<U>>,
     pub delete_use_case: Arc<DeleteServiceAccountUseCase<U>>,
@@ -754,6 +756,16 @@ pub async fn assign_roles<U: UnitOfWork>(
     Json(req): Json<AssignRolesRequest>,
 ) -> Result<Json<AssignRolesResponse>, PlatformError> {
     crate::checks::can_update_service_accounts(&auth.0)?;
+    // Owner ruling 14: only roles whose every permission the caller holds
+    // may be added or removed.
+    let account = state
+        .repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::ServiceAccountNotFound { id: id.clone() })?;
+    let before: Vec<String> = account.roles.iter().map(|r| r.role.clone()).collect();
+    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &req.roles)
+        .await?;
     let command = AssignRolesCommand {
         service_account_id: id.clone(),
         roles: req.roles,
