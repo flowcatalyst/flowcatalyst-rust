@@ -345,3 +345,184 @@ async fn an_access_token_is_no_session_cookie() {
     let resp = app.get_with_session("/auth/me", &session).await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+const PLANNER_REDIRECT: &str = "https://planner.example.test/callback";
+const PKCE_VERIFIER: &str = "verifier-0123456789-0123456789-0123456789-abcdef";
+
+/// A public PKCE client, as AgentPlanner is registered.
+async fn seed_public_client(app: &TestApp) {
+    let client = fc_platform::auth::oauth_entity::OAuthClient::new("agent-planner", "Planner")
+        .with_redirect_uri(PLANNER_REDIRECT)
+        .with_grant_type(fc_platform::auth::oauth_entity::GrantType::RefreshToken);
+    app.repos.oauth_client_repo.insert(&client).await.unwrap();
+}
+
+fn authorize_request(prompt: Option<&str>) -> Request<Body> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(sha2::Sha256::digest(PKCE_VERIFIER.as_bytes()));
+    let mut uri = format!(
+        "/oauth/authorize?response_type=code&client_id=agent-planner&redirect_uri={}&state=s1&scope=openid%20offline_access&code_challenge={challenge}&code_challenge_method=S256",
+        urlencoding::encode(PLANNER_REDIRECT)
+    );
+    if let Some(p) = prompt {
+        uri.push_str(&format!("&prompt={p}"));
+    }
+    Request::builder().uri(uri).body(Body::empty()).unwrap()
+}
+
+fn location(resp: &Response<Body>) -> String {
+    resp.headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn with_header(mut req: Request<Body>, name: &'static str, value: String) -> Request<Body> {
+    req.headers_mut().insert(name, value.parse().unwrap());
+    req
+}
+
+/// POST /oauth/token with a form body.
+async fn token_request(app: &TestApp, form: &[(&str, &str)]) -> (StatusCode, Value) {
+    let body = form
+        .iter()
+        .map(|(k, v)| format!("{k}={}", urlencoding::encode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    read_json(
+        send(
+            app,
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/token")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await,
+    )
+    .await
+}
+
+/// Owner ruling 2026-09-25, item 6 (Java 66281bc7, S2.2): /oauth/authorize
+/// signs in from the session cookie only — never a Bearer — and only an
+/// active user's; a code is not redeemed for a principal deactivated since.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn authorize_reads_only_an_active_users_session_cookie() {
+    let app = TestApp::setup().await;
+    seed_public_client(&app).await;
+    let user = seed_user(&app, "ada@flowcatalyst.test", "Correct-Horse-9!").await;
+
+    // A Bearer is no session: sent to log in, and prompt=none is refused.
+    let access = app.auth_service.generate_access_token(&user).unwrap();
+    let resp = send(
+        &app,
+        with_header(
+            authorize_request(None),
+            "authorization",
+            format!("Bearer {access}"),
+        ),
+    )
+    .await;
+    assert!(
+        location(&resp).starts_with("/auth/login?"),
+        "{}",
+        location(&resp)
+    );
+    let resp = send(
+        &app,
+        with_header(
+            authorize_request(Some("none")),
+            "authorization",
+            format!("Bearer {access}"),
+        ),
+    )
+    .await;
+    assert!(
+        location(&resp).contains("error=login_required"),
+        "{}",
+        location(&resp)
+    );
+    // Nor is an access token carried in the cookie.
+    let resp = send(
+        &app,
+        with_header(
+            authorize_request(None),
+            "cookie",
+            format!("fc_session={access}"),
+        ),
+    )
+    .await;
+    assert!(
+        location(&resp).starts_with("/auth/login?"),
+        "{}",
+        location(&resp)
+    );
+
+    // The session cookie of an active user gets a code.
+    let session = app.auth_service.generate_session_token(&user).unwrap();
+    let resp = send(
+        &app,
+        with_header(
+            authorize_request(None),
+            "cookie",
+            format!("fc_session={session}"),
+        ),
+    )
+    .await;
+    let loc = location(&resp);
+    assert!(loc.starts_with(PLANNER_REDIRECT), "{loc}");
+    let code = loc
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_string();
+
+    // Deactivated after the code was issued: the code buys no tokens...
+    let mut inactive = app
+        .repos
+        .principal_repo
+        .find_by_id(&user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    inactive.deactivate();
+    app.repos.principal_repo.update(&inactive).await.unwrap();
+    let (status, body) = token_request(
+        &app,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", PLANNER_REDIRECT),
+            ("client_id", "agent-planner"),
+            ("code_verifier", PKCE_VERIFIER),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant", "{body}");
+    assert_eq!(body["error_description"], "Account is not active", "{body}");
+
+    // ...and the session no longer signs in.
+    let resp = send(
+        &app,
+        with_header(
+            authorize_request(None),
+            "cookie",
+            format!("fc_session={session}"),
+        ),
+    )
+    .await;
+    assert!(
+        location(&resp).starts_with("/auth/login?"),
+        "{}",
+        location(&resp)
+    );
+}
