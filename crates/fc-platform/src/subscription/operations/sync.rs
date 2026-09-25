@@ -10,9 +10,7 @@ use std::sync::Arc;
 use super::create::EventTypeBindingInput;
 use super::events::SubscriptionsSynced;
 use crate::subscription::entity::SubscriptionSource;
-use crate::usecase::{
-    ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
-};
+use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
 use crate::ConnectionRepository;
 use crate::DispatchPoolRepository;
 use crate::SubscriptionRepository;
@@ -148,16 +146,41 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         command: &SyncSubscriptionsCommand,
         ctx: &ExecutionContext,
     ) -> Result<SubscriptionsSynced, UseCaseError> {
-        // Validate connections exist (only when connection_id is provided)
+        // Every named connection, in one query: it must exist, and its scope
+        // must be consistent with the subscription's (Go
+        // subscription/operations/sync.go:224-243, ruling 2026-09-21 #5).
+        // An application's synced subscriptions are client-less here, so a
+        // connection scoped to any client is a mismatch: a bare id could
+        // otherwise borrow another tenant's connection and its account.
+        let connection_ids: Vec<String> = command
+            .subscriptions
+            .iter()
+            .filter_map(|i| i.connection_id.clone())
+            .collect();
+        let connections: HashMap<String, crate::Connection> = self
+            .connection_repo
+            .find_by_ids(&connection_ids)
+            .await?
+            .into_iter()
+            .map(|c| (c.id.clone(), c))
+            .collect();
         for input in &command.subscriptions {
             if let Some(ref conn_id) = input.connection_id {
-                self.connection_repo
-                    .find_by_id(conn_id)
-                    .await
-                    .or_not_found(
+                let connection = connections.get(conn_id).ok_or_else(|| {
+                    UseCaseError::not_found(
                         "CONNECTION_NOT_FOUND",
                         format!("Connection '{}' not found", conn_id),
-                    )?;
+                    )
+                })?;
+                if connection.client_id.is_some() {
+                    return Err(UseCaseError::validation(
+                        "CONNECTION_SCOPE_MISMATCH",
+                        format!(
+                            "Subscription '{}': connection '{}' is scoped to a different client",
+                            input.code, conn_id
+                        ),
+                    ));
+                }
             }
         }
 

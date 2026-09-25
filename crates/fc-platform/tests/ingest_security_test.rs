@@ -816,3 +816,238 @@ async fn only_a_caller_that_may_sign_as_the_application_ingests_its_events() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
+
+// ── S7: subscriptions and connections name only usable signers ──────────────
+
+fn subscription_body(code: &str, client_id: &str) -> Value {
+    json!({
+        "code": code,
+        "name": code,
+        "endpoint": "https://receiver.example.test/hook",
+        "clientId": client_id,
+        "eventTypes": [{"eventTypeCode": "zzz:a:b:c"}]
+    })
+}
+
+async fn create_connection(
+    app: &TestApp,
+    code: &str,
+    account: &str,
+    client_id: Option<&str>,
+) -> String {
+    let mut connection = fc_platform::Connection::new(code, code, account);
+    connection.client_id = client_id.map(str::to_string);
+    app.repos
+        .connection_repo
+        .insert(&connection)
+        .await
+        .expect("insert connection");
+    connection.id
+}
+
+/// Creating or re-pointing a subscription, or creating a connection, may
+/// name only an account the caller may sign with: no owning-application
+/// exemption, named rows must exist, and a connection must be in scope.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn subscriptions_and_connections_name_only_accounts_the_caller_may_use() {
+    let app = TestApp::setup().await;
+    let acme = create_client(&app, "acme").await;
+    let other = create_client(&app, "other").await;
+    let billing = create_application(&app, "billing").await;
+    let (acme_sac, acme_prn) = seed_account(&app, "acme-svc", None, &[&acme]).await;
+    let (billing_sac, billing_prn) = seed_account(&app, "billing-svc", Some(&billing), &[]).await;
+    let (other_sac, _) = seed_account(&app, "other-svc", None, &[&other]).await;
+    let other_connection = create_connection(&app, "other-conn", &other_sac, Some(&other)).await;
+    let acme_connection = create_connection(&app, "acme-conn", &acme_sac, Some(&acme)).await;
+
+    let admin = token_for(
+        &app,
+        // A bare client id: the subscription handlers' own client check
+        // (AuthContext::can_access_client) compares the claim entry whole,
+        // so an `id:identifier` pair would stop there before this check.
+        &Principal::new_user("admin@acme.test", UserScope::Client).with_client_id(&acme),
+        &[
+            permissions::admin::SUBSCRIPTION_CREATE,
+            permissions::admin::SUBSCRIPTION_UPDATE,
+        ],
+    );
+    let create = |code: &str, extra: Value| {
+        let mut body = subscription_body(code, &acme);
+        for (k, v) in extra.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        body
+    };
+
+    for (code, extra, status, error) in [
+        (
+            "sub-app",
+            json!({"serviceAccountId": billing_sac}),
+            StatusCode::FORBIDDEN,
+            "SERVICE_ACCOUNT_OUT_OF_REACH",
+        ),
+        (
+            // The application's account named by its principal id.
+            "sub-app-prn",
+            json!({"serviceAccountId": billing_prn}),
+            StatusCode::FORBIDDEN,
+            "SERVICE_ACCOUNT_OUT_OF_REACH",
+        ),
+        (
+            "sub-other",
+            json!({"serviceAccountId": other_sac}),
+            StatusCode::FORBIDDEN,
+            "SERVICE_ACCOUNT_OUT_OF_REACH",
+        ),
+        (
+            "sub-missing",
+            json!({"serviceAccountId": "sac_0000000000000"}),
+            StatusCode::NOT_FOUND,
+            "SERVICE_ACCOUNT_NOT_FOUND",
+        ),
+        (
+            "sub-conn",
+            json!({"connectionId": other_connection}),
+            StatusCode::FORBIDDEN,
+            "CONNECTION_OUT_OF_REACH",
+        ),
+    ] {
+        let (got, body) = post(&app, "/api/subscriptions", &admin, create(code, extra)).await;
+        assert_eq!(got, status, "{code}: {body}");
+        assert_eq!(body["error"], error, "{code}: {body}");
+    }
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM msg_subscriptions").await,
+        0
+    );
+
+    // Its own client's account and connection are its to use.
+    let (status, body) = post(
+        &app,
+        "/api/subscriptions",
+        &admin,
+        create(
+            "sub-own",
+            json!({"serviceAccountId": acme_sac, "connectionId": acme_connection}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    // A subscription of its client already signed by the application's
+    // account (a synced one): re-pointing its endpoint is refused, while an
+    // edit that leaves the endpoint alone is not re-checked.
+    let synced = create_subscription(&app, "synced-sub", Some(&acme), Some(&billing_sac)).await;
+    let path = format!("/api/subscriptions/{synced}");
+    let (status, body) = read_json(
+        app.put(
+            &path,
+            &admin,
+            json!({"endpoint": "https://attacker.example.test/hook"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"], "SERVICE_ACCOUNT_OUT_OF_REACH");
+    let (status, body) = read_json(app.put(&path, &admin, json!({"name": "Renamed"})).await).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (endpoint,): (String,) =
+        sqlx::query_as("SELECT target FROM msg_subscriptions WHERE id = $1")
+            .bind(&synced)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(endpoint, "https://receiver.example.test/hook");
+
+    // A connection too: an anchor that is not the application may not put
+    // the application's account on one.
+    let anchor = token_for(&app, &anchor_user(), &[]);
+    let (status, body) = post(
+        &app,
+        "/api/connections",
+        &anchor,
+        json!({"code": "app-conn", "name": "App", "serviceAccountId": billing_prn}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"], "SERVICE_ACCOUNT_OUT_OF_REACH");
+    let (status, body) = post(
+        &app,
+        "/api/connections",
+        &anchor,
+        json!({"code": "acme-conn-2", "name": "Acme", "serviceAccountId": acme_prn}),
+    )
+    .await;
+    assert!(status.is_success(), "{body}");
+}
+
+/// An application's subscription sync may not name a connection scoped to a
+/// client (Go's CONNECTION_SCOPE_MISMATCH): its subscriptions are
+/// client-less.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn subscription_sync_refuses_a_client_scoped_connection() {
+    let app = TestApp::setup().await;
+    let acme = create_client(&app, "acme").await;
+    let billing = create_application(&app, "billing").await;
+    let (billing_sac, billing_prn) = seed_account(&app, "billing-svc", Some(&billing), &[]).await;
+    sqlx::query(
+        "INSERT INTO iam_principal_application_access (principal_id, application_id) VALUES ($1, $2)",
+    )
+    .bind(&billing_prn)
+    .bind(&billing)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let scoped = create_connection(&app, "acme-conn", &billing_sac, Some(&acme)).await;
+    let shared = create_connection(&app, "shared-conn", &billing_sac, None).await;
+
+    let token = token_for(
+        &app,
+        &service_caller(&billing_prn, UserScope::Anchor),
+        &[permissions::admin::SUBSCRIPTION_SYNC],
+    );
+    let sync = |connection: &str| {
+        json!({"subscriptions": [{
+            "code": "synced",
+            "name": "Synced",
+            "target": "https://receiver.example.test/hook",
+            "connectionId": connection,
+            "eventTypes": [{"eventTypeCode": "billing:a:b:c"}]
+        }]})
+    };
+    let (status, body) = post(
+        &app,
+        "/api/applications/billing/subscriptions/sync",
+        &token,
+        sync(&scoped),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "CONNECTION_SCOPE_MISMATCH");
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM msg_subscriptions").await,
+        0
+    );
+
+    let (status, body) = post(
+        &app,
+        "/api/applications/billing/subscriptions/sync",
+        &token,
+        sync("con_0000000000000"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"], "CONNECTION_NOT_FOUND");
+
+    let (status, body) = post(
+        &app,
+        "/api/applications/billing/subscriptions/sync",
+        &token,
+        sync(&shared),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}

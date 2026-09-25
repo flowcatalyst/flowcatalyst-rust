@@ -316,6 +316,7 @@ pub async fn create_subscription(
         max_retries: req.max_retries,
         timeout_seconds: req.timeout_seconds,
         data_only: req.data_only,
+        caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
@@ -475,6 +476,7 @@ pub async fn update_subscription(
         max_retries: req.max_retries,
         timeout_seconds: req.timeout_seconds,
         data_only: None,
+        caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.update_use_case.run(cmd, ctx).await.into_result()?;

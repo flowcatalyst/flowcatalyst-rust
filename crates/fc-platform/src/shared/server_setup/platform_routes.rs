@@ -415,12 +415,16 @@ pub fn build_platform_routes(
     let create_sub_use_case = Arc::new(
         crate::subscription::operations::CreateSubscriptionUseCase::new(
             repos.subscription_repo.clone(),
+            repos.service_account_repo.clone(),
+            repos.connection_repo.clone(),
             unit_of_work.clone(),
         ),
     );
     let update_sub_use_case = Arc::new(
         crate::subscription::operations::UpdateSubscriptionUseCase::new(
             repos.subscription_repo.clone(),
+            repos.service_account_repo.clone(),
+            repos.connection_repo.clone(),
             unit_of_work.clone(),
         ),
     );

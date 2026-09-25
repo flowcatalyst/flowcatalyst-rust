@@ -31,6 +31,10 @@ pub struct CreateConnectionCommand {
     pub external_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// Who is creating it, for the signing-reach check (never serialised,
+    /// so never in the audit log).
+    #[serde(skip)]
+    pub caller: Option<crate::shared::authorization_service::AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for CreateConnectionCommand {}
@@ -134,6 +138,21 @@ impl<U: UnitOfWork> CreateConnectionUseCase<U> {
                 format!("Service account '{}' not found", command.service_account_id),
             )?;
 
+        // The account must be one the caller may sign with (S7; Java
+        // `CreateConnection`, b1ce6e55): every subscription on this
+        // connection is delivered with it. `applicationCode`-style ownership
+        // counts for nothing.
+        crate::service_account::signing_reach::require_usable_signers(
+            command.caller.as_ref(),
+            &self.service_account_repo,
+            &self.connection_repo,
+            Some(&command.service_account_id),
+            true,
+            None,
+            false,
+        )
+        .await?;
+
         // Uniqueness check (code + client_id scope)
         let existing = self
             .connection_repo
@@ -181,6 +200,7 @@ mod tests {
             service_account_id: "sa-123".to_string(),
             external_id: None,
             client_id: None,
+            caller: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("my-webhook"));

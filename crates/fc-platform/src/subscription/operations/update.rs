@@ -7,13 +7,16 @@ use std::sync::Arc;
 
 use super::create::EventTypeBindingInput;
 use super::events::SubscriptionUpdated;
+use crate::service_account::signing_reach::require_usable_signers;
+use crate::shared::authorization_service::AuthContext;
+use crate::shared::caller_reach::non_blank;
 use crate::subscription::entity::DispatchMode;
 use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use crate::EventTypeBinding;
 use crate::Subscription;
-use crate::SubscriptionRepository;
+use crate::{ConnectionRepository, ServiceAccountRepository, SubscriptionRepository};
 
 /// Command for updating an existing subscription.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +68,11 @@ pub struct UpdateSubscriptionCommand {
     /// New data_only setting (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_only: Option<bool>,
+
+    /// Who is updating it, for the signing-reach check (never serialised,
+    /// so never in the audit log).
+    #[serde(skip)]
+    pub caller: Option<AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for UpdateSubscriptionCommand {}
@@ -72,13 +80,22 @@ impl crate::usecase::AuditMasked for UpdateSubscriptionCommand {}
 /// Use case for updating an existing subscription.
 pub struct UpdateSubscriptionUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,
+    service_account_repo: Arc<ServiceAccountRepository>,
+    connection_repo: Arc<ConnectionRepository>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
-    pub fn new(subscription_repo: Arc<SubscriptionRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        subscription_repo: Arc<SubscriptionRepository>,
+        service_account_repo: Arc<ServiceAccountRepository>,
+        connection_repo: Arc<ConnectionRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             subscription_repo,
+            service_account_repo,
+            connection_repo,
             unit_of_work,
         }
     }
@@ -161,6 +178,11 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
                     command.subscription_id
                 ),
             )?;
+
+        // Where deliveries go and who signs them, before the update.
+        let account_before = non_blank(subscription.service_account_id.clone());
+        let connection_before = non_blank(subscription.connection_id.clone());
+        let endpoint_before = subscription.endpoint.clone();
 
         // Track changes
         let mut updated_name: Option<&str> = None;
@@ -247,6 +269,30 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
             subscription.data_only = data_only;
         }
 
+        // Whenever the update changes the endpoint, the account or the
+        // connection, the resulting account and connection must be ones the
+        // caller may sign with (S7; Java `UpdateSubscription`): re-pointing
+        // the endpoint of a subscription signed by an account the caller
+        // cannot reach would hand that account's credentials to the
+        // caller's endpoint. Re-sending the current values (the SPA sends
+        // the whole form) changes nothing and is not re-checked.
+        let account_after = non_blank(subscription.service_account_id.clone());
+        let connection_after = non_blank(subscription.connection_id.clone());
+        let account_changed = account_before != account_after;
+        let connection_changed = connection_before != connection_after;
+        if account_changed || connection_changed || endpoint_before != subscription.endpoint {
+            require_usable_signers(
+                command.caller.as_ref(),
+                &self.service_account_repo,
+                &self.connection_repo,
+                account_after.as_deref(),
+                account_changed,
+                connection_after.as_deref(),
+                connection_changed,
+            )
+            .await?;
+        }
+
         subscription.updated_at = chrono::Utc::now();
 
         // Create domain event
@@ -280,6 +326,7 @@ mod tests {
             max_retries: Some(10),
             timeout_seconds: None,
             data_only: None,
+            caller: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

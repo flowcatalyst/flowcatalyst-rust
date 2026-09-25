@@ -131,6 +131,7 @@ pub async fn create_connection(
         service_account_id: req.service_account_id,
         external_id: req.external_id,
         client_id: req.client_id,
+        caller: Some(auth.0.clone()),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;

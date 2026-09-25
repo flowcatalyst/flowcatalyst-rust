@@ -817,6 +817,9 @@ impl TriggerSync {
                     max_retries: Some(spec.max_retries as u32),
                     timeout_seconds: Some(spec.timeout_seconds as u32),
                     data_only: Some(spec.data_only),
+                    // Platform-authored: a function subscription names no
+                    // account or connection, so no signer is checked.
+                    caller: None,
                 };
                 self.commit_linked(
                     uow,
@@ -866,6 +869,7 @@ impl TriggerSync {
                     max_retries: Some(spec.max_retries as u32),
                     timeout_seconds: Some(spec.timeout_seconds as u32),
                     data_only: spec.data_only,
+                    caller: None,
                 };
                 self.commit_linked(
                     uow,

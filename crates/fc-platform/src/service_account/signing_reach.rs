@@ -31,11 +31,13 @@
 
 use std::fmt;
 
+use crate::connection::repository::ConnectionRepository;
 use crate::permissions;
 use crate::service_account::repository::ServiceAccountRepository;
 use crate::shared::authorization_service::AuthContext;
 use crate::shared::caller_reach;
 use crate::shared::error::Result;
+use crate::usecase::UseCaseError;
 
 /// Which clients a service account reaches.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +205,96 @@ impl SigningReach {
 /// A super-admin holds `platform:*:*:*` (Java `AuthContext.isSuperAdmin`).
 pub fn is_super_admin(caller: &AuthContext) -> bool {
     caller.has_permission(permissions::ADMIN_ALL)
+}
+
+/// The account a subscription's (or connection's) deliveries will be signed
+/// with, named directly or through its connection, must be one the caller
+/// may use (Java `subscription/operations/Access.requireUsableSigners`,
+/// S3.1): the caller chooses the endpoint, so naming an account is choosing
+/// where its bearer token and signatures go.
+///
+/// `service_account_id` / `connection_id` are the resulting references (blank
+/// is none). A reference the caller is setting (`*_must_exist`) must name an
+/// existing row (404 `SERVICE_ACCOUNT_NOT_FOUND` / `CONNECTION_NOT_FOUND`);
+/// one carried over unchanged may be dangling (it signs nothing) and is then
+/// not refused. A connection outside the caller's scope is 403
+/// `CONNECTION_OUT_OF_REACH`; an account the caller may not use is 403
+/// `SERVICE_ACCOUNT_OUT_OF_REACH`. Nothing to check needs no caller; anything
+/// to check without one is 403 `UNAUTHENTICATED`.
+pub async fn require_usable_signers(
+    caller: Option<&AuthContext>,
+    accounts: &ServiceAccountRepository,
+    connections: &ConnectionRepository,
+    service_account_id: Option<&str>,
+    account_must_exist: bool,
+    connection_id: Option<&str>,
+    connection_must_exist: bool,
+) -> std::result::Result<(), UseCaseError> {
+    let service_account_id = service_account_id.filter(|v| !v.trim().is_empty());
+    let connection_id = connection_id.filter(|v| !v.trim().is_empty());
+    if service_account_id.is_none() && connection_id.is_none() {
+        return Ok(());
+    }
+    let Some(caller) = caller else {
+        return Err(UseCaseError::forbidden(
+            "UNAUTHENTICATED",
+            "authentication required",
+        ));
+    };
+    let reach = SigningReach::for_caller(caller, accounts).await?;
+
+    // The accounts to check: the one named, and the connection's.
+    let mut to_check: Vec<(String, bool)> = Vec::new();
+    if let Some(id) = service_account_id {
+        to_check.push((id.to_string(), account_must_exist));
+    }
+    if let Some(id) = connection_id {
+        match connections.find_by_id(id).await? {
+            None if connection_must_exist => {
+                return Err(UseCaseError::not_found(
+                    "CONNECTION_NOT_FOUND",
+                    format!("Connection not found: {id}"),
+                ))
+            }
+            None => {}
+            Some(connection) => {
+                if !caller_reach::reaches_scope(caller, connection.client_id.as_deref()) {
+                    return Err(UseCaseError::forbidden(
+                        "CONNECTION_OUT_OF_REACH",
+                        format!(
+                            "connection {} belongs to a scope the caller cannot access",
+                            connection.code
+                        ),
+                    ));
+                }
+                if !connection.service_account_id.trim().is_empty() {
+                    to_check.push((connection.service_account_id, false));
+                }
+            }
+        }
+    }
+    let references: Vec<String> = to_check.iter().map(|(id, _)| id.clone()).collect();
+    let found = accounts.find_signing_accounts(&references).await?;
+    for (id, must_exist) in &to_check {
+        match found.get(id) {
+            None if *must_exist => {
+                return Err(UseCaseError::not_found(
+                    "SERVICE_ACCOUNT_NOT_FOUND",
+                    format!("ServiceAccount not found: {id}"),
+                ))
+            }
+            None => {}
+            Some(account) => {
+                if let Err(refusal) = reach.may_use(account) {
+                    return Err(UseCaseError::forbidden(
+                        "SERVICE_ACCOUNT_OUT_OF_REACH",
+                        refusal.to_string(),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
