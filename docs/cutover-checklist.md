@@ -83,6 +83,11 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
 - [ ] IaC hygiene (owner): the router task definition holds the Teams webhook `sig=` in plain text;
       move it to SSM
 
+## Known inherited defects (same in Go; not cutover blockers)
+- Go's SPA redirects an already-signed-in OIDC interaction to `/oidc/interaction/{uid}/login`, which no
+  backend serves (Go or Rust): `frontend/src/api/auth.ts`, `router/guards.ts`. Fix in the SPA (point it at
+  `/auth/oidc/interaction/{uid}/…`) once the interaction flow is exercised.
+
 ## Before deploy (owner)
 - [ ] Run `docs/fc-predeploy-checks.sql` (tenant pins, cross-app role permissions, OAuth clients on non-service
       principals, service accounts' batch permissions, service accounts not tied to an application)
