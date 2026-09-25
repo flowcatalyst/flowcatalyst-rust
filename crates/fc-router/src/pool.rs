@@ -16,7 +16,7 @@
 //! "drained" momentarily between a counter decrement and the task's actual exit.
 
 use arc_swap::ArcSwapOption;
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use governor::{
     clock::DefaultClock,
     state::{InMemoryState, NotKeyed},
@@ -28,6 +28,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn};
 
@@ -40,7 +41,6 @@ use fc_common::{
     MessageCallback, PoolConfig, PoolStats,
 };
 
-const DEFAULT_GROUP: &str = "__DEFAULT__";
 const QUEUE_CAPACITY_MULTIPLIER: u32 = 20; // Java: QUEUE_CAPACITY_MULTIPLIER = 20
 const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
 
@@ -50,7 +50,7 @@ const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
 ///
 /// Cloned into every worker/drain closure that needs to decrement
 /// `queue_size` on completion (`spawn_immediate_task`, `spawn_drain_task`,
-/// the batch+group failure paths, `drain()`), so the crossing-detection
+/// group releases, `release_remainder()`, the worker guards), so the crossing-detection
 /// logic lives in one place instead of being reimplemented at each of the
 /// half-dozen decrement sites — and, more importantly, so it is provably
 /// the *only* place `queue_size` is ever decremented, closing off the
@@ -71,6 +71,12 @@ pub(crate) struct QueueSlotReleaser {
 }
 
 impl QueueSlotReleaser {
+    /// Take one queue slot back for a message that stays in the pool: an
+    /// in-place retry sitting out its backoff counts as queued, as in Go.
+    fn reserve(&self) {
+        self.queue_size.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn release(&self) {
         let prev = self.queue_size.fetch_sub(1, Ordering::Relaxed);
         if prev == self.capacity {
@@ -80,34 +86,77 @@ impl QueueSlotReleaser {
 }
 
 // ============================================================================
-// Disposition — ledger A-27
+// Disposition — ledger A-27, aligned to Go's `pool.go` `DispositionOf`
 // ============================================================================
 //
-// `disposition_of` is the single, pure decision that used to live twice as
-// near-identical inline `match outcome.result { ... }` blocks in
-// `spawn_immediate_task` and `spawn_drain_task` — one deciding the circuit
-// breaker's ledger, one deciding the ack/nack/metric/cascade side effects.
-// Extracting it means both call sites make the exact same decision by
-// construction, and a test can assert the decision without spinning up a
-// pool, a mediator, or a broker.
+// `disposition_of` is the single, pure decision both delivery paths
+// (`spawn_immediate_task`, `spawn_drain_task`) make about a mediation
+// outcome, so they make the same decision by construction and a test can
+// assert it without a pool, a mediator or a broker.
 //
-// Shaped after Go's `pool.go` `DispositionOf` (ledger A-27's reference
-// shape — see `docs/router-gap-analysis.md`), adapted to what Rust's pool
-// actually does today:
+// It follows Go (`internal/router/pool.go`, `DispositionOf`) outcome by
+// outcome:
 //
-// - Go's `BrokerRetry` is an IN-PIPELINE retry (re-front the message on the
-//   group's own buffer, no broker round-trip) gated by a per-message
-//   attempts budget (`maxInPipelineAttempts`). Rust's pool has no such
-//   path: every retryable outcome already nacks back to the broker for
-//   redelivery. `BrokerAction::Retry` and the `attempts` parameter stay in
-//   this shape for interface parity and so a future in-pipeline retry
-//   budget has somewhere to land, but nothing produces `Retry` today.
-// - Go's BLOCK_ON_ERROR ACKs untried siblings off the broker (its `A-01`
-//   recovery path — a settled-message hook + platform reaper that does not
-//   exist in this port yet). Ledger A-01 forbids shipping that branch here
-//   before the platform half exists, so `GroupEffect::Block` here still
-//   means "cascade a NACK to the buffered siblings as they're dequeued"
-//   (the pre-existing `failed_batch_groups` mechanism), never an ACK.
+// - A 429 or an `ack:false` deferral is RETRIED IN PLACE (`BrokerAction::Retry`):
+//   the message stays in this process, re-fronted in its group so nothing
+//   behind it is delivered first, and is attempted again after a backoff
+//   (`retry_delay` / `deferred_delay`). The retry is bounded by
+//   `MAX_IN_PIPELINE_ATTEMPTS`; once spent, the message is released to the
+//   broker instead, with the backoff as its redelivery delay.
+// - A deferral that names a delay, from a broker that holds a nacked message
+//   back for that delay, goes straight back to the broker with exactly that
+//   delay (owner ruling R1 2026-09-17, Go `d879b23`).
+// - An unreachable or unavailable target, or an open breaker, RELEASES the
+//   message and every message buffered behind it.
+// - A permanent rejection is ACKed away; BLOCK_ON_ERROR then stops the
+//   group.
+//
+// One deliberate difference from Go: under BLOCK_ON_ERROR, Go ACKs the
+// untried siblings behind a failed head and reports them to the platform
+// (its A-01 settled-message hook). That platform half does not exist in this
+// port, so `GroupEffect::Block` here hands the siblings back to the broker
+// (NACK) instead of deleting them.
+
+/// Most times a message is retried in place before it is released to the
+/// broker instead (Go `maxInPipelineAttempts`). An in-place retry never
+/// returns the message, so while it loops the broker's expiry, redelivery
+/// count and DLQ cannot act on it; a target answering 429 or `ack:false` for
+/// ever would otherwise pin the message and its whole group in memory.
+pub const MAX_IN_PIPELINE_ATTEMPTS: u32 = 10;
+
+/// Bounds of the in-place retry backoff for 429 (Go `retryMinDelay` /
+/// `retryMaxDelay`).
+const RETRY_MIN_DELAY: Duration = Duration::from_millis(100);
+const RETRY_MAX_DELAY: Duration = Duration::from_secs(5 * 60);
+
+/// Bounds of the deferred (`ack:false`) backoff (Go `deferredMinDelay` /
+/// `deferredMaxDelay`): the target is healthy and answering cheap 200s, so
+/// it starts later and caps sooner than the error curve.
+const DEFERRED_MIN_DELAY: Duration = Duration::from_secs(5);
+const DEFERRED_MAX_DELAY: Duration = Duration::from_secs(60);
+
+/// Nack delay for messages handed back only because the message ahead of
+/// them in their group failed — they were never attempted.
+const SIBLING_NACK_DELAY_SECS: u32 = 10;
+
+/// Exponential backoff: `min << attempts` (shift capped at 12), floored at
+/// the delay the target asked for, capped at `max` (Go `backoffDelay`).
+fn backoff_delay(attempts: u32, floor_secs: u32, min: Duration, max: Duration) -> Duration {
+    let shifted = min.saturating_mul(1u32 << attempts.min(12));
+    shifted.max(Duration::from_secs(floor_secs as u64)).min(max)
+}
+
+/// In-place retry backoff for a 429: 100ms doubling, `Retry-After` as the
+/// floor, 5-minute cap (Go `retryDelay`).
+pub fn retry_delay(attempts: u32, floor_secs: u32) -> Duration {
+    backoff_delay(attempts, floor_secs, RETRY_MIN_DELAY, RETRY_MAX_DELAY)
+}
+
+/// In-place retry backoff for an `ack:false` deferral: 5s doubling, the
+/// target's `delaySeconds` as the floor, 60s cap (Go `deferredDelay`).
+pub fn deferred_delay(attempts: u32, floor_secs: u32) -> Duration {
+    backoff_delay(attempts, floor_secs, DEFERRED_MIN_DELAY, DEFERRED_MAX_DELAY)
+}
 
 /// What a [`Disposition`] does to a message at the broker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,13 +164,13 @@ pub enum BrokerAction {
     /// Ack the message — delivered, or a permanent rejection that retrying
     /// cannot fix.
     Ack,
-    /// Retry in place, without touching the broker. Reserved for a future
-    /// in-pipeline retry budget — see the module doc above. Nothing
-    /// produces this today; a call site that receives it treats it the
-    /// same as `Release`.
+    /// Keep the message and attempt it again here after
+    /// [`Disposition::retry_after`], without touching the broker. In an
+    /// ordered group it is re-fronted, so nothing behind it overtakes it.
     Retry,
     /// Nack the message back to the broker for redelivery — the target is
-    /// unreachable, unavailable, or throttling.
+    /// unreachable or unavailable, the breaker is open, the target named a
+    /// delay the broker can hold, or the in-place retry budget is spent.
     Release,
 }
 
@@ -129,24 +178,17 @@ pub enum BrokerAction {
 /// Meaningless for IMMEDIATE dispatch, which has no group buffer to affect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupEffect {
-    /// The drainer moves on to the next buffered message (or exits idle if
-    /// there is none). Covers a success and a discarded failure that
-    /// doesn't cascade — either because the mode doesn't call for it
-    /// (NEXT_ON_ERROR / IMMEDIATE) or because the outcome itself doesn't
-    /// (RateLimited, Deferred — the target is healthy, just asking to
-    /// wait).
+    /// The drainer moves on: to the next buffered message after an ACK, or
+    /// back to the same (re-fronted) message after a retry.
     Continue,
-    /// BLOCK_ON_ERROR's defining behaviour: the head failed terminally (a
-    /// permanent, non-retryable rejection), so every message still
-    /// buffered behind it is cascaded — NACKed as it's dequeued, never
-    /// mediated — rather than delivered past the failure. Only ever
-    /// produced when `mode == DispatchMode::BlockOnError`.
+    /// BLOCK_ON_ERROR's defining behaviour: the head failed terminally, so
+    /// every message buffered behind it is handed back to the broker rather
+    /// than delivered past the failure. Only produced when
+    /// `mode == DispatchMode::BlockOnError`.
     Block,
-    /// The target is unreachable/unavailable: this message AND everything
-    /// still buffered behind it are cascaded back to the broker, under
-    /// EVERY dispatch mode — an unreachable target says nothing about
-    /// whether the message itself was wrong, so ordering must be
-    /// preserved by returning the whole group rather than skipping ahead.
+    /// This message AND everything buffered behind it go back to the
+    /// broker, under every dispatch mode, so the group's order survives the
+    /// redelivery.
     Release,
 }
 
@@ -164,10 +206,10 @@ pub enum DispositionMetric {
     RateLimited,
 }
 
-/// `processOne`'s (here: the drain/immediate task's) pure verdict for a
-/// mediation outcome: what happens to THIS message at the broker
-/// ([`Self::action`]), what that means for the rest of an ordered group
-/// ([`Self::group`]), the metric to record, and the nack delay to apply.
+/// The pure verdict for a mediation outcome: what happens to THIS message
+/// at the broker ([`Self::action`]), what that means for the rest of an
+/// ordered group ([`Self::group`]), the metric to record, and the backoff
+/// before a retry or the delay to put on a release.
 ///
 /// Produced by [`disposition_of`], which is pure — no I/O, no metrics
 /// calls, no ack/nack calls. Every side effect stays at the call site.
@@ -176,144 +218,150 @@ pub struct Disposition {
     pub action: BrokerAction,
     pub group: GroupEffect,
     pub metric: DispositionMetric,
-    /// Seconds to pass to `MessageCallback::nack` when `action` is
-    /// `Release` (or `Retry`). `None` for `Ack` (irrelevant) and for a
-    /// `Release` with no specific delay (the call site's own default
-    /// applies — see `disposition_of`'s `ErrorConnection` arm).
-    pub retry_after_secs: Option<u32>,
+    /// For `Retry`: how long to wait before the next attempt. For
+    /// `Release`: the redelivery delay to ask the broker for (zero = none).
+    /// Unused for `Ack`.
+    pub retry_after: Duration,
+    /// `true` when this `Release` exists only because the in-place retry
+    /// budget ([`MAX_IN_PIPELINE_ATTEMPTS`]) is spent.
+    pub budget_exhausted: bool,
 }
 
-/// Pure mapping from a mediation outcome to its [`Disposition`] (ledger
-/// A-27 / A-01). No I/O, no metrics, no ack/nack/flush calls — everything
-/// needed is passed in, so a test can call it directly instead of
-/// re-deriving the decision from the delivery loop.
+impl Disposition {
+    /// [`Self::retry_after`] as a broker nack delay: whole seconds, at least
+    /// one, or `None` when there is nothing to wait out (Go `nackDelay`).
+    pub fn nack_delay_secs(&self) -> Option<u32> {
+        if self.retry_after.is_zero() {
+            return None;
+        }
+        let secs = u32::try_from(self.retry_after.as_secs()).unwrap_or(u32::MAX);
+        Some(secs.max(1))
+    }
+}
+
+/// Retry in place within the budget; once it is spent, release instead with
+/// the backoff as the broker's redelivery delay (Go `retryOrRelease`).
+fn retry_or_release(attempts: u32, delay: Duration, metric: DispositionMetric) -> Disposition {
+    if attempts + 1 >= MAX_IN_PIPELINE_ATTEMPTS {
+        return Disposition {
+            action: BrokerAction::Release,
+            group: GroupEffect::Release,
+            metric,
+            retry_after: delay,
+            budget_exhausted: true,
+        };
+    }
+    Disposition {
+        action: BrokerAction::Retry,
+        group: GroupEffect::Continue,
+        metric,
+        retry_after: delay,
+        budget_exhausted: false,
+    }
+}
+
+/// Pure mapping from a mediation outcome to its [`Disposition`] (Go
+/// `DispositionOf`).
 ///
-/// `attempts` is accepted for interface parity with Go's `DispositionOf`
-/// (which gates an in-pipeline retry budget on it) but is not consulted
-/// here — see the module doc above for why. It stays in the signature so a
-/// future retry budget has somewhere to land without a second breaking
-/// signature change.
-///
-/// `mode` only changes the `Group` effect of a permanent rejection
-/// (`ErrorConfig`): ledger A-01 says BLOCK_ON_ERROR must stop the group at
-/// a terminally failed head rather than deliver successors past it (the
-/// pre-existing NACK cascade — see the module doc for why not the
-/// ACK-the-siblings branch); every other mode continues past it.
+/// - `attempts`: how many times this message has already been attempted in
+///   place (0 on its first delivery). Drives the backoff and the
+///   [`MAX_IN_PIPELINE_ATTEMPTS`] budget.
+/// - `mode`: only BLOCK_ON_ERROR changes anything — a permanent rejection
+///   then blocks the group.
+/// - `honours_delayed_return`: whether the message's source broker holds a
+///   nacked message back for the requested delay
+///   ([`MessageCallback::honours_delayed_return`]). Only consulted for a
+///   deferral that names a delay.
 pub fn disposition_of(
     outcome: &MediationOutcome,
-    _attempts: u32,
+    attempts: u32,
     mode: DispatchMode,
+    honours_delayed_return: bool,
 ) -> Disposition {
+    let release = |metric, retry_after| Disposition {
+        action: BrokerAction::Release,
+        group: GroupEffect::Release,
+        metric,
+        retry_after,
+        budget_exhausted: false,
+    };
+    let requested = outcome.delay_seconds.unwrap_or(0);
+
     match outcome.result {
         MediationResult::Success => Disposition {
             action: BrokerAction::Ack,
             group: GroupEffect::Continue,
             metric: DispositionMetric::Success,
-            retry_after_secs: None,
+            retry_after: Duration::ZERO,
+            budget_exhausted: false,
         },
 
-        MediationResult::ErrorConfig => {
-            // Permanent ACK-drop: a 4xx, an unfollowed 3xx, a pre-flight
-            // rejection, or (R-57) a 5xx the mediator has already
-            // classified as "the app answered" rather than "unavailable".
-            // BLOCK_ON_ERROR must stop the group at this failure rather
-            // than deliver successors past it; every other mode moves on.
-            let group = if mode == DispatchMode::BlockOnError {
+        // Permanent ACK-drop: a 4xx, an unfollowed 3xx, a pre-flight
+        // rejection, or (R-57) a 5xx the mediator classified as "the app
+        // answered". BLOCK_ON_ERROR stops the group rather than deliver
+        // successors past the failure; every other mode moves on.
+        MediationResult::ErrorConfig => Disposition {
+            action: BrokerAction::Ack,
+            group: if mode == DispatchMode::BlockOnError {
                 GroupEffect::Block
             } else {
                 GroupEffect::Continue
-            };
-            Disposition {
-                action: BrokerAction::Ack,
-                group,
-                metric: DispositionMetric::Failure,
-                retry_after_secs: None,
-            }
-        }
-
-        MediationResult::ErrorProcess => {
-            // Pre-classified by the mediator (R-57): reaching this case at
-            // all means "target unavailable" (502/503/504, or the
-            // generic-failure fallback) — release rather than discard, and
-            // release the WHOLE group (not just this message) so ordering
-            // survives redelivery. Applies under every dispatch mode.
-            Disposition {
-                action: BrokerAction::Release,
-                group: GroupEffect::Release,
-                metric: DispositionMetric::Transient,
-                retry_after_secs: outcome.delay_seconds,
-            }
-        }
-
-        MediationResult::ErrorConnection => Disposition {
-            // Transport failure / unreachable host / timeout — the target
-            // is down. Same whole-group release as ErrorProcess, fixed 30s
-            // delay (the mediator's own default for this outcome).
-            action: BrokerAction::Release,
-            group: GroupEffect::Release,
+            },
             metric: DispositionMetric::Failure,
-            retry_after_secs: Some(30),
+            retry_after: Duration::ZERO,
+            budget_exhausted: false,
         },
 
-        MediationResult::RateLimited => Disposition {
-            // 429 — healthy destination asking us to slow down. NOT a
-            // breaker failure (see `breaker_effect`) and does NOT cascade:
-            // a rate limit says nothing about the rest of the group.
-            action: BrokerAction::Release,
-            group: GroupEffect::Continue,
-            metric: DispositionMetric::RateLimited,
-            retry_after_secs: Some(outcome.delay_seconds.unwrap_or(30)),
-        },
+        // 502/503/504 after the mediator's own retry burst: the target is
+        // unavailable, nothing is wrong with the message. Hand back the
+        // whole group with the outcome's delay.
+        MediationResult::ErrorProcess => release(
+            DispositionMetric::Transient,
+            Duration::from_secs(requested as u64),
+        ),
 
-        MediationResult::Deferred => Disposition {
-            // 2xx + ack=false (ledger 22b) — the target explicitly
-            // deferred this message. Not a failure: breaker-neutral, same
-            // as RateLimited, and does not cascade either — requeue with
-            // the target's requested delay (already floored to 0 by the
-            // mediator when absent).
-            action: BrokerAction::Release,
-            group: GroupEffect::Continue,
-            metric: DispositionMetric::Transient,
-            retry_after_secs: outcome.delay_seconds,
-        },
+        // Transport failure / unreachable host / timeout.
+        MediationResult::ErrorConnection => release(
+            DispositionMetric::Failure,
+            Duration::from_secs(requested as u64),
+        ),
 
-        MediationResult::CircuitOpen => Disposition {
-            // The mediator's own breaker was open — no network call was
-            // attempted (`MediationOutcome::circuit_open`). Ported
-            // VERBATIM from the pool's two pre-existing inline
-            // short-circuits (now deleted — see `mediator.rs`'s
-            // `Mediator::mediate` impl for where this check moved to),
-            // which actually differed from each other before this port
-            // unified them behind one pure function:
-            //
-            // - `spawn_immediate_task` (IMMEDIATE mode, no group buffer at
-            //   all): short fixed nack, `Failure` metric. `disposition.group`
-            //   is never consulted on that path, so `Release` here is a
-            //   no-op for it — verbatim.
-            // - the group-drain path (ordered modes): the SAME nack +
-            //   metric, but it ALSO inserted the batch+group key into
-            //   `failed_batch_groups`, cascading a NACK to every message
-            //   still buffered behind it — i.e. exactly `GroupEffect::Release`.
-            //   `Release` here reproduces that cascade verbatim (this is
-            //   also what `docs/router-architecture.md`'s "circuit open ->
-            //   release group" row and the conformance corpus's
-            //   `breaker-open-makes-no-call` case's `RETURN_TO_BROKER`
-            //   expectation call for — so unifying the two prior call sites
-            //   behind this one arm happens to land on the corpus's answer
-            //   for `disposition`, not away from it).
-            //
-            // **Known gap, not fixed here:** the corpus's `metric` for this
-            // case is `"none"` (no call was made, nothing to say about the
-            // target). Both prior call sites recorded `Failure` anyway;
-            // this port preserves that unchanged rather than silently
-            // reclassifying it. `metric` also isn't asserted by the
-            // conformance runner yet (see its own `TODO(A-27)`), so this
-            // gap is currently invisible to it either way.
-            action: BrokerAction::Release,
-            group: GroupEffect::Release,
-            metric: DispositionMetric::None, /* R-08 kept-as-Go + corpus: no delivery attempted, no pool metric */
-            retry_after_secs: Some(5),
-        },
+        // 429: a healthy target asking us to slow down. Retry in place,
+        // honouring Retry-After as the backoff floor.
+        MediationResult::RateLimited => retry_or_release(
+            attempts,
+            retry_delay(attempts, requested),
+            DispositionMetric::RateLimited,
+        ),
+
+        // 2xx + ack:false. R1: a named delay the broker can hold goes back
+        // to the broker on its first occurrence with exactly that delay (no
+        // curve, no cap), taking the group with it. Otherwise retry in place
+        // on the deferred curve, the named delay as its floor (H1: never a
+        // 0s release).
+        MediationResult::Deferred => {
+            if requested > 0 && honours_delayed_return {
+                release(
+                    DispositionMetric::Transient,
+                    Duration::from_secs(requested as u64),
+                )
+            } else {
+                retry_or_release(
+                    attempts,
+                    deferred_delay(attempts, requested),
+                    DispositionMetric::Transient,
+                )
+            }
+        }
+
+        // No call was made: the breaker already says the target is down.
+        // Released like a transport failure — retrying in place would pin
+        // the group in memory for exactly the outage the release is for.
+        // No metric: nothing was attempted.
+        MediationResult::CircuitOpen => release(
+            DispositionMetric::None,
+            Duration::from_secs(requested as u64),
+        ),
     }
 }
 
@@ -367,8 +415,8 @@ fn apply_metric(collector: &PoolMetricsCollector, metric: DispositionMetric, dur
 /// currently suppressed, ACK it without ever calling the mediator and
 /// record the suppressed-ACK metric. Returns `true` when the task was
 /// fully handled this way — the caller must not mediate, rate-limit, or
-/// otherwise touch it further (queue-size/batch-group bookkeeping is still
-/// the caller's job, same as any other terminal path).
+/// otherwise touch it further (queue-size bookkeeping is still the caller's
+/// job, same as any other terminal path).
 ///
 /// A message with no group id (or an empty one) is never suppressed —
 /// suppression is a per-group concept.
@@ -432,6 +480,195 @@ fn maybe_flush_group(
     }
 }
 
+// ============================================================================
+// Worker bookkeeping and group release helpers
+// ============================================================================
+
+/// What one worker task holds against the pool's shared counters, given
+/// back on every exit path — including a panic, where the Drop impl runs
+/// during unwinding. Without it a panicking task leaked its queue slot (the
+/// pool slowly filled until it NACKed everything), its active-worker count,
+/// and a phantom entry in the never-reaped "Mediating" view.
+struct WorkerGuard {
+    queue_size: QueueSlotReleaser,
+    active_workers: Arc<AtomicU32>,
+    mediating: Arc<DashMap<u64, MediatingEntry>>,
+    /// A queue slot is held for the message (queued, or waiting out a retry).
+    slot_held: bool,
+    /// The `mediating` key while a delivery is in flight; also means an
+    /// active-worker count is held.
+    in_flight: Option<u64>,
+}
+
+impl WorkerGuard {
+    /// A guard for a message that already holds a queue slot, when
+    /// `slot_held` is set by the caller.
+    fn new(
+        queue_size: QueueSlotReleaser,
+        active_workers: Arc<AtomicU32>,
+        mediating: Arc<DashMap<u64, MediatingEntry>>,
+    ) -> Self {
+        Self {
+            queue_size,
+            active_workers,
+            mediating,
+            slot_held: true,
+            in_flight: None,
+        }
+    }
+
+    fn release_slot(&mut self) {
+        if std::mem::take(&mut self.slot_held) {
+            self.queue_size.release();
+        }
+    }
+
+    fn reserve_slot(&mut self) {
+        if !self.slot_held {
+            self.queue_size.reserve();
+            self.slot_held = true;
+        }
+    }
+
+    /// A delivery starts: count the worker and remember its `mediating` key.
+    fn begin(&mut self, mediating_key: u64) {
+        self.active_workers.fetch_add(1, Ordering::Relaxed);
+        self.in_flight = Some(mediating_key);
+    }
+
+    /// The delivery finished.
+    fn end(&mut self) {
+        if let Some(key) = self.in_flight.take() {
+            ProcessPool::end_mediating(&self.mediating, key);
+            self.active_workers.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        self.end();
+        self.release_slot();
+    }
+}
+
+/// A drain task's guard: its [`WorkerGuard`] for the message in hand, plus
+/// the group it owns. If the task exits abnormally (panic, or a closed
+/// semaphore) it empties the group's buffer — dropping each task fires its
+/// callback's fallback nack — gives back one queue slot per abandoned
+/// message, and clears `processing` so a later submit can start a fresh
+/// drainer.
+struct DrainGuard {
+    group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
+    group_id: Arc<str>,
+    /// The drainer's message in hand. Its slot is given back at dequeue, so
+    /// it starts with none held.
+    worker: WorkerGuard,
+    active: bool,
+}
+
+impl Drop for DrainGuard {
+    fn drop(&mut self) {
+        self.worker.slot_held = false;
+        if !self.active {
+            return;
+        }
+        let abandoned = match self.group_handlers.get(&self.group_id) {
+            Some(entry) => {
+                let mut handler = entry.lock();
+                let abandoned = handler.take_all();
+                if handler.processing {
+                    handler.set_processing(false);
+                }
+                abandoned
+            }
+            None => Vec::new(),
+        };
+        for _ in &abandoned {
+            self.worker.queue_size.release();
+        }
+        error!(
+            group_id = %self.group_id,
+            abandoned = abandoned.len(),
+            "Drain task exited abnormally — released its queue slots; the abandoned messages' callbacks nack them as they drop"
+        );
+        drop(abandoned);
+    }
+}
+
+/// Empty `group`'s buffer, returning what was in it in FIFO order (Go
+/// `takeBuffered`). The caller owns the queue slots those messages held.
+fn take_buffered(
+    group_handlers: &DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>,
+    group_id: &Arc<str>,
+) -> Vec<PoolTask> {
+    match group_handlers.get(group_id) {
+        Some(entry) => entry.lock().take_all(),
+        None => Vec::new(),
+    }
+}
+
+/// Nack every message in `tasks`, giving back the queue slot each held.
+async fn nack_all(tasks: Vec<PoolTask>, queue_size: &QueueSlotReleaser, delay: Option<u32>) {
+    for task in tasks {
+        queue_size.release();
+        task.callback.nack(delay).await;
+    }
+}
+
+/// Hand a whole group back to the broker: the head (first in the buffer)
+/// with `head_delay`, everything behind it with the sibling delay.
+async fn release_group(
+    group_handlers: &DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>,
+    group_id: &Arc<str>,
+    queue_size: &QueueSlotReleaser,
+    head_delay: Option<u32>,
+) {
+    let mut buffered = take_buffered(group_handlers, group_id).into_iter();
+    if let Some(head) = buffered.next() {
+        queue_size.release();
+        head.callback.nack(head_delay).await;
+    }
+    nack_all(
+        buffered.collect(),
+        queue_size,
+        Some(SIBLING_NACK_DELAY_SECS),
+    )
+    .await;
+}
+
+/// The two dispositions worth a log line of their own: a deferral (a 2xx
+/// the mediator logs nothing for, yet it can hold a message back for as
+/// long as the target names) and a spent retry budget.
+fn log_disposition(
+    pool_code: &str,
+    task: &PoolTask,
+    outcome: &MediationOutcome,
+    disposition: &Disposition,
+) {
+    if outcome.result == MediationResult::Deferred {
+        info!(
+            message_id = %task.message.id,
+            group = task.message.message_group_id.as_deref().unwrap_or(""),
+            pool_code = %pool_code,
+            delay_seconds = ?outcome.delay_seconds,
+            status = ?outcome.status_code,
+            action = ?disposition.action,
+            "Target deferred message (ack=false)"
+        );
+    }
+    if disposition.budget_exhausted {
+        warn!(
+            message_id = %task.message.id,
+            pool_code = %pool_code,
+            attempts = task.attempts + 1,
+            max_attempts = MAX_IN_PIPELINE_ATTEMPTS,
+            redelivery_delay_ms = disposition.retry_after.as_millis() as u64,
+            "In-pipeline retry budget exhausted; releasing to broker"
+        );
+    }
+}
+
 /// Pool-wide rate limiter state shared across all message groups in a pool.
 ///
 /// Bundles the configured `rpm` with the live `RateLimiter` so a single
@@ -463,37 +700,17 @@ impl RateLimitState {
     }
 }
 
-/// Composite key for batch+group tracking - avoids format!() string allocation
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BatchGroupKey {
-    pub batch_id: Arc<str>,
-    pub group_id: Arc<str>,
-}
-
-impl BatchGroupKey {
-    #[inline]
-    pub fn new(batch_id: &str, group_id: &str) -> Self {
-        Self {
-            batch_id: Arc::from(batch_id),
-            group_id: Arc::from(group_id),
-        }
-    }
-}
-
-impl std::fmt::Display for BatchGroupKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.batch_id, self.group_id)
-    }
-}
-
 /// Task submitted to a pool worker
 pub struct PoolTask {
     pub message: Message,
     pub receipt_handle: String,
     pub callback: Box<dyn MessageCallback>,
     pub batch_id: Option<Arc<str>>,
-    /// Pre-computed batch+group key for FIFO tracking
-    pub batch_group_key: Option<BatchGroupKey>,
+    /// How many times this message has already been attempted in place (Go
+    /// `QueuedMessage.Attempts`): 0 on first delivery, incremented by each
+    /// `BrokerAction::Retry`. Drives the backoff and the
+    /// [`MAX_IN_PIPELINE_ATTEMPTS`] budget.
+    pub attempts: u32,
     /// The message's SOURCE queue (mirrors `common.InFlightMessage.QueueIdentifier`
     /// in the Go port). A `Message`/mediation target carries no queue
     /// information of its own — this is the one place a `PoolTask` still
@@ -504,12 +721,17 @@ pub struct PoolTask {
     pub queue_identifier: String,
 }
 
-/// Lightweight per-message-group handler.
-/// Just a queue of pending tasks and a flag — no tokio task, no channels.
-/// A drain task is spawned only when work arrives for an idle group.
+/// Lightweight per-message-group handler: the group's buffer and a flag —
+/// no tokio task, no channels. A drain task is spawned only when work
+/// arrives for an idle group.
+///
+/// The buffer is a single strict FIFO, as in Go's `groupQueue`. A message
+/// group is an ordering contract, so there is no priority lane inside it:
+/// letting a "high priority" message jump an earlier one in the same group
+/// would defeat in-order delivery. A retried head is put back at the FRONT
+/// (`push_front`), so it is the next message attempted.
 struct MessageGroupHandler {
-    high_priority: VecDeque<PoolTask>,
-    regular: VecDeque<PoolTask>,
+    msgs: VecDeque<PoolTask>,
     processing: bool,
     /// When this group was last left with no drainer running (mirrors Go's
     /// `groupQueue.parkedAt`) — `None` while `processing` is `true`, or if
@@ -524,34 +746,37 @@ struct MessageGroupHandler {
 impl MessageGroupHandler {
     fn new() -> Self {
         Self {
-            high_priority: VecDeque::new(),
-            regular: VecDeque::new(),
+            msgs: VecDeque::new(),
             processing: false,
             parked_at: None,
         }
     }
 
-    fn enqueue(&mut self, task: PoolTask, high_priority: bool) {
-        if high_priority {
-            self.high_priority.push_back(task);
-        } else {
-            self.regular.push_back(task);
-        }
+    fn enqueue(&mut self, task: PoolTask) {
+        self.msgs.push_back(task);
     }
 
-    /// Dequeue next task, high priority first.
+    /// Put a retried message back at the head of the group.
+    fn enqueue_front(&mut self, task: PoolTask) {
+        self.msgs.push_front(task);
+    }
+
     fn dequeue(&mut self) -> Option<PoolTask> {
-        self.high_priority
-            .pop_front()
-            .or_else(|| self.regular.pop_front())
+        self.msgs.pop_front()
+    }
+
+    /// Empty the buffer, returning what was in it in FIFO order (Go
+    /// `takeBuffered`).
+    fn take_all(&mut self) -> Vec<PoolTask> {
+        self.msgs.drain(..).collect()
     }
 
     fn is_empty(&self) -> bool {
-        self.high_priority.is_empty() && self.regular.is_empty()
+        self.msgs.is_empty()
     }
 
     fn len(&self) -> usize {
-        self.high_priority.len() + self.regular.len()
+        self.msgs.len()
     }
 
     /// The single mutator of `processing` — every call site that used to
@@ -584,18 +809,9 @@ pub struct MediatingEntry {
     /// doc for why a `PoolTask` carries this at all).
     pub queue: String,
     pub target: String,
-    /// In-pipeline retry count. **Always 0 in this port, a genuine
-    /// semantic gap versus Go, not a stub to fill in later:** Go's
-    /// `Attempts` counts a bounded in-pipeline retry-with-front-reinsertion
-    /// (`BrokerAction::Retry`) that this Rust port's pool never performs —
-    /// `disposition_of`'s own doc says "Nothing produces `Retry` today":
-    /// every retryable outcome nacks straight back to the broker instead.
-    /// `HttpMediator::mediate`'s bounded retry burst happens entirely
-    /// inside one `mediate()` call and is invisible at this layer, so
-    /// there is no pipeline-level attempt count to report. Field kept for
-    /// wire-shape parity with Go's `MediatingInfo.attempts` (same
-    /// reasoning as `InFlightMessageInfo`'s own `attempts`, added
-    /// alongside this).
+    /// How many times this message had already been retried in place when
+    /// this attempt started (Go `MediatingEntry.Attempts`). The mediator's
+    /// own retry burst inside one `mediate()` call is not counted here.
     pub attempts: u32,
     /// When this message entered the worker (started waiting on the rate
     /// limiter, immediately before `mediator.mediate` is called) — mirrors
@@ -647,12 +863,6 @@ pub struct ProcessPool {
 
     /// Per-message-group handlers (lightweight: VecDeque + processing flag)
     group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
-
-    /// Batch+group failure tracking for cascading NACKs
-    failed_batch_groups: Arc<DashSet<BatchGroupKey>>,
-
-    /// Track remaining messages per batch+group for cleanup
-    batch_group_message_count: Arc<DashMap<BatchGroupKey, AtomicU32>>,
 
     /// Rate limiter + configured rpm bundled together. `ArcSwapOption`
     /// allows lock-free reads on the hot path (every dispatched message)
@@ -715,6 +925,14 @@ pub struct ProcessPool {
     /// non-blocking snapshot of the same state via `tracker.is_empty()`.
     tracker: TaskTracker,
 
+    /// Cancelled by [`Self::shutdown`] and [`Self::release_remainder`] — the
+    /// points where buffered work is handed back to the broker. Wakes every
+    /// task sitting out an in-place retry backoff, so it hands its message
+    /// back too instead of holding up `wait_drained()`. [`Self::drain`] does
+    /// NOT cancel it: a pool being removed keeps working through its buffer,
+    /// retries included, as Go's `Drain` does.
+    stop: CancellationToken,
+
     /// Item 3 (router bench rig, 2026-09-07): true from the moment a batch
     /// found this pool without room for it until a later batch finds room
     /// again. `QueueManager::route_batch` gates its "pool at capacity"
@@ -759,8 +977,6 @@ impl ProcessPool {
             concurrency: AtomicU32::new(concurrency_val),
             semaphore: Arc::new(Semaphore::new(concurrency_val as usize)),
             group_handlers: Arc::new(DashMap::new()),
-            failed_batch_groups: Arc::new(DashSet::new()),
-            batch_group_message_count: Arc::new(DashMap::new()),
             rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
             running: AtomicBool::new(false),
             queue_size: Arc::new(AtomicU32::new(0)),
@@ -771,6 +987,7 @@ impl ProcessPool {
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
             flush_registry: Arc::new(GroupFlushRegistry::new()),
             tracker: TaskTracker::new(),
+            stop: CancellationToken::new(),
             capacity_full_warned: AtomicBool::new(false),
         }
     }
@@ -849,43 +1066,14 @@ impl ProcessPool {
         // Increment queue size
         self.queue_size.fetch_add(1, Ordering::Relaxed);
 
-        // Get message group
-        let group_id: Arc<str> = batch_msg
-            .message
-            .message_group_id
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .map(|s| Arc::from(s.as_str()))
-            .unwrap_or_else(|| Arc::from(DEFAULT_GROUP));
-
-        // Track batch+group message count for cleanup
-        let batch_group_key = batch_msg
-            .batch_id
-            .as_ref()
-            .map(|batch_id| BatchGroupKey::new(batch_id, &group_id));
-
-        if let Some(ref key) = batch_group_key {
-            self.batch_group_message_count
-                .entry(key.clone())
-                .or_insert_with(|| AtomicU32::new(0))
-                .fetch_add(1, Ordering::Relaxed);
-        }
-
-        // Check if batch+group has failed (early check before queueing)
-        if let Some(ref key) = batch_group_key {
-            if self.failed_batch_groups.contains(key) {
-                debug!(
-                    message_id = %batch_msg.message.id,
-                    batch_id = %key.batch_id,
-                    group_id = %key.group_id,
-                    "Batch+group failed, NACKing for FIFO"
-                );
-                self.queue_slot_releaser().release();
-                self.decrement_and_cleanup_batch_group(key);
-                batch_msg.callback.nack(Some(10)).await;
-                return Ok(());
-            }
-        }
+        let task = PoolTask {
+            message: batch_msg.message,
+            receipt_handle: batch_msg.receipt_handle,
+            callback: batch_msg.callback,
+            batch_id: batch_msg.batch_id,
+            attempts: 0,
+            queue_identifier: batch_msg.queue_identifier,
+        };
 
         // IMMEDIATE mode: no ordering needed — spawn a standalone task per message.
         // This avoids the sequential drain bottleneck where a slow HTTP call blocks
@@ -897,37 +1085,21 @@ impl ProcessPool {
         // unrelated producers behind each other (Go parity: the ungrouped-
         // ordered branch). Under FC_ROUTER_STRICT_ROUTING the manager ACKs
         // these before they ever reach the pool.
-        if !batch_msg.message.dispatch_mode.requires_ordering()
-            || batch_msg
-                .message
-                .message_group_id
-                .as_deref()
-                .is_none_or(str::is_empty)
+        let group_id: Arc<str> = match task
+            .message
+            .message_group_id
+            .as_deref()
+            .filter(|g| !g.is_empty())
         {
-            let task = PoolTask {
-                message: batch_msg.message,
-                receipt_handle: String::new(), // not used in standalone path
-                callback: batch_msg.callback,
-                batch_id: batch_msg.batch_id,
-                batch_group_key,
-                queue_identifier: batch_msg.queue_identifier,
-            };
-            self.spawn_immediate_task(task);
-            return Ok(());
-        }
-
-        let is_high_priority = batch_msg.message.high_priority;
-
-        let task = PoolTask {
-            message: batch_msg.message,
-            receipt_handle: batch_msg.receipt_handle,
-            callback: batch_msg.callback,
-            batch_id: batch_msg.batch_id,
-            batch_group_key,
-            queue_identifier: batch_msg.queue_identifier,
+            Some(g) if task.message.dispatch_mode.requires_ordering() => Arc::from(g),
+            _ => {
+                self.spawn_immediate_task(task);
+                return Ok(());
+            }
         };
 
-        // Ordered mode: enqueue to group handler and spawn drain task if idle
+        // Ordered mode: enqueue at the back of the group's FIFO and spawn a
+        // drain task if the group is idle.
         let should_spawn = {
             let entry = self
                 .group_handlers
@@ -935,7 +1107,7 @@ impl ProcessPool {
                 .or_insert_with(|| parking_lot::Mutex::new(MessageGroupHandler::new()));
             let mut handler = entry.lock();
 
-            handler.enqueue(task, is_high_priority);
+            handler.enqueue(task);
 
             if !handler.processing {
                 handler.set_processing(true);
@@ -952,20 +1124,21 @@ impl ProcessPool {
         Ok(())
     }
 
-    /// Spawn a standalone task for an IMMEDIATE mode message.
-    /// No group ordering — acquires semaphore, rate-limits, mediates, callbacks directly.
+    /// Spawn a standalone task for an IMMEDIATE mode message (Go
+    /// `runImmediate`): acquire a concurrency slot, rate-limit, mediate, and
+    /// act on the [`Disposition`]. A `Retry` keeps the message in this task:
+    /// it gives the slot back, waits out the backoff (counted as queued,
+    /// as in Go), and goes round again.
     ///
     /// **Owns:** Arc clones of the pool's semaphore / mediator / counters /
-    /// rate limiter / metrics / circuit-breaker registry, plus the single
-    /// `PoolTask` value that was handed in.
-    /// **Exits:** when mediation finishes (success, failure, or callback
-    /// fired). Self-terminating — there is no shutdown channel; the task
-    /// is short-lived (one message).
-    /// **Tracked by:** `self.tracker` (a `tokio_util::task::TaskTracker`).
-    /// `wait_drained()` awaits every task the tracker knows about, so this
-    /// task is included in that wait even though nothing explicitly joins
-    /// it. The pool also tracks in-flight work via the `active_workers`
-    /// counter and the semaphore permit lifetime, for stats.
+    /// rate limiter / metrics, plus the single `PoolTask` handed in.
+    /// **Exits:** when the message is acked or nacked — including when
+    /// [`Self::shutdown`]/[`Self::release_remainder`] interrupt a retry
+    /// backoff, which nacks it.
+    /// **Tracked by:** `self.tracker`, so `wait_drained()` includes it.
+    /// **Panic safety:** [`WorkerGuard`] gives back the queue slot, the
+    /// active-worker count and the `mediating` entry this task held; the
+    /// message's callback fires its fallback nack as it drops.
     fn spawn_immediate_task(&self, task: PoolTask) {
         let semaphore = self.semaphore.clone();
         let mediator = self.mediator.clone();
@@ -977,109 +1150,116 @@ impl ProcessPool {
         let rate_limiter = self.rate_limiter.clone();
         let metrics_collector = self.metrics_collector.clone();
         let flush_registry = self.flush_registry.clone();
-        let failed_batch_groups = self.failed_batch_groups.clone();
-        let batch_group_message_count = self.batch_group_message_count.clone();
+        let stop = self.stop.clone();
 
         self.tracker.spawn(async move {
-            // Group-flush suppression (ledger A-05/R-52/R-53), checked
-            // BEFORE the semaphore/rate limiter so a suppressed group
-            // spends neither a concurrency slot nor a rate-limit token —
-            // that saving is the whole point of suppression.
-            if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
-                queue_size.release();
-                if let Some(ref key) = task.batch_group_key {
-                    Self::decrement_and_cleanup_batch_group_static(
-                        key,
-                        &batch_group_message_count,
-                        &failed_batch_groups,
-                    );
-                }
-                return;
-            }
+            let mut task = task;
+            let mut guard = WorkerGuard::new(queue_size, active_workers, mediating);
 
-            // Acquire a concurrency slot FIRST, then pace on the rate
-            // limiter while holding it — see `wait_for_rate_limit_permit`
-            // for why this order matters.
-            let permit = match semaphore.acquire().await {
-                Ok(p) => p,
-                Err(_) => {
-                    queue_size.release();
-                    if let Some(ref key) = task.batch_group_key {
-                        Self::decrement_and_cleanup_batch_group_static(
-                            key,
-                            &batch_group_message_count,
-                            &failed_batch_groups,
-                        );
-                    }
-                    task.callback.nack(Some(10)).await;
+            loop {
+                // Group-flush suppression (ledger A-05/R-52/R-53), checked
+                // BEFORE the semaphore/rate limiter so a suppressed group
+                // spends neither a concurrency slot nor a rate-limit token —
+                // that saving is the whole point of suppression.
+                if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
+                    guard.release_slot();
                     return;
                 }
-            };
 
-            // Wait for rate limit permit (no timeout — see fn doc).
-            Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
+                // Acquire a concurrency slot FIRST, then pace on the rate
+                // limiter while holding it — see `wait_for_rate_limit_permit`
+                // for why this order matters.
+                let permit = match semaphore.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        guard.release_slot();
+                        task.callback.nack(Some(10)).await;
+                        return;
+                    }
+                };
 
-            active_workers.fetch_add(1, Ordering::Relaxed);
-            let mediating_key =
-                Self::begin_mediating(&mediating, &mediating_seq, &pool_code, &task);
-            queue_size.release();
+                // Wait for rate limit permit (no timeout — see fn doc).
+                Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
 
-            // Circuit breaker admission/recording now lives entirely
-            // inside `mediator.mediate` (ledger: centralised so no call
-            // site can forget to arm it — see `mediator.rs`'s
-            // `Mediator::mediate` doc). An open breaker comes back as
-            // `MediationResult::CircuitOpen`, handled by `disposition_of`
-            // like any other outcome below.
-            let start = std::time::Instant::now();
-            let outcome = mediator.mediate(&task.message).await;
-            let duration_ms = start.elapsed().as_millis() as u64;
-            Self::end_mediating(&mediating, mediating_key);
+                let key =
+                    Self::begin_mediating(&guard.mediating, &mediating_seq, &pool_code, &task);
+                guard.begin(key);
+                guard.release_slot();
 
-            // IMMEDIATE mode has no group buffer, so `disposition.group`
-            // is never consulted here — DispatchMode at this call site
-            // is always `Immediate`.
-            let disposition = disposition_of(&outcome, 0, task.message.dispatch_mode);
-            apply_metric(&metrics_collector, disposition.metric, duration_ms);
+                // Circuit breaker admission/recording lives entirely inside
+                // `mediator.mediate` (see `mediator.rs`); an open breaker
+                // comes back as `MediationResult::CircuitOpen`.
+                let start = std::time::Instant::now();
+                let outcome = mediator.mediate(&task.message).await;
+                let duration_ms = start.elapsed().as_millis() as u64;
 
-            match disposition.action {
-                BrokerAction::Ack => {
-                    maybe_flush_group(&flush_registry, &task.message, &outcome);
-                    task.callback.ack().await;
-                }
-                BrokerAction::Release | BrokerAction::Retry => {
-                    task.callback.nack(disposition.retry_after_secs).await;
-                }
-            }
-
-            if let Some(ref key) = task.batch_group_key {
-                Self::decrement_and_cleanup_batch_group_static(
-                    key,
-                    &batch_group_message_count,
-                    &failed_batch_groups,
+                let disposition = disposition_of(
+                    &outcome,
+                    task.attempts,
+                    task.message.dispatch_mode,
+                    task.callback.honours_delayed_return(),
                 );
-            }
+                apply_metric(&metrics_collector, disposition.metric, duration_ms);
+                log_disposition(&pool_code, &task, &outcome, &disposition);
+                guard.end();
+                drop(permit);
 
-            active_workers.fetch_sub(1, Ordering::Relaxed);
-            drop(permit);
+                // IMMEDIATE has no group buffer: `disposition.group` has
+                // nothing to act on here.
+                match disposition.action {
+                    BrokerAction::Ack => {
+                        maybe_flush_group(&flush_registry, &task.message, &outcome);
+                        task.callback.ack().await;
+                        return;
+                    }
+                    BrokerAction::Release => {
+                        task.callback.nack(disposition.nack_delay_secs()).await;
+                        return;
+                    }
+                    BrokerAction::Retry => {
+                        task.attempts += 1;
+                        guard.reserve_slot();
+                        tokio::select! {
+                            biased;
+                            _ = stop.cancelled() => {
+                                // Handed back rather than held through
+                                // shutdown.
+                                guard.release_slot();
+                                task.callback.nack(disposition.nack_delay_secs()).await;
+                                return;
+                            }
+                            _ = tokio::time::sleep(disposition.retry_after) => {}
+                        }
+                    }
+                }
+            }
         });
     }
 
-    /// Spawn a task that drains all queued messages for a group, then exits.
+    /// Spawn a task that drains a group's buffer one message at a time,
+    /// then exits (Go `drainGroup`).
+    ///
+    /// Per message, the [`Disposition`] decides:
+    /// - `Ack`: ack it and move on — unless BLOCK_ON_ERROR blocked the
+    ///   group, in which case every message buffered behind it is handed
+    ///   back to the broker first.
+    /// - `Retry`: put it back at the FRONT of the group, wait out the
+    ///   backoff, and attempt it again. Nothing behind it is delivered in
+    ///   the meantime (H3).
+    /// - `Release`: nack it AND take and nack the group's whole buffer, so
+    ///   the group comes back from the broker in order (H3, Go
+    ///   `releaseGroup`/`takeBuffered`).
     ///
     /// **Owns:** the group's `MessageGroupHandler` (via `group_handlers`)
-    /// and Arc clones of the pool's shared state (semaphore, mediator,
-    /// counters, rate limiter, metrics, circuit-breaker registry,
-    /// failed-batch tracking).
-    /// **Exits:** when the group's queue drains to empty (the handler's
-    /// `processing` flag is cleared and the loop breaks). Self-terminating
-    /// — one drain task per active group, recreated by the next submit
-    /// that finds the queue idle.
-    /// **Tracked by:** `self.tracker` (a `tokio_util::task::TaskTracker`).
-    /// `wait_drained()` awaits every task the tracker knows about, so this
-    /// task is included in that wait. The `processing` flag in the handler
-    /// remains the "is a drain task running" signal used by `submit()`; the
-    /// Drop guard at the top of the spawned body resets that flag even on
-    /// panic.
+    /// while `processing` is set, plus Arc clones of the pool's shared state.
+    /// **Exits:** when the group's buffer is empty (the handler is removed
+    /// from the map), or when the semaphore closes.
+    /// **Tracked by:** `self.tracker`, so `wait_drained()` includes it.
+    /// **Panic safety:** [`DrainGuard`] empties the buffer (the callbacks'
+    /// Drop fires their fallback nacks), gives back one queue slot per
+    /// abandoned message, clears `processing`, and releases the
+    /// active-worker count and `mediating` entry held for the message in
+    /// hand.
     fn spawn_drain_task(&self, group_id: Arc<str>) {
         let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
         let semaphore = self.semaphore.clone();
@@ -1088,174 +1268,60 @@ impl ProcessPool {
         let active_workers = self.active_workers.clone();
         let mediating = self.mediating.clone();
         let mediating_seq = self.mediating_seq.clone();
-        let failed_batch_groups = self.failed_batch_groups.clone();
-        let batch_group_message_count = self.batch_group_message_count.clone();
         let rate_limiter = self.rate_limiter.clone();
         let group_handlers = self.group_handlers.clone();
         let metrics_collector = self.metrics_collector.clone();
         let flush_registry = self.flush_registry.clone();
+        let stop = self.stop.clone();
 
         self.tracker.spawn(async move {
             debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task started");
 
-            // Safety guard: if this task panics or exits via an early break,
-            // (a) reset the `processing` flag so a future submit() can spawn
-            //     a fresh drain task,
-            // (b) drain remaining tasks from the VecDeque — dropping them is
-            //     the trigger for `QueueMessageCallback::drop` to clear
-            //     `in_pipeline` and fire fallback nacks, releasing SQS
-            //     redelivery for those messages,
-            // (c) decrement active_workers if a permit was held, and
-            //     remove the abandoned `mediating` entry if one was live —
-            //     without this a panicked drain task would leave a
-            //     phantom entry in the never-reaped "Mediating" view
-            //     forever.
-            //
-            // Without (b), abandoned tasks would sit in the VecDeque
-            // indefinitely (the handler is only freed when its queue is
-            // empty AND `processing == false`), and SQS redeliveries would
-            // be silently swallowed by the manager's duplicate filter.
-            struct PanicGuard {
-                group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
-                group_id: Arc<str>,
-                active_workers: Arc<AtomicU32>,
-                mediating: Arc<DashMap<u64, MediatingEntry>>,
-                /// Whether a semaphore permit was held when panic occurred
-                holding_permit: bool,
-                /// The `mediating` key to remove, if `begin_mediating` ran
-                /// for the task in flight when the panic/early-break
-                /// happened and `end_mediating` hasn't run yet.
-                mediating_key: Option<u64>,
-                active: bool,
-            }
-            impl Drop for PanicGuard {
-                fn drop(&mut self) {
-                    if !self.active {
-                        return;
-                    }
-                    let mut abandoned = 0usize;
-                    if let Some(entry) = self.group_handlers.get(&self.group_id) {
-                        let mut handler = entry.lock();
-                        // Drain queued tasks; their callbacks' Drop impl
-                        // does the cleanup. We can't await here so we just
-                        // drop them and let the callback's Drop spawn the
-                        // fallback nack on the runtime.
-                        while handler.dequeue().is_some() {
-                            abandoned += 1;
-                        }
-                        if handler.processing {
-                            handler.set_processing(false);
-                        }
-                    }
-                    if abandoned > 0 {
-                        error!(
-                            group_id = %self.group_id,
-                            abandoned = abandoned,
-                            "Drain task exited abnormally — drained queued tasks; their callbacks' Drop will release SQS redelivery"
-                        );
-                    } else {
-                        error!(group_id = %self.group_id, "Drain task exited abnormally — reset processing flag");
-                    }
-                    if self.holding_permit {
-                        self.active_workers.fetch_sub(1, Ordering::Relaxed);
-                    }
-                    if let Some(key) = self.mediating_key {
-                        ProcessPool::end_mediating(&self.mediating, key);
-                    }
-                }
-            }
-            let mut panic_guard = PanicGuard {
+            let mut guard = DrainGuard {
                 group_handlers: group_handlers.clone(),
                 group_id: group_id.clone(),
-                active_workers: active_workers.clone(),
-                mediating: mediating.clone(),
-                holding_permit: false,
-                mediating_key: None,
+                worker: WorkerGuard::new(queue_size.clone(), active_workers, mediating),
                 active: true,
             };
+            // The drainer gives back each message's slot at dequeue itself.
+            guard.worker.slot_held = false;
 
             loop {
-                // Dequeue next task (lock is held only for the dequeue, dropped before any await)
-                let dequeue_result = {
-                    let handler_entry = group_handlers.get(&group_id);
-                    match handler_entry {
-                        Some(entry) => {
-                            let mut handler = entry.lock();
-                            match handler.dequeue() {
-                                Some(task) => Some(task),
-                                None => {
-                                    handler.set_processing(false);
-                                    None
-                                }
-                            }
+                // Dequeue the head (lock held only for the dequeue).
+                let next = match group_handlers.get(&group_id) {
+                    Some(entry) => {
+                        let mut handler = entry.lock();
+                        let next = handler.dequeue();
+                        if next.is_none() {
+                            handler.set_processing(false);
                         }
-                        None => None,
-                    }
-                }; // Lock dropped here
-
-                // Check for failed batch+group OUTSIDE the lock
-                let task = match dequeue_result {
-                    Some(task) => {
-                        if let Some(ref key) = task.batch_group_key {
-                            if failed_batch_groups.contains(key) {
-                                queue_size.release();
-                                Self::decrement_and_cleanup_batch_group_static(
-                                    key,
-                                    &batch_group_message_count,
-                                    &failed_batch_groups,
-                                );
-                                task.callback.nack(Some(10)).await;
-                                continue;
-                            }
-                        }
-                        Some(task)
+                        next
                     }
                     None => None,
                 };
 
-                let task = match task {
-                    Some(t) => t,
-                    None => {
-                        // Clean up the empty handler from the map — but the
-                        // check ("is it still empty and idle?") and the
-                        // removal must be a single atomic map operation.
-                        // A separate get() + drop() + remove() opens a
-                        // window between the drop and the remove where a
-                        // concurrent submit() can find the handler via
-                        // entry().or_insert_with, enqueue a task, set
-                        // `processing = true`, and spawn a new drain task —
-                        // only for this remove() to then yank the handler
-                        // (with the freshly queued task inside) out from
-                        // under it. The new drain task's next get() then
-                        // sees `None` and exits immediately, and the
-                        // abandoned `PoolTask`'s callback fires a spurious
-                        // fallback nack on Drop. `remove_if` holds the
-                        // shard lock across the predicate and the removal,
-                        // closing that window.
-                        group_handlers.remove_if(&group_id, |_, handler_mutex| {
-                            let handler = handler_mutex.lock();
-                            handler.is_empty() && !handler.processing
-                        });
-                        panic_guard.active = false; // Normal exit, don't trigger guard
-                        debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task exited");
-                        break;
-                    }
+                let Some(mut task) = next else {
+                    // Remove the empty handler — the "still empty and idle?"
+                    // check and the removal must be one atomic map
+                    // operation. A separate get() + remove() would let a
+                    // concurrent submit() enqueue into the handler and spawn
+                    // a new drainer in between, only for this remove() to
+                    // yank the handler (and the new task) out from under it.
+                    group_handlers.remove_if(&group_id, |_, handler_mutex| {
+                        let handler = handler_mutex.lock();
+                        handler.is_empty() && !handler.processing
+                    });
+                    guard.active = false; // Normal exit
+                    debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task exited");
+                    break;
                 };
 
-                // Decrement queue size
                 queue_size.release();
 
                 // Group-flush suppression (ledger A-05/R-52/R-53), checked
                 // BEFORE the semaphore/rate limiter so a suppressed group
                 // spends neither a concurrency slot nor a rate-limit token.
                 if ack_if_suppressed(&flush_registry, &metrics_collector, &task).await {
-                    if let Some(ref key) = task.batch_group_key {
-                        Self::decrement_and_cleanup_batch_group_static(
-                            key,
-                            &batch_group_message_count,
-                            &failed_batch_groups,
-                        );
-                    }
                     continue;
                 }
 
@@ -1266,19 +1332,9 @@ impl ProcessPool {
                     Ok(p) => p,
                     Err(_) => {
                         error!("Semaphore closed");
-                        if let Some(ref key) = task.batch_group_key {
-                            Self::decrement_and_cleanup_batch_group_static(
-                                key,
-                                &batch_group_message_count,
-                                &failed_batch_groups,
-                            );
-                        }
                         task.callback.nack(Some(10)).await;
-                        // Leave panic_guard.active = true: the queue may
-                        // still hold tasks, and the guard will drain them
-                        // (their callbacks' Drop fires the fallback nack)
-                        // and reset the processing flag so a future submit
-                        // can spawn a new drain task.
+                        // Leave the guard active: it empties the rest of the
+                        // buffer (fallback nacks) and resets `processing`.
                         break;
                     }
                 };
@@ -1286,65 +1342,32 @@ impl ProcessPool {
                 // Wait for rate limit permit (no timeout — see fn doc).
                 Self::wait_for_rate_limit_permit(&rate_limiter, &metrics_collector).await;
 
-                active_workers.fetch_add(1, Ordering::Relaxed);
-                panic_guard.holding_permit = true;
-                panic_guard.mediating_key = Some(ProcessPool::begin_mediating(
-                    &mediating,
+                let key = Self::begin_mediating(
+                    &guard.worker.mediating,
                     &mediating_seq,
                     &pool_code,
                     &task,
-                ));
+                );
+                guard.worker.begin(key);
 
-                // Circuit breaker admission/recording now lives entirely
-                // inside `mediator.mediate` (ledger: centralised so no
-                // call site can forget to arm it — see `mediator.rs`'s
-                // `Mediator::mediate` doc). An open breaker comes back as
-                // `MediationResult::CircuitOpen`, which `disposition_of`
-                // maps to `GroupEffect::Release` — reproducing this call
-                // site's pre-existing `failed_batch_groups.insert` cascade
-                // below verbatim, just driven by the outcome instead of a
-                // local breaker check.
                 let start = std::time::Instant::now();
                 let outcome = mediator.mediate(&task.message).await;
-                if let Some(key) = panic_guard.mediating_key.take() {
-                    ProcessPool::end_mediating(&mediating, key);
-                }
                 let duration_ms = start.elapsed().as_millis() as u64;
 
-                let disposition = disposition_of(&outcome, 0, task.message.dispatch_mode);
+                let disposition = disposition_of(
+                    &outcome,
+                    task.attempts,
+                    task.message.dispatch_mode,
+                    task.callback.honours_delayed_return(),
+                );
                 apply_metric(&metrics_collector, disposition.metric, duration_ms);
-
-                // GroupEffect::Block (BLOCK_ON_ERROR's terminally-failed
-                // head) and GroupEffect::Release (an unreachable target,
-                // under every mode) both cascade the same way today:
-                // mark the batch+group failed so every message still
-                // buffered behind this one is NACKed as it's dequeued,
-                // never mediated — see the module's disposition_of doc
-                // for why this isn't the ACK-the-siblings branch.
-                match disposition.group {
-                    GroupEffect::Continue => {}
-                    GroupEffect::Block | GroupEffect::Release => {
-                        if let Some(ref key) = task.batch_group_key {
-                            let was_new = failed_batch_groups.insert(key.clone());
-                            if was_new {
-                                warn!(
-                                    batch_group = %key,
-                                    group_effect = ?disposition.group,
-                                    "Batch+group marked as failed - remaining messages will be NACKed"
-                                );
-                            }
-                        }
-                    }
-                }
+                log_disposition(&pool_code, &task, &outcome, &disposition);
+                guard.worker.end();
+                drop(permit);
 
                 match disposition.action {
                     BrokerAction::Ack => {
                         if outcome.result == MediationResult::Success {
-                            debug!(
-                                message_id = %task.message.id,
-                                duration_ms = duration_ms,
-                                "Message processed successfully"
-                            );
                             maybe_flush_group(&flush_registry, &task.message, &outcome);
                         } else {
                             warn!(
@@ -1354,65 +1377,74 @@ impl ProcessPool {
                             );
                         }
                         task.callback.ack().await;
+
+                        if disposition.group == GroupEffect::Block {
+                            // BLOCK_ON_ERROR: the head failed terminally, so
+                            // nothing behind it may be delivered past it.
+                            // Handed back, not ACKed — see the Disposition
+                            // section's module doc.
+                            let siblings = take_buffered(&group_handlers, &group_id);
+                            if !siblings.is_empty() {
+                                warn!(
+                                    group_id = %group_id,
+                                    pool_code = %pool_code,
+                                    released = siblings.len(),
+                                    "Head failed under BLOCK_ON_ERROR; handing the group back to the broker"
+                                );
+                            }
+                            nack_all(siblings, &queue_size, Some(SIBLING_NACK_DELAY_SECS)).await;
+                        }
                     }
-                    BrokerAction::Release | BrokerAction::Retry => {
-                        warn!(
+                    BrokerAction::Release => {
+                        // The whole group goes back, head first, so it
+                        // returns in order.
+                        task.callback.nack(disposition.nack_delay_secs()).await;
+                        let siblings = take_buffered(&group_handlers, &group_id);
+                        info!(
+                            group_id = %group_id,
+                            pool_code = %pool_code,
                             message_id = %task.message.id,
-                            error = ?outcome.error_message,
-                            retry_after = ?disposition.retry_after_secs,
-                            "NACKing for retry"
+                            buffered_released = siblings.len(),
+                            delay_seconds = ?disposition.nack_delay_secs(),
+                            "Released message group to broker"
                         );
-                        task.callback.nack(disposition.retry_after_secs).await;
+                        nack_all(siblings, &queue_size, Some(SIBLING_NACK_DELAY_SECS)).await;
+                    }
+                    BrokerAction::Retry => {
+                        // Re-front the head so it is the next message
+                        // attempted, then wait out the backoff holding no
+                        // concurrency slot. Later arrivals queue behind it.
+                        task.attempts += 1;
+                        let head_delay = disposition.nack_delay_secs();
+                        let homeless = match group_handlers.get(&group_id) {
+                            Some(entry) => {
+                                queue_size.reserve();
+                                entry.lock().enqueue_front(task);
+                                None
+                            }
+                            None => Some(task),
+                        };
+                        if let Some(task) = homeless {
+                            // Unreachable while `processing` is set (the
+                            // handler is only removed when idle); hand the
+                            // message back rather than lose it.
+                            task.callback.nack(head_delay).await;
+                            continue;
+                        }
+                        tokio::select! {
+                            biased;
+                            _ = stop.cancelled() => {
+                                // Shutdown / release_remainder: hand the group
+                                // back (whatever release_remainder has not
+                                // already taken) instead of holding it.
+                                release_group(&group_handlers, &group_id, &queue_size, head_delay).await;
+                            }
+                            _ = tokio::time::sleep(disposition.retry_after) => {}
+                        }
                     }
                 }
-
-                // Decrement batch+group count and cleanup if done
-                if let Some(ref key) = task.batch_group_key {
-                    Self::decrement_and_cleanup_batch_group_static(
-                        key,
-                        &batch_group_message_count,
-                        &failed_batch_groups,
-                    );
-                }
-
-                // Cleanup
-                active_workers.fetch_sub(1, Ordering::Relaxed);
-                panic_guard.holding_permit = false;
-                drop(permit);
             }
         });
-    }
-
-    /// Decrement batch+group message count and cleanup tracking maps when count reaches zero.
-    /// Instance version for use in submit().
-    fn decrement_and_cleanup_batch_group(&self, batch_group_key: &BatchGroupKey) {
-        Self::decrement_and_cleanup_batch_group_static(
-            batch_group_key,
-            &self.batch_group_message_count,
-            &self.failed_batch_groups,
-        );
-    }
-
-    /// Decrement batch+group message count and cleanup tracking maps when count reaches zero.
-    /// Static version for use in drain tasks.
-    fn decrement_and_cleanup_batch_group_static(
-        batch_group_key: &BatchGroupKey,
-        batch_group_message_count: &DashMap<BatchGroupKey, AtomicU32>,
-        failed_batch_groups: &DashSet<BatchGroupKey>,
-    ) {
-        let should_cleanup = if let Some(counter) = batch_group_message_count.get(batch_group_key) {
-            let remaining = counter.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
-            debug!(batch_group = %batch_group_key, remaining = remaining, "Batch+group count decremented");
-            remaining == 0
-        } else {
-            false
-        };
-
-        if should_cleanup {
-            batch_group_message_count.remove(batch_group_key);
-            failed_batch_groups.remove(batch_group_key);
-            debug!(batch_group = %batch_group_key, "Batch+group fully processed, cleaned up");
-        }
     }
 
     /// Record `task` as entering a worker — the operator "Mediating" view's
@@ -1420,8 +1452,7 @@ impl ProcessPool {
     /// path call this, in the same critical section as their
     /// `active_workers.fetch_add`). Returns the key `end_mediating` needs
     /// to remove it again. Static (takes the Arc clones directly) so it
-    /// can run inside a spawned task that only owns clones, not `&self` —
-    /// same pattern as `decrement_and_cleanup_batch_group_static`.
+    /// can run inside a spawned task that only owns clones, not `&self`.
     fn begin_mediating(
         mediating: &DashMap<u64, MediatingEntry>,
         mediating_seq: &AtomicU64,
@@ -1437,7 +1468,7 @@ impl ProcessPool {
                 group: task.message.message_group_id.clone().unwrap_or_default(),
                 queue: task.queue_identifier.clone(),
                 target: task.message.mediation_target.clone(),
-                attempts: 0,
+                attempts: task.attempts,
                 mediated_at: std::time::Instant::now(),
             },
         );
@@ -1656,6 +1687,7 @@ impl ProcessPool {
     pub async fn shutdown(&self) {
         info!(pool_code = %self.config.code, "Shutting down pool");
         self.running.store(false, Ordering::SeqCst);
+        self.stop.cancel();
         self.tracker.close();
     }
 
@@ -1690,6 +1722,11 @@ impl ProcessPool {
     /// [`ProcessPool::drain`] or [`ProcessPool::shutdown`] for that half.
     pub async fn release_remainder(&self) -> usize {
         self.running.store(false, Ordering::SeqCst);
+        // Wake every task waiting out an in-place retry: each hands its
+        // message back (and whatever is left of its group) rather than
+        // holding it past shutdown. Cancelled BEFORE the buffers are taken,
+        // so a head re-fronted after this sweep is seen by its own task.
+        self.stop.cancel();
 
         let group_ids: Vec<Arc<str>> = self
             .group_handlers
@@ -1700,26 +1737,9 @@ impl ProcessPool {
         let mut released = 0usize;
         let queue_slot_releaser = self.queue_slot_releaser();
         for group_id in group_ids {
-            let drained: Vec<PoolTask> = match self.group_handlers.get(&group_id) {
-                Some(entry) => {
-                    let mut handler = entry.lock();
-                    let mut tasks = Vec::new();
-                    while let Some(task) = handler.dequeue() {
-                        tasks.push(task);
-                    }
-                    tasks
-                }
-                None => Vec::new(),
-            };
-
-            for task in drained {
-                released += 1;
-                queue_slot_releaser.release();
-                if let Some(ref key) = task.batch_group_key {
-                    self.decrement_and_cleanup_batch_group(key);
-                }
-                task.callback.nack(None).await;
-            }
+            let drained = take_buffered(&self.group_handlers, &group_id);
+            released += drained.len();
+            nack_all(drained, &queue_slot_releaser, None).await;
         }
 
         if released > 0 {
@@ -1920,28 +1940,43 @@ impl Default for PoolConfigUpdate {
 
 #[cfg(test)]
 mod disposition_tests {
-    //! Pins `disposition_of` per outcome (ledger A-27). Pure/synchronous —
-    //! no pool, mediator, or broker needed. Integration-level cascade
-    //! behaviour (does BLOCK_ON_ERROR actually NACK the siblings end to
-    //! end?) is pinned separately in
-    //! `tests/cascade_dispatch_mode_test.rs`.
+    //! Pins `disposition_of` per outcome, and the backoff curves, against
+    //! Go's `pool.go` (`DispositionOf`, `retryDelay`, `deferredDelay`,
+    //! `retryOrRelease`, `nackDelay`). Pure/synchronous — no pool, mediator,
+    //! or broker needed. End-to-end group behaviour is pinned in
+    //! `tests/cascade_dispatch_mode_test.rs` and `tests/pool_tests.rs`.
     use super::*;
     use fc_common::MediationOutcome;
 
+    const ALL_MODES: [DispatchMode; 3] = [
+        DispatchMode::Immediate,
+        DispatchMode::NextOnError,
+        DispatchMode::BlockOnError,
+    ];
+
+    fn secs(s: u64) -> Duration {
+        Duration::from_secs(s)
+    }
+
     #[test]
     fn success_acks_and_continues() {
-        let d = disposition_of(&MediationOutcome::success(200), 0, DispatchMode::Immediate);
+        let d = disposition_of(
+            &MediationOutcome::success(200),
+            0,
+            DispatchMode::Immediate,
+            true,
+        );
         assert_eq!(d.action, BrokerAction::Ack);
         assert_eq!(d.group, GroupEffect::Continue);
         assert_eq!(d.metric, DispositionMetric::Success);
-        assert_eq!(d.retry_after_secs, None);
+        assert_eq!(d.nack_delay_secs(), None);
     }
 
     #[test]
     fn error_config_acks_and_continues_under_immediate_and_next_on_error() {
         let outcome = MediationOutcome::error_config(400, "bad request".to_string());
         for m in [DispatchMode::Immediate, DispatchMode::NextOnError] {
-            let d = disposition_of(&outcome, 0, m);
+            let d = disposition_of(&outcome, 0, m, true);
             assert_eq!(d.action, BrokerAction::Ack, "mode {m:?}");
             assert_eq!(d.group, GroupEffect::Continue, "mode {m:?}");
             assert_eq!(d.metric, DispositionMetric::Failure, "mode {m:?}");
@@ -1951,112 +1986,180 @@ mod disposition_tests {
     #[test]
     fn error_config_blocks_group_under_block_on_error() {
         let outcome = MediationOutcome::error_config(500, "rejected".to_string());
-        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError);
+        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError, true);
         assert_eq!(d.action, BrokerAction::Ack, "the head is still ACKed away");
-        assert_eq!(
-            d.group,
-            GroupEffect::Block,
-            "BLOCK_ON_ERROR must stop the group at a terminally failed head"
-        );
+        assert_eq!(d.group, GroupEffect::Block);
         assert_eq!(d.metric, DispositionMetric::Failure);
     }
 
     #[test]
     fn error_process_releases_whole_group_under_every_mode() {
         let outcome = MediationOutcome::error_process(Some(30), "unavailable".to_string());
-        for m in [
-            DispatchMode::Immediate,
-            DispatchMode::NextOnError,
-            DispatchMode::BlockOnError,
-        ] {
-            let d = disposition_of(&outcome, 0, m);
+        for m in ALL_MODES {
+            let d = disposition_of(&outcome, 0, m, true);
             assert_eq!(d.action, BrokerAction::Release, "mode {m:?}");
-            assert_eq!(
-                d.group,
-                GroupEffect::Release,
-                "a retryable head failure releases the whole group under every mode; mode {m:?}"
-            );
+            assert_eq!(d.group, GroupEffect::Release, "mode {m:?}");
             assert_eq!(d.metric, DispositionMetric::Transient, "mode {m:?}");
-            assert_eq!(d.retry_after_secs, Some(30), "mode {m:?}");
+            assert_eq!(d.nack_delay_secs(), Some(30), "mode {m:?}");
         }
     }
 
     #[test]
-    fn error_connection_releases_whole_group_with_fixed_30s_delay() {
+    fn error_connection_releases_whole_group_with_its_30s_delay() {
         let outcome = MediationOutcome::error_connection("connection refused".to_string());
-        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError);
+        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError, true);
         assert_eq!(d.action, BrokerAction::Release);
         assert_eq!(d.group, GroupEffect::Release);
         assert_eq!(d.metric, DispositionMetric::Failure);
-        assert_eq!(d.retry_after_secs, Some(30));
+        assert_eq!(d.nack_delay_secs(), Some(30));
     }
 
     #[test]
-    fn rate_limited_releases_without_cascading() {
-        let outcome = MediationOutcome::rate_limited(12);
-        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError);
-        assert_eq!(d.action, BrokerAction::Release);
-        assert_eq!(
-            d.group,
-            GroupEffect::Continue,
-            "429 is breaker-neutral and must not cascade to the rest of the group"
-        );
-        assert_eq!(d.metric, DispositionMetric::RateLimited);
-        assert_eq!(d.retry_after_secs, Some(12));
-    }
-
-    #[test]
-    fn rate_limited_defaults_delay_to_30s_when_absent() {
-        // `rate_limited()` always sets a delay, but disposition_of's own
-        // `.unwrap_or(30)` is pinned directly against a hand-built outcome
-        // in case that constructor's default ever changes independently.
-        let outcome = MediationOutcome {
-            result: MediationResult::RateLimited,
-            delay_seconds: None,
-            status_code: Some(429),
-            error_message: None,
-            flush_group: false,
-            pre_flight: false,
-        };
-        let d = disposition_of(&outcome, 0, DispatchMode::Immediate);
-        assert_eq!(d.retry_after_secs, Some(30));
-    }
-
-    #[test]
-    fn deferred_releases_without_cascading_and_retains_delay() {
-        let outcome = MediationOutcome::deferred(200, Some(15));
-        let d = disposition_of(&outcome, 0, DispatchMode::BlockOnError);
-        assert_eq!(d.action, BrokerAction::Release);
-        assert_eq!(
-            d.group,
-            GroupEffect::Continue,
-            "ack:false is not a failure and must not cascade to the rest of the group"
-        );
-        assert_eq!(d.metric, DispositionMetric::Transient);
-        assert_eq!(d.retry_after_secs, Some(15));
-    }
-
-    #[test]
-    fn circuit_open_releases_whole_group_with_fixed_5s_delay_and_no_metric() {
-        // Ledger: HttpMediator::mediate now returns this outcome directly
-        // when its breaker rejects the call before any network attempt —
-        // see mediator.rs. disposition_of must reproduce the pool's two
-        // former inline short-circuits verbatim: a 5s nack, a Failure
-        // metric, and (unlike RateLimited/Deferred) a full group cascade —
-        // the group-drain call site used to insert into
-        // `failed_batch_groups` directly on an open breaker.
-        let outcome = MediationOutcome::circuit_open();
-        for m in [
-            DispatchMode::Immediate,
-            DispatchMode::NextOnError,
+    fn rate_limited_retries_in_place_with_retry_after_as_floor() {
+        let d = disposition_of(
+            &MediationOutcome::rate_limited(12),
+            0,
             DispatchMode::BlockOnError,
-        ] {
-            let d = disposition_of(&outcome, 0, m);
+            true,
+        );
+        assert_eq!(
+            d.action,
+            BrokerAction::Retry,
+            "429 is retried here, not released"
+        );
+        assert_eq!(d.group, GroupEffect::Continue, "and does not cascade");
+        assert_eq!(d.metric, DispositionMetric::RateLimited);
+        assert_eq!(d.retry_after, secs(12));
+        assert!(!d.budget_exhausted);
+    }
+
+    #[test]
+    fn deferred_without_delay_retries_in_place_on_the_deferred_curve() {
+        // H1: an ack:false with no delay must never be a 0s release.
+        for honours in [true, false] {
+            let d = disposition_of(
+                &MediationOutcome::deferred(200, Some(0)),
+                0,
+                DispatchMode::NextOnError,
+                honours,
+            );
+            assert_eq!(d.action, BrokerAction::Retry, "honours={honours}");
+            assert_eq!(d.retry_after, secs(5), "the curve starts at 5s");
+            assert_eq!(d.metric, DispositionMetric::Transient);
+        }
+    }
+
+    #[test]
+    fn deferred_with_delay_goes_back_to_a_broker_that_holds_it() {
+        // R1: exactly the named delay, no curve, no cap, whole group.
+        let d = disposition_of(
+            &MediationOutcome::deferred(200, Some(600)),
+            0,
+            DispatchMode::NextOnError,
+            true,
+        );
+        assert_eq!(d.action, BrokerAction::Release);
+        assert_eq!(d.group, GroupEffect::Release);
+        assert_eq!(d.nack_delay_secs(), Some(600));
+        assert!(!d.budget_exhausted);
+    }
+
+    #[test]
+    fn deferred_with_delay_retries_in_place_when_the_broker_cannot_hold_it() {
+        let d = disposition_of(
+            &MediationOutcome::deferred(200, Some(15)),
+            0,
+            DispatchMode::NextOnError,
+            false,
+        );
+        assert_eq!(d.action, BrokerAction::Retry);
+        assert_eq!(d.retry_after, secs(15), "the named delay floors the curve");
+    }
+
+    #[test]
+    fn circuit_open_releases_whole_group_with_no_metric() {
+        let outcome = MediationOutcome::circuit_open();
+        for m in ALL_MODES {
+            let d = disposition_of(&outcome, 0, m, true);
             assert_eq!(d.action, BrokerAction::Release, "mode {m:?}");
             assert_eq!(d.group, GroupEffect::Release, "mode {m:?}");
             assert_eq!(d.metric, DispositionMetric::None, "mode {m:?}");
-            assert_eq!(d.retry_after_secs, Some(5), "mode {m:?}");
+            assert_eq!(d.nack_delay_secs(), Some(5), "mode {m:?}");
         }
+    }
+
+    #[test]
+    fn a_spent_retry_budget_releases_with_the_backoff_as_redelivery_delay() {
+        let outcome = MediationOutcome::rate_limited(30);
+        let d = disposition_of(
+            &outcome,
+            MAX_IN_PIPELINE_ATTEMPTS - 2,
+            DispatchMode::NextOnError,
+            true,
+        );
+        assert_eq!(d.action, BrokerAction::Retry, "one retry left");
+
+        let d = disposition_of(
+            &outcome,
+            MAX_IN_PIPELINE_ATTEMPTS - 1,
+            DispatchMode::NextOnError,
+            true,
+        );
+        assert_eq!(
+            d.action,
+            BrokerAction::Release,
+            "the last attempt hands it back"
+        );
+        assert_eq!(d.group, GroupEffect::Release, "with its group");
+        assert!(d.budget_exhausted);
+        assert_eq!(d.retry_after, retry_delay(MAX_IN_PIPELINE_ATTEMPTS - 1, 30));
+    }
+
+    #[test]
+    fn deferred_curve_matches_go() {
+        assert_eq!(deferred_delay(0, 0), secs(5));
+        assert_eq!(deferred_delay(1, 0), secs(10));
+        assert_eq!(deferred_delay(3, 0), secs(40));
+        assert_eq!(deferred_delay(4, 0), secs(60), "80s ramp hits the 60s cap");
+        assert_eq!(deferred_delay(12, 0), secs(60));
+        assert_eq!(
+            deferred_delay(40, 0),
+            secs(60),
+            "shift is capped, never overflows"
+        );
+        assert_eq!(deferred_delay(0, 30), secs(30));
+        assert_eq!(deferred_delay(3, 30), secs(40), "ramp above the floor wins");
+        assert_eq!(
+            deferred_delay(0, 300),
+            secs(60),
+            "a floor never lifts the cap"
+        );
+    }
+
+    #[test]
+    fn retry_curve_matches_go() {
+        assert_eq!(retry_delay(0, 0), Duration::from_millis(100));
+        assert_eq!(retry_delay(0, 30), secs(30));
+        assert_eq!(retry_delay(12, 0), secs(300));
+        assert_eq!(retry_delay(0, 240), secs(240));
+        assert_eq!(retry_delay(0, u32::MAX), secs(300));
+    }
+
+    #[test]
+    fn nack_delay_is_whole_seconds_at_least_one_or_none() {
+        let with = |d: Duration| Disposition {
+            action: BrokerAction::Release,
+            group: GroupEffect::Release,
+            metric: DispositionMetric::None,
+            retry_after: d,
+            budget_exhausted: false,
+        };
+        assert_eq!(with(Duration::ZERO).nack_delay_secs(), None);
+        assert_eq!(with(Duration::from_millis(200)).nack_delay_secs(), Some(1));
+        assert_eq!(
+            with(Duration::from_millis(51_200)).nack_delay_secs(),
+            Some(51)
+        );
     }
 
     // ------------------------------------------------------------------

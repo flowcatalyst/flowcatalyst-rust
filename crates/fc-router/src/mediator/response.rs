@@ -18,8 +18,8 @@
 //! - **400 / 401 / 403 / 404 / 501** → `ErrorConfig`. These don't retry
 //!   and emit a configuration warning.
 //! - **429** → `RateLimited` with the `Retry-After` header (default 30).
-//!   The pool nacks with that delay and does NOT consume the retry
-//!   budget or trip the circuit breaker.
+//!   The pool retries it in place with that delay as the backoff floor;
+//!   it does not trip the circuit breaker.
 //! - **Other 4xx** → `ErrorConfig`, warned like a named 4xx.
 //! - **502 / 503 / 504** → `ErrorProcess` — retryable transient: the
 //!   target was unreachable/unavailable, not wrong.
@@ -204,7 +204,7 @@ pub(super) async fn classify(
 
     if status_code == 429 {
         // Healthy destination throttling us. Return RateLimited so the
-        // pool applies Retry-After without consuming the retry budget or
+        // pool retries in place with Retry-After as the floor, without
         // tripping the circuit breaker.
         let retry_after = response
             .headers()

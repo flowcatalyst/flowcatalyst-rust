@@ -8,6 +8,18 @@ use tracing::{debug, error, info, warn};
 use crate::{QueueConsumer, QueueError, QueueMetrics, Result};
 use fc_common::{Message, QueuedMessage};
 
+/// SQS's ceiling on a message's visibility timeout (12 hours, Go
+/// `sqs.MaxVisibility`). A larger `ChangeMessageVisibility` is rejected, and
+/// the rejected nack would leave the message to its natural timeout instead.
+pub const SQS_MAX_VISIBILITY_SECONDS: u32 = 43_200;
+
+/// A nack/defer delay as an SQS visibility timeout, clamped to
+/// [`SQS_MAX_VISIBILITY_SECONDS`]. (Go clamps to what is left of the 12h
+/// from the message's first receive; this is the flat ceiling.)
+fn visibility_for(delay_seconds: Option<u32>) -> i32 {
+    delay_seconds.unwrap_or(0).min(SQS_MAX_VISIBILITY_SECONDS) as i32
+}
+
 /// AWS SQS queue consumer
 pub struct SqsQueueConsumer {
     client: Client,
@@ -276,7 +288,7 @@ impl QueueConsumer for SqsQueueConsumer {
     async fn nack(&self, receipt_handle: &str, delay_seconds: Option<u32>) -> Result<()> {
         // In SQS, NACK is done by setting visibility timeout to 0 (immediate retry)
         // or to a delay value for delayed retry
-        let visibility_timeout = delay_seconds.unwrap_or(0) as i32;
+        let visibility_timeout = visibility_for(delay_seconds);
 
         self.client
             .change_message_visibility()
@@ -299,7 +311,7 @@ impl QueueConsumer for SqsQueueConsumer {
 
     async fn defer(&self, receipt_handle: &str, delay_seconds: Option<u32>) -> Result<()> {
         // Same SQS operation as nack, but tracked separately as not a failure
-        let visibility_timeout = delay_seconds.unwrap_or(0) as i32;
+        let visibility_timeout = visibility_for(delay_seconds);
 
         self.client
             .change_message_visibility()
@@ -399,5 +411,23 @@ impl QueueConsumer for SqsQueueConsumer {
             total_nacked: self.total_nacked.load(Ordering::Relaxed),
             total_deferred: self.total_deferred.load(Ordering::Relaxed),
         }))
+    }
+}
+
+#[cfg(test)]
+mod visibility_clamp_tests {
+    use super::*;
+
+    #[test]
+    fn nack_delays_are_clamped_to_the_sqs_ceiling() {
+        assert_eq!(visibility_for(None), 0);
+        assert_eq!(visibility_for(Some(30)), 30);
+        assert_eq!(visibility_for(Some(43_200)), 43_200);
+        assert_eq!(visibility_for(Some(100_000)), 43_200);
+        assert_eq!(
+            visibility_for(Some(u32::MAX)),
+            43_200,
+            "never wraps negative"
+        );
     }
 }

@@ -22,15 +22,11 @@ use tracing::debug;
 /// budget — `Success`, `ErrorConfig` and `RateLimited` are terminal here
 /// and return on the first attempt.
 ///
-/// **Not the whole picture.** `pool.rs` applies its *own*, separately
-/// configured delay whenever a message NACKs back to the broker instead
-/// of exhausting this schedule (see the `nack(delay_seconds)` calls
-/// around `pool.rs`'s delivery loop, and the pool-side backoff curve for
-/// deferred/blocked messages). A-03 calls for folding both into one
-/// policy object with one observable schedule; that pool-side half is a
-/// later lane's work — this type only collapses the mediator's half, and
-/// is deliberately kept a pure, standalone value so that later collapse
-/// has something concrete to absorb.
+/// **Not the whole picture.** The pool has its own, separate retry for
+/// the outcomes this policy treats as terminal: a 429 or an `ack:false`
+/// deferral is retried in place on the pool's backoff curves, bounded by
+/// `MAX_IN_PIPELINE_ATTEMPTS` (see `pool::disposition_of`), and an outcome
+/// this burst gives up on is handed back to the broker.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetryPolicy {
     /// Total attempts, including the first. `max_attempts: 1` never

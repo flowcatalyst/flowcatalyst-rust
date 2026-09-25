@@ -167,18 +167,25 @@ governor token bucket (per pool):
     Timeout:    30 seconds max wait  →  NACK with 10s delay
 ```
 
-### Batch+Group Failure Cascading (FIFO)
+### Group Outcomes (FIFO)
+
+One drain task per ordered group takes messages from a strict FIFO buffer
+(no priority lane inside a group), one at a time. What the mediation outcome
+does to the group follows Go's `pool.go` (`disposition_of`):
 
 ```
-Batch [B1], Group [order_456], Mode: BLOCK_ON_ERROR
+Group [order_456], buffer: A B C D
 
-    Message A: mediator returns Success    → ACK
-    Message B: mediator returns ErrorProcess → NACK + mark B1:order_456 as failed
-    Message C: check failed_batch_groups   → NACK immediately (no mediation attempt)
-    Message D: check failed_batch_groups   → NACK immediately
-
-    Next poll: all NACKed messages reappear from SQS
-    Message B retried first (lowest sequence)
+    A: Success                  → ACK, move on to B
+    B: 429 / ack:false          → put B back at the FRONT, wait out the backoff,
+                                  attempt B again (C and D wait behind it);
+                                  after MAX_IN_PIPELINE_ATTEMPTS, release as below
+    B: 502/503/504, unreachable,
+       breaker open             → NACK B, take the WHOLE buffer (C, D) and NACK it
+    B: ack:false + delaySeconds
+       (broker holds delays)    → same whole-group release, B with exactly that delay
+    B: 4xx / R-57 5xx           → ACK B away; NEXT_ON_ERROR moves on to C,
+                                  BLOCK_ON_ERROR takes and NACKs C, D
 ```
 
 ---
@@ -215,14 +222,13 @@ Worker pool per processing pool code.
 | `group_handlers` | `DashMap<Arc<str>, Mutex<MessageGroupHandler>>` | Per-group FIFO queues (~200 bytes idle) |
 | `rate_limiter` | `RwLock<Option<Arc<RateLimiter>>>` | Governor token bucket (updatable at runtime) |
 | `circuit_breaker_registry` | `Arc<CircuitBreakerRegistry>` | Shared per-endpoint circuit breakers |
-| `failed_batch_groups` | `DashSet<BatchGroupKey>` | Track failed batch+group combos for cascading NACKs |
 | `metrics_collector` | `Arc<PoolMetricsCollector>` | HdrHistogram + windowed counters |
 
 **Two task types:**
 - `spawn_immediate_task()` — one independent task per IMMEDIATE message, fully concurrent
 - `spawn_drain_task()` — one sequential task per message group (ordered modes), exits when empty
 
-**Panic safety:** `PanicGuard` on drain tasks resets `processing` flag, decrements `active_workers`, and cleans up `in_flight_groups` if the task panics.
+**Panic safety:** `WorkerGuard` (both task types) gives back the task's queue slot, active-worker count and `mediating` entry on any exit, panic included. `DrainGuard` also empties an abandoned group's buffer (the callbacks' Drop nacks each message), gives back a queue slot per message, and resets `processing`.
 
 ### HttpMediator
 
