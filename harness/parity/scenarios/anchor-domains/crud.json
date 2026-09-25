@@ -1,0 +1,108 @@
+{
+  "name": "anchor-domains: CRUD, normalisation, and the anchor-only gate on every route including reads",
+  "why": "the anchor-domain list decides who logs in as an anchor user at all; spec §1 says all eleven auth-admin routes are anchor-only including reads, so a wire diff in the gate would let a CLIENT-scoped caller enumerate or edit the anchor allowlist",
+  "covers": ["listAnchorDomains", "createAnchorDomain", "updateAnchorDomain", "deleteAnchorDomain",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/anchor-domains",
+                   "body": { "domain": "PARITY-${run}.example.com" } },
+      "expect": { "status": 201 },
+      "capture": { "domainId": "/id" } },
+
+    { "id": "list-contains-normalised-domain",
+      "why": "domain is trimmed and lower-cased before storage (spec §4.1): the created row must read back lower-case even though the request was upper-case",
+      "request": { "method": "GET", "path": "/api/anchor-domains" },
+      "unordered": ["/items"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/anchor-domains/${domainId}",
+                   "body": { "domain": "parity-${run}-renamed.example.com" } } },
+
+    { "id": "list-after-update",
+      "request": { "method": "GET", "path": "/api/anchor-domains" },
+      "unordered": ["/items"] },
+
+    { "id": "create-missing-domain",
+      "request": { "method": "POST", "path": "/api/anchor-domains", "body": {} } },
+
+    { "id": "create-invalid-domain",
+      "request": { "method": "POST", "path": "/api/anchor-domains", "body": { "domain": "not a domain" } } },
+
+    { "id": "create-for-duplicate",
+      "request": { "method": "POST", "path": "/api/anchor-domains", "body": { "domain": "parity-dup-${run}.example.com" } },
+      "expect": { "status": 201 } },
+
+    { "id": "duplicate-domain",
+      "request": { "method": "POST", "path": "/api/anchor-domains",
+                   "body": { "domain": "PARITY-DUP-${run}.EXAMPLE.COM" } } },
+
+    { "id": "update-unknown",
+      "request": { "method": "PUT", "path": "/api/anchor-domains/adm_doesnotexist1", "body": { "domain": "x.example.com" } } },
+
+    { "id": "update-invalid-domain",
+      "request": { "method": "PUT", "path": "/api/anchor-domains/${domainId}", "body": { "domain": "nope" } } },
+
+    { "id": "create-collision-target",
+      "request": { "method": "POST", "path": "/api/anchor-domains", "body": { "domain": "parity-collision-${run}.example.com" } },
+      "expect": { "status": 201 },
+      "capture": { "collisionTargetId": "/id" } },
+
+    { "id": "update-into-existing-domain",
+      "why": "Go has no pre-check on update and answers 500 on the UNIQUE violation; Java pre-checks and answers 409 DOMAIN_EXISTS (spec §8 D2, a deliberate deviation) — this is exactly the kind of divergence the harness exists to surface",
+      "request": { "method": "PUT", "path": "/api/anchor-domains/${collisionTargetId}",
+                   "body": { "domain": "parity-dup-${run}.example.com" } } },
+
+    { "id": "create-doomed",
+      "request": { "method": "POST", "path": "/api/anchor-domains", "body": { "domain": "parity-doomed-${run}.example.com" } },
+      "expect": { "status": 201 },
+      "capture": { "doomedId": "/id" } },
+
+    { "id": "delete-doomed",
+      "request": { "method": "DELETE", "path": "/api/anchor-domains/${doomedId}" } },
+
+    { "id": "delete-doomed-again",
+      "request": { "method": "DELETE", "path": "/api/anchor-domains/${doomedId}" } },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Anchor-Domain Confinement Client", "identifier": "parity-adconf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-adconf-${run}@example.com", "name": "Parity Anchor-Domain Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role",
+      "why": "platform:admin holds no anchor-domain permission at all — irrelevant here anyway, since spec §1 gates every route by anchor scope, not by permission code",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-adconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-forbidden",
+      "why": "reads are anchor-only too (spec §1) — a CLIENT-scoped admin must not enumerate the anchor domain list",
+      "request": { "method": "GET", "path": "/api/anchor-domains" } },
+
+    { "id": "confinement-create-forbidden",
+      "request": { "method": "POST", "path": "/api/anchor-domains", "body": { "domain": "should-not-exist.example.com" } } },
+
+    { "id": "confinement-delete-forbidden",
+      "request": { "method": "DELETE", "path": "/api/anchor-domains/${domainId}" } }
+  ]
+}

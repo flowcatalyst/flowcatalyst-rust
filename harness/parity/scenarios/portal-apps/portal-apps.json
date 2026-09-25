@@ -1,0 +1,229 @@
+{
+  "name": "portal-apps: create (CONFIDENTIAL/PUBLIC, duplicate code, wildcard callback), update, delete (one/two OAuth clients), list, and the §4.5 OAuth-client portalAppId surface",
+  "why": "portal-apps.md §3.4/§3.6 run inside their own transaction (app + provisioned OAuth client, or app + every linked OAuth client, atomically) and §4.4/§4.5 are entirely new wire shapes the aggregate suites never exercised on Go — a wire diff on the one-transaction rollback, the deleted-suffix pluralisation, or the portalAppId <-> portalClientId resolution in OAuthClientApi would be invisible anywhere else.",
+  "covers": ["listPortalApps", "createPortalApp", "updatePortalApp", "deletePortalApp",
+             "createClient", "createOAuthClient", "updateOAuthClient"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Portal Apps Client", "identifier": "parity-papp-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientId": "/id" } },
+
+    { "id": "create-confidential",
+      "why": "spec §9.7: a callback ⇒ CONFIDENTIAL, secret returned once and not equal to the stored value (the stored value is never on the wire so this pins shape+presence, not the hash), the OAuth client is portal-flagged, app-linked, authorization_code only, PKCE on, apiAccess off.",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "Customer-Portal-${run}", "name": "Customer Portal",
+                             "description": "the confidential app",
+                             "redirectUris": ["https://papp-${run}.example.com/callback"] } },
+      "expect": { "status": 201 },
+      "capture": { "appId1": "/portalApp/id", "oc1Id": "/oauthClientId", "oc1RowId": "/oauthClientRowId",
+                   "oc1Secret": "/clientSecret" } },
+
+    { "id": "get-oauth-client-of-confidential-app",
+      "why": "the provisioned client itself, by row id — pins grantTypes/scopes/pkce/apiAccess/portal linkage (spec §3.4 step 3) beyond what the create response's PortalAppResponse.oauthClients summary carries.",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${oc1RowId}" } },
+
+    { "id": "create-public",
+      "why": "spec §9.7: PUBLIC ⇒ no secret.",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "supplier-portal-${run}", "name": "Supplier Portal",
+                             "redirectUris": ["https://papp-supplier-${run}.example.com/callback"],
+                             "clientType": "PUBLIC" } },
+      "expect": { "status": 201 },
+      "capture": { "appId2": "/portalApp/id", "oc2Id": "/oauthClientId", "oc2RowId": "/oauthClientRowId" } },
+
+    { "id": "create-duplicate-code-other-case",
+      "why": "spec §2.1/§9.2: codes normalise case-insensitively, so 'CUSTOMER-PORTAL-${run}' collides with the first app's stored 'customer-portal-${run}'; §9.7: no extra OAuth client is created on the failed attempt — pinned by the unchanged list below.",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "CUSTOMER-PORTAL-${run}", "name": "Duplicate" } } },
+
+    { "id": "create-wildcard-callback",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "wildcard-${run}", "name": "Wildcard",
+                             "redirectUris": ["https://*.example.com/callback"] } } },
+
+    { "id": "create-invalid-client-type",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "badtype-${run}", "name": "Bad Type",
+                             "clientType": "PARTNER" } } },
+
+    { "id": "create-missing-name",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "noname-${run}" } } },
+
+    { "id": "create-invalid-code",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "-leading-dash", "name": "Bad Code" } } },
+
+    { "id": "list-after-create",
+      "request": { "method": "GET", "path": "/api/portal-apps", "query": { "clientId": "${clientId}" } },
+      "unordered": ["/portalApps"] },
+
+    { "id": "list-missing-client-id-non-anchor",
+      "why": "spec §4.4: clientId omitted is the one 4.4 route where the rule is conditional on anchor tier — a non-anchor caller (§confinement steps below establish one) still gets CLIENT_ID_REQUIRED; here the caller is still the anchor admin so this exercises the anchor branch (every client's apps).",
+      "request": { "method": "GET", "path": "/api/portal-apps" },
+      "unordered": ["/portalApps"] },
+
+    { "id": "update-rename",
+      "request": { "method": "PUT", "path": "/api/portal-apps/${appId2}",
+                   "body": { "clientId": "${clientId}", "name": "Supplier Portal Renamed" } },
+      "expect": { "status": 200 } },
+
+    { "id": "update-deactivate",
+      "request": { "method": "PUT", "path": "/api/portal-apps/${appId2}",
+                   "body": { "clientId": "${clientId}", "active": false } },
+      "expect": { "status": 200 } },
+
+    { "id": "update-missing-id-name-blank",
+      "request": { "method": "PUT", "path": "/api/portal-apps/${appId2}",
+                   "body": { "clientId": "${clientId}", "name": "   " } } },
+
+    { "id": "update-unknown-app",
+      "request": { "method": "PUT", "path": "/api/portal-apps/pta_doesnotexist${run}",
+                   "body": { "clientId": "${clientId}", "name": "Nope" } } },
+
+    { "id": "list-after-update",
+      "request": { "method": "GET", "path": "/api/portal-apps", "query": { "clientId": "${clientId}" } },
+      "unordered": ["/portalApps"] },
+
+    { "id": "create-app-for-two-client-delete",
+      "why": "sets up the §3.6/§4.4 two-OAuth-client delete case: create the app (one provisioned client), then link a SECOND, independently-created OAuth client to the same app via portalAppId (§4.5) before deleting.",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "two-clients-${run}", "name": "Two Clients App",
+                             "redirectUris": ["https://papp-two-${run}.example.com/callback"] } },
+      "expect": { "status": 201 },
+      "capture": { "appId3": "/portalApp/id", "oc3aId": "/oauthClientId" } },
+
+    { "id": "link-second-oauth-client-to-app3",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Parity Portal App3 Second Client ${run}", "clientType": "PUBLIC",
+                             "redirectUris": ["https://papp-two-second-${run}.example.com/callback"],
+                             "portalAppId": "${appId3}" } },
+      "expect": { "status": 201 },
+      "capture": { "oc3bId": "/client/id", "oc3bPortalClientId": "/client/portalClientId", "oc3bPortalAppId": "/client/portalAppId" } },
+
+    { "id": "delete-app3-two-oauth-clients",
+      "why": "spec §4.4: message suffixed ' with its OAuth clients' (plural, >1 deleted).",
+      "request": { "method": "DELETE", "path": "/api/portal-apps/${appId3}", "query": { "clientId": "${clientId}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "delete-app2-one-oauth-client",
+      "why": "spec §4.4: message suffixed ' with its OAuth client' (singular).",
+      "request": { "method": "DELETE", "path": "/api/portal-apps/${appId2}", "query": { "clientId": "${clientId}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "delete-app2-again",
+      "request": { "method": "DELETE", "path": "/api/portal-apps/${appId2}", "query": { "clientId": "${clientId}" } } },
+
+    { "id": "get-oc3a-after-app3-delete",
+      "why": "spec §3.6: every OAuth client whose portalAppId named the deleted app is itself deleted, never merely unlinked (widening-access guard).",
+      "request": { "method": "GET", "path": "/api/oauth-clients/by-client-id/${oc3aId}" } },
+
+    { "id": "list-after-deletes",
+      "request": { "method": "GET", "path": "/api/portal-apps", "query": { "clientId": "${clientId}" } },
+      "unordered": ["/portalApps"] },
+
+    { "id": "delete-missing-client-id",
+      "request": { "method": "DELETE", "path": "/api/portal-apps/${appId1}" } },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Portal Apps Confinement Client", "identifier": "parity-papp-conf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-papp-conf-${run}@example.com", "name": "Parity Portal Apps Confinement",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-3391" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:portal-administrator"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-papp-conf-${run}@example.com", "password": "Correct-Harness-Battery-3391" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-missing-client-id",
+      "why": "a non-anchor caller with no clientId ⇒ CLIENT_ID_REQUIRED, not every client's apps (spec §4.4).",
+      "request": { "method": "GET", "path": "/api/portal-apps" } },
+
+    { "id": "confinement-list-out-of-scope",
+      "request": { "method": "GET", "path": "/api/portal-apps", "query": { "clientId": "${clientId}" } } },
+
+    { "id": "confinement-create-out-of-scope",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "conf-shouldfail-${run}", "name": "Should Fail" } } },
+
+    { "id": "confinement-list-own-scope-ok",
+      "request": { "method": "GET", "path": "/api/portal-apps", "query": { "clientId": "${confClientId}" } },
+      "unordered": ["/portalApps"] },
+
+    { "id": "login-as-admin-again",
+      "why": "restore the admin session for the §4.5 OAuth-client steps below — the confinement caller cannot create OAuth clients (anchor-only, auth-core.md §6.3).",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "oauth-client-portal-app-id-on-create",
+      "why": "spec §4.5: portalAppId given, portalClientId omitted ⇒ resolved automatically to the app's own client and surfaced on the response.",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Parity Portal App1 Extra Client ${run}", "clientType": "PUBLIC",
+                             "redirectUris": ["https://papp-extra-${run}.example.com/callback"],
+                             "portalAppId": "${appId1}" } },
+      "expect": { "status": 201 },
+      "capture": { "oc4RowId": "/client/id", "oc4ClientId": "/client/clientId" } },
+
+    { "id": "oauth-client-portal-app-client-mismatch",
+      "why": "spec §4.5: a portalAppId belonging to clientId ${clientId} together with an explicit, DIFFERENT portalClientId ⇒ 400 PORTAL_APP_CLIENT_MISMATCH.",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Parity Mismatch Client ${run}", "clientType": "PUBLIC",
+                             "redirectUris": ["https://papp-mismatch-${run}.example.com/callback"],
+                             "portalAppId": "${appId1}", "portalClientId": "${confClientId}" } } },
+
+    { "id": "oauth-client-portal-app-not-found",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Parity Unknown App Client ${run}", "clientType": "PUBLIC",
+                             "redirectUris": ["https://papp-unknown-${run}.example.com/callback"],
+                             "portalAppId": "pta_doesnotexist${run}" } } },
+
+    { "id": "oauth-client-unlink-app",
+      "why": "spec §4.5: portalAppId: \"\" unlinks; portalClientId keeps (unlinked ⇔ null, portalClientId stays set).",
+      "request": { "method": "PUT", "path": "/api/oauth-clients/${oc4RowId}", "body": { "portalAppId": "" } },
+      "expect": { "status": 204 } },
+
+    { "id": "get-oc4-after-unlink",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${oc4RowId}" } },
+
+    { "id": "oauth-client-relink-app",
+      "request": { "method": "PUT", "path": "/api/oauth-clients/${oc4RowId}", "body": { "portalAppId": "${appId1}" } },
+      "expect": { "status": 204 } },
+
+    { "id": "get-oc4-after-relink",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${oc4RowId}" } },
+
+    { "id": "oauth-client-clear-portal-client-clears-app-link",
+      "why": "spec §4.5: portalClientId: \"\" clears BOTH the portal flag and the app link, even though this request never names portalAppId.",
+      "request": { "method": "PUT", "path": "/api/oauth-clients/${oc4RowId}", "body": { "portalClientId": "" } },
+      "expect": { "status": 204 } },
+
+    { "id": "get-oc4-after-clear",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${oc4RowId}" } },
+
+    { "id": "delete-oc4",
+      "request": { "method": "DELETE", "path": "/api/oauth-clients/${oc4RowId}" },
+      "expect": { "status": 204 } }
+  ]
+}

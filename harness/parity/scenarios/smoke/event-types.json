@@ -1,0 +1,86 @@
+{
+  "name": "S0 smoke: health, login, me, event-types CRUD, tenant confinement",
+  "covers": ["listEventTypes", "createEventType", "getEventType", "updateEventType", "deleteEventType",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "health",
+      "request": { "method": "GET", "path": "/health" } },
+
+    { "id": "unauthenticated",
+      "request": { "method": "GET", "path": "/api/event-types" } },
+
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "me",
+      "request": { "method": "GET", "path": "/api/me" } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "parity:smoke:eventtype:${run}", "name": "Parity Event Type",
+                             "description": "parity harness smoke", "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "etId": "/id" } },
+
+    { "id": "get-created",
+      "request": { "method": "GET", "path": "/api/event-types/${etId}" } },
+
+    { "id": "list",
+      "request": { "method": "GET", "path": "/api/event-types", "query": { "clientId": "${client.id}" } },
+      "unordered": ["/items"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/event-types/${etId}",
+                   "body": { "name": "Parity Event Type Updated", "description": "parity harness smoke, updated" } } },
+
+    { "id": "get-updated",
+      "request": { "method": "GET", "path": "/api/event-types/${etId}" } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/event-types/${etId}" } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/event-types/${etId}" } },
+
+    { "id": "validation-error",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "not-a-valid-code", "name": "Bad Code" } } },
+
+    { "id": "confinement-create",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "parity:smoke:confinement:${run}", "name": "Parity Confinement Target",
+                             "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "confinementEtId": "/id" } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Second Client", "identifier": "parity-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-b-${run}@example.com", "name": "Parity B User",
+                             "scope": "CLIENT", "clientId": "${clientBId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:messaging-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "login-as-b",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-b-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "cross-tenant-read",
+      "request": { "method": "GET", "path": "/api/event-types/${confinementEtId}" } }
+  ]
+}

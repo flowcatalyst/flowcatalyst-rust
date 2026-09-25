@@ -1,0 +1,97 @@
+{
+  "name": "events: ingest writes (createEvent, batchIngestEvents) + the read surface's empty/validation/404 shapes",
+  "why": "docs/spec/event.md §1/§9: msg_events_read is filled only by the stream processor, and the parity harness runs with FC_STREAM_PROCESSOR_ENABLED=false (parity/src/main/java/io/flowcatalyst/parity/ParityEnv.java) on both sides. So a freshly ingested event NEVER becomes visible through listEvents/getEvent/listEventsRaw/eventFilterOptions in this harness — those routes read a table nothing populates here. This file therefore pins the write side for real (createEvent's envelope and defaults, batchIngestEvents' whole-batch-rejection and dedup, the tenant guard) and pins the read side's empty-state/validation/404/permission shapes only. Coverage of the read surface against actual projected rows needs the stream processor wired into a later phase (see report).",
+  "covers": ["createEvent", "batchIngestEvents", "listEvents", "listEventsRaw", "listEventsRawAlias",
+             "eventFilterOptions", "getEvent"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "create-singular",
+      "request": { "method": "POST", "path": "/api/events",
+                   "body": { "eventType": "s1cev.${run}.single", "source": "s1c-harness",
+                             "subject": "s1c-subj-${run}", "data": { "n": 1 },
+                             "messageGroup": "s1c-grp-${run}", "correlationId": "s1c-corr-${run}",
+                             "causationId": "s1c-cause-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "eventId": "/event/id", "eventDedup": "/event/deduplicationId" } },
+
+    { "id": "create-singular-missing-data-is-validation-error",
+      "request": { "method": "POST", "path": "/api/events",
+                   "body": { "eventType": "s1cev.${run}.nodata", "source": "s1c-harness", "data": null } } },
+
+    { "id": "batch",
+      "request": { "method": "POST", "path": "/api/events/batch",
+                   "body": { "items": [
+                       { "type": "s1cev.${run}.batch1", "source": "s1c-harness", "data": {} },
+                       { "type": "s1cev.${run}.batch2", "source": "s1c-harness", "data": {} }
+                   ] } },
+      "expect": { "status": 201 },
+      "capture": { "batch1Id": "/results/0/id", "batch2Id": "/results/1/id" } },
+
+    { "id": "batch-empty-is-201-not-200",
+      "request": { "method": "POST", "path": "/api/events/batch", "body": { "items": [] } },
+      "expect": { "status": 201 } },
+
+    { "id": "batch-one-bad-item-reports-it-in-its-slot",
+      "request": { "method": "POST", "path": "/api/events/batch",
+                   "body": { "items": [
+                       { "type": "s1cev.${run}.wholea", "source": "s1c-harness", "data": {} },
+                       { "type": "s1cev.${run}.wholeb", "source": "s1c-harness", "data": null }
+                   ] } } },
+
+    { "id": "batch-repeated-deduplication-id-still-both-report-success",
+      "request": { "method": "POST", "path": "/api/events/batch",
+                   "body": { "items": [
+                       { "type": "s1cev.${run}.dupe", "source": "s1c-harness", "data": {}, "deduplicationId": "s1cev-dedup-${run}" },
+                       { "type": "s1cev.${run}.dupe", "source": "s1c-harness", "data": {}, "deduplicationId": "s1cev-dedup-${run}" }
+                   ] } },
+      "expect": { "status": 201 },
+      "capture": { "dupeResultId0": "/results/0/id", "dupeResultId1": "/results/1/id" } },
+
+    { "id": "batch-unknown-client-code-leaves-event-unscoped-not-rejected",
+      "request": { "method": "POST", "path": "/api/events/batch",
+                   "body": { "items": [
+                       { "type": "s1cev.${run}.unknowncode", "source": "s1c-harness", "data": {},
+                         "clientCode": "s1c-no-such-client-code-${run}" }
+                   ] } },
+      "expect": { "status": 201 },
+      "capture": { "unknownCodeResultId": "/results/0/id" } },
+
+    { "id": "create-singular-with-own-client-id-succeeds-because-anchor-can-access-any-client",
+      "request": { "method": "POST", "path": "/api/events",
+                   "body": { "eventType": "s1cev.${run}.withclient", "source": "s1c-harness", "data": {},
+                             "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "withClientEventId": "/event/id", "withClientDedup": "/event/deduplicationId" } },
+
+    { "id": "get-by-id-of-a-freshly-ingested-event-is-404-because-the-projector-never-ran",
+      "request": { "method": "GET", "path": "/api/events/${eventId}" } },
+
+    { "id": "get-by-id-unknown",
+      "request": { "method": "GET", "path": "/api/events/s1cevmissing1" } },
+
+    { "id": "list-empty-state",
+      "request": { "method": "GET", "path": "/api/events" } },
+
+    { "id": "list-raw-empty-state",
+      "request": { "method": "GET", "path": "/api/events/list-raw" } },
+
+    { "id": "list-raw-alias-empty-state",
+      "request": { "method": "GET", "path": "/api/events/raw" } },
+
+    { "id": "list-with-since-until-and-type-filters-still-empty",
+      "request": { "method": "GET", "path": "/api/events",
+                   "query": { "type": "s1cev.${run}.single", "since": "2020-01-01T00:00:00Z",
+                              "until": "2030-01-01T00:00:00Z" } } },
+
+    { "id": "list-non-integer-limit-is-validation-error",
+      "request": { "method": "GET", "path": "/api/events", "query": { "limit": "not-a-number" } } },
+
+    { "id": "filter-options-empty-state",
+      "request": { "method": "GET", "path": "/api/events/filter-options" } }
+  ]
+}

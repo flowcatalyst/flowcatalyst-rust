@@ -1,0 +1,151 @@
+{
+  "name": "email-domain-mappings: create/read/update/move-provider/delete lifecycle, the ungated lookup route, validation, anchor-only confinement",
+  "why": "this mapping decides which identity provider and 2FA policy an entire email domain's users get routed through at login — the move-provider transition (with its ALREADY_ON_PROVIDER guard) and the deliberately ungated lookup route (spec §3: no coarse gate, answers {found:false} rather than 404) are the two behaviours most likely to silently diverge",
+  "covers": ["listEmailDomainMappings", "createEmailDomainMapping", "getEmailDomainMapping", "getEmailDomainMappingByDomain",
+             "lookupEmailDomainMapping", "updateEmailDomainMapping", "moveEmailDomainMappingProvider", "deleteEmailDomainMapping",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-idp-x",
+      "why": "move-provider validates its target against the identity-provider table (unlike create, which does not — spec §1); a real target is needed for the move step below.",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-edm-idpx-${run}", "name": "Parity EDM IdP X", "type": "INTERNAL", "oidcMultiTenant": false } },
+      "expect": { "status": 201 },
+      "capture": { "idpXId": "/id" } },
+
+    { "id": "create-idp-y",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-edm-idpy-${run}", "name": "Parity EDM IdP Y", "type": "INTERNAL", "oidcMultiTenant": false } },
+      "expect": { "status": 201 },
+      "capture": { "idpYId": "/id" } },
+
+    { "id": "create",
+      "why": "identityProviderId is not FK-checked on create (only on move-provider) — an unknown reference is accepted, matching the documented ApiTest behaviour",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings",
+                   "body": { "emailDomain": "parity-edm-${run}.example.test", "identityProviderId": "idp_parity_x",
+                             "scopeType": "CLIENT", "primaryClientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "edmId": "/id" } },
+
+    { "id": "get-created",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings/${edmId}" } },
+
+    { "id": "get-by-domain",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings/by-domain/parity-edm-${run}.example.test" } },
+
+    { "id": "lookup-found",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings/lookup", "query": { "domain": "parity-edm-${run}.example.test" } } },
+
+    { "id": "lookup-not-found",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings/lookup", "query": { "domain": "parity-edm-nomatch-${run}.example.test" } },
+      "expect": { "status": 200 } },
+
+    { "id": "lookup-missing-domain-param",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings/lookup" } },
+
+    { "id": "list",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings" },
+      "unordered": ["/mappings"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/email-domain-mappings/${edmId}",
+                   "body": { "additionalClientIds": ["${client.id}"], "require2fa": true, "allowed2faMethods": ["TOTP"] } },
+      "expect": { "status": 204 } },
+
+    { "id": "get-updated",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings/${edmId}" } },
+
+    { "id": "update-2fa-missing-method",
+      "why": "documented validation: require2fa true with no allowed2faMethods is 400 2FA_METHOD_REQUIRED",
+      "request": { "method": "PUT", "path": "/api/email-domain-mappings/${edmId}", "body": { "require2fa": true } } },
+
+    { "id": "update-invalid-2fa-method",
+      "request": { "method": "PUT", "path": "/api/email-domain-mappings/${edmId}",
+                   "body": { "require2fa": true, "allowed2faMethods": ["CARRIER_PIGEON"] } } },
+
+    { "id": "move-provider",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings/${edmId}/move-provider",
+                   "body": { "identityProviderId": "${idpYId}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "move-provider-already-on-provider",
+      "why": "documented business rule: moving to the provider the mapping is already on is 409 ALREADY_ON_PROVIDER",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings/${edmId}/move-provider",
+                   "body": { "identityProviderId": "${idpYId}" } } },
+
+    { "id": "move-provider-missing-target",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings/${edmId}/move-provider", "body": {} } },
+
+    { "id": "create-for-duplicate",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings",
+                   "body": { "emailDomain": "parity-edm-dup-${run}.example.test", "identityProviderId": "idp_parity_x", "scopeType": "ANCHOR" } },
+      "expect": { "status": 201 },
+      "capture": { "dupMappingId": "/id" } },
+
+    { "id": "create-duplicate-domain",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings",
+                   "body": { "emailDomain": "parity-edm-dup-${run}.example.test", "identityProviderId": "idp_parity_x", "scopeType": "ANCHOR" } } },
+
+    { "id": "create-invalid-domain",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings",
+                   "body": { "emailDomain": "nodot", "identityProviderId": "idp_parity_x", "scopeType": "ANCHOR" } } },
+
+    { "id": "create-invalid-scope-type",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings",
+                   "body": { "emailDomain": "parity-edm-badscope-${run}.example.test", "identityProviderId": "idp_parity_x", "scopeType": "GLOBAL" } } },
+
+    { "id": "create-partner-missing-primary-client",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings",
+                   "body": { "emailDomain": "parity-edm-partner-${run}.example.test", "identityProviderId": "idp_parity_x", "scopeType": "PARTNER" } } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/email-domain-mappings/${edmId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/email-domain-mappings/${edmId}" } },
+
+    { "id": "get-deleted",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings/${edmId}" } },
+
+    { "id": "move-provider-unknown-mapping",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings/edm_doesnotexist99/move-provider",
+                   "body": { "identityProviderId": "idp_parity_x" } } },
+
+    { "id": "confinement-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity EDM Second Client", "identifier": "parity-edm-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "confinement-second-principal",
+      "why": "platform:auth-admin grants no email-domain-mapping permission, and the gated routes are anchor-only regardless (Checks.requireAnchor) — the lookup route is the exception, tested separately below",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-edm-b-${run}@example.test", "name": "Parity EDM B Admin",
+                             "scope": "CLIENT", "clientId": "${clientBId}", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "confinement-grant-auth-admin-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:auth-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-edm-b-${run}@example.test", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-refused",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings" } },
+
+    { "id": "confinement-lookup-still-works",
+      "why": "spec §3: lookup has no coarse gate at all — a non-anchor caller must get the same answer an anchor would, unlike every other route in this group",
+      "request": { "method": "GET", "path": "/api/email-domain-mappings/lookup", "query": { "domain": "parity-edm-dup-${run}.example.test" } },
+      "expect": { "status": 200 } }
+  ]
+}

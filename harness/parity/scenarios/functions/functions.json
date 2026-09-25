@@ -1,0 +1,168 @@
+{
+  "name": "functions: every /api/function* and /control/functions/* route, publish gated by required signatures",
+  "why": "docs/spec/function-api.md: the function platform (functions, versions, aliases, policies, control plane) is Java-first — there is no Go implementation (spec §0). This scenario requests every route listed for it in parity/surface.json at least once. The harness boots Java WITHOUT FLOWCATALYST_DEV_MODE (parity/src/main/java/io/flowcatalyst/parity/ParityEnv.java, JavaSide.java never set it), so FC_FN_SIGNATURES stays at its 'required' default and cannot be switched to 'off' without either turning dev mode on (out of scope for this scenario: dev mode changes far more than signatures) or failing Java's own startup guard (spec §5.1 step 5 / §8 P9). Publish therefore stops at 400 SIGNATURE_REQUIRED, and every downstream, version-shaped route is exercised against a function that has NO published version: versions/aliases lists come back empty, a version lookup or promote/retire by number is 404 FunctionVersion_NOT_FOUND rather than the 409s a real publish→ready→promote flow would show. That is a deliberate, reported limitation — see the handback report — not a gap in this scenario's coverage of the routes themselves.",
+  "covers": ["createApplication", "provisionApplicationServiceAccount", "getServiceAccountByCode", "assignServiceAccountRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-application",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "pf-${run}", "name": "Parity Functions ${run}", "type": "APPLICATION" } },
+      "expect": { "status": 201 },
+      "capture": { "fnAppId": "/id" } },
+
+    { "id": "create-function",
+      "request": { "method": "POST", "path": "/api/functions",
+                   "body": { "applicationCode": "pf-${run}", "serviceName": "svc", "name": "fn", "runtime": "jvm",
+                             "description": "parity harness function" } } },
+
+    { "id": "get-function",
+      "request": { "method": "GET", "path": "/api/functions/pf-${run}.svc.fn" } },
+
+    { "id": "list-by-pattern",
+      "request": { "method": "GET", "path": "/api/functions", "query": { "address": "pf-${run}.*" } },
+      "unordered": ["/data"] },
+
+    { "id": "update-function",
+      "request": { "method": "PUT", "path": "/api/functions/pf-${run}.svc.fn",
+                   "body": { "description": "parity harness function, updated" } } },
+
+    { "id": "get-policy",
+      "request": { "method": "GET", "path": "/api/function-policies/platform" } },
+
+    { "id": "put-policy",
+      "request": { "method": "PUT", "path": "/api/function-policies/platform",
+                   "body": { "signers": [ { "issuer": "https://issuer.parity.example", "subject": "parity-signer-${run}",
+                                             "runtimes": ["jvm"] } ],
+                             "ceilings": { "maxConcurrency": 5 } } } },
+
+    { "id": "publish",
+      "request": { "method": "POST", "path": "/api/functions/pf-${run}.svc.fn/versions",
+                   "body": { "artifactRef": "oci://parity/pf-fn:1",
+                             "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                             "manifest": { "runtime": "jvm", "entrypoint": "com.acme.parity.Fn", "pool": "pf-pool-${run}" } } } },
+
+    { "id": "list-versions",
+      "request": { "method": "GET", "path": "/api/functions/pf-${run}.svc.fn/versions" } },
+
+    { "id": "get-version-not-found",
+      "request": { "method": "GET", "path": "/api/functions/pf-${run}.svc.fn/versions/1" } },
+
+    { "id": "create-host-application",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "pf-host-${run}", "name": "Parity Function Host ${run}", "type": "APPLICATION" } },
+      "expect": { "status": 201 },
+      "capture": { "hostAppId": "/id" } },
+
+    { "id": "provision-host-service-account",
+      "request": { "method": "POST", "path": "/api/applications/${hostAppId}/provision-service-account" },
+      "expect": { "status": 201 },
+      "capture": { "hostClientId": "/serviceAccount/oauthClient/clientId", "hostClientSecret": "/serviceAccount/oauthClient/clientSecret" } },
+
+    { "id": "host-service-account",
+      "request": { "method": "GET", "path": "/api/service-accounts/code/app:pf-host-${run}" },
+      "expect": { "status": 200 },
+      "capture": { "hostServiceAccountId": "/id" } },
+
+    { "id": "assign-host-role",
+      "request": { "method": "PUT", "path": "/api/service-accounts/${hostServiceAccountId}/roles",
+                   "body": { "roles": ["platform:application-service", "platform:function-host"] } } },
+
+    { "id": "host-token",
+      "request": { "method": "POST", "path": "/oauth/token",
+                   "form": { "grant_type": "client_credentials", "client_id": "${hostClientId}", "client_secret": "${hostClientSecret}" } },
+      "expect": { "status": 200 },
+      "capture": { "hostToken": "/access_token" } },
+
+    { "id": "heartbeat",
+      "request": { "method": "POST", "path": "/control/functions/heartbeat", "auth": "${hostToken}", "headers": { "Cookie": "" },
+                   "body": { "hostId": "beat-${run}", "pool": "pf-pool-${run}", "state": "ACTIVE",
+                             "loaded": [ { "address": "pf-${run}.svc.fn", "version": 1, "state": "LOADED" } ] } } },
+
+    { "id": "desired-state",
+      "request": { "method": "GET", "path": "/control/functions/desired-state", "auth": "${hostToken}", "headers": { "Cookie": "" },
+                   "query": { "pool": "pf-pool-${run}" } } },
+
+    { "id": "emit-events",
+      "request": { "method": "POST", "path": "/control/functions/events", "auth": "${hostToken}", "headers": { "Cookie": "" },
+                   "body": { "hostId": "beat-${run}", "address": "pf-${run}.svc.fn", "version": 1,
+                             "events": [ { "type": "pf-${run}:orders:order:created", "subject": "s",
+                                           "dedupId": "parity-emit-${run}", "data": {} } ] } } },
+
+    { "id": "promote-not-ready",
+      "request": { "method": "PUT", "path": "/api/functions/pf-${run}.svc.fn/aliases/live", "body": { "version": 1 } } },
+
+    { "id": "status",
+      "request": { "method": "GET", "path": "/api/functions/pf-${run}.svc.fn/status" } },
+
+    { "id": "list-aliases",
+      "request": { "method": "GET", "path": "/api/functions/pf-${run}.svc.fn/aliases" } },
+
+    { "id": "get-config",
+      "request": { "method": "GET", "path": "/api/functions/pf-${run}.svc.fn/config" } },
+
+    { "id": "put-config",
+      "request": { "method": "PUT", "path": "/api/functions/pf-${run}.svc.fn/config",
+                   "body": { "values": { "GREETING": "hello" } } } },
+
+    { "id": "get-secrets",
+      "request": { "method": "GET", "path": "/api/functions/pf-${run}.svc.fn/secrets" } },
+
+    { "id": "put-secret",
+      "request": { "method": "PUT", "path": "/api/functions/pf-${run}.svc.fn/secrets/API_KEY",
+                   "body": { "value": "parity-secret-${run}" } } },
+
+    { "id": "get-secrets-after-set",
+      "request": { "method": "GET", "path": "/api/functions/pf-${run}.svc.fn/secrets" } },
+
+    { "id": "delete-secret",
+      "request": { "method": "DELETE", "path": "/api/functions/pf-${run}.svc.fn/secrets/API_KEY" } },
+
+    { "id": "delete-secret-not-found",
+      "request": { "method": "DELETE", "path": "/api/functions/pf-${run}.svc.fn/secrets/API_KEY" } },
+
+    { "id": "retire-not-found",
+      "request": { "method": "POST", "path": "/api/functions/pf-${run}.svc.fn/versions/1/retire" } },
+
+    { "id": "pools",
+      "request": { "method": "GET", "path": "/api/function-pools" } },
+
+    { "id": "duplicate-create",
+      "request": { "method": "POST", "path": "/api/functions",
+                   "body": { "applicationCode": "pf-${run}", "serviceName": "svc", "name": "fn", "runtime": "jvm" } } },
+
+    { "id": "immutable-field",
+      "request": { "method": "PUT", "path": "/api/functions/pf-${run}.svc.fn", "body": { "name": "nope" } } },
+
+    { "id": "two-part-address",
+      "request": { "method": "GET", "path": "/api/functions/a.b" } },
+
+    { "id": "create-application-not-addressable",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "pf_bad_${run}", "name": "Parity Not Addressable ${run}", "type": "APPLICATION" } },
+      "expect": { "status": 201 } },
+
+    { "id": "create-function-application-not-addressable",
+      "request": { "method": "POST", "path": "/api/functions",
+                   "body": { "applicationCode": "pf_bad_${run}", "serviceName": "svc", "name": "fn", "runtime": "jvm" } } },
+
+    { "id": "delete-function",
+      "request": { "method": "DELETE", "path": "/api/functions/pf-${run}.svc.fn" } },
+
+    { "id": "claim-domain",
+      "request": { "method": "POST", "path": "/api/function-domains",
+                   "body": { "hostname": "pf-${run}.parity.example" } } },
+
+    { "id": "list-domains",
+      "request": { "method": "GET", "path": "/api/function-domains", "query": { "clientId": "platform" } } },
+
+    { "id": "list-routes-requires-filter",
+      "request": { "method": "GET", "path": "/api/function-routes" } },
+
+    { "id": "release-domain",
+      "request": { "method": "DELETE", "path": "/api/function-domains/pf-${run}.parity.example" } }
+  ]
+}

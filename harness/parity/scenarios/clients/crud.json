@@ -1,0 +1,175 @@
+{
+  "name": "clients: CRUD, search, status changes, notes, application linking, and anchor-only confinement",
+  "why": "clients are the tenant root and every route on this surface is anchor-only regardless of held permission codes (client.md open question 5); a wire diff in the anchor gate would let a CLIENT-scoped caller read or mutate the tenant table",
+  "covers": ["listClients", "createClient", "searchClients", "searchClientsByQuery", "getClientByIdentifier",
+             "getClient", "updateClient", "activateClient", "suspendClient", "addClientNote", "deleteClient",
+             "getClientApplications", "updateClientApplications", "enableClientApplication", "disableClientApplication",
+             "createApplication", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Client", "identifier": "parity-client-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientId": "/id" } },
+
+    { "id": "get-by-id",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}" } },
+
+    { "id": "get-by-identifier",
+      "request": { "method": "GET", "path": "/api/clients/by-identifier/parity-client-${run}" } },
+
+    { "id": "list",
+      "request": { "method": "GET", "path": "/api/clients" },
+      "unordered": ["/clients"] },
+
+    { "id": "search-post",
+      "request": { "method": "POST", "path": "/api/clients/search", "body": { "term": "Parity Client" } },
+      "unordered": ["/clients"] },
+
+    { "id": "search-get",
+      "request": { "method": "GET", "path": "/api/clients/search", "query": { "q": "Parity Client" } },
+      "unordered": ["/clients"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/clients/${clientId}", "body": { "name": "Parity Client Renamed" } } },
+
+    { "id": "get-after-update",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}" } },
+
+    { "id": "suspend",
+      "request": { "method": "POST", "path": "/api/clients/${clientId}/suspend", "body": { "reason": "parity harness suspend" } } },
+
+    { "id": "get-after-suspend",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}" } },
+
+    { "id": "activate",
+      "request": { "method": "POST", "path": "/api/clients/${clientId}/activate" } },
+
+    { "id": "get-after-activate",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}" } },
+
+    { "id": "add-note",
+      "request": { "method": "POST", "path": "/api/clients/${clientId}/notes",
+                   "body": { "category": "parity", "text": "note added by the harness" } } },
+
+    { "id": "get-after-note",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}" } },
+
+    { "id": "create-linked-application",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "parity-clientapp-${run}", "name": "Parity Client App" } },
+      "expect": { "status": 201 },
+      "capture": { "linkedAppId": "/id" } },
+
+    { "id": "client-applications-before",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}/applications" },
+      "unordered": ["/applications"] },
+
+    { "id": "enable-application",
+      "request": { "method": "POST", "path": "/api/clients/${clientId}/applications/${linkedAppId}/enable" } },
+
+    { "id": "client-applications-after-enable",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}/applications" },
+      "unordered": ["/applications"] },
+
+    { "id": "disable-application",
+      "request": { "method": "POST", "path": "/api/clients/${clientId}/applications/${linkedAppId}/disable" } },
+
+    { "id": "update-client-applications",
+      "request": { "method": "PUT", "path": "/api/clients/${clientId}/applications",
+                   "body": { "enabledApplicationIds": ["${linkedAppId}"] } } },
+
+    { "id": "client-applications-after-bulk-update",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}/applications" },
+      "unordered": ["/applications"] },
+
+    { "id": "validation-missing-name",
+      "request": { "method": "POST", "path": "/api/clients", "body": { "identifier": "parity-noname-${run}" } } },
+
+    { "id": "validation-missing-identifier",
+      "request": { "method": "POST", "path": "/api/clients", "body": { "name": "No Identifier" } } },
+
+    { "id": "validation-bad-identifier",
+      "request": { "method": "POST", "path": "/api/clients", "body": { "name": "Bad Id", "identifier": "Not Valid!" } } },
+
+    { "id": "create-for-duplicate",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Dup Base", "identifier": "parity-clientdup-${run}" } },
+      "expect": { "status": 201 } },
+
+    { "id": "duplicate-identifier",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Dup Again", "identifier": "PARITY-CLIENTDUP-${run}" } } },
+
+    { "id": "get-unknown",
+      "request": { "method": "GET", "path": "/api/clients/clt_doesnotexist1" } },
+
+    { "id": "suspend-unknown",
+      "request": { "method": "POST", "path": "/api/clients/clt_doesnotexist1/suspend", "body": { "reason": "x" } } },
+
+    { "id": "create-doomed",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Doomed Client", "identifier": "parity-clientdoomed-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "doomedClientId": "/id" } },
+
+    { "id": "delete-doomed",
+      "request": { "method": "DELETE", "path": "/api/clients/${doomedClientId}" } },
+
+    { "id": "get-doomed-after-delete",
+      "request": { "method": "GET", "path": "/api/clients/${doomedClientId}" } },
+
+    { "id": "delete-doomed-again",
+      "request": { "method": "DELETE", "path": "/api/clients/${doomedClientId}" } },
+
+    { "id": "create-deactivate-target",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Deactivate Target", "identifier": "parity-clientdeact-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "deactivateTargetId": "/id" } },
+
+    { "id": "deactivate-is-a-hard-delete",
+      "request": { "method": "POST", "path": "/api/clients/${deactivateTargetId}/deactivate", "body": { "reason": "discarded" } } },
+
+    { "id": "get-after-deactivate",
+      "request": { "method": "GET", "path": "/api/clients/${deactivateTargetId}" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-clientconf-${run}@example.com", "name": "Parity Client Confinement User",
+                             "scope": "CLIENT", "clientId": "${clientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-clientconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-forbidden",
+      "request": { "method": "GET", "path": "/api/clients" } },
+
+    { "id": "confinement-read-own-client-forbidden",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}" } },
+
+    { "id": "confinement-applications-of-own-client-allowed",
+      "why": "GET /{id}/applications is the one non-anchor route on this surface: access to one's own client must succeed even though every other route is anchor-only",
+      "request": { "method": "GET", "path": "/api/clients/${clientId}/applications" },
+      "unordered": ["/applications"] },
+
+    { "id": "confinement-write-forbidden",
+      "request": { "method": "PUT", "path": "/api/clients/${clientId}", "body": { "name": "Should not apply" } } }
+  ]
+}

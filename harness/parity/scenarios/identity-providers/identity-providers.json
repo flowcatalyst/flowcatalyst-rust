@@ -1,0 +1,142 @@
+{
+  "name": "identity-providers: create/read/update/delete lifecycle, the delete-still-mapped guard, validation, anchor-only confinement",
+  "why": "identity providers gate SSO for entire email domains and store an encrypted client secret ref — the delete guard (a provider still referenced by a domain mapping must refuse) is the one business rule worth pinning explicitly, since deleting it out from under a live mapping would silently break every user of that domain's login",
+  "covers": ["listIdentityProviders", "createIdentityProvider", "getIdentityProvider", "updateIdentityProvider",
+             "deleteIdentityProvider", "createEmailDomainMapping", "deleteEmailDomainMapping",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-idp-${run}", "name": "Parity Identity Provider", "type": "OIDC",
+                             "oidcIssuerUrl": "https://login.example.test/v2.0", "oidcClientId": "parity-cid",
+                             "oidcClientSecretRef": "plain-secret", "oidcMultiTenant": false,
+                             "allowedEmailDomains": ["parity-idp-${run}.example.test"], "mappingScope": "ANCHOR" } },
+      "expect": { "status": 201 },
+      "capture": { "idpId": "/id" } },
+
+    { "id": "create-fresh-domain-without-mapping-scope",
+      "why": "owner ruling 2026-09-15: the scope of a brand-new email-domain mapping is an explicit choice — a create that would map a fresh domain without naming ANCHOR or CLIENT is refused (MAPPING_SCOPE_REQUIRED) before any row is written",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-idp-noscope-${run}", "name": "Parity No Scope Provider", "type": "INTERNAL",
+                             "oidcMultiTenant": false, "allowedEmailDomains": ["parity-idp-noscope-${run}.example.test"] } },
+      "expect": { "status": 400 } },
+
+    { "id": "get-created",
+      "request": { "method": "GET", "path": "/api/identity-providers/${idpId}" } },
+
+    { "id": "list",
+      "request": { "method": "GET", "path": "/api/identity-providers" },
+      "unordered": ["/identityProviders"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/identity-providers/${idpId}",
+                   "body": { "name": "Parity Identity Provider Updated" } },
+      "expect": { "status": 200 } },
+
+    { "id": "get-updated",
+      "request": { "method": "GET", "path": "/api/identity-providers/${idpId}" } },
+
+    { "id": "update-noop-every-field-optional",
+      "request": { "method": "PUT", "path": "/api/identity-providers/${idpId}", "body": {} },
+      "expect": { "status": 200 } },
+
+    { "id": "create-for-delete-guard",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-idp-guard-${run}", "name": "Parity Delete Guard Provider", "type": "OIDC",
+                             "oidcIssuerUrl": "https://login.example.test/v2.0", "oidcClientId": "parity-guard-cid",
+                             "oidcMultiTenant": false } },
+      "expect": { "status": 201 },
+      "capture": { "guardIdpId": "/id" } },
+
+    { "id": "map-domain-to-guard-provider",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings",
+                   "body": { "emailDomain": "parity-idp-guard-${run}.example.test", "identityProviderId": "${guardIdpId}",
+                             "scopeType": "ANCHOR" } },
+      "expect": { "status": 201 },
+      "capture": { "guardMappingId": "/id" } },
+
+    { "id": "delete-blocked-while-mapped",
+      "why": "documented business rule: deleting a provider a domain mapping still references is 409 DOMAINS_STILL_MAPPED",
+      "request": { "method": "DELETE", "path": "/api/identity-providers/${guardIdpId}" } },
+
+    { "id": "remove-the-mapping",
+      "request": { "method": "DELETE", "path": "/api/email-domain-mappings/${guardMappingId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "delete-guard-provider-now-succeeds",
+      "request": { "method": "DELETE", "path": "/api/identity-providers/${guardIdpId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "release-domains-before-delete",
+      "why": "the initial create registered allowedEmailDomains, which the delete guard would otherwise block on (DOMAINS_STILL_MAPPED is already pinned above on the dedicated guard provider) — releasing here isolates this delete as the plain, unblocked case.",
+      "request": { "method": "PUT", "path": "/api/identity-providers/${idpId}", "body": { "allowedEmailDomains": [] } },
+      "expect": { "status": 200 } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/identity-providers/${idpId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/identity-providers/${idpId}" } },
+
+    { "id": "get-deleted",
+      "request": { "method": "GET", "path": "/api/identity-providers/${idpId}" } },
+
+    { "id": "create-missing-name",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-idp-noname-${run}", "type": "INTERNAL", "oidcMultiTenant": false } } },
+
+    { "id": "create-oidc-missing-issuer",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-idp-noissuer-${run}", "name": "No Issuer", "type": "OIDC", "oidcMultiTenant": false } } },
+
+    { "id": "create-for-duplicate",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-idp-dup-${run}", "name": "Dup One", "type": "INTERNAL", "oidcMultiTenant": false } },
+      "expect": { "status": 201 },
+      "capture": { "dupIdpId": "/id" } },
+
+    { "id": "create-duplicate-code",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-idp-dup-${run}", "name": "Dup Two", "type": "INTERNAL", "oidcMultiTenant": false } } },
+
+    { "id": "get-unknown",
+      "request": { "method": "GET", "path": "/api/identity-providers/idp_doesnotexist99" } },
+
+    { "id": "confinement-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity IdP Second Client", "identifier": "parity-idp-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "confinement-second-principal",
+      "why": "platform:auth-admin grants AUTH_OAUTH_CLIENT_* and AUTH_CLIENT_AUTH_CONFIG_* but no identity-provider permission at all, and every identity-provider route is anchor-gated regardless (Checks.requireAnchor) — pinning the tier check, not a permission or scope check",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-idp-b-${run}@example.test", "name": "Parity IdP B Admin",
+                             "scope": "CLIENT", "clientId": "${clientBId}", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "confinement-grant-auth-admin-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:auth-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-idp-b-${run}@example.test", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-refused",
+      "request": { "method": "GET", "path": "/api/identity-providers" } },
+
+    { "id": "confinement-create-refused",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-idp-refused-${run}", "name": "Should Not Be Created", "type": "INTERNAL", "oidcMultiTenant": false } } }
+  ]
+}

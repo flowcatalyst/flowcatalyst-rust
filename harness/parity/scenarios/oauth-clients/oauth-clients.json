@@ -1,0 +1,142 @@
+{
+  "name": "oauth-clients: create (PUBLIC/CONFIDENTIAL), get, list, update, activate/deactivate, rotate-secret, delete, anchor confinement",
+  "why": "auth-core.md §6.3: every route is anchor-only and the plaintext secret is disclosed exactly once on create/rotate — a wire diff on the secret-bearing responses or the NOT_CONFIDENTIAL/PORTAL_API_ACCESS_CONFLICT business rules would either leak a stale credential shape or silently let a portal client acquire platform authority.",
+  "covers": ["listOAuthClients", "createOAuthClient", "getOAuthClient", "getOAuthClientByClientID", "updateOAuthClient",
+             "activateOAuthClient", "deactivateOAuthClient", "rotateOAuthClientSecret", "regenerateOAuthClientSecret",
+             "deleteOAuthClient", "createClient", "createPrincipal"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-public",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Parity Public Client ${run}", "clientType": "PUBLIC",
+                             "redirectUris": ["https://public-${run}.example.com/callback"],
+                             "grantTypes": ["authorization_code"], "defaultScopes": ["openid"] } },
+      "expect": { "status": 201 },
+      "capture": { "publicOcId": "/client/id", "publicClientId": "/client/clientId" } },
+
+    { "id": "create-confidential",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Parity Confidential Client ${run}", "clientType": "CONFIDENTIAL",
+                             "grantTypes": ["client_credentials"], "applicationIds": ["${app.id}"] } },
+      "expect": { "status": 201 },
+      "capture": { "confOcId": "/client/id", "confClientPublicId": "/client/clientId", "confClientSecret": "/clientSecret" } },
+
+    { "id": "get-by-id",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${publicOcId}" } },
+
+    { "id": "get-by-client-id",
+      "request": { "method": "GET", "path": "/api/oauth-clients/by-client-id/${publicClientId}" } },
+
+    { "id": "get-by-client-id-unknown",
+      "request": { "method": "GET", "path": "/api/oauth-clients/by-client-id/no-such-client-id" } },
+
+    { "id": "list",
+      "request": { "method": "GET", "path": "/api/oauth-clients" },
+      "unordered": ["/clients"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/oauth-clients/${publicOcId}",
+                   "body": { "clientName": "Parity Public Client Updated ${run}" } },
+      "expect": { "status": 204 } },
+
+    { "id": "get-after-update",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${publicOcId}" } },
+
+    { "id": "deactivate",
+      "request": { "method": "POST", "path": "/api/oauth-clients/${publicOcId}/deactivate" } },
+
+    { "id": "get-after-deactivate",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${publicOcId}" } },
+
+    { "id": "activate",
+      "request": { "method": "POST", "path": "/api/oauth-clients/${publicOcId}/activate" } },
+
+    { "id": "rotate-secret-confidential",
+      "request": { "method": "POST", "path": "/api/oauth-clients/${confOcId}/rotate-secret" },
+      "expect": { "status": 200 },
+      "capture": { "rotatedClientSecret": "/clientSecret" } },
+
+    { "id": "regenerate-secret-alias",
+      "why": "regenerate-secret is the SDK's alias for rotate-secret, sharing the same handler (OAuthClientApi#register) — the lockfile still names it as its own operationId.",
+      "request": { "method": "POST", "path": "/api/oauth-clients/${confOcId}/regenerate-secret" },
+      "capture": { "regeneratedClientSecret": "/clientSecret" } },
+
+    { "id": "revoke-previous-secret",
+      "why": "the rotation's overlap window ends early: the previous secret is revoked at once (lockfile revokeOAuthClientPreviousSecret, vendored 3c22690).",
+      "request": { "method": "POST", "path": "/api/oauth-clients/${confOcId}/revoke-previous-secret" } },
+
+    { "id": "revoke-previous-secret-again",
+      "why": "nothing left to revoke — both sides answer the same either way; the corpus records which.",
+      "request": { "method": "POST", "path": "/api/oauth-clients/${confOcId}/revoke-previous-secret" } },
+
+    { "id": "rotate-secret-not-confidential",
+      "why": "documented business rule (spec §6.3): a PUBLIC client has no rotatable secret — 409 NOT_CONFIDENTIAL.",
+      "request": { "method": "POST", "path": "/api/oauth-clients/${publicOcId}/rotate-secret" } },
+
+    { "id": "delete-public",
+      "request": { "method": "DELETE", "path": "/api/oauth-clients/${publicOcId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "get-after-delete",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${publicOcId}" } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/oauth-clients/${publicOcId}" } },
+
+    { "id": "delete-confidential",
+      "request": { "method": "DELETE", "path": "/api/oauth-clients/${confOcId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "create-missing-name",
+      "request": { "method": "POST", "path": "/api/oauth-clients", "body": { "clientType": "PUBLIC" } } },
+
+    { "id": "create-invalid-type",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Bad Type ${run}", "clientType": "BOGUS" } } },
+
+    { "id": "create-portal-api-access-conflict",
+      "why": "documented business rule (OAuthClient#withPortalAndApiAccess): a portal client can never also carry apiAccess — 400 PORTAL_API_ACCESS_CONFLICT.",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Portal Conflict ${run}", "clientType": "PUBLIC",
+                             "portalClientId": "${client.id}", "apiAccess": true } } },
+
+    { "id": "update-unknown",
+      "request": { "method": "PUT", "path": "/api/oauth-clients/oac_doesnotexist0", "body": { "clientName": "Nope" } } },
+
+    { "id": "get-unknown",
+      "request": { "method": "GET", "path": "/api/oauth-clients/oac_doesnotexist0" } },
+
+    { "id": "create-second-client",
+      "why": "tenant confinement: oauth-clients has no per-resource scope, so a CLIENT-scoped principal must be refused by the anchor gate on every route, before any load/404 check.",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity OAuthClient Confinement Client", "identifier": "parity-oac-conf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-oac-conf-${run}@example.com", "name": "Parity OAuthClient Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 } },
+
+    { "id": "login-as-b",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-oac-conf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list",
+      "request": { "method": "GET", "path": "/api/oauth-clients" } },
+
+    { "id": "confinement-create",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Should Not Exist", "clientType": "PUBLIC" } } },
+
+    { "id": "confinement-get",
+      "request": { "method": "GET", "path": "/api/oauth-clients/${confOcId}" } }
+  ]
+}

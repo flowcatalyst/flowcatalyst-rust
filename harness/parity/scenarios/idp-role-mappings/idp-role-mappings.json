@@ -1,0 +1,76 @@
+{
+  "name": "idp-role-mappings: create/list/delete, the pre-checked duplicate, anchor-only confinement",
+  "why": "CreateIdpRoleMapping's uniqueness pre-check is a deliberate Java deviation from Go (spec D1: Go has no pre-check and answers 500 on the UNIQUE violation; Java answers 409 MAPPING_EXISTS) — this is exactly the shape of diff the harness exists to surface and record as a ruling, not silently normalise away",
+  "covers": ["listIdpRoleMappings", "createIdpRoleMapping", "deleteIdpRoleMapping", "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/idp-role-mappings",
+                   "body": { "idpType": "OIDC", "idpRoleName": "parity-idp-role-${run}", "platformRoleName": "platform:messaging-admin" } },
+      "expect": { "status": 201 },
+      "capture": { "mappingId": "/id" } },
+
+    { "id": "list",
+      "request": { "method": "GET", "path": "/api/idp-role-mappings" },
+      "unordered": ["/items"] },
+
+    { "id": "create-duplicate-idp-role-name",
+      "why": "spec D1: a duplicate idpRoleName is pre-checked in Java and answered 409 MAPPING_EXISTS — Go has no pre-check and lets the UNIQUE constraint surface as a 500, so this step's status is exactly where a wire diff is expected and must be reported, not asserted away",
+      "request": { "method": "POST", "path": "/api/idp-role-mappings",
+                   "body": { "idpType": "OIDC", "idpRoleName": "parity-idp-role-${run}", "platformRoleName": "platform:developer" } } },
+
+    { "id": "create-missing-idp-type",
+      "request": { "method": "POST", "path": "/api/idp-role-mappings",
+                   "body": { "idpRoleName": "parity-idp-role-notype-${run}", "platformRoleName": "platform:developer" } } },
+
+    { "id": "create-missing-idp-role-name",
+      "request": { "method": "POST", "path": "/api/idp-role-mappings",
+                   "body": { "idpType": "OIDC", "platformRoleName": "platform:developer" } } },
+
+    { "id": "create-missing-platform-role-name",
+      "request": { "method": "POST", "path": "/api/idp-role-mappings",
+                   "body": { "idpType": "OIDC", "idpRoleName": "parity-idp-role-noplat-${run}" } } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/idp-role-mappings/${mappingId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/idp-role-mappings/${mappingId}" } },
+
+    { "id": "confinement-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity IdpRoleMapping Second Client", "identifier": "parity-irm-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "confinement-second-principal",
+      "why": "idp-role-mappings are anchor-only (Checks.requireAnchor, no per-resource dimension per the operation's own doc comment) — a CLIENT-scoped caller, even one holding platform:iam-admin, must be refused",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-irm-b-${run}@example.test", "name": "Parity IRM B Admin",
+                             "scope": "CLIENT", "clientId": "${clientBId}", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "confinement-grant-iam-admin-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:iam-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-irm-b-${run}@example.test", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-refused",
+      "request": { "method": "GET", "path": "/api/idp-role-mappings" } },
+
+    { "id": "confinement-create-refused",
+      "request": { "method": "POST", "path": "/api/idp-role-mappings",
+                   "body": { "idpType": "OIDC", "idpRoleName": "parity-idp-role-refused-${run}", "platformRoleName": "platform:developer" } } }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "name": "reset-approvals: list, approve/deny on an unknown id, permission and tenant confinement",
+  "why": "auth-identity.md §8.6: the lost-device approval queue is only ever populated by /auth/password-reset/request when requireStrongFactorForReset is true, and both Go and Java keep that flag false in production (ResetApprovalRequest.java, ApprovalQueue.java) — the queue is permanently idle here, so this scenario pins the reachable surface (list shape, the 404 on approve/deny, and the authorization gates) rather than a full queue-to-decision lifecycle, which cannot be seeded through the API in v1.",
+  "covers": ["listResetApprovals", "approveResetApproval", "denyResetApproval", "createClient", "createPrincipal"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-empty",
+      "request": { "method": "GET", "path": "/api/reset-approvals" } },
+
+    { "id": "approve-unknown",
+      "request": { "method": "POST", "path": "/api/reset-approvals/rar_doesnotexist0/approve" } },
+
+    { "id": "approve-unknown-with-note",
+      "request": { "method": "POST", "path": "/api/reset-approvals/rar_doesnotexist0/approve",
+                   "body": { "note": "parity harness probe" } } },
+
+    { "id": "deny-unknown",
+      "request": { "method": "POST", "path": "/api/reset-approvals/rar_doesnotexist0/deny" } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Reset Approvals Confinement Client", "identifier": "parity-ra-conf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-ra-conf-${run}@example.com", "name": "Parity Reset Approvals Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confCallerId": "/id" } },
+
+    { "id": "login-as-no-permission-caller",
+      "why": "the caller holds no role at all — GET is gated by any of USER_CREATE/USER_UPDATE/USER_DELETE (ResetApprovalApi#list), so this must be a plain 403, no per-tenant filtering to hide behind.",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-ra-conf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-no-permission",
+      "request": { "method": "GET", "path": "/api/reset-approvals" } },
+
+    { "id": "confinement-approve-no-permission",
+      "why": "approve/deny load the row before checking requireUserAdmin, but the row does not exist — this pins whether a permission-less caller sees 404 (load-first) or 403 (gate-first) before the resource check ever runs.",
+      "request": { "method": "POST", "path": "/api/reset-approvals/rar_doesnotexist0/approve" } },
+
+    { "id": "re-login-as-admin",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "grant-confinement-caller-client-admin",
+      "request": { "method": "PUT", "path": "/api/principals/${confCallerId}/roles",
+                   "body": { "roles": ["platform:client-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "login-as-client-admin-caller",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-ra-conf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-with-permission",
+      "why": "with USER_UPDATE the coarse gate passes; list() is scoped by Auth.current().visibility(), so this must still show nothing belonging to the anchor client.",
+      "request": { "method": "GET", "path": "/api/reset-approvals" } },
+
+    { "id": "confinement-approve-with-permission-unknown-id",
+      "why": "the row still does not exist, so requireUserAdmin never even runs — this is the ordinary 404, now reached past the coarse gate.",
+      "request": { "method": "POST", "path": "/api/reset-approvals/rar_doesnotexist0/approve" } }
+  ]
+}

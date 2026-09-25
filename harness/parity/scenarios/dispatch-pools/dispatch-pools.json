@@ -1,0 +1,148 @@
+{
+  "name": "dispatch-pools: CRUD, filters, unconditional archive/suspend/activate flips, 4xx, real persisted-clientId confinement",
+  "why": "Dispatch pools have no ALREADY_ARCHIVED-style conflicts (docs/spec/dispatchpool.md §2) — archive/suspend/activate are unconditional flips from any state, so archiving twice or suspending an archived pool must both succeed identically on both sides; a Go/Java divergence there (one side refusing, the other flipping) is the load-bearing behaviour this file pins alongside the ordinary persisted-clientId confinement.",
+  "covers": ["listDispatchPools", "createDispatchPool", "getDispatchPool", "updateDispatchPool",
+             "deleteDispatchPool", "activateDispatchPool", "archiveDispatchPool", "suspendDispatchPool",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/dispatch-pools",
+                   "body": { "code": "s1cdp-${run}", "name": "Order Pool", "description": "parity harness pool",
+                             "rateLimit": 100, "concurrency": 5 } },
+      "expect": { "status": 201 },
+      "capture": { "poolId": "/id" } },
+
+    { "id": "get-created",
+      "request": { "method": "GET", "path": "/api/dispatch-pools/${poolId}" } },
+
+    { "id": "create-client-scoped",
+      "request": { "method": "POST", "path": "/api/dispatch-pools",
+                   "body": { "code": "s1cdp-${run}-scoped", "name": "Scoped Pool", "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "poolScopedId": "/id" } },
+
+    { "id": "list-by-status",
+      "request": { "method": "GET", "path": "/api/dispatch-pools", "query": { "status": "ACTIVE" } },
+      "unordered": ["/pools"] },
+
+    { "id": "list-by-client-id",
+      "request": { "method": "GET", "path": "/api/dispatch-pools", "query": { "clientId": "${client.id}" } },
+      "unordered": ["/pools"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/dispatch-pools/${poolId}",
+                   "body": { "name": "Order Pool v2", "rateLimit": 200, "concurrency": 10 } } },
+
+    { "id": "get-updated",
+      "request": { "method": "GET", "path": "/api/dispatch-pools/${poolId}" } },
+
+    { "id": "archive",
+      "request": { "method": "POST", "path": "/api/dispatch-pools/${poolId}/archive" } },
+
+    { "id": "get-after-archive",
+      "request": { "method": "GET", "path": "/api/dispatch-pools/${poolId}" } },
+
+    { "id": "suspend-after-archive-is-unconditional",
+      "request": { "method": "POST", "path": "/api/dispatch-pools/${poolId}/suspend" } },
+
+    { "id": "get-after-suspend",
+      "request": { "method": "GET", "path": "/api/dispatch-pools/${poolId}" } },
+
+    { "id": "activate",
+      "request": { "method": "POST", "path": "/api/dispatch-pools/${poolId}/activate" } },
+
+    { "id": "archive-again-is-a-no-op-write",
+      "request": { "method": "POST", "path": "/api/dispatch-pools/${poolId}/archive" } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/dispatch-pools/${poolId}" } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/dispatch-pools/${poolId}" } },
+
+    { "id": "get-after-delete",
+      "request": { "method": "GET", "path": "/api/dispatch-pools/${poolId}" } },
+
+    { "id": "create-code-required",
+      "request": { "method": "POST", "path": "/api/dispatch-pools", "body": { "name": "X" } } },
+
+    { "id": "create-invalid-code-format",
+      "request": { "method": "POST", "path": "/api/dispatch-pools", "body": { "code": "Bad Code", "name": "X" } } },
+
+    { "id": "create-name-required",
+      "request": { "method": "POST", "path": "/api/dispatch-pools", "body": { "code": "s1cdp-${run}-noname" } } },
+
+    { "id": "create-invalid-concurrency",
+      "request": { "method": "POST", "path": "/api/dispatch-pools",
+                   "body": { "code": "s1cdp-${run}-badconc", "name": "X", "concurrency": 0 } } },
+
+    { "id": "create-invalid-rate-limit",
+      "request": { "method": "POST", "path": "/api/dispatch-pools",
+                   "body": { "code": "s1cdp-${run}-badrate", "name": "X", "rateLimit": -1 } } },
+
+    { "id": "create-duplicate-first",
+      "request": { "method": "POST", "path": "/api/dispatch-pools", "body": { "code": "s1cdp-${run}-dup", "name": "Dup" } },
+      "expect": { "status": 201 },
+      "capture": { "dupPoolId": "/id" } },
+
+    { "id": "create-duplicate-conflict",
+      "request": { "method": "POST", "path": "/api/dispatch-pools", "body": { "code": "s1cdp-${run}-dup", "name": "Dup Again" } } },
+
+    { "id": "update-missing",
+      "request": { "method": "PUT", "path": "/api/dispatch-pools/dpl_doesnotexist${run}", "body": { "name": "X" } } },
+
+    { "id": "archive-missing",
+      "request": { "method": "POST", "path": "/api/dispatch-pools/dpl_doesnotexist${run}/archive" } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "S1C DispatchPools Second Client", "identifier": "s1c-dp-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "s1c-dp-b-${run}@example.com", "name": "S1C DP B User",
+                             "scope": "CLIENT", "clientId": "${clientBId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:messaging-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "login-as-b",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "s1c-dp-b-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "b-cannot-read-anchors-scoped-pool",
+      "request": { "method": "GET", "path": "/api/dispatch-pools/${poolScopedId}" } },
+
+    { "id": "b-cannot-update-anchors-scoped-pool",
+      "request": { "method": "PUT", "path": "/api/dispatch-pools/${poolScopedId}", "body": { "name": "Touched By B" } } },
+
+    { "id": "b-cannot-archive-anchors-scoped-pool",
+      "request": { "method": "POST", "path": "/api/dispatch-pools/${poolScopedId}/archive" } },
+
+    { "id": "b-can-create-own",
+      "request": { "method": "POST", "path": "/api/dispatch-pools",
+                   "body": { "code": "s1cdpb-${run}-own", "name": "X", "clientId": "${clientBId}" } },
+      "expect": { "status": 201 },
+      "capture": { "ownPoolId": "/id" } },
+
+    { "id": "b-cannot-create-platform-wide",
+      "request": { "method": "POST", "path": "/api/dispatch-pools", "body": { "code": "s1cdpb-${run}-platform", "name": "X" } } },
+
+    { "id": "b-cannot-create-scoped-to-foreign-client",
+      "request": { "method": "POST", "path": "/api/dispatch-pools",
+                   "body": { "code": "s1cdpb-${run}-foreign", "name": "X", "clientId": "${client.id}" } } }
+  ]
+}

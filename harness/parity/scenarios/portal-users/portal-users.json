@@ -1,0 +1,262 @@
+{
+  "name": "portal-users: ensure (invite / invite-link / redirect validation), list, activate, deactivate, delete, confinement",
+  "why": "portalidentity's Ensure endpoint branches on SSO-managed domain, returnInviteLink, and registered portal redirect URIs (auth-identity.md §5.7); each branch produces a differently-shaped 200, and the redirect validation is the one 400 this aggregate documents.",
+  "covers": ["listPortalUsers", "ensurePortalUser", "activatePortalUser", "deactivatePortalUser", "deletePortalUser",
+             "grantPortalUserApp", "revokePortalUserApp", "createPortalApp", "updatePortalApp",
+             "createClient", "createOAuthClient", "createPrincipal"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Portal Client", "identifier": "parity-portal-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "portalClientId": "/id" } },
+
+    { "id": "ensure-sends-invite",
+      "why": "no portal OAuth client is registered yet, so target is null; the invite is still sent (spec §5.7 non-SSO branch) — this exercises the send-mail path, not the mail content (out of reach in v1).",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "parity-portal-invite-${run}@example.com" } },
+      "expect": { "status": 200 },
+      "capture": { "identityId": "/identityId" } },
+
+    { "id": "ensure-again-already-has-password-false-idempotent",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "parity-portal-invite-${run}@example.com" } } },
+
+    { "id": "list-by-client",
+      "request": { "method": "GET", "path": "/api/portal-users", "query": { "clientId": "${portalClientId}" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "list-missing-client-id",
+      "request": { "method": "GET", "path": "/api/portal-users" } },
+
+    { "id": "ensure-return-invite-link",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "parity-portal-link-${run}@example.com",
+                             "returnInviteLink": true } },
+      "expect": { "status": 200 },
+      "capture": { "linkIdentityId": "/identityId" } },
+
+    { "id": "create-portal-oauth-client",
+      "request": { "method": "POST", "path": "/api/oauth-clients",
+                   "body": { "clientName": "Parity Portal Entry ${run}", "clientType": "PUBLIC",
+                             "redirectUris": ["https://portal-${run}.example.com/callback"],
+                             "portalClientId": "${portalClientId}" } },
+      "expect": { "status": 201 } },
+
+    { "id": "ensure-with-valid-redirect",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "parity-portal-redirok-${run}@example.com",
+                             "redirectUri": "https://portal-${run}.example.com/callback", "returnInviteLink": true } },
+      "expect": { "status": 200 },
+      "capture": { "redirOkIdentityId": "/identityId" } },
+
+    { "id": "ensure-with-invalid-redirect",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "parity-portal-redirbad-${run}@example.com",
+                             "redirectUri": "https://evil.example.com/callback" } } },
+
+    { "id": "ensure-missing-client-id",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "email": "parity-portal-noclient-${run}@example.com" } } },
+
+    { "id": "activate",
+      "request": { "method": "POST", "path": "/api/portal-users/${identityId}/activate",
+                   "body": { "clientId": "${portalClientId}" } } },
+
+    { "id": "deactivate",
+      "request": { "method": "POST", "path": "/api/portal-users/${identityId}/deactivate",
+                   "body": { "clientId": "${portalClientId}" } } },
+
+    { "id": "list-after-deactivate",
+      "request": { "method": "GET", "path": "/api/portal-users", "query": { "clientId": "${portalClientId}" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "activate-missing-client-id",
+      "request": { "method": "POST", "path": "/api/portal-users/${identityId}/activate", "body": {} } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/portal-users/${identityId}",
+                   "query": { "clientId": "${portalClientId}" } } },
+
+    { "id": "list-after-delete",
+      "request": { "method": "GET", "path": "/api/portal-users", "query": { "clientId": "${portalClientId}" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/portal-users/${identityId}",
+                   "query": { "clientId": "${portalClientId}" } } },
+
+    { "id": "create-app-for-user-tests",
+      "why": "portal-apps.md §4.1 step 1/§4.2/§4.3: ensure-by-code, the app filter, and grant/revoke all resolve a portalAppCode against the client's portal apps, so this group needs one to exist.",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${portalClientId}", "code": "suppliers-${run}", "name": "Suppliers Portal",
+                             "redirectUris": ["https://portal-appcode-${run}.example.com/callback"] } },
+      "expect": { "status": 201 },
+      "capture": { "appCodeAppId": "/portalApp/id" } },
+
+    { "id": "ensure-with-portal-app-code",
+      "why": "spec §9.4: 'SUPPLIERS' (upper-case) normalises to 'suppliers-${run}' in the response; state is INVITED and the identity is granted the app (§3.1 step 5).",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "parity-portal-appcode-${run}@example.com",
+                             "portalAppCode": "SUPPLIERS-${run}", "returnInviteLink": true } },
+      "expect": { "status": 200 },
+      "capture": { "appCodeIdentityId": "/identityId" } },
+
+    { "id": "ensure-with-unknown-portal-app-code",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "parity-portal-appcode-unknown-${run}@example.com",
+                             "portalAppCode": "does-not-exist-${run}" } } },
+
+    { "id": "list-filter-by-portal-app-code",
+      "why": "spec §9.3 app filter: only the app-code-ensured identity above has the grant; §4.2's apps[] entry carries invitedAt/inviteExpiresAt.",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "portalAppCode": "suppliers-${run}" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "list-filter-by-unknown-portal-app-code",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "portalAppCode": "nope-${run}" } } },
+
+    { "id": "ensure-search-pat",
+      "why": "the three identities below exercise §9.3's search matrix; the run token is a suffix, never the leading characters, so the prefix queries stay exact.",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "pat.jones-${run}@example.test" } },
+      "expect": { "status": 200 },
+      "capture": { "searchPatId": "/identityId" } },
+
+    { "id": "ensure-search-jonas",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "jonas-contact-${run}@example.test", "name": "Jonas Smith" } },
+      "expect": { "status": 200 },
+      "capture": { "searchJonasId": "/identityId" } },
+
+    { "id": "ensure-search-underscore",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "under_score-${run}@example.test" } },
+      "expect": { "status": 200 },
+      "capture": { "searchUnderscoreId": "/identityId" } },
+
+    { "id": "search-email-prefix-case-insensitive",
+      "why": "spec §9.3: 'PAT' finds pat.jones@… by email, case-insensitively.",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "q": "PAT" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "search-name-prefix",
+      "why": "spec §9.3: 'jonas' finds name \"Jonas Smith\".",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "q": "jonas" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "search-not-a-prefix-finds-nothing",
+      "why": "spec §9.3: 'jones' finds nothing — prefix-only, and neither email nor name starts with it.",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "q": "jones" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "search-escapes-underscore",
+      "why": "spec §9.3: 'under_' finds under_score@… — the '_' is escaped, not a single-char wildcard.",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "q": "under_" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "search-escapes-percent",
+      "why": "spec §9.3: 'u%' finds nothing — the '%' is escaped, not a wildcard.",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "q": "u%" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "list-page-1-size-2",
+      "why": "spec §9.3: a small page proves `page`/`size` reach the query, and `total` still counts every matching row, not just the page.",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "page": "1", "size": "2" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "grant-app-to-search-pat",
+      "request": { "method": "POST", "path": "/api/portal-users/${searchPatId}/apps",
+                   "body": { "clientId": "${portalClientId}", "portalAppCode": "suppliers-${run}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-after-grant",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "portalAppCode": "suppliers-${run}" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "revoke-app-from-search-pat",
+      "request": { "method": "DELETE", "path": "/api/portal-users/${searchPatId}/apps/suppliers-${run}",
+                   "query": { "clientId": "${portalClientId}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-after-revoke",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${portalClientId}", "portalAppCode": "suppliers-${run}" } },
+      "unordered": ["/portalUsers"] },
+
+    { "id": "grant-unknown-app-code",
+      "request": { "method": "POST", "path": "/api/portal-users/${searchPatId}/apps",
+                   "body": { "clientId": "${portalClientId}", "portalAppCode": "does-not-exist-${run}" } } },
+
+    { "id": "revoke-unknown-app-code",
+      "request": { "method": "DELETE", "path": "/api/portal-users/${searchPatId}/apps/does-not-exist-${run}",
+                   "query": { "clientId": "${portalClientId}" } } },
+
+    { "id": "create-inactive-app-for-grant-test",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${portalClientId}", "code": "inactive-grant-${run}", "name": "Inactive Grant Test",
+                             "redirectUris": ["https://portal-inactive-${run}.example.com/callback"] } },
+      "expect": { "status": 201 },
+      "capture": { "inactiveAppId": "/portalApp/id", "inactiveAppCode": "/portalApp/code" } },
+
+    { "id": "deactivate-app-for-grant-test",
+      "request": { "method": "PUT", "path": "/api/portal-apps/${inactiveAppId}",
+                   "body": { "clientId": "${portalClientId}", "active": false } },
+      "expect": { "status": 200 } },
+
+    { "id": "grant-inactive-app-fails",
+      "why": "spec §4.3: inactive ⇒ 400 PORTAL_APP_INACTIVE.",
+      "request": { "method": "POST", "path": "/api/portal-users/${searchPatId}/apps",
+                   "body": { "clientId": "${portalClientId}", "portalAppCode": "${inactiveAppCode}" } } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Portal Confinement Client", "identifier": "parity-portal-conf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-portal-conf-${run}@example.com", "name": "Parity Portal Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confCallerId": "/id" } },
+
+    { "id": "grant-confinement-portal-role",
+      "why": "platform:portal-administrator is CLIENT-delegable (PlatformRoles): confinement here must come from the caller's own client scope (Checks.requirePortalUserManage), not from the role's own reach.",
+      "request": { "method": "PUT", "path": "/api/principals/${confCallerId}/roles",
+                   "body": { "roles": ["platform:portal-administrator"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "login-as-confinement-caller",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-portal-conf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-out-of-scope",
+      "why": "a portal-administrator scoped to confClientId reading another client's portal users — the refusal shape (403 vs 404, or an empty list) is what a wire diff would break.",
+      "request": { "method": "GET", "path": "/api/portal-users", "query": { "clientId": "${portalClientId}" } } },
+
+    { "id": "confinement-ensure-out-of-scope",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${portalClientId}", "email": "parity-portal-conf-shouldfail-${run}@example.com" } } },
+
+    { "id": "confinement-list-own-scope-ok",
+      "request": { "method": "GET", "path": "/api/portal-users", "query": { "clientId": "${confClientId}" } },
+      "unordered": ["/portalUsers"] }
+  ]
+}

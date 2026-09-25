@@ -1,0 +1,104 @@
+{
+  "name": "docs: the embedded platform index, application pages via the SDK sync, and the DOCS_VIEW gate",
+  "why": "this is a read-only surface fed by two very different sources (the jar's embedded published pages and the app_docs table an application SDK syncs); a wire diff in the index composition (platform pages by filename order, application groups sorted by name) or in the DOCS_VIEW gate would break the admin console's Documentation screen",
+  "covers": ["listDocs", "getPlatformDoc", "getApplicationDoc", "createApplication", "createClient",
+             "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "list-before-any-app-docs",
+      "request": { "method": "GET", "path": "/api/docs" },
+      "unordered": ["/applications"] },
+
+    { "id": "get-known-platform-page",
+      "request": { "method": "GET", "path": "/api/docs/platform/platform-overview" } },
+
+    { "id": "get-another-known-platform-page",
+      "request": { "method": "GET", "path": "/api/docs/platform/identity-and-access" } },
+
+    { "id": "get-unknown-platform-page",
+      "request": { "method": "GET", "path": "/api/docs/platform/does-not-exist-${run}" } },
+
+    { "id": "create-application",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "parity-docs-${run}", "name": "Parity Docs App" } },
+      "expect": { "status": 201 } },
+
+    { "id": "get-application-doc-before-sync",
+      "why": "the application exists but has synced no pages yet — Doc_NOT_FOUND, not Application_NOT_FOUND",
+      "request": { "method": "GET", "path": "/api/docs/applications/parity-docs-${run}/getting-started" } },
+
+    { "id": "sync-app-doc",
+      "request": { "method": "POST", "path": "/api/applications/parity-docs-${run}/docs/sync",
+                   "body": { "docs": [
+                     { "slug": "getting-started", "title": "Getting Started", "content": "# Getting Started\nParity docs harness." }
+                   ] } },
+      "expect": { "status": 200 } },
+
+    { "id": "get-application-doc-after-sync",
+      "request": { "method": "GET", "path": "/api/docs/applications/parity-docs-${run}/getting-started" } },
+
+    { "id": "list-after-sync-includes-application-group",
+      "request": { "method": "GET", "path": "/api/docs" },
+      "unordered": ["/applications"] },
+
+    { "id": "get-doc-unknown-application",
+      "request": { "method": "GET", "path": "/api/docs/applications/parity-does-not-exist-${run}/getting-started" } },
+
+    { "id": "get-doc-unknown-slug-on-known-application",
+      "request": { "method": "GET", "path": "/api/docs/applications/parity-docs-${run}/no-such-page" } },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Docs Confinement Client", "identifier": "parity-docsconf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-docsconf-${run}@example.com", "name": "Parity Docs Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role-without-docs-view",
+      "why": "platform:auth-readonly holds no docs:view permission — every route on this surface requires it (spec §4)",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:auth-readonly"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-docsconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-forbidden",
+      "request": { "method": "GET", "path": "/api/docs" } },
+
+    { "id": "relogin-as-admin-to-regrant",
+      "why": "the session is currently the confinement principal's own — reassigning its roles needs an admin session, not self-service",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-regrant-with-docs-view",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:admin-readonly"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-relogin",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-docsconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-read-succeeds-with-docs-view",
+      "why": "docs are platform-level, not client-scoped: a CLIENT-scoped principal holding docs:view can read the whole index, same as the anchor above",
+      "request": { "method": "GET", "path": "/api/docs" },
+      "unordered": ["/applications"] }
+  ]
+}

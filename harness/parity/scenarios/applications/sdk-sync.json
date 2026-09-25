@@ -1,0 +1,141 @@
+{
+  "name": "applications: the nine app-scoped SDK sync routes",
+  "why": "every application SDK bootstraps its catalogue through these declarative sync routes; a wire diff in the {created,updated,deleted,syncedCodes} rollup shape would silently desync every application's event types, roles, subscriptions, dispatch pools, principals, docs, processes, scheduled jobs or OpenAPI document on cutover",
+  "covers": ["createApplication", "syncEventTypes", "syncRoles", "syncSubscriptions", "syncDispatchPools",
+             "syncPrincipals", "syncAppDocs", "syncProcesses", "syncScheduledJobs", "syncOpenapi"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "create-app",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "parity-sync-${run}", "name": "Parity Sync App" } },
+      "expect": { "status": 201 } },
+
+    { "id": "sync-event-types-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/event-types/sync",
+                   "body": { "eventTypes": [
+                     { "code": "parity-sync-${run}:parity:et:created", "name": "Parity Synced", "description": "d" }
+                   ] } } },
+
+    { "id": "sync-event-types-update",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/event-types/sync",
+                   "body": { "eventTypes": [
+                     { "code": "parity-sync-${run}:parity:et:created", "name": "Parity Synced Renamed", "description": "d2" }
+                   ] } } },
+
+    { "id": "sync-event-types-remove-unlisted",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/event-types/sync",
+                   "query": { "removeUnlisted": "true" },
+                   "body": { "eventTypes": [] } } },
+
+    { "id": "sync-roles-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/roles/sync",
+                   "body": { "roles": [
+                     { "name": "operator", "displayName": "Operator", "description": "d",
+                       "permissions": ["parity-sync-${run}:messaging:event-type:view"], "clientManaged": false }
+                   ] } } },
+
+    { "id": "sync-roles-update",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/roles/sync",
+                   "body": { "roles": [
+                     { "name": "operator", "displayName": "Operator Renamed", "description": "d2",
+                       "permissions": ["parity-sync-${run}:messaging:event-type:view"], "clientManaged": true }
+                   ] } } },
+
+    { "id": "sync-dispatch-pools-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/dispatch-pools/sync",
+                   "body": { "pools": [ { "code": "parity-pool-${run}", "name": "Parity Pool", "description": "d" } ] } } },
+
+    { "id": "sync-dispatch-pools-update",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/dispatch-pools/sync",
+                   "body": { "pools": [
+                     { "code": "parity-pool-${run}", "name": "Parity Pool Renamed", "description": "d2", "rateLimit": 5, "concurrency": 2 }
+                   ] } } },
+
+    { "id": "sync-subscriptions-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/subscriptions/sync",
+                   "body": { "subscriptions": [
+                     { "code": "parity-sub-${run}", "name": "Parity Sub", "target": "https://example.test/hook",
+                       "eventTypes": [ { "eventTypeCode": "parity-sync-${run}:parity:et:created" } ] }
+                   ] } } },
+
+    { "id": "sync-subscriptions-update",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/subscriptions/sync",
+                   "body": { "subscriptions": [
+                     { "code": "parity-sub-${run}", "name": "Parity Sub Renamed", "target": "https://example.test/hook2",
+                       "eventTypes": [ { "eventTypeCode": "parity-sync-${run}:parity:et:created" } ] }
+                   ] } } },
+
+    { "id": "sync-principals-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/principals/sync",
+                   "body": { "principals": [
+                     { "email": "parity-syncuser-${run}@example.com", "name": "Synced User", "roles": [] }
+                   ] } } },
+
+    { "id": "sync-principals-update",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/principals/sync",
+                   "body": { "principals": [
+                     { "email": "parity-syncuser-${run}@example.com", "name": "Synced User Renamed", "roles": [], "active": false }
+                   ] } } },
+
+    { "id": "sync-docs-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/docs/sync",
+                   "body": { "docs": [ { "slug": "getting-started", "title": "Getting Started", "content": "# Getting Started\nHello." } ] } } },
+
+    { "id": "sync-docs-replace",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/docs/sync",
+                   "body": { "docs": [ { "slug": "guide", "title": "Guide", "content": "# Guide\nBody." } ] } } },
+
+    { "id": "sync-processes-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/processes/sync",
+                   "body": { "processes": [
+                     { "code": "parity-sync-${run}:harness:widget-process", "name": "Parity Process", "description": "d",
+                       "body": "graph TD; A-->B;", "diagramType": "mermaid", "tags": ["parity"] }
+                   ] } } },
+
+    { "id": "sync-processes-update",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/processes/sync",
+                   "body": { "processes": [
+                     { "code": "parity-sync-${run}:harness:widget-process", "name": "Parity Process Renamed", "description": "d2",
+                       "body": "graph TD; A-->C;", "diagramType": "mermaid", "tags": ["parity", "v2"] }
+                   ] } } },
+
+    { "id": "sync-scheduled-jobs-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/scheduled-jobs/sync",
+                   "body": { "clientId": null, "jobs": [
+                     { "code": "parity-job-${run}", "name": "Parity Job", "crons": ["0 0 * * * *"] }
+                   ] } },
+      "capture": { "syncedJobId": "/created/0" } },
+
+    { "id": "sync-scheduled-jobs-update",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/scheduled-jobs/sync",
+                   "body": { "clientId": null, "jobs": [
+                     { "code": "parity-job-${run}", "name": "Parity Job Renamed", "crons": ["0 30 9 * * 1-5"] }
+                   ] } } },
+
+    { "id": "sync-openapi-create",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/openapi/sync",
+                   "body": { "spec": { "openapi": "3.0.0", "info": { "title": "Parity Sync API", "version": "1.0.0" }, "paths": {} } } },
+      "capture": { "specId": "/specId" } },
+
+    { "id": "sync-openapi-unchanged",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/openapi/sync",
+                   "body": { "spec": { "openapi": "3.0.0", "info": { "title": "Parity Sync API", "version": "1.0.0" }, "paths": {} } } } },
+
+    { "id": "sync-openapi-new-version",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/openapi/sync",
+                   "body": { "spec": { "openapi": "3.0.0", "info": { "title": "Parity Sync API", "version": "1.1.0" }, "paths": { "/x": {} } } } } },
+
+    { "id": "sync-invalid-openapi",
+      "request": { "method": "POST", "path": "/api/applications/parity-sync-${run}/openapi/sync",
+                   "body": { "spec": { "notOpenapi": true } } } },
+
+    { "id": "sync-unknown-application",
+      "request": { "method": "POST", "path": "/api/applications/parity-does-not-exist-${run}/event-types/sync",
+                   "body": { "eventTypes": [] } } }
+  ]
+}

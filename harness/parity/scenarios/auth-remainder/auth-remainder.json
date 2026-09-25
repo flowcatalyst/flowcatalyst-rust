@@ -1,0 +1,175 @@
+{
+  "name": "auth-remainder: the 2FA enrolment gate end to end, email-PIN request surfaces, change-password's email code, OIDC bridge refusals, password-reset request",
+  "why": "These are the auth-identity.md routes S2's own scenario file does not reach: the enrollment_required branch of the login gate (a domain that requires 2FA, a principal with none yet), the token-gated email surfaces whose real secret only ever travels by mail (out of reach in v1 — the 200/4xx shapes are what a wire diff would break), and the OIDC bridge's and password-reset's request-only refusal shapes for a seed with no OIDC identity provider.",
+  "covers": ["createIdentityProvider", "createEmailDomainMapping", "createClient", "createPrincipal"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-internal-idp",
+      "why": "DomainPolicy.Evaluator#evaluate reads `internal` off the mapping's own identity-provider row (auth-mfa/DomainPolicy.java): an INTERNAL-typed row keeps the gate live, and the same mapping doubles as the OIDC-bridge OIDC_NOT_CONFIGURED fixture below (a mapped domain whose provider is not OIDC).",
+      "request": { "method": "POST", "path": "/api/identity-providers",
+                   "body": { "code": "parity-s3-ar-idp-${run}", "name": "Parity S3 AR Internal", "type": "INTERNAL",
+                             "oidcMultiTenant": false } },
+      "expect": { "status": 201 },
+      "capture": { "idpId": "/id" } },
+
+    { "id": "create-require2fa-mapping",
+      "request": { "method": "POST", "path": "/api/email-domain-mappings",
+                   "body": { "emailDomain": "parity-s3-ar-${run}.example.test", "identityProviderId": "${idpId}",
+                             "scopeType": "ANCHOR", "require2fa": true, "allowed2faMethods": ["TOTP", "EMAIL_PIN"],
+                             "rememberDeviceEnabled": true } },
+      "expect": { "status": 201 } },
+
+    { "id": "create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity S3 AR Client", "identifier": "parity-s3-ar-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientId": "/id" } },
+
+    { "id": "create-gate-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "gate-${run}@parity-s3-ar-${run}.example.test", "name": "Parity Gate User",
+                             "scope": "CLIENT", "clientId": "${clientId}", "password": "Correct-Harness-Battery-3391" } },
+      "expect": { "status": 201 } },
+
+    { "id": "logout-admin", "request": { "method": "POST", "path": "/auth/logout" } },
+
+    { "id": "login-gate-user-first-time",
+      "why": "no confirmed factor yet and the domain requires one: LoginMfaGate's enrollment_required branch, never mfa_required.",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "gate-${run}@parity-s3-ar-${run}.example.test", "password": "Correct-Harness-Battery-3391" } },
+      "expect": { "status": 200 },
+      "capture": { "enrollToken": "/enrollToken" } },
+
+    { "id": "enroll-totp-begin",
+      "request": { "method": "POST", "path": "/auth/2fa/enroll/totp/begin", "body": { "enrollToken": "${enrollToken}" } },
+      "expect": { "status": 200 },
+      "capture": { "enrollSecret": "/secret" },
+      "ignore": [ { "pointer": "/qr", "reason": "a PNG of a per-side random secret; the uri it encodes is compared with the secret masked" } ] },
+
+    { "id": "enroll-totp-confirm-wrong-code",
+      "request": { "method": "POST", "path": "/auth/2fa/enroll/totp/confirm",
+                   "body": { "enrollToken": "${enrollToken}", "code": "000000" } } },
+
+    { "id": "enroll-totp-confirm",
+      "request": { "method": "POST", "path": "/auth/2fa/enroll/totp/confirm",
+                   "body": { "enrollToken": "${enrollToken}", "code": "${totp:enrollSecret:0}" } },
+      "expect": { "status": 200 },
+      "ignore": [ { "pointer": "/recoveryCodes", "reason": "ten random codes per side, not needed by a later step" } ] },
+
+    { "id": "enroll-email-begin",
+      "why": "the token-gated enrol/email/begin surface (distinct from the self-service methods/email/begin below): the same enrollToken is still structurally valid after enroll-totp-confirm above (MfaToken.parse does not consume it), so this reaches the ENROLL-purpose token branch, not the session-gated one.",
+      "request": { "method": "POST", "path": "/auth/2fa/enroll/email/begin", "body": { "enrollToken": "${enrollToken}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "enroll-email-confirm-wrong-code",
+      "why": "the real PIN travels by mail (out of reach in v1); this pins the 400 INVALID_CODE shape on the token-gated confirm route.",
+      "request": { "method": "POST", "path": "/auth/2fa/enroll/email/confirm",
+                   "body": { "enrollToken": "${enrollToken}", "code": "000000" } } },
+
+    { "id": "self-email-begin",
+      "why": "the self-service methods/email/begin surface: the mailed PIN itself is out of reach in v1 (spec: mail-carried secrets), so only the 200 request-surface and the wrong-code refusal below are pinned.",
+      "request": { "method": "POST", "path": "/auth/2fa/methods/email/begin" },
+      "expect": { "status": 200 } },
+
+    { "id": "self-email-confirm-wrong-code",
+      "request": { "method": "POST", "path": "/auth/2fa/methods/email/confirm", "body": { "code": "000000" } } },
+
+    { "id": "logout-gate-user-1", "request": { "method": "POST", "path": "/auth/logout" } },
+
+    { "id": "login-gate-user-second-time",
+      "why": "TOTP is now confirmed: LoginMfaGate's mfa_required branch, methods:[TOTP] only (EMAIL_PIN was never confirmed above).",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "gate-${run}@parity-s3-ar-${run}.example.test", "password": "Correct-Harness-Battery-3391" } },
+      "expect": { "status": 200 },
+      "capture": { "mfaToken": "/mfaToken" } },
+
+    { "id": "challenge-email-with-pending-token",
+      "why": "TwoFactorApi#challengeEmail mails a login PIN to any pending-token holder with an email address — it does not check whether EMAIL_PIN is a confirmed or domain-permitted method (that gate lives in #verify only).",
+      "request": { "method": "POST", "path": "/auth/2fa/challenge/email", "body": { "mfaToken": "${mfaToken}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "challenge-email-invalid-token",
+      "request": { "method": "POST", "path": "/auth/2fa/challenge/email", "body": { "mfaToken": "not-a-real-token" } } },
+
+    { "id": "verify-email-pin-wrong-code",
+      "why": "the real PIN travels by mail and is out of reach in v1; a wrong code against a domain that permits EMAIL_PIN (allowed2faMethods above) still exercises #verify's method-permission branch, distinctly from the wrong-method-not-allowed case pinned elsewhere.",
+      "request": { "method": "POST", "path": "/auth/2fa/verify",
+                   "body": { "mfaToken": "${mfaToken}", "method": "EMAIL_PIN", "code": "000000", "rememberDevice": false } } },
+
+    { "id": "finish-login-with-totp",
+      "why": "rememberDevice:true (the mapping above sets rememberDeviceEnabled:true) issues a trusted device — the fixture for the revoke route below (S2's own mfa.json never revokes one, only lists).",
+      "request": { "method": "POST", "path": "/auth/2fa/verify",
+                   "body": { "mfaToken": "${mfaToken}", "method": "TOTP", "code": "${totp:enrollSecret:+1}", "rememberDevice": true } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-trusted-devices-before-revoke",
+      "request": { "method": "GET", "path": "/auth/2fa/trusted-devices" },
+      "expect": { "status": 200 },
+      "capture": { "trustedDeviceId": "/devices/0/id" } },
+
+    { "id": "revoke-trusted-device",
+      "request": { "method": "DELETE", "path": "/auth/2fa/trusted-devices/${trustedDeviceId}" },
+      "expect": { "status": 200 } },
+
+    { "id": "revoke-trusted-device-again",
+      "why": "defect 10 on record (TwoFactorApi class doc): the second revoke of the same id is 404, not an unconditional 200.",
+      "request": { "method": "DELETE", "path": "/auth/2fa/trusted-devices/${trustedDeviceId}" } },
+
+    { "id": "logout-gate-user-2", "request": { "method": "POST", "path": "/auth/logout" } },
+
+    { "id": "login-admin-again",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "change-password-send-email-code-no-mfa",
+      "why": "the admin has no confirmed second factor in a fresh seed: ChangePasswordApi#sendEmailCode's NO_MFA refusal, the only reachable shape without a mailed secret.",
+      "request": { "method": "POST", "path": "/auth/change-password/send-email-code" } },
+
+    { "id": "oidc-login-missing-domain-and-provider",
+      "request": { "method": "GET", "path": "/auth/oidc/login" } },
+
+    { "id": "oidc-login-mapped-domain-not-oidc",
+      "why": "the mapping created above points at an INTERNAL provider: OidcClients#resolveForEmail resolves the mapping but returns no provider — OidcBridgeApi's OIDC_NOT_CONFIGURED, not the no-mapping-at-all 500 below.",
+      "request": { "method": "GET", "path": "/auth/oidc/login", "query": { "domain": "parity-s3-ar-${run}.example.test" } } },
+
+    { "id": "oidc-login-legacy-email-param",
+      "why": "the legacy `email` query param derives the domain the same way (OidcBridgeApi#login).",
+      "request": { "method": "GET", "path": "/auth/oidc/login", "query": { "email": "someone@parity-s3-ar-${run}.example.test" } } },
+
+    { "id": "oidc-login-unmapped-domain",
+      "why": "no mapping row at all: OidcClients#resolveForEmail throws before OidcBridgeApi can distinguish 'not configured' from a lookup failure — 500 OIDC_RESOLVE_FAILED, a different shape from the mapped-but-non-OIDC case above.",
+      "request": { "method": "GET", "path": "/auth/oidc/login", "query": { "domain": "parity-s3-ar-nomapping-${run}.example.test" } } },
+
+    { "id": "oidc-session-end-plain",
+      "request": { "method": "GET", "path": "/auth/oidc/session/end" },
+      "expect": { "status": 200 } },
+
+    { "id": "oidc-session-end-missing-client",
+      "request": { "method": "GET", "path": "/auth/oidc/session/end",
+                   "query": { "post_logout_redirect_uri": "https://parity-s3-ar-${run}.example.com/" } } },
+
+    { "id": "oidc-session-end-unknown-client",
+      "request": { "method": "GET", "path": "/auth/oidc/session/end",
+                   "query": { "post_logout_redirect_uri": "https://parity-s3-ar-${run}.example.com/",
+                              "client_id": "oac_doesnotexist${run}" } } },
+
+    { "id": "password-reset-request-unknown-email",
+      "why": "spec §8.2: no account enumeration — silent 200 whether or not the address exists.",
+      "request": { "method": "POST", "path": "/auth/password-reset/request",
+                   "body": { "email": "parity-s3-ar-nobody-${run}@example.com" } },
+      "expect": { "status": 200 } },
+
+    { "id": "password-reset-request-real-email",
+      "request": { "method": "POST", "path": "/auth/password-reset/request", "body": { "email": "${admin.email}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "password-reset-request-blank-email",
+      "request": { "method": "POST", "path": "/auth/password-reset/request", "body": { "email": "" } },
+      "expect": { "status": 200 } }
+  ]
+}

@@ -1,0 +1,621 @@
+{
+  "name": "scheduled-jobs: CRUD, lifecycle (pause/resume/fire/archive), instances+logs+complete, offset paging, 4xx, real persisted-clientId confinement (403, not PR-3's 404)",
+  "why": "Scheduled jobs use the OLDER 403-FORBIDDEN-for-out-of-scope pattern (ScheduledJobApi#visible throws HttpError.forbidden), not dispatch-jobs' PR-3 404-byte-identical rule \u2014 this file pins that the two families genuinely differ on the wire, not just in code. It also pins the ARCHIVED-then-fire conflict, the two completion dialects (SDK status=SUCCESS|FAILURE vs SPA status=<instance status>+completionStatus), and that GET .../instances/{id}/logs on an unknown instance is an empty array, not a 404 (ScheduledJobApiTest#errorsUseTheEnvelopeWithTheLockfileCodes).",
+  "covers": [
+    "listScheduledJobs",
+    "createScheduledJob",
+    "getScheduledJobByCode",
+    "getScheduledJob",
+    "updateScheduledJob",
+    "deleteScheduledJob",
+    "archiveScheduledJob",
+    "pauseScheduledJob",
+    "resumeScheduledJob",
+    "fireScheduledJobNow",
+    "listScheduledJobInstances",
+    "getScheduledJobInstance",
+    "completeScheduledJobInstance",
+    "writeScheduledJobInstanceLog",
+    "listScheduledJobInstanceLogs",
+    "createClient",
+    "createPrincipal",
+    "assignPrincipalRoles"
+  ],
+  "steps": [
+    {
+      "id": "login",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "${admin.email}",
+          "password": "${admin.password}"
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "sess": "cookie:fc_session"
+      }
+    },
+    {
+      "id": "create",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "s1csj-${run}",
+          "name": "S1C Scheduled Job",
+          "description": "parity harness job",
+          "crons": [
+            "0 0 * * * *"
+          ],
+          "timezone": "Europe/Amsterdam",
+          "payload": {
+            "k": 1
+          },
+          "concurrent": false,
+          "tracksCompletion": true,
+          "timeoutSeconds": 30,
+          "targetUrl": "https://target.test/scheduled"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "jobId": "/id"
+      }
+    },
+    {
+      "id": "get-created",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "get-by-code",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/by-code/s1csj-${run}"
+      }
+    },
+    {
+      "id": "get-by-code-missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/by-code/s1csj-${run}-nope"
+      }
+    },
+    {
+      "id": "list-by-search",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs",
+        "query": {
+          "search": "s1csj-${run}"
+        }
+      }
+    },
+    {
+      "id": "list-by-status-filtered-to-nothing",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs",
+        "query": {
+          "search": "s1csj-${run}",
+          "status": "PAUSED"
+        }
+      }
+    },
+    {
+      "id": "update",
+      "request": {
+        "method": "PUT",
+        "path": "/api/scheduled-jobs/${jobId}",
+        "body": {
+          "name": "S1C Renamed",
+          "crons": [
+            "0 30 9 * * 1-5"
+          ],
+          "deliveryMaxAttempts": 7
+        }
+      }
+    },
+    {
+      "id": "get-updated",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "pause",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${jobId}/pause"
+      }
+    },
+    {
+      "id": "get-after-pause",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "resume",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${jobId}/resume"
+      }
+    },
+    {
+      "id": "get-after-resume",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "fire-with-correlation-id",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${jobId}/fire",
+        "body": {
+          "correlationId": "s1csj-corr-${run}"
+        }
+      },
+      "expect": {
+        "status": 202
+      },
+      "capture": {
+        "instanceId": "/instanceId"
+      }
+    },
+    {
+      "id": "get-after-first-fire-has-active-instance",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "list-instances-queued",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${jobId}/instances",
+        "query": {
+          "status": "QUEUED"
+        }
+      }
+    },
+    {
+      "id": "get-instance",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/instances/${instanceId}"
+      }
+    },
+    {
+      "id": "write-instance-log",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/instances/${instanceId}/log",
+        "body": {
+          "level": "INFO",
+          "message": "hello",
+          "metadata": {
+            "a": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "list-instance-logs",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/instances/${instanceId}/logs"
+      },
+      "capture": {
+        "logId": "/0/id"
+      }
+    },
+    {
+      "id": "complete-instance-sdk-dialect",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/instances/${instanceId}/complete",
+        "body": {
+          "status": "SUCCESS",
+          "result": {
+            "rows": 3
+          }
+        }
+      }
+    },
+    {
+      "id": "get-instance-after-complete",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/instances/${instanceId}"
+      }
+    },
+    {
+      "id": "archive",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${jobId}/archive"
+      }
+    },
+    {
+      "id": "get-after-archive",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "fire-archived-job-is-409-archived",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${jobId}/fire"
+      }
+    },
+    {
+      "id": "delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "delete-again",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "get-after-delete",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "get-missing-instance",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/instances/sji_doesnotexist1"
+      }
+    },
+    {
+      "id": "complete-missing-instance",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/instances/sji_doesnotexist1/complete",
+        "body": {}
+      }
+    },
+    {
+      "id": "logs-of-missing-instance-is-empty-array-not-404",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/instances/sji_doesnotexist1/logs"
+      }
+    },
+    {
+      "id": "create-cron-invalid-shape",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "s1csj-badcron-${run}",
+          "name": "X",
+          "crons": [
+            "* * * * *"
+          ],
+          "concurrent": false,
+          "tracksCompletion": false
+        }
+      }
+    },
+    {
+      "id": "create-invalid-code-format",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "Bad_Code_${run}",
+          "name": "X",
+          "crons": [
+            "0 0 * * * *"
+          ],
+          "concurrent": false,
+          "tracksCompletion": false
+        }
+      }
+    },
+    {
+      "id": "create-duplicate-first",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "s1csj-dup-${run}",
+          "name": "X",
+          "crons": [
+            "0 0 * * * *"
+          ],
+          "concurrent": false,
+          "tracksCompletion": false
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "dupJobId": "/id"
+      }
+    },
+    {
+      "id": "create-duplicate-conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "s1csj-dup-${run}",
+          "name": "X Again",
+          "crons": [
+            "0 0 * * * *"
+          ],
+          "concurrent": false,
+          "tracksCompletion": false
+        }
+      }
+    },
+    {
+      "id": "update-crons-required-empty-array",
+      "request": {
+        "method": "PUT",
+        "path": "/api/scheduled-jobs/${dupJobId}",
+        "body": {
+          "crons": []
+        }
+      }
+    },
+    {
+      "id": "list-page-non-integer-is-validation-error",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs",
+        "query": {
+          "page": "x"
+        }
+      }
+    },
+    {
+      "id": "fire-dup-job-for-a-log-validation-target",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${dupJobId}/fire"
+      },
+      "expect": {
+        "status": 202
+      },
+      "capture": {
+        "dupInstanceId": "/instanceId"
+      }
+    },
+    {
+      "id": "write-log-missing-level",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/instances/${dupInstanceId}/log",
+        "body": {
+          "message": "m"
+        }
+      }
+    },
+    {
+      "id": "create-client-scoped-confinement-target",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "s1csj-confine-${run}",
+          "name": "Confine",
+          "crons": [
+            "0 0 * * * *"
+          ],
+          "concurrent": false,
+          "tracksCompletion": false,
+          "clientId": "${client.id}"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "confineJobId": "/id"
+      }
+    },
+    {
+      "id": "fire-confinement-target-for-an-instance",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${confineJobId}/fire"
+      },
+      "expect": {
+        "status": 202
+      },
+      "capture": {
+        "confineInstanceId": "/instanceId"
+      }
+    },
+    {
+      "id": "create-second-client",
+      "request": {
+        "method": "POST",
+        "path": "/api/clients",
+        "body": {
+          "name": "S1C ScheduledJobs Second Client",
+          "identifier": "s1c-sj-b-${run}"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "clientBId": "/id"
+      }
+    },
+    {
+      "id": "create-second-principal",
+      "request": {
+        "method": "POST",
+        "path": "/api/principals",
+        "body": {
+          "email": "s1c-sj-b-${run}@example.com",
+          "name": "S1C SJ B User",
+          "scope": "CLIENT",
+          "clientId": "${clientBId}",
+          "password": "Correct-Harness-Battery-2381"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "principalBId": "/id"
+      }
+    },
+    {
+      "id": "assign-role",
+      "request": {
+        "method": "PUT",
+        "path": "/api/principals/${principalBId}/roles",
+        "body": {
+          "roles": [
+            "platform:messaging-admin"
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "login-as-b",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "s1c-sj-b-${run}@example.com",
+          "password": "Correct-Harness-Battery-2381"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "b-cannot-read-client-a-scoped-job-is-403-forbidden-not-404",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/${confineJobId}"
+      }
+    },
+    {
+      "id": "b-cannot-read-client-a-jobs-instance",
+      "request": {
+        "method": "GET",
+        "path": "/api/scheduled-jobs/instances/${confineInstanceId}"
+      }
+    },
+    {
+      "id": "b-cannot-log-on-client-a-instance",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/instances/${confineInstanceId}/log",
+        "body": {
+          "level": "INFO",
+          "message": "x"
+        }
+      }
+    },
+    {
+      "id": "b-cannot-fire-client-a-job",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${confineJobId}/fire"
+      }
+    },
+    {
+      "id": "b-cannot-create-platform-wide",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "s1csjb-platform-${run}",
+          "name": "X",
+          "crons": [
+            "0 0 * * * *"
+          ],
+          "concurrent": false,
+          "tracksCompletion": false
+        }
+      }
+    },
+    {
+      "id": "b-can-create-and-fire-and-log-on-own-client-scoped-job",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "s1csjb-own-${run}",
+          "name": "X",
+          "crons": [
+            "0 0 * * * *"
+          ],
+          "concurrent": false,
+          "tracksCompletion": false,
+          "clientId": "${clientBId}"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "bOwnJobId": "/id"
+      }
+    },
+    {
+      "id": "b-fires-its-own-job",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/${bOwnJobId}/fire"
+      },
+      "expect": {
+        "status": 202
+      },
+      "capture": {
+        "bOwnInstanceId": "/instanceId"
+      }
+    },
+    {
+      "id": "b-logs-on-its-own-instance",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs/instances/${bOwnInstanceId}/log",
+        "body": {
+          "level": "INFO",
+          "message": "x"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,483 @@
+{
+  "name": "audit-logs: cursor pagination, filters, facets, entity/principal lists, permission gate (no client-scope)",
+  "why": "docs/spec/audit.md §8: audit rows carry NO client-scope visibility rule at all (any AUDIT_LOG_VIEW holder sees every row) — unlike the write aggregates in this group, so the meaningful negative test here is the permission gate, not tenant isolation, and this file substitutes that for the usual confinement block. Rows are seeded through POST /api/audit-logs/batch (outside the lockfile, gated only by 'any authenticated principal' per docs/spec/sdk-ingest.md) so the cursor/facet/entity/principal routes have real, attributable data to read back rather than only testing on an empty table.",
+  "covers": [
+    "listAuditLogs",
+    "listAuditLogsRecent",
+    "auditLogEntityTypes",
+    "auditLogOperations",
+    "auditLogApplicationIDs",
+    "auditLogClientIDs",
+    "auditLogsByEntity",
+    "auditLogsByPrincipal",
+    "getAuditLog",
+    "createClient",
+    "createPrincipal",
+    "assignPrincipalRoles"
+  ],
+  "steps": [
+    {
+      "id": "login",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "${admin.email}",
+          "password": "${admin.password}"
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "sess": "cookie:fc_session"
+      }
+    },
+    {
+      "id": "seed-one",
+      "request": {
+        "method": "POST",
+        "path": "/api/audit-logs/batch",
+        "body": {
+          "items": [
+            {
+              "entityType": "S1cAuditEntity${run}",
+              "entityId": "e1-${run}",
+              "operation": "CREATE",
+              "principalId": "${admin.id}"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "seedOneId": "/results/0/id"
+      }
+    },
+    {
+      "id": "seed-with-explicit-principal",
+      "request": {
+        "method": "POST",
+        "path": "/api/audit-logs/batch",
+        "body": {
+          "items": [
+            {
+              "entityType": "S1cAuditEntity${run}",
+              "entityId": "e2-${run}",
+              "operation": "UPDATE",
+              "principalId": "${admin.id}"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "seedTwoId": "/results/0/id"
+      }
+    },
+    {
+      "id": "seed-without-principal-is-refused-per-item",
+      "why": "ruling 2026-09-06 #10b (Go ece54fe): an audit item with no principalId is refused in its own slot and never defaulted to the caller; the other item still lands",
+      "request": {
+        "method": "POST",
+        "path": "/api/audit-logs/batch",
+        "body": {
+          "items": [
+            {
+              "entityType": "S1cAuditEntity${run}",
+              "entityId": "np-${run}",
+              "operation": "CREATE"
+            },
+            {
+              "entityType": "S1cAuditEntity${run}",
+              "entityId": "wp-${run}",
+              "operation": "CREATE",
+              "principalId": "${admin.id}"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "seed-skipped-cases",
+      "request": {
+        "method": "POST",
+        "path": "/api/audit-logs/batch",
+        "body": {
+          "items": [
+            {
+              "entityType": "S1cAuditEntity${run}",
+              "entityId": "e3-${run}",
+              "operation": "CREATE",
+              "applicationCode": "s1c-no-such-app-code-${run}",
+              "principalId": "${admin.id}"
+            },
+            {
+              "entityType": "S1cAuditEntity${run}",
+              "entityId": "e4-${run}",
+              "operation": "CREATE",
+              "clientCode": "s1c-no-such-client-code-${run}",
+              "principalId": "${admin.id}"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "seed-page-1",
+      "request": {
+        "method": "POST",
+        "path": "/api/audit-logs/batch",
+        "body": {
+          "items": [
+            {
+              "entityType": "s1c-audit-page-${run}",
+              "entityId": "p1",
+              "operation": "CREATE",
+              "principalId": "${admin.id}"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "pageOneId": "/results/0/id"
+      }
+    },
+    {
+      "id": "seed-page-2",
+      "request": {
+        "method": "POST",
+        "path": "/api/audit-logs/batch",
+        "body": {
+          "items": [
+            {
+              "entityType": "s1c-audit-page-${run}",
+              "entityId": "p2",
+              "operation": "CREATE",
+              "principalId": "${admin.id}"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "pageTwoId": "/results/0/id"
+      }
+    },
+    {
+      "id": "seed-page-3",
+      "request": {
+        "method": "POST",
+        "path": "/api/audit-logs/batch",
+        "body": {
+          "items": [
+            {
+              "entityType": "s1c-audit-page-${run}",
+              "entityId": "p3",
+              "operation": "CREATE",
+              "principalId": "${admin.id}"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "pageThreeId": "/results/0/id"
+      }
+    },
+    {
+      "id": "get-by-id",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/${seedOneId}"
+      }
+    },
+    {
+      "id": "get-by-id-missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/aud_doesnotexist1"
+      }
+    },
+    {
+      "id": "list-filtered-by-entity-type-and-id",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs",
+        "query": {
+          "entityType": "S1cAuditEntity${run}",
+          "entityId": "e1-${run}"
+        }
+      }
+    },
+    {
+      "id": "list-filtered-by-operation",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs",
+        "query": {
+          "entityType": "S1cAuditEntity${run}",
+          "operation": "UPDATE"
+        }
+      }
+    },
+    {
+      "id": "recent-alias-same-filter",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/recent",
+        "query": {
+          "entityType": "S1cAuditEntity${run}",
+          "entityId": "e1-${run}"
+        }
+      }
+    },
+    {
+      "id": "by-entity",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/entity/S1cAuditEntity${run}/e1-${run}"
+      }
+    },
+    {
+      "id": "by-entity-unknown-is-empty-not-404",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/entity/S1cAuditEntity${run}/no-such-entity-id"
+      }
+    },
+    {
+      "id": "by-principal",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/principal/${admin.id}"
+      },
+      "why": "ruling 2026-09-06 #10b: every seeded row names the admin explicitly, so the by-principal read finds them all"
+    },
+    {
+      "id": "entity-types-facet-contains-our-entity-type",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/entity-types"
+      }
+    },
+    {
+      "id": "operations-facet-contains-create-and-update",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/operations"
+      },
+      "unordered": [
+        "/operations"
+      ],
+      "why": "the operations facet is a set; its order follows whichever rows other scenarios left behind"
+    },
+    {
+      "id": "application-ids-facet",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/application-ids"
+      }
+    },
+    {
+      "id": "client-ids-facet",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/client-ids"
+      }
+    },
+    {
+      "id": "page-1-of-2",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs",
+        "query": {
+          "entityType": "s1c-audit-page-${run}",
+          "pageSize": "2"
+        }
+      },
+      "capture": {
+        "page1NextCursor": "/nextCursor"
+      }
+    },
+    {
+      "id": "page-2-with-after-cursor",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs",
+        "query": {
+          "entityType": "s1c-audit-page-${run}",
+          "pageSize": "2",
+          "after": "${page1NextCursor}"
+        }
+      }
+    },
+    {
+      "id": "page-size-non-integer-is-validation-error",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs",
+        "query": {
+          "pageSize": "not-a-number"
+        }
+      }
+    },
+    {
+      "id": "malformed-cursor-is-400-cursor",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs",
+        "query": {
+          "after": "not-a-valid-cursor-at-all"
+        }
+      }
+    },
+    {
+      "id": "create-second-client",
+      "request": {
+        "method": "POST",
+        "path": "/api/clients",
+        "body": {
+          "name": "S1C AuditLogs Second Client",
+          "identifier": "s1c-audit-b-${run}"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "clientBId": "/id"
+      }
+    },
+    {
+      "id": "create-second-principal",
+      "request": {
+        "method": "POST",
+        "path": "/api/principals",
+        "body": {
+          "email": "s1c-audit-b-${run}@example.com",
+          "name": "S1C Audit B User",
+          "scope": "CLIENT",
+          "clientId": "${clientBId}",
+          "password": "Correct-Harness-Battery-2381"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "principalBId": "/id"
+      }
+    },
+    {
+      "id": "assign-role-without-audit-log-view",
+      "request": {
+        "method": "PUT",
+        "path": "/api/principals/${principalBId}/roles",
+        "body": {
+          "roles": [
+            "platform:messaging-admin"
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "login-as-b",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "s1c-audit-b-${run}@example.com",
+          "password": "Correct-Harness-Battery-2381"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "b-without-audit-log-view-is-permission-required",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs"
+      }
+    },
+    {
+      "id": "b-cannot-get-by-id-either",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/${seedOneId}"
+      }
+    },
+    {
+      "id": "login-as-anchor-to-grant-role",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "${admin.email}",
+          "password": "${admin.password}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "grant-audit-log-view-via-viewer-role",
+      "request": {
+        "method": "PUT",
+        "path": "/api/principals/${principalBId}/roles",
+        "body": {
+          "roles": [
+            "platform:viewer"
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "login-as-b-again",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "s1c-audit-b-${run}@example.com",
+          "password": "Correct-Harness-Battery-2381"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "b-with-viewer-role-can-now-read-anchors-audit-log",
+      "request": {
+        "method": "GET",
+        "path": "/api/audit-logs/${seedOneId}"
+      }
+    }
+  ]
+}

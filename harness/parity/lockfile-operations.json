@@ -1,0 +1,1286 @@
+{
+  "source": "flowcatalyst-go api/openapi.lock.json",
+  "commit": "73a6918e3534c76338cab28eb9a36d6bd4b16c25",
+  "operations": [
+    {
+      "method": "GET",
+      "path": "/api/anchor-domains",
+      "operationId": "listAnchorDomains"
+    },
+    {
+      "method": "POST",
+      "path": "/api/anchor-domains",
+      "operationId": "createAnchorDomain"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/anchor-domains/{id}",
+      "operationId": "deleteAnchorDomain"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/anchor-domains/{id}",
+      "operationId": "updateAnchorDomain"
+    },
+    {
+      "method": "GET",
+      "path": "/api/applications",
+      "operationId": "listApplications"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications",
+      "operationId": "createApplication"
+    },
+    {
+      "method": "GET",
+      "path": "/api/applications/by-code/{code}",
+      "operationId": "getApplicationByCode"
+    },
+    {
+      "method": "GET",
+      "path": "/api/applications/by-id/{id}/roles",
+      "operationId": "listApplicationRoles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/connections/sync",
+      "operationId": "syncConnections"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/dispatch-pools/sync",
+      "operationId": "syncDispatchPools"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/docs/sync",
+      "operationId": "syncAppDocs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/event-types/sync",
+      "operationId": "syncEventTypes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/openapi/sync",
+      "operationId": "syncOpenapi"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/principals/sync",
+      "operationId": "syncPrincipals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/processes/sync",
+      "operationId": "syncProcesses"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/roles/sync",
+      "operationId": "syncRoles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/scheduled-jobs/sync",
+      "operationId": "syncScheduledJobs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{appCode}/subscriptions/sync",
+      "operationId": "syncSubscriptions"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/applications/{id}",
+      "operationId": "deleteApplication"
+    },
+    {
+      "method": "GET",
+      "path": "/api/applications/{id}",
+      "operationId": "getApplication"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/applications/{id}",
+      "operationId": "updateApplication"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{id}/activate",
+      "operationId": "activateApplication"
+    },
+    {
+      "method": "GET",
+      "path": "/api/applications/{id}/clients",
+      "operationId": "listApplicationClientConfigs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/applications/{id}/clients/{clientId}",
+      "operationId": "getApplicationClientConfig"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{id}/clients/{clientId}/disable",
+      "operationId": "disableApplicationForClient"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{id}/clients/{clientId}/enable",
+      "operationId": "enableApplicationForClient"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{id}/deactivate",
+      "operationId": "deactivateApplication"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{id}/provision-login-client",
+      "operationId": "provisionApplicationLoginClient"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{id}/provision-service-account",
+      "operationId": "provisionApplicationServiceAccount"
+    },
+    {
+      "method": "POST",
+      "path": "/api/applications/{id}/service-account",
+      "operationId": "attachApplicationServiceAccount"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs",
+      "operationId": "listAuditLogs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs/application-ids",
+      "operationId": "auditLogApplicationIDs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs/client-ids",
+      "operationId": "auditLogClientIDs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs/entity-types",
+      "operationId": "auditLogEntityTypes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs/entity/{entityType}/{entityId}",
+      "operationId": "auditLogsByEntity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs/operations",
+      "operationId": "auditLogOperations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs/principal/{principalId}",
+      "operationId": "auditLogsByPrincipal"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs/recent",
+      "operationId": "listAuditLogsRecent"
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-logs/{id}",
+      "operationId": "getAuditLog"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth-configs",
+      "operationId": "listAuthConfigs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth-configs",
+      "operationId": "createAuthConfig"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/auth-configs/{id}",
+      "operationId": "deleteAuthConfig"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/auth-configs/{id}",
+      "operationId": "updateAuthConfig"
+    },
+    {
+      "method": "GET",
+      "path": "/api/clients",
+      "operationId": "listClients"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clients",
+      "operationId": "createClient"
+    },
+    {
+      "method": "GET",
+      "path": "/api/clients/by-identifier/{identifier}",
+      "operationId": "getClientByIdentifier"
+    },
+    {
+      "method": "GET",
+      "path": "/api/clients/search",
+      "operationId": "searchClientsByQuery"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clients/search",
+      "operationId": "searchClients"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/clients/{id}",
+      "operationId": "deleteClient"
+    },
+    {
+      "method": "GET",
+      "path": "/api/clients/{id}",
+      "operationId": "getClient"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/clients/{id}",
+      "operationId": "updateClient"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clients/{id}/activate",
+      "operationId": "activateClient"
+    },
+    {
+      "method": "GET",
+      "path": "/api/clients/{id}/applications",
+      "operationId": "getClientApplications"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/clients/{id}/applications",
+      "operationId": "updateClientApplications"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clients/{id}/applications/{applicationId}/disable",
+      "operationId": "disableClientApplication"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clients/{id}/applications/{applicationId}/enable",
+      "operationId": "enableClientApplication"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clients/{id}/deactivate",
+      "operationId": "deactivateClient"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clients/{id}/notes",
+      "operationId": "addClientNote"
+    },
+    {
+      "method": "POST",
+      "path": "/api/clients/{id}/suspend",
+      "operationId": "suspendClient"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/config/{app}/{section}/{property}",
+      "operationId": "deletePlatformConfigProperty"
+    },
+    {
+      "method": "GET",
+      "path": "/api/config/{app}/{section}/{property}",
+      "operationId": "getPlatformConfigProperty"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/config/{app}/{section}/{property}",
+      "operationId": "setPlatformConfigProperty"
+    },
+    {
+      "method": "GET",
+      "path": "/api/connections",
+      "operationId": "listConnections"
+    },
+    {
+      "method": "POST",
+      "path": "/api/connections",
+      "operationId": "createConnection"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/connections/{id}",
+      "operationId": "deleteConnection"
+    },
+    {
+      "method": "GET",
+      "path": "/api/connections/{id}",
+      "operationId": "getConnection"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/connections/{id}",
+      "operationId": "updateConnection"
+    },
+    {
+      "method": "POST",
+      "path": "/api/connections/{id}/activate",
+      "operationId": "activateConnection"
+    },
+    {
+      "method": "POST",
+      "path": "/api/connections/{id}/pause",
+      "operationId": "pauseConnection"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs",
+      "operationId": "listDispatchJobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs/by-event/{eventId}",
+      "operationId": "dispatchJobsByEventAlias"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs/event/{eventId}",
+      "operationId": "dispatchJobsByEvent"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs/filter-options",
+      "operationId": "dispatchJobFilterOptions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs/list-raw",
+      "operationId": "listDispatchJobsRaw"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs/raw",
+      "operationId": "listDispatchJobsRawAlias"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dispatch-jobs/requeue",
+      "operationId": "requeueDispatchJobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs/{id}",
+      "operationId": "getDispatchJob"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs/{id}/attempts",
+      "operationId": "listDispatchJobAttempts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dispatch-jobs/{id}/cancel",
+      "operationId": "cancelDispatchJob"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dispatch-jobs/{id}/complete",
+      "operationId": "completeDispatchJob"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-jobs/{id}/raw",
+      "operationId": "getDispatchJobRaw"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dispatch-jobs/{id}/sign",
+      "operationId": "signDispatchJob"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-pools",
+      "operationId": "listDispatchPools"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dispatch-pools",
+      "operationId": "createDispatchPool"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/dispatch-pools/{id}",
+      "operationId": "deleteDispatchPool"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch-pools/{id}",
+      "operationId": "getDispatchPool"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/dispatch-pools/{id}",
+      "operationId": "updateDispatchPool"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dispatch-pools/{id}/activate",
+      "operationId": "activateDispatchPool"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dispatch-pools/{id}/archive",
+      "operationId": "archiveDispatchPool"
+    },
+    {
+      "method": "POST",
+      "path": "/api/dispatch-pools/{id}/suspend",
+      "operationId": "suspendDispatchPool"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dispatch/router-config",
+      "operationId": "getRouterConfig"
+    },
+    {
+      "method": "GET",
+      "path": "/api/docs",
+      "operationId": "listDocs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/docs/applications/{appCode}/{slug}",
+      "operationId": "getApplicationDoc"
+    },
+    {
+      "method": "GET",
+      "path": "/api/docs/platform/{slug}",
+      "operationId": "getPlatformDoc"
+    },
+    {
+      "method": "GET",
+      "path": "/api/email-domain-mappings",
+      "operationId": "listEmailDomainMappings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/email-domain-mappings",
+      "operationId": "createEmailDomainMapping"
+    },
+    {
+      "method": "GET",
+      "path": "/api/email-domain-mappings/by-domain/{domain}",
+      "operationId": "getEmailDomainMappingByDomain"
+    },
+    {
+      "method": "GET",
+      "path": "/api/email-domain-mappings/lookup",
+      "operationId": "lookupEmailDomainMapping"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/email-domain-mappings/{id}",
+      "operationId": "deleteEmailDomainMapping"
+    },
+    {
+      "method": "GET",
+      "path": "/api/email-domain-mappings/{id}",
+      "operationId": "getEmailDomainMapping"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/email-domain-mappings/{id}",
+      "operationId": "updateEmailDomainMapping"
+    },
+    {
+      "method": "POST",
+      "path": "/api/email-domain-mappings/{id}/move-provider",
+      "operationId": "moveEmailDomainMappingProvider"
+    },
+    {
+      "method": "GET",
+      "path": "/api/event-types",
+      "operationId": "listEventTypes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/event-types",
+      "operationId": "createEventType"
+    },
+    {
+      "method": "GET",
+      "path": "/api/event-types/by-code/{code}",
+      "operationId": "getEventTypeByCode"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/event-types/{id}",
+      "operationId": "deleteEventType"
+    },
+    {
+      "method": "GET",
+      "path": "/api/event-types/{id}",
+      "operationId": "getEventType"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/event-types/{id}",
+      "operationId": "updateEventType"
+    },
+    {
+      "method": "POST",
+      "path": "/api/event-types/{id}/schemas",
+      "operationId": "addEventTypeSchema"
+    },
+    {
+      "method": "POST",
+      "path": "/api/event-types/{id}/versions",
+      "operationId": "addEventTypeVersion"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events",
+      "operationId": "listEvents"
+    },
+    {
+      "method": "POST",
+      "path": "/api/events",
+      "operationId": "createEvent"
+    },
+    {
+      "method": "POST",
+      "path": "/api/events/batch",
+      "operationId": "batchIngestEvents"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events/filter-options",
+      "operationId": "eventFilterOptions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events/list-raw",
+      "operationId": "listEventsRaw"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events/raw",
+      "operationId": "listEventsRawAlias"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events/{id}",
+      "operationId": "getEvent"
+    },
+    {
+      "method": "GET",
+      "path": "/api/identity-providers",
+      "operationId": "listIdentityProviders"
+    },
+    {
+      "method": "POST",
+      "path": "/api/identity-providers",
+      "operationId": "createIdentityProvider"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/identity-providers/{id}",
+      "operationId": "deleteIdentityProvider"
+    },
+    {
+      "method": "GET",
+      "path": "/api/identity-providers/{id}",
+      "operationId": "getIdentityProvider"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/identity-providers/{id}",
+      "operationId": "updateIdentityProvider"
+    },
+    {
+      "method": "GET",
+      "path": "/api/idp-role-mappings",
+      "operationId": "listIdpRoleMappings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/idp-role-mappings",
+      "operationId": "createIdpRoleMapping"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/idp-role-mappings/{id}",
+      "operationId": "deleteIdpRoleMapping"
+    },
+    {
+      "method": "GET",
+      "path": "/api/login-attempts",
+      "operationId": "listLoginAttempts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/oauth-clients",
+      "operationId": "listOAuthClients"
+    },
+    {
+      "method": "POST",
+      "path": "/api/oauth-clients",
+      "operationId": "createOAuthClient"
+    },
+    {
+      "method": "GET",
+      "path": "/api/oauth-clients/by-client-id/{clientId}",
+      "operationId": "getOAuthClientByClientID"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/oauth-clients/{id}",
+      "operationId": "deleteOAuthClient"
+    },
+    {
+      "method": "GET",
+      "path": "/api/oauth-clients/{id}",
+      "operationId": "getOAuthClient"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/oauth-clients/{id}",
+      "operationId": "updateOAuthClient"
+    },
+    {
+      "method": "POST",
+      "path": "/api/oauth-clients/{id}/activate",
+      "operationId": "activateOAuthClient"
+    },
+    {
+      "method": "POST",
+      "path": "/api/oauth-clients/{id}/deactivate",
+      "operationId": "deactivateOAuthClient"
+    },
+    {
+      "method": "POST",
+      "path": "/api/oauth-clients/{id}/regenerate-secret",
+      "operationId": "regenerateOAuthClientSecret"
+    },
+    {
+      "method": "POST",
+      "path": "/api/oauth-clients/{id}/revoke-previous-secret",
+      "operationId": "revokeOAuthClientPreviousSecret"
+    },
+    {
+      "method": "POST",
+      "path": "/api/oauth-clients/{id}/rotate-secret",
+      "operationId": "rotateOAuthClientSecret"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/platform-config/access/{id}",
+      "operationId": "revokePlatformConfigAccess"
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform-config/{app}",
+      "operationId": "listPlatformConfigProperties"
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform-config/{app}/access",
+      "operationId": "listPlatformConfigAccess"
+    },
+    {
+      "method": "POST",
+      "path": "/api/platform-config/{app}/access",
+      "operationId": "grantPlatformConfigAccess"
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform/cors",
+      "operationId": "listCorsOrigins"
+    },
+    {
+      "method": "POST",
+      "path": "/api/platform/cors",
+      "operationId": "addCorsOrigin"
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform/cors/allowed",
+      "operationId": "publicAllowedOrigins"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/platform/cors/{id}",
+      "operationId": "deleteCorsOrigin"
+    },
+    {
+      "method": "GET",
+      "path": "/api/platform/cors/{id}",
+      "operationId": "getCorsOrigin"
+    },
+    {
+      "method": "GET",
+      "path": "/api/portal-apps",
+      "operationId": "listPortalApps"
+    },
+    {
+      "method": "POST",
+      "path": "/api/portal-apps",
+      "operationId": "createPortalApp"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/portal-apps/{id}",
+      "operationId": "deletePortalApp"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/portal-apps/{id}",
+      "operationId": "updatePortalApp"
+    },
+    {
+      "method": "POST",
+      "path": "/api/portal-apps/{id}/assign-unassigned",
+      "operationId": "assignUnassignedPortalUsers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/portal-users",
+      "operationId": "listPortalUsers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/portal-users",
+      "operationId": "ensurePortalUser"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/portal-users/{id}",
+      "operationId": "deletePortalUser"
+    },
+    {
+      "method": "POST",
+      "path": "/api/portal-users/{id}/activate",
+      "operationId": "activatePortalUser"
+    },
+    {
+      "method": "POST",
+      "path": "/api/portal-users/{id}/apps",
+      "operationId": "grantPortalUserApp"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/portal-users/{id}/apps/{portalAppCode}",
+      "operationId": "revokePortalUserApp"
+    },
+    {
+      "method": "POST",
+      "path": "/api/portal-users/{id}/deactivate",
+      "operationId": "deactivatePortalUser"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals",
+      "operationId": "listPrincipals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals",
+      "operationId": "createPrincipal"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/bulk-import",
+      "operationId": "bulkImportUsers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals/check-email-domain",
+      "operationId": "checkPrincipalEmailDomain"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals/developer-users",
+      "operationId": "listDeveloperUsers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/sync",
+      "operationId": "syncUsers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/users",
+      "operationId": "createUser"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/principals/{id}",
+      "operationId": "deletePrincipal"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals/{id}",
+      "operationId": "getPrincipal"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/principals/{id}",
+      "operationId": "updatePrincipal"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/{id}/activate",
+      "operationId": "activatePrincipal"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals/{id}/application-access",
+      "operationId": "listPrincipalApplicationAccess"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/principals/{id}/application-access",
+      "operationId": "assignPrincipalApplicationAccess"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals/{id}/available-applications",
+      "operationId": "listPrincipalAvailableApplications"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals/{id}/client-access",
+      "operationId": "listPrincipalClientAccess"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/{id}/client-access",
+      "operationId": "grantPrincipalClientAccess"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/principals/{id}/client-access/{clientId}",
+      "operationId": "revokePrincipalClientAccess"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/principals/{id}/client-association",
+      "operationId": "setPrincipalClientAssociation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/{id}/deactivate",
+      "operationId": "deactivatePrincipal"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/principals/{id}/developer-credential",
+      "operationId": "revokePrincipalDeveloperCredential"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/{id}/developer-credential",
+      "operationId": "setPrincipalDeveloperCredential"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/{id}/reset-2fa",
+      "operationId": "resetPrincipalTwoFactor"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/{id}/reset-password",
+      "operationId": "resetPrincipalPassword"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals/{id}/roles",
+      "operationId": "listPrincipalRoles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/{id}/roles",
+      "operationId": "addPrincipalRole"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/principals/{id}/roles",
+      "operationId": "assignPrincipalRoles"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/principals/{id}/roles/{role}",
+      "operationId": "removePrincipalRole"
+    },
+    {
+      "method": "POST",
+      "path": "/api/principals/{id}/send-password-reset",
+      "operationId": "sendPrincipalPasswordReset"
+    },
+    {
+      "method": "GET",
+      "path": "/api/principals/{id}/version",
+      "operationId": "getPrincipalVersion"
+    },
+    {
+      "method": "GET",
+      "path": "/api/processes",
+      "operationId": "listProcesses"
+    },
+    {
+      "method": "POST",
+      "path": "/api/processes",
+      "operationId": "createProcess"
+    },
+    {
+      "method": "GET",
+      "path": "/api/processes/by-code/{code}",
+      "operationId": "getProcessByCode"
+    },
+    {
+      "method": "POST",
+      "path": "/api/processes/sync",
+      "operationId": "syncProcessesByBody"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/processes/{id}",
+      "operationId": "deleteProcess"
+    },
+    {
+      "method": "GET",
+      "path": "/api/processes/{id}",
+      "operationId": "getProcess"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/processes/{id}",
+      "operationId": "updateProcess"
+    },
+    {
+      "method": "POST",
+      "path": "/api/processes/{id}/archive",
+      "operationId": "archiveProcess"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reset-approvals",
+      "operationId": "listResetApprovals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/reset-approvals/{id}/approve",
+      "operationId": "approveResetApproval"
+    },
+    {
+      "method": "POST",
+      "path": "/api/reset-approvals/{id}/deny",
+      "operationId": "denyResetApproval"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles",
+      "operationId": "listRoles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/roles",
+      "operationId": "createRole"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles/by-application/{applicationId}",
+      "operationId": "getRolesByApplication"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles/by-code/{code}",
+      "operationId": "getRoleByCode"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles/by-source/{source}",
+      "operationId": "getRolesBySource"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles/filters/applications",
+      "operationId": "getRoleApplicationFilters"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles/permissions",
+      "operationId": "listPermissions"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/roles/permissions/{permission}",
+      "operationId": "deletePermission"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles/permissions/{permission}",
+      "operationId": "getPermission"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/roles/{id}",
+      "operationId": "deleteRole"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles/{id}",
+      "operationId": "getRole"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/roles/{id}",
+      "operationId": "updateRole"
+    },
+    {
+      "method": "GET",
+      "path": "/api/roles/{roleName}/permissions",
+      "operationId": "listRolePermissions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/roles/{roleName}/permissions",
+      "operationId": "grantRolePermissionByBody"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/roles/{roleName}/permissions/{permission}",
+      "operationId": "revokeRolePermission"
+    },
+    {
+      "method": "POST",
+      "path": "/api/roles/{roleName}/permissions/{permission}",
+      "operationId": "grantRolePermission"
+    },
+    {
+      "method": "GET",
+      "path": "/api/scheduled-jobs",
+      "operationId": "listScheduledJobs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scheduled-jobs",
+      "operationId": "createScheduledJob"
+    },
+    {
+      "method": "GET",
+      "path": "/api/scheduled-jobs/by-code/{code}",
+      "operationId": "getScheduledJobByCode"
+    },
+    {
+      "method": "GET",
+      "path": "/api/scheduled-jobs/instances/{instanceId}",
+      "operationId": "getScheduledJobInstance"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scheduled-jobs/instances/{instanceId}/complete",
+      "operationId": "completeScheduledJobInstance"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scheduled-jobs/instances/{instanceId}/log",
+      "operationId": "writeScheduledJobInstanceLog"
+    },
+    {
+      "method": "GET",
+      "path": "/api/scheduled-jobs/instances/{instanceId}/logs",
+      "operationId": "listScheduledJobInstanceLogs"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/scheduled-jobs/{id}",
+      "operationId": "deleteScheduledJob"
+    },
+    {
+      "method": "GET",
+      "path": "/api/scheduled-jobs/{id}",
+      "operationId": "getScheduledJob"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/scheduled-jobs/{id}",
+      "operationId": "updateScheduledJob"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scheduled-jobs/{id}/archive",
+      "operationId": "archiveScheduledJob"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scheduled-jobs/{id}/fire",
+      "operationId": "fireScheduledJobNow"
+    },
+    {
+      "method": "GET",
+      "path": "/api/scheduled-jobs/{id}/instances",
+      "operationId": "listScheduledJobInstances"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scheduled-jobs/{id}/pause",
+      "operationId": "pauseScheduledJob"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scheduled-jobs/{id}/resume",
+      "operationId": "resumeScheduledJob"
+    },
+    {
+      "method": "GET",
+      "path": "/api/service-accounts",
+      "operationId": "listServiceAccounts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/service-accounts",
+      "operationId": "createServiceAccount"
+    },
+    {
+      "method": "GET",
+      "path": "/api/service-accounts/code/{code}",
+      "operationId": "getServiceAccountByCode"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/service-accounts/{id}",
+      "operationId": "deleteServiceAccount"
+    },
+    {
+      "method": "GET",
+      "path": "/api/service-accounts/{id}",
+      "operationId": "getServiceAccount"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/service-accounts/{id}",
+      "operationId": "updateServiceAccount"
+    },
+    {
+      "method": "POST",
+      "path": "/api/service-accounts/{id}/deactivate",
+      "operationId": "deactivateServiceAccount"
+    },
+    {
+      "method": "POST",
+      "path": "/api/service-accounts/{id}/regenerate-auth-token",
+      "operationId": "regenerateServiceAccountAuthToken_regenerate-auth-token"
+    },
+    {
+      "method": "POST",
+      "path": "/api/service-accounts/{id}/regenerate-secret",
+      "operationId": "regenerateServiceAccountSigningSecret_regenerate-secret"
+    },
+    {
+      "method": "POST",
+      "path": "/api/service-accounts/{id}/regenerate-signing-secret",
+      "operationId": "regenerateServiceAccountSigningSecret_regenerate-signing-secret"
+    },
+    {
+      "method": "POST",
+      "path": "/api/service-accounts/{id}/regenerate-token",
+      "operationId": "regenerateServiceAccountAuthToken_regenerate-token"
+    },
+    {
+      "method": "GET",
+      "path": "/api/service-accounts/{id}/roles",
+      "operationId": "listServiceAccountRoles"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/service-accounts/{id}/roles",
+      "operationId": "assignServiceAccountRoles"
+    },
+    {
+      "method": "POST",
+      "path": "/api/service-accounts/{id}/token",
+      "operationId": "mintServiceAccountToken"
+    },
+    {
+      "method": "GET",
+      "path": "/api/subscriptions",
+      "operationId": "listSubscriptions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/subscriptions",
+      "operationId": "createSubscription"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/subscriptions/{id}",
+      "operationId": "deleteSubscription"
+    },
+    {
+      "method": "GET",
+      "path": "/api/subscriptions/{id}",
+      "operationId": "getSubscription"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/subscriptions/{id}",
+      "operationId": "updateSubscription"
+    },
+    {
+      "method": "POST",
+      "path": "/api/subscriptions/{id}/pause",
+      "operationId": "pauseSubscription"
+    },
+    {
+      "method": "POST",
+      "path": "/api/subscriptions/{id}/resume",
+      "operationId": "resumeSubscription"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/webauthn/authenticate/begin",
+      "operationId": "webauthnAuthenticateBegin"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/webauthn/authenticate/complete",
+      "operationId": "webauthnAuthenticateComplete"
+    },
+    {
+      "method": "GET",
+      "path": "/auth/webauthn/credentials",
+      "operationId": "listWebauthnCredentials"
+    },
+    {
+      "method": "DELETE",
+      "path": "/auth/webauthn/credentials/{id}",
+      "operationId": "deleteWebauthnCredential"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/webauthn/register/begin",
+      "operationId": "webauthnRegisterBegin"
+    },
+    {
+      "method": "POST",
+      "path": "/auth/webauthn/register/complete",
+      "operationId": "webauthnRegisterComplete"
+    }
+  ]
+}

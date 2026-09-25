@@ -1,0 +1,233 @@
+[
+  {
+    "scenario": "functions*",
+    "step": "create-function",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "get-function",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "list-by-pattern",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "update-function",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "get-policy",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "put-policy",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "publish",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "list-versions",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "get-version-not-found",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "heartbeat",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "desired-state",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "emit-events",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "promote-not-ready",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "status",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "list-aliases",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "get-config",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "put-config",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "get-secrets",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "put-secret",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "get-secrets-after-set",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "delete-secret",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "delete-secret-not-found",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "retire-not-found",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "pools",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "duplicate-create",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "immutable-field",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "two-part-address",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "create-function-application-not-addressable",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "delete-function",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "claim-domain",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "list-domains",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "list-routes-requires-filter",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  },
+  {
+    "scenario": "functions*",
+    "step": "release-domain",
+    "pointer": "/**",
+    "reason": "Go has no function runner: every /api/function*, /control/functions/* route falls through to Go's SPA (200 text/html). The reference for this API is Java, not Go.",
+    "ruling": "owner decisions 2026-09-25, Direction: new features Go lacks (the function runner and its management API) follow Java; see also #5"
+  }
+]

@@ -1,0 +1,72 @@
+{
+  "name": "code-first-connections: connection sync then subscription sync by connectionCode, and the no-fallback refusal",
+  "why": "the driver for this whole unit (docs/go-mirror/2026-09-21-code-first-connections-handoff.md): an application syncs its own connection, then defines a subscription against it by CODE (never an id, which differs per environment) for one client — and a bare connectionCode must resolve ONLY this application's own namespace, never silently falling back to a shared connection of the same code (code-first-connections.md §3). Java-first until the owner runs this against Go (K2/K3 have no Go reference commit fixed at the time of writing).",
+  "covers": ["createServiceAccount", "createApplication", "provisionApplicationServiceAccount", "createClient", "syncConnections",
+             "syncSubscriptions", "createConnection"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-app",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "cfc-app-${run}", "name": "CFC App" } },
+      "expect": { "status": 201 },
+      "capture": { "appId": "/id" } },
+
+    { "id": "provision-service-account",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/provision-service-account" },
+      "expect": { "status": 201 } },
+
+    { "id": "create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "CFC Client", "identifier": "cfc-cli-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientId": "/id" } },
+
+    { "id": "sync-connections-create",
+      "request": { "method": "POST", "path": "/api/applications/cfc-app-${run}/connections/sync",
+                   "body": { "clientId": "${clientId}",
+                             "connections": [ { "code": "cfc-conn-${run}", "name": "CFC Conn" } ] } },
+      "expect": { "status": 200 } },
+
+    { "id": "sync-subscriptions-by-connection-code",
+      "request": { "method": "POST", "path": "/api/applications/cfc-app-${run}/subscriptions/sync",
+                   "body": { "clientId": "${clientId}",
+                             "subscriptions": [
+                               { "code": "cfc-sub-${run}", "name": "CFC Sub", "target": "https://example.test/cfc-hook",
+                                 "connectionCode": "cfc-conn-${run}",
+                                 "eventTypes": [ { "eventTypeCode": "cfc-app-${run}:demo:widget:created" } ] }
+                             ] } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-shared-signer",
+      "request": { "method": "POST", "path": "/api/service-accounts",
+                   "body": { "code": "cfc-signer-${run}", "name": "CFC shared signer", "clientIds": [] } },
+      "expect": { "status": 201 },
+      "capture": { "sharedSaId": "/serviceAccount/id" } },
+
+    { "id": "create-shared-connection",
+      "request": { "method": "POST", "path": "/api/connections",
+                   "body": { "code": "cfc-shared-${run}", "name": "CFC Shared", "serviceAccountId": "${sharedSaId}" } },
+      "expect": { "status": 201 } },
+
+    { "id": "sync-subscriptions-shared-connection-not-found-without-flag",
+      "request": { "method": "POST", "path": "/api/applications/cfc-app-${run}/subscriptions/sync",
+                   "body": { "subscriptions": [
+                     { "code": "cfc-sub-noshare-${run}", "name": "No Share", "target": "https://example.test/noshare",
+                       "connectionCode": "cfc-shared-${run}",
+                       "eventTypes": [ { "eventTypeCode": "cfc-app-${run}:demo:widget:created" } ] }
+                   ] } } },
+
+    { "id": "sync-subscriptions-shared-connection-found-with-flag",
+      "request": { "method": "POST", "path": "/api/applications/cfc-app-${run}/subscriptions/sync",
+                   "body": { "subscriptions": [
+                     { "code": "cfc-sub-shared-${run}", "name": "Shared OK", "target": "https://example.test/shared",
+                       "connectionCode": "cfc-shared-${run}", "sharedConnection": true,
+                       "eventTypes": [ { "eventTypeCode": "cfc-app-${run}:demo:widget:created" } ] }
+                   ] } },
+      "expect": { "status": 200 } }
+  ]
+}

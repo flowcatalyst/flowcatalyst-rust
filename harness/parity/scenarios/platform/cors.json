@@ -1,0 +1,124 @@
+{
+  "name": "platform cors: the public allowlist read, the anchor-only management routes, and the format rules",
+  "why": "the /allowed route is the one unauthenticated, public route on the whole platform surface (the SPA reads it before it knows who is logged in); every other route is anchor-only (spec §5) and the origin format is pinned because a future CORS filter compares request Origin headers against these exact stored strings",
+  "covers": ["listCorsOrigins", "addCorsOrigin", "getCorsOrigin", "deleteCorsOrigin", "publicAllowedOrigins",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "public-allowed-unauthenticated",
+      "why": "no bearer, no cookie — the authenticator lets this one through and the handler never consults the principal (spec §3)",
+      "request": { "method": "GET", "path": "/api/platform/cors/allowed" },
+      "unordered": ["/origins"] },
+
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "list-before",
+      "request": { "method": "GET", "path": "/api/platform/cors" },
+      "unordered": ["/corsOrigins"] },
+
+    { "id": "add",
+      "request": { "method": "POST", "path": "/api/platform/cors",
+                   "body": { "origin": "https://parity-${run}.example.com", "description": "parity harness" } },
+      "expect": { "status": 201 },
+      "capture": { "originId": "/id" } },
+
+    { "id": "get-by-id",
+      "request": { "method": "GET", "path": "/api/platform/cors/${originId}" } },
+
+    { "id": "list-after-add",
+      "request": { "method": "GET", "path": "/api/platform/cors" },
+      "unordered": ["/corsOrigins"] },
+
+    { "id": "public-allowed-after-add",
+      "request": { "method": "GET", "path": "/api/platform/cors/allowed" },
+      "unordered": ["/origins"] },
+
+    { "id": "add-wildcard-host",
+      "why": "a `*` inside the host is accepted by the parser (spec §4, open question 1) even though its expansion is a future filter's job",
+      "request": { "method": "POST", "path": "/api/platform/cors",
+                   "body": { "origin": "https://*.parity-wild-${run}.example.com" } },
+      "expect": { "status": 201 } },
+
+    { "id": "add-trims-whitespace",
+      "request": { "method": "POST", "path": "/api/platform/cors",
+                   "body": { "origin": "  https://parity-trim-${run}.example.com  " } },
+      "expect": { "status": 201 },
+      "capture": { "trimmedOriginId": "/id" } },
+
+    { "id": "get-trimmed",
+      "request": { "method": "GET", "path": "/api/platform/cors/${trimmedOriginId}" } },
+
+    { "id": "add-blank-origin",
+      "request": { "method": "POST", "path": "/api/platform/cors", "body": { "origin": "   " } } },
+
+    { "id": "add-invalid-scheme",
+      "request": { "method": "POST", "path": "/api/platform/cors", "body": { "origin": "ftp://example.com" } } },
+
+    { "id": "add-invalid-path-not-allowed",
+      "request": { "method": "POST", "path": "/api/platform/cors", "body": { "origin": "https://example.com/path" } } },
+
+    { "id": "add-invalid-userinfo",
+      "request": { "method": "POST", "path": "/api/platform/cors", "body": { "origin": "https://user@example.com" } } },
+
+    { "id": "add-for-duplicate",
+      "request": { "method": "POST", "path": "/api/platform/cors", "body": { "origin": "https://parity-cdup-${run}.example.com" } },
+      "expect": { "status": 201 } },
+
+    { "id": "add-duplicate-origin",
+      "request": { "method": "POST", "path": "/api/platform/cors", "body": { "origin": "https://parity-cdup-${run}.example.com" } } },
+
+    { "id": "get-unknown",
+      "request": { "method": "GET", "path": "/api/platform/cors/cor_doesnotexist1" } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/platform/cors/${originId}" } },
+
+    { "id": "get-after-delete",
+      "request": { "method": "GET", "path": "/api/platform/cors/${originId}" } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/platform/cors/${originId}" } },
+
+    { "id": "public-allowed-after-delete",
+      "request": { "method": "GET", "path": "/api/platform/cors/allowed" },
+      "unordered": ["/origins"] },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Cors Confinement Client", "identifier": "parity-corsconf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-corsconf-${run}@example.com", "name": "Parity Cors Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-corsconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-public-allowed-still-works",
+      "why": "the public route consults no principal at all — a logged-in, non-anchor caller sees exactly what an anonymous one sees",
+      "request": { "method": "GET", "path": "/api/platform/cors/allowed" },
+      "unordered": ["/origins"] },
+
+    { "id": "confinement-list-forbidden",
+      "request": { "method": "GET", "path": "/api/platform/cors" } },
+
+    { "id": "confinement-add-forbidden",
+      "request": { "method": "POST", "path": "/api/platform/cors", "body": { "origin": "https://should-not-exist.example.com" } } }
+  ]
+}

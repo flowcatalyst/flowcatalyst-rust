@@ -22,6 +22,7 @@ members = [
     "bin/fc-stream-processor",
     "bin/fc-server",
     "bin/fc-fnhost",
+    "harness/parity",
 ]
 # Their own Cargo workspaces, built for wasm targets (templates/ holds a
 # `cargo generate` template, not buildable until rendered).

@@ -1,0 +1,122 @@
+{
+  "name": "dispatch-jobs: reads, raw variant, by-event alias, filter-options, requeue, cancel/complete conflicts, PR-3 404-not-403 confinement",
+  "why": "This tag has no create route of its own (docs/spec/dispatchjob.md, DispatchJobApi javadoc) — jobs normally arrive from the router's dispatcher, which is disabled in this harness (FC_ROUTER_ENABLED=false). Rows are seeded instead through the outside-lockfile ingest route POST /api/dispatch-jobs (IngestApi, spec sdk-ingest.md), so the actual dispatch-jobs tag routes have real rows to read. The centrepiece is DispatchJobApi's own documented ruling PR-3 (2026-09-01): every id-addressed route answers 404 byte-identical to not-found for an out-of-scope job, never the 403 SCOPE_FORBIDDEN this surface used to answer — if either side still 403s here, or answers a body that lets the caller tell 'missing' from 'not yours' apart, that is exactly the wire regression the ruling was written to prevent. Cancel/complete can only be exercised on their 409 NOT_FAILED conflict, since driving a job to FAILED needs the (also-disabled) dispatcher.",
+  "covers": ["listDispatchJobs", "listDispatchJobsRaw", "listDispatchJobsRawAlias", "dispatchJobFilterOptions",
+             "dispatchJobsByEvent", "dispatchJobsByEventAlias", "getDispatchJob", "getDispatchJobRaw",
+             "listDispatchJobAttempts", "requeueDispatchJobs", "cancelDispatchJob", "completeDispatchJob",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "seed-platform-wide-job",
+      "request": { "method": "POST", "path": "/api/dispatch-jobs",
+                   "body": { "code": "s1cdj-platform-${run}", "targetUrl": "https://target.test/hook",
+                             "payload": "{\"k\":\"v\"}", "serviceAccountId": "sva_s1cdj1",
+                             "eventId": "p${run}", "source": "s1c-harness" } },
+      "expect": { "status": 201 },
+      "capture": { "platformJobId": "/id" } },
+
+    { "id": "seed-client-a-scoped-job",
+      "request": { "method": "POST", "path": "/api/dispatch-jobs",
+                   "body": { "code": "s1cdj-clienta-${run}", "targetUrl": "https://target.test/hook",
+                             "payload": "{\"k\":\"v\"}", "serviceAccountId": "sva_s1cdj1",
+                             "eventId": "a${run}", "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientAJobId": "/id" } },
+
+    { "id": "get-by-id",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/${platformJobId}" } },
+
+    { "id": "get-by-id-raw",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/${platformJobId}/raw" } },
+
+    { "id": "attempts-of-a-never-attempted-job-is-an-empty-list",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/${platformJobId}/attempts" } },
+
+    { "id": "list-filtered-by-code",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs", "query": { "code": "s1cdj-platform-${run}" } } },
+
+    { "id": "list-raw-filtered-by-code",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/list-raw", "query": { "code": "s1cdj-platform-${run}" } } },
+
+    { "id": "list-raw-alias-filtered-by-code",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/raw", "query": { "code": "s1cdj-platform-${run}" } } },
+
+    { "id": "filter-options",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/filter-options" } },
+
+    { "id": "by-event",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/event/p${run}" } },
+
+    { "id": "by-event-alias",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/by-event/p${run}" } },
+
+    { "id": "cancel-pending-job-is-409-not-failed",
+      "request": { "method": "POST", "path": "/api/dispatch-jobs/${platformJobId}/cancel" } },
+
+    { "id": "complete-pending-job-is-409-not-failed",
+      "request": { "method": "POST", "path": "/api/dispatch-jobs/${platformJobId}/complete" } },
+
+    { "id": "cancel-missing-job-is-404",
+      "request": { "method": "POST", "path": "/api/dispatch-jobs/dj_doesnotexist${run}/cancel" } },
+
+    { "id": "requeue-both-seeded-jobs",
+      "request": { "method": "POST", "path": "/api/dispatch-jobs/requeue",
+                   "body": { "ids": ["${platformJobId}", "${clientAJobId}"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "get-missing-job",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/dj_doesnotexist${run}" } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "S1C DispatchJobs Second Client", "identifier": "s1c-dj-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "s1c-dj-b-${run}@example.com", "name": "S1C DJ B User",
+                             "scope": "CLIENT", "clientId": "${clientBId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:messaging-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "login-as-b",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "s1c-dj-b-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "b-cannot-get-client-a-job-answers-404-not-403-pr3",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/${clientAJobId}" } },
+
+    { "id": "b-cannot-get-client-a-job-raw-answers-404-not-403-pr3",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/${clientAJobId}/raw" } },
+
+    { "id": "b-cannot-get-client-a-job-attempts-answers-404-not-403-pr3",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/${clientAJobId}/attempts" } },
+
+    { "id": "b-cannot-cancel-client-a-job-answers-404-not-403-pr3",
+      "request": { "method": "POST", "path": "/api/dispatch-jobs/${clientAJobId}/cancel" } },
+
+    { "id": "b-cannot-complete-client-a-job-answers-404-not-403-pr3",
+      "request": { "method": "POST", "path": "/api/dispatch-jobs/${clientAJobId}/complete" } },
+
+    { "id": "b-list-view-does-not-include-client-a-job",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs" },
+      "unordered": [""] },
+
+    { "id": "b-by-event-for-the-platform-wide-job",
+      "request": { "method": "GET", "path": "/api/dispatch-jobs/event/p${run}" },
+      "unordered": [""] }
+  ]
+}

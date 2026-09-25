@@ -1,0 +1,395 @@
+{
+  "name": "processes: CRUD, filters, archive (idempotent), 4xx, global (unscoped) confinement",
+  "why": "Process has no clientId column at all (docs/process.md) \u2014 unlike event-types/subscriptions/connections it is genuinely global. The confinement block here is a negative check: a CLIENT-scoped principal must see and mutate an anchor-created process exactly like the anchor does, because there is nothing to confine. If Java ever grows client-scoping for processes and Go does not (or vice versa), this is where that DIFF shows up.",
+  "covers": [
+    "listProcesses",
+    "createProcess",
+    "getProcess",
+    "getProcessByCode",
+    "updateProcess",
+    "archiveProcess",
+    "deleteProcess",
+    "createClient",
+    "createPrincipal",
+    "assignPrincipalRoles",
+    "syncProcessesByBody"
+  ],
+  "steps": [
+    {
+      "id": "login",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "${admin.email}",
+          "password": "${admin.password}"
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "sess": "cookie:fc_session"
+      }
+    },
+    {
+      "id": "create",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes",
+        "body": {
+          "code": "s1cproc${run}:orders:fulfil",
+          "name": "Order Fulfilment",
+          "description": "parity harness process",
+          "body": "graph TD; A-->B",
+          "diagramType": "mermaid",
+          "tags": [
+            "orders",
+            "core"
+          ]
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "procId": "/id"
+      }
+    },
+    {
+      "id": "get-created",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes/${procId}"
+      }
+    },
+    {
+      "id": "get-by-code",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes/by-code/s1cproc${run}:orders:fulfil"
+      }
+    },
+    {
+      "id": "get-by-code-missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes/by-code/s1cproc${run}:nope:missing"
+      }
+    },
+    {
+      "id": "list-by-application",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes",
+        "query": {
+          "application": "s1cproc${run}"
+        }
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "sync-by-body",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes/sync",
+        "body": {
+          "applicationCode": "s1cproc${run}",
+          "processes": [
+            {
+              "code": "s1cproc${run}:orders:synced",
+              "name": "Synced Process",
+              "description": "parity harness sync",
+              "body": "graph TD; A-->B",
+              "diagramType": "mermaid",
+              "tags": [
+                "orders"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sync-by-body-missing-application-code",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes/sync",
+        "body": {
+          "applicationCode": "",
+          "processes": []
+        }
+      }
+    },
+    {
+      "id": "list-by-subdomain",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes",
+        "query": {
+          "application": "s1cproc${run}",
+          "subdomain": "orders"
+        }
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "list-by-status",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes",
+        "query": {
+          "application": "s1cproc${run}",
+          "status": "ACTIVE"
+        }
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "update",
+      "request": {
+        "method": "PUT",
+        "path": "/api/processes/${procId}",
+        "body": {
+          "name": "Order Fulfilment v2",
+          "description": "updated",
+          "tags": [
+            "orders",
+            "core",
+            "v2"
+          ]
+        }
+      }
+    },
+    {
+      "id": "get-updated",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes/${procId}"
+      }
+    },
+    {
+      "id": "archive",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes/${procId}/archive"
+      }
+    },
+    {
+      "id": "get-after-archive",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes/${procId}"
+      }
+    },
+    {
+      "id": "archive-again-is-idempotent",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes/${procId}/archive"
+      }
+    },
+    {
+      "id": "list-archived-filter",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes",
+        "query": {
+          "application": "s1cproc${run}",
+          "status": "ARCHIVED"
+        }
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/processes/${procId}"
+      }
+    },
+    {
+      "id": "delete-again",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/processes/${procId}"
+      }
+    },
+    {
+      "id": "get-after-delete",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes/${procId}"
+      }
+    },
+    {
+      "id": "create-code-required",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes",
+        "body": {
+          "code": "",
+          "name": "X"
+        }
+      }
+    },
+    {
+      "id": "create-invalid-code-format",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes",
+        "body": {
+          "code": "only:two",
+          "name": "X"
+        }
+      }
+    },
+    {
+      "id": "create-name-required",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes",
+        "body": {
+          "code": "s1cproc${run}:orders:noname",
+          "name": ""
+        }
+      }
+    },
+    {
+      "id": "create-duplicate-first",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes",
+        "body": {
+          "code": "s1cproc${run}:orders:dup",
+          "name": "Dup"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "dupProcId": "/id"
+      }
+    },
+    {
+      "id": "create-duplicate-conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes",
+        "body": {
+          "code": "s1cproc${run}:orders:dup",
+          "name": "Dup Again"
+        }
+      }
+    },
+    {
+      "id": "create-confinement-target",
+      "request": {
+        "method": "POST",
+        "path": "/api/processes",
+        "body": {
+          "code": "s1cproc${run}:billing:confine",
+          "name": "Confinement Target"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "confineProcId": "/id"
+      }
+    },
+    {
+      "id": "create-second-client",
+      "request": {
+        "method": "POST",
+        "path": "/api/clients",
+        "body": {
+          "name": "S1C Processes Second Client",
+          "identifier": "s1c-proc-b-${run}"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "clientBId": "/id"
+      }
+    },
+    {
+      "id": "create-second-principal",
+      "request": {
+        "method": "POST",
+        "path": "/api/principals",
+        "body": {
+          "email": "s1c-proc-b-${run}@example.com",
+          "name": "S1C Proc B User",
+          "scope": "CLIENT",
+          "clientId": "${clientBId}",
+          "password": "Correct-Harness-Battery-2381"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "principalBId": "/id"
+      }
+    },
+    {
+      "id": "assign-role",
+      "request": {
+        "method": "PUT",
+        "path": "/api/principals/${principalBId}/roles",
+        "body": {
+          "roles": [
+            "platform:messaging-admin"
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "login-as-b",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "s1c-proc-b-${run}@example.com",
+          "password": "Correct-Harness-Battery-2381"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "cross-tenant-read-succeeds-because-global",
+      "request": {
+        "method": "GET",
+        "path": "/api/processes/${confineProcId}"
+      }
+    },
+    {
+      "id": "cross-tenant-write-succeeds-because-global",
+      "request": {
+        "method": "PUT",
+        "path": "/api/processes/${confineProcId}",
+        "body": {
+          "name": "Touched By B"
+        }
+      }
+    }
+  ]
+}

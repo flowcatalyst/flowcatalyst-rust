@@ -1,0 +1,163 @@
+{
+  "name": "subscriptions: CRUD, filters, pause/resume (idempotent), 4xx, real persisted-clientId confinement",
+  "why": "Unlike event-types, a subscription's clientId is genuinely persisted and drives both authorization (checkScopeAccess) and list/get visibility (docs/spec/subscription.md §5). A cross-tenant read or write here should be a real, enforced 403/SCOPE_FORBIDDEN on both sides — if Go's enforcement differs (e.g. answers 404 instead of 403, or lets the write through), that is exactly the class of defect this harness exists to catch.",
+  "covers": ["listSubscriptions", "createSubscription", "getSubscription", "updateSubscription",
+             "deleteSubscription", "pauseSubscription", "resumeSubscription",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csub-${run}", "name": "Order Sub", "endpoint": "https://example.com/hook",
+                             "description": "parity harness subscription",
+                             "eventTypes": [ { "eventTypeCode": "s1csub${run}:orders:order:created" } ] } },
+      "expect": { "status": 201 },
+      "capture": { "subId": "/id" } },
+
+    { "id": "get-created",
+      "request": { "method": "GET", "path": "/api/subscriptions/${subId}" } },
+
+    { "id": "list-by-status",
+      "request": { "method": "GET", "path": "/api/subscriptions", "query": { "status": "ACTIVE" } },
+      "unordered": ["/subscriptions"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/subscriptions/${subId}",
+                   "body": { "name": "Order Sub v2",
+                             "eventTypes": [ { "eventTypeCode": "s1csub${run}:orders:order:created" },
+                                             { "eventTypeCode": "s1csub${run}:orders:order:shipped" } ],
+                             "maxRetries": 5, "timeoutSeconds": 45 } } },
+
+    { "id": "get-updated",
+      "request": { "method": "GET", "path": "/api/subscriptions/${subId}" } },
+
+    { "id": "pause",
+      "request": { "method": "POST", "path": "/api/subscriptions/${subId}/pause" } },
+
+    { "id": "get-after-pause",
+      "request": { "method": "GET", "path": "/api/subscriptions/${subId}" } },
+
+    { "id": "resume",
+      "request": { "method": "POST", "path": "/api/subscriptions/${subId}/resume" } },
+
+    { "id": "resume-again-is-idempotent",
+      "request": { "method": "POST", "path": "/api/subscriptions/${subId}/resume" } },
+
+    { "id": "get-after-resume",
+      "request": { "method": "GET", "path": "/api/subscriptions/${subId}" } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/subscriptions/${subId}" } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/subscriptions/${subId}" } },
+
+    { "id": "get-after-delete",
+      "request": { "method": "GET", "path": "/api/subscriptions/${subId}" } },
+
+    { "id": "create-code-required",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "name": "X", "endpoint": "https://x", "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } } },
+
+    { "id": "create-invalid-code-format",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "Bad Code", "name": "X", "endpoint": "https://x",
+                             "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } } },
+
+    { "id": "create-name-required",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csub-${run}-noname", "endpoint": "https://x",
+                             "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } } },
+
+    { "id": "create-invalid-endpoint",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csub-${run}-badurl", "name": "X", "endpoint": "not-a-url",
+                             "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } } },
+
+    { "id": "create-event-types-required",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csub-${run}-noevts", "name": "X", "endpoint": "https://x", "eventTypes": [] } } },
+
+    { "id": "create-duplicate-first",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csub-${run}-dup", "name": "Dup", "endpoint": "https://x",
+                             "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } },
+      "expect": { "status": 201 },
+      "capture": { "dupSubId": "/id" } },
+
+    { "id": "create-duplicate-conflict",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csub-${run}-dup", "name": "Dup Again", "endpoint": "https://x",
+                             "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } } },
+
+    { "id": "update-missing",
+      "request": { "method": "PUT", "path": "/api/subscriptions/sub_doesnotexist${run}", "body": { "name": "X" } } },
+
+    { "id": "pause-missing",
+      "request": { "method": "POST", "path": "/api/subscriptions/sub_doesnotexist${run}/pause" } },
+
+    { "id": "create-confinement-target",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csub-${run}-confine", "name": "Confinement Target", "endpoint": "https://example.com/confine",
+                             "clientId": "${client.id}", "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } },
+      "expect": { "status": 201 },
+      "capture": { "confineSubId": "/id" } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "S1C Subscriptions Second Client", "identifier": "s1c-sub-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "s1c-sub-b-${run}@example.com", "name": "S1C Sub B User",
+                             "scope": "CLIENT", "clientId": "${clientBId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:messaging-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "login-as-b",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "s1c-sub-b-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "b-cannot-create-platform-wide",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csubb-${run}-platform", "name": "X", "endpoint": "https://x",
+                             "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } } },
+
+    { "id": "b-cannot-create-scoped-to-foreign-client",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csubb-${run}-foreign", "name": "X", "endpoint": "https://x",
+                             "clientId": "${client.id}", "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } } },
+
+    { "id": "b-can-create-scoped-to-own-client",
+      "request": { "method": "POST", "path": "/api/subscriptions",
+                   "body": { "code": "s1csubb-${run}-own", "name": "X", "endpoint": "https://x",
+                             "clientId": "${clientBId}", "eventTypes": [ { "eventTypeCode": "a:b:c:d" } ] } },
+      "expect": { "status": 201 },
+      "capture": { "ownSubId": "/id" } },
+
+    { "id": "b-cannot-read-anchors-scoped-subscription",
+      "request": { "method": "GET", "path": "/api/subscriptions/${confineSubId}" } },
+
+    { "id": "b-cannot-update-anchors-scoped-subscription",
+      "request": { "method": "PUT", "path": "/api/subscriptions/${confineSubId}", "body": { "name": "Touched By B" } } },
+
+    { "id": "b-cannot-pause-anchors-scoped-subscription",
+      "request": { "method": "POST", "path": "/api/subscriptions/${confineSubId}/pause" } },
+
+    { "id": "b-cannot-delete-anchors-scoped-subscription",
+      "request": { "method": "DELETE", "path": "/api/subscriptions/${confineSubId}" } }
+  ]
+}

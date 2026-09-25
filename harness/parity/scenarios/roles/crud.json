@@ -1,0 +1,193 @@
+{
+  "name": "roles: CRUD, id/name resolution, source immutability, permission grants, filters, and the permission catalogue",
+  "why": "roles are global (no client dimension) and the id-or-name resolution on /api/roles/{id} plus the CODE-source immutability rule are load-bearing for every SDK that addresses roles by name; a wire diff would let a CLIENT-scoped caller with only view permission escalate, or would silently let a catalogue role be edited",
+  "covers": ["listRoles", "createRole", "getRole", "updateRole", "deleteRole", "getRoleByCode", "getRolesBySource",
+             "getRolesByApplication", "getRoleApplicationFilters", "listRolePermissions", "grantRolePermission",
+             "grantRolePermissionByBody", "revokeRolePermission", "listPermissions", "getPermission", "deletePermission",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "applicationCode": "parity", "roleName": "role-${run}", "displayName": "Parity Role",
+                             "description": "d", "permissions": ["parity:admin:widget:view"], "clientManaged": false } },
+      "expect": { "status": 201 },
+      "capture": { "roleId": "/id" } },
+
+    { "id": "get-by-id",
+      "request": { "method": "GET", "path": "/api/roles/${roleId}" } },
+
+    { "id": "get-by-name-fallback",
+      "why": "the {id} route also resolves by name (spec §3): a TSID and a role name are addressed on the same route",
+      "request": { "method": "GET", "path": "/api/roles/parity:role-${run}" } },
+
+    { "id": "get-by-code",
+      "request": { "method": "GET", "path": "/api/roles/by-code/parity:role-${run}" } },
+
+    { "id": "list",
+      "request": { "method": "GET", "path": "/api/roles" },
+      "unordered": ["/roles"] },
+
+    { "id": "by-source-database",
+      "request": { "method": "GET", "path": "/api/roles/by-source/DATABASE" },
+      "unordered": [""] },
+
+    { "id": "by-source-lenient",
+      "why": "spec §3 open question 5: an unrecognised source segment lists the DATABASE roles rather than 400 or []",
+      "request": { "method": "GET", "path": "/api/roles/by-source/not-a-real-source" },
+      "unordered": [""] },
+
+    { "id": "by-application-empty",
+      "request": { "method": "GET", "path": "/api/roles/by-application/app_doesnotexist1" } },
+
+    { "id": "filters-applications",
+      "request": { "method": "GET", "path": "/api/roles/filters/applications" },
+      "unordered": ["/applicationCodes"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/roles/${roleId}", "body": { "displayName": "Parity Role Renamed" } } },
+
+    { "id": "get-after-update",
+      "request": { "method": "GET", "path": "/api/roles/${roleId}" } },
+
+    { "id": "update-clear-permissions",
+      "why": "an explicit empty permissions[] replaces the set wholesale (spec §3); absent leaves it untouched",
+      "request": { "method": "PUT", "path": "/api/roles/${roleId}", "body": { "permissions": [] } } },
+
+    { "id": "get-after-clear",
+      "request": { "method": "GET", "path": "/api/roles/${roleId}" } },
+
+    { "id": "list-role-permissions-empty",
+      "request": { "method": "GET", "path": "/api/roles/parity:role-${run}/permissions" } },
+
+    { "id": "grant-by-path",
+      "request": { "method": "POST", "path": "/api/roles/parity:role-${run}/permissions/parity:admin:widget:manage" } },
+
+    { "id": "grant-by-body",
+      "request": { "method": "POST", "path": "/api/roles/parity:role-${run}/permissions",
+                   "body": { "permission": "parity:admin:widget:delete" } } },
+
+    { "id": "grant-idempotent",
+      "why": "granting an already-held permission is a no-op on the set but still returns 200 with the role (spec §2)",
+      "request": { "method": "POST", "path": "/api/roles/parity:role-${run}/permissions/parity:admin:widget:manage" } },
+
+    { "id": "list-role-permissions-after-grants",
+      "request": { "method": "GET", "path": "/api/roles/parity:role-${run}/permissions" },
+      "unordered": ["/permissions"] },
+
+    { "id": "revoke",
+      "request": { "method": "DELETE", "path": "/api/roles/parity:role-${run}/permissions/parity:admin:widget:delete" } },
+
+    { "id": "revoke-absent-is-a-no-op",
+      "request": { "method": "DELETE", "path": "/api/roles/parity:role-${run}/permissions/parity:admin:widget:delete" } },
+
+    { "id": "list-role-permissions-after-revoke",
+      "request": { "method": "GET", "path": "/api/roles/parity:role-${run}/permissions" },
+      "unordered": ["/permissions"] },
+
+    { "id": "grant-unknown-role",
+      "request": { "method": "POST", "path": "/api/roles/parity:doesnotexist-${run}/permissions/parity:x:y:z" } },
+
+    { "id": "validation-missing-application-code",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "roleName": "x", "displayName": "X", "clientManaged": false } } },
+
+    { "id": "validation-missing-role-name",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "applicationCode": "parity", "displayName": "X", "clientManaged": false } } },
+
+    { "id": "validation-missing-display-name",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "applicationCode": "parity", "roleName": "y-${run}", "clientManaged": false } } },
+
+    { "id": "duplicate-role",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "applicationCode": "parity", "roleName": "role-${run}", "displayName": "Dup",
+                             "clientManaged": false } } },
+
+    { "id": "update-code-sourced-role-is-immutable",
+      "why": "a CODE-sourced (seeded) role rejects update/delete with 409 CODE_ROLE_IMMUTABLE even though grant/revoke are allowed on it (spec §2 — a deliberate asymmetry)",
+      "request": { "method": "PUT", "path": "/api/roles/platform:viewer", "body": { "displayName": "Should not apply" } } },
+
+    { "id": "delete-code-sourced-role-is-immutable",
+      "request": { "method": "DELETE", "path": "/api/roles/platform:viewer" } },
+
+    { "id": "grant-on-code-sourced-role-is-allowed",
+      "why": "grant/revoke bypass the CODE-source immutability that blocks update/delete (spec §2, open question 1)",
+      "request": { "method": "POST", "path": "/api/roles/platform:viewer/permissions/parity:admin:widget:harness-probe-${run}" } },
+
+    { "id": "revoke-on-code-sourced-role-is-allowed",
+      "request": { "method": "DELETE", "path": "/api/roles/platform:viewer/permissions/parity:admin:widget:harness-probe-${run}" } },
+
+    { "id": "get-unknown",
+      "request": { "method": "GET", "path": "/api/roles/rol_doesnotexist1" } },
+
+    { "id": "create-doomed",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "applicationCode": "parity", "roleName": "doomed-${run}", "displayName": "Doomed",
+                             "clientManaged": false } },
+      "expect": { "status": 201 },
+      "capture": { "doomedRoleId": "/id" } },
+
+    { "id": "delete-doomed",
+      "request": { "method": "DELETE", "path": "/api/roles/${doomedRoleId}" } },
+
+    { "id": "get-doomed-after-delete",
+      "request": { "method": "GET", "path": "/api/roles/${doomedRoleId}" } },
+
+    { "id": "delete-doomed-again",
+      "request": { "method": "DELETE", "path": "/api/roles/${doomedRoleId}" } },
+
+    { "id": "permissions-catalogue-list",
+      "why": "the catalogue (iam_permissions) is a separate table the seeder does not populate; no route in this tag's surface can insert a row into it, so only the empty-list and not-found shapes are reachable here",
+      "request": { "method": "GET", "path": "/api/roles/permissions" },
+      "unordered": ["/permissions"] },
+
+    { "id": "get-unknown-permission",
+      "request": { "method": "GET", "path": "/api/roles/permissions/parity:does:not:exist" } },
+
+    { "id": "delete-unknown-permission-is-idempotent",
+      "request": { "method": "DELETE", "path": "/api/roles/permissions/parity:does:not:exist" } },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Roles Confinement Client", "identifier": "parity-roleconf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-roleconf-${run}@example.com", "name": "Parity Roles Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-readonly-role",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:iam-readonly"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-roleconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-read-succeeds",
+      "why": "roles are global with no per-resource dimension: a CLIENT-scoped principal holding role:view can read every role, including one created under the anchor's session",
+      "request": { "method": "GET", "path": "/api/roles/${roleId}" } },
+
+    { "id": "confinement-write-forbidden",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "applicationCode": "parity", "roleName": "should-not-exist-${run}", "displayName": "X",
+                             "clientManaged": false } } },
+
+    { "id": "confinement-delete-forbidden",
+      "request": { "method": "DELETE", "path": "/api/roles/${roleId}" } }
+  ]
+}
