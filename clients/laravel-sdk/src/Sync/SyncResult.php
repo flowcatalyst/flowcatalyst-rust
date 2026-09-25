@@ -16,7 +16,7 @@ final class SyncResult
      * @param array{created: int, updated: int, deleted: int, error?: string} $subscriptions Subscription sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $connections Connection sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $dispatchPools Dispatch pool sync results
-     * @param array{created: int, updated: int, deleted: int, error?: string} $principals Principal sync results
+     * @param array{created: int, updated: int, deleted: int, passwordHashIgnored?: list<string>, error?: string} $principals Principal sync results (passwordHashIgnored: existing users whose passwordHash was not applied)
      * @param array{created: int, updated: int, deleted: int, error?: string} $processes Process sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $scheduledJobs Scheduled-job sync results
      * @param array{created: int, updated: int, deleted: int, error?: string, version?: string} $openapi OpenAPI-document publish result

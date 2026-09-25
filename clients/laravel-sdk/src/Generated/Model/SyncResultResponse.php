@@ -33,6 +33,10 @@ class SyncResultResponse
     /**
      * @var list<string>|null
      */
+    protected $passwordHashIgnored;
+    /**
+     * @var list<string>|null
+     */
     protected $syncedCodes;
     /**
      * @var int|null
@@ -112,6 +116,24 @@ class SyncResultResponse
     {
         $this->initialized['deleted'] = true;
         $this->deleted = $deleted;
+        return $this;
+    }
+    /**
+     * @return list<string>|null
+     */
+    public function getPasswordHashIgnored(): ?array
+    {
+        return $this->passwordHashIgnored;
+    }
+    /**
+     * @param list<string>|null $passwordHashIgnored
+     *
+     * @return self
+     */
+    public function setPasswordHashIgnored(?array $passwordHashIgnored): self
+    {
+        $this->initialized['passwordHashIgnored'] = true;
+        $this->passwordHashIgnored = $passwordHashIgnored;
         return $this;
     }
     /**
