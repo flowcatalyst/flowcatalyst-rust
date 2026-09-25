@@ -7,6 +7,13 @@ authors.workspace = true
 # SDK licence, like fc-sdk.
 license = "MPL-2.0"
 description = "FlowCatalyst function ABI: the guest-facing types of Java's function-api"
+repository = "https://github.com/flowcatalyst/flowcatalyst-rust"
+keywords = ["flowcatalyst", "wasm", "functions", "serverless"]
+categories = ["wasm", "api-bindings"]
+# Published to crates.io as a dependency of fc-function-pdk: only the crate
+# itself. The tests read the Java golden files and link the platform (a
+# path-only dev-dependency, dropped on publish).
+include = ["src/**/*.rs", "Cargo.toml", "LICENSE"]
 
 [dependencies]
 # No tokio, no std-only I/O: this crate must build for wasm32-unknown-unknown.

@@ -10,12 +10,14 @@ interface LoginCredentials {
 	password: string;
 }
 
-interface LoginResponse {
+export interface LoginResponse {
 	principalId: string;
 	name: string;
 	email: string;
 	roles: string[];
 	clientId: string | null;
+	/** Effective permission codes; absent from a backend that predates them. */
+	permissions?: string[];
 }
 
 export interface DomainCheckResponse {
@@ -24,14 +26,14 @@ export interface DomainCheckResponse {
 	idpIssuer?: string;
 }
 
-function mapLoginResponseToUser(response: LoginResponse): User {
+export function mapLoginResponseToUser(response: LoginResponse): User {
 	return {
 		id: response.principalId,
 		email: response.email,
 		name: response.name,
 		clientId: response.clientId,
 		roles: response.roles,
-		permissions: [], // Permissions are loaded separately or derived from roles
+		permissions: Array.isArray(response.permissions) ? response.permissions : null,
 	};
 }
 
@@ -75,6 +77,25 @@ export async function checkSession(): Promise<boolean> {
 	}
 }
 
+/**
+ * Fill in the signed-in user's permissions from `/auth/me` when the response
+ * that signed them in did not carry them. Best effort: on any failure the
+ * user keeps `permissions: null` and the old admin-role rule applies.
+ */
+export async function loadPermissions(): Promise<void> {
+	const authStore = useAuthStore();
+	try {
+		const response = await fetch(`${AUTH_URL}/me`, { credentials: "include" });
+		if (!response.ok) return;
+		const data: LoginResponse = await response.json();
+		if (authStore.user && Array.isArray(data.permissions)) {
+			authStore.user = { ...authStore.user, permissions: data.permissions };
+		}
+	} catch {
+		// Keep the fallback.
+	}
+}
+
 export async function login(credentials: LoginCredentials): Promise<void> {
 	const authStore = useAuthStore();
 	authStore.setLoading(true);
@@ -97,6 +118,9 @@ export async function login(credentials: LoginCredentials): Promise<void> {
 
 		const data: LoginResponse = await response.json();
 		authStore.setUser(mapLoginResponseToUser(data));
+		if (!Array.isArray(data.permissions)) {
+			await loadPermissions();
+		}
 
 		// Check if this is part of an OIDC interaction flow
 		const urlParams = new URLSearchParams(window.location.search);

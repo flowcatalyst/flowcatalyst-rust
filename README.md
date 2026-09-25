@@ -185,8 +185,9 @@ This repository is dual-licensed by component:
 
 | Component | License | Text |
 |---|---|---|
-| The platform — every crate and binary under `crates/` and `bin/` (except `fc-sdk`), the `frontend/`, migrations, docs | [GNU AGPL-3.0-or-later](https://www.gnu.org/licenses/agpl-3.0.html) | [`LICENSE`](LICENSE) |
+| The platform — every crate and binary under `crates/` and `bin/` (except the SDK crates below), the `frontend/`, migrations, docs | [GNU AGPL-3.0-or-later](https://www.gnu.org/licenses/agpl-3.0.html) | [`LICENSE`](LICENSE) |
 | The SDKs — [`crates/fc-sdk`](crates/fc-sdk) (Rust), [`clients/typescript-sdk`](clients/typescript-sdk), [`clients/laravel-sdk`](clients/laravel-sdk), [`clients/go-sdk`](clients/go-sdk) | [MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/) | `LICENSE` in each SDK directory |
+| The function guest crates — [`crates/fc-function-abi`](crates/fc-function-abi), [`crates/fc-function-model`](crates/fc-function-model), [`crates/fc-function-pdk`](crates/fc-function-pdk) | [MPL-2.0](https://www.mozilla.org/en-US/MPL/2.0/) | `LICENSE` in each crate directory |
 
 **Why the split.** The AGPL keeps the platform copyleft even when it is only
 run as a hosted service: anyone who modifies it and lets users interact with

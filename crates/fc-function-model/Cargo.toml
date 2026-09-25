@@ -3,7 +3,10 @@ name = "fc-function-model"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-license.workspace = true
+# Shared by the platform and the function host (AGPL) and linked by guests, so
+# it takes the SDK licence, like fc-function-abi (its one FlowCatalyst
+# dependency) and fc-function-pdk.
+license = "MPL-2.0"
 description = "FlowCatalyst function model: the manifest and the function value types, shared by the platform and the function host (Java's one set of platform/function classes)"
 
 [dependencies]

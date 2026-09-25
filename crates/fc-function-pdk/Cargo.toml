@@ -21,6 +21,7 @@ edition = "2021"
 authors = ["FlowCatalyst Team"]
 # An SDK, so the SDK licence (as fc-function-abi and fc-sdk).
 license = "MPL-2.0"
+repository = "https://github.com/flowcatalyst/flowcatalyst-rust"
 
 [workspace.dependencies]
 # Pinned exactly, and to the same releases as the host's test guests
@@ -36,6 +37,12 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["flowcatalyst", "wasm", "wasi", "component", "functions"]
+categories = ["wasm", "web-programming::http-server"]
+# The vendored WIT goes with it: wit-bindgen reads it at build time.
+include = ["src/**/*.rs", "examples/**/*.rs", "wit/**/*.wit", "Cargo.toml", "README.md", "LICENSE"]
 
 [features]
 default = ["flowcatalyst", "json", "log"]
@@ -53,7 +60,9 @@ json = ["dep:serde", "dep:serde_json", "indexmap/serde"]
 log = ["dep:log"]
 
 [dependencies]
-fc-function-abi = { path = "../fc-function-abi" }
+# `path` for a build from the repository (and a git dependency on it), the
+# `version` for crates.io, where the two are published in step.
+fc-function-abi = { path = "../fc-function-abi", version = "0.1.0" }
 fc-function-pdk-macros = { path = "macros", version = "=0.1.0" }
 wasip2 = { workspace = true }
 # Already in the tree through fc-function-abi (its `MultiMap`); named here

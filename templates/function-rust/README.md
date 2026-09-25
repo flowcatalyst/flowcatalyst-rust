@@ -10,6 +10,23 @@ cargo build --release --target wasm32-wasip2     # the component:
                                                  # target/wasm32-wasip2/release/{{crate_name}}.wasm
 ```
 
+## The PDK dependency
+
+`Cargo.toml` takes `fc-function-pdk` from the FlowCatalyst repository, as a
+git dependency, which always works (pin it with `tag = "…"` or `rev = "…"`):
+
+```toml
+fc-function-pdk = { git = "https://github.com/flowcatalyst/flowcatalyst-rust" }
+```
+
+Once the PDK is published to crates.io, a version works as well:
+
+```toml
+fc-function-pdk = "0.1"
+```
+
+## Publishing the function
+
 `manifest.json` declares the function's endpoints, config and secrets. Keep
 `runtime: wasm` and `entrypoint: wasi_http_incoming_handler` (the
 manifest-safe name of the `wasi:http/incoming-handler` export), and publish

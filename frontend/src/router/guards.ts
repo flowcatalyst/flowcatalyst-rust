@@ -3,7 +3,7 @@ import { useAuthStore } from "@/stores/auth";
 import {
 	usePermissionsStore,
 	getRoutePermission,
-	isPlatformAdminRole,
+	userCan,
 } from "@/stores/permissions";
 import { usePlatformConfigStore } from "@/stores/platformConfig";
 import { checkSession } from "@/api/auth";
@@ -142,9 +142,8 @@ export function permissionGuard(requiredPermission: string) {
 	): void => {
 		const authStore = useAuthStore();
 		const permissionsStore = usePermissionsStore();
-		const permissions = authStore.user?.permissions || [];
 
-		if (permissions.includes(requiredPermission)) {
+		if (userCan(authStore.user, requiredPermission)) {
 			next();
 			return;
 		}
@@ -192,17 +191,10 @@ export function createRoutePermissionGuard() {
 			return;
 		}
 
-		const permissions = authStore.user?.permissions || [];
-		const roles = authStore.user?.roles || [];
-
-		// Platform admins bypass all permission checks
-		if (isPlatformAdminRole(roles)) {
-			next();
-			return;
-		}
-
-		// Check if user has the required permission
-		if (permissions.includes(requiredPermission) || permissions.includes("*")) {
+		// The user's permissions grant one of the route's (wildcards
+		// included); a backend without `permissions` falls back to the
+		// admin-role rule (see `userCan`).
+		if (userCan(authStore.user, requiredPermission)) {
 			next();
 			return;
 		}
@@ -211,7 +203,10 @@ export function createRoutePermissionGuard() {
 		permissionsStore.showPermissionDenied({
 			type: "route",
 			message: "You do not have permission to access this page.",
-			requiredPermission,
+			requiredPermission:
+				typeof requiredPermission === "string"
+					? requiredPermission
+					: requiredPermission.join(" or "),
 			path: to.fullPath,
 		});
 
