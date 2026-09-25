@@ -843,6 +843,80 @@ async fn test_functions_migration_is_idempotent() {
     }
 }
 
+/// Migration 038 (Java V18): a sync rollup's audit row is keyed by the
+/// application code, so an application whose code is longer than a TSID
+/// must still commit. The probe backfills the tracker on a database that
+/// already has the width, and re-running the SQL is a no-op.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_sync_rollup_audit_fits_a_long_application_code() {
+    use fc_platform::event_type::operations::EventTypesSynced;
+    use fc_platform::usecase::ExecutionContext;
+    use fc_platform::{PgUnitOfWork, UnitOfWork};
+
+    let (pool, _container) = setup_test_db().await;
+    let code = "a-rather-long-application-code-of-fifty-characters";
+    assert_eq!(code.len(), 50);
+
+    #[derive(serde::Serialize)]
+    struct SyncEventTypesCommand {
+        application_code: String,
+    }
+    impl fc_platform::usecase::AuditMasked for SyncEventTypesCommand {}
+
+    let ctx = ExecutionContext::create("test-principal-id");
+    let event = EventTypesSynced {
+        metadata: EventTypesSynced::metadata_for(&ctx, code),
+        application_code: code.to_string(),
+        created: 1,
+        updated: 0,
+        deleted: 0,
+        synced_codes: vec![format!("{code}:orders:order:created")],
+        schemas_created: 0,
+        schemas_updated: 0,
+        schemas_unchanged: 0,
+    };
+    let command = SyncEventTypesCommand {
+        application_code: code.to_string(),
+    };
+    let result = PgUnitOfWork::new(pool.clone())
+        .emit_event(event, &command)
+        .await
+        .into_result();
+    assert!(result.is_ok(), "the rollup commits: {:?}", result.err());
+
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM aud_logs WHERE entity_type = 'Application' AND entity_id = $1",
+    )
+    .bind(code)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 1);
+
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/038_aud_logs_entity_id_width.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("re-running 038 is a no-op");
+    sqlx::query("DELETE FROM _schema_migrations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    run_migrations(&pool, MigrationProfile::Production)
+        .await
+        .expect("migrations over the widened column");
+    let (tracked,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM _schema_migrations \
+         WHERE migration_id = '038_aud_logs_entity_id_width')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(tracked, "the probe recognises an applied 038");
+}
+
 // ─── Service Account Repository Tests ─────────────────────────────────────
 
 #[tokio::test]

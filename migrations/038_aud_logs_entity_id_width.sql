@@ -1,0 +1,13 @@
+-- aud_logs.entity_id was VARCHAR(17), a TSID's width (Go's 006 has the same
+-- width). But a sync rollup event's subject is `platform.application.{code}`
+-- (EventTypesSynced, PrincipalsSynced, SubscriptionsSynced, ...), and the
+-- unit of work keys the audit row by the subject's third segment, so the
+-- entity id is the application code (up to 50 characters). Any application
+-- whose code is longer than 17 characters failed every SDK sync at the audit
+-- write. Java's V18 (f4611623) widens it to 100, the width entity_type and
+-- principal_id already have.
+--
+-- Widening a VARCHAR is a catalogue-only change in PostgreSQL (no table
+-- rewrite, the index is kept), and a writer that only ever writes 17
+-- characters (Go) is unaffected. Re-running it is a no-op.
+ALTER TABLE aud_logs ALTER COLUMN entity_id TYPE VARCHAR(100);
