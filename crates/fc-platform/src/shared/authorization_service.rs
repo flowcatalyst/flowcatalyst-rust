@@ -55,7 +55,11 @@ impl AuthContext {
             scope: claims.tier,
             email: claims.email.clone(),
             name: claims.name.clone(),
-            accessible_clients: claims.clients.clone(),
+            accessible_clients: claims
+                .clients
+                .iter()
+                .map(|c| client_id_of(c).to_string())
+                .collect(),
             permissions,
             roles: claims.roles.clone(),
         }
@@ -104,6 +108,14 @@ impl AuthContext {
     pub fn has_role(&self, role: &str) -> bool {
         self.roles.iter().any(|r| r == role)
     }
+}
+
+/// The client id in one `clients` claim entry: the claim carries
+/// `id:identifier` pairs (or `*`) and everything inward reasons in bare ids
+/// (Go `auth.ParseClientsClaim`; Java `ScopeClaim`). Client ids never
+/// contain `:`.
+fn client_id_of(entry: &str) -> &str {
+    entry.split_once(':').map_or(entry, |(id, _)| id)
 }
 
 /// Go's `errIdentityTokenNotAPICredential` (shared/middleware/middleware.go:24).
@@ -1103,6 +1115,26 @@ mod tests {
             permissions: permissions.into_iter().map(String::from).collect(),
             roles: vec!["test:admin".to_string()],
         }
+    }
+
+    /// A bearer's `clients` claim carries `id:identifier` pairs (Go
+    /// `buildClients`); client checks and every reader of
+    /// `accessible_clients` take bare ids.
+    #[test]
+    fn clients_claim_pairs_become_bare_ids() {
+        let claims: AccessTokenClaims = serde_json::from_value(serde_json::json!({
+            "sub": "prn_1", "iss": "i", "aud": "a", "exp": 2, "iat": 1,
+            "type": "SERVICE", "tier": "PARTNER",
+            "clients": ["clt_A:acme", "clt_B"]
+        }))
+        .unwrap();
+        let ctx = AuthContext::from_claims_with_permissions(&claims, HashSet::new());
+        assert_eq!(ctx.accessible_clients, vec!["clt_A", "clt_B"]);
+        assert!(ctx.can_access_client("clt_A"));
+        assert!(ctx.can_access_client("clt_B"));
+        assert!(!ctx.can_access_client("acme"));
+        assert!(!ctx.can_access_client("clt_C"));
+        assert_eq!(client_id_of("*"), "*");
     }
 
     #[test]
