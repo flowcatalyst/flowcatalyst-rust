@@ -3382,6 +3382,7 @@ dependencies = [
 name = "fc-web"
 version = "0.1.0"
 dependencies = [
+ "axum-extra",
  "bytes",
  "chrono",
  "fc-platform",
