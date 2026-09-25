@@ -295,6 +295,51 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     ])
     .await;
     assert_eq!(code, 0, "{out}{err}");
+
+    // `fn validate` (W5): the plan; a setting still missing only warns.
+    let (code, out, err) = fc_dev_fn(&[
+        "--credentials-file",
+        &creds,
+        "validate",
+        ADDRESS,
+        "--manifest",
+        manifest,
+    ])
+    .await;
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("+ subscription shop:orders:order:placed (create)"),
+        "{out}"
+    );
+    assert!(out.contains("! settings missing: CARRIER_API_KEY"), "{out}");
+    let bad_manifest = tmp.path().join("bad-manifest.json");
+    std::fs::write(&bad_manifest, r#"{"runtime":"cobol","entrypoint":"x"}"#).unwrap();
+    let (code, out, err) = fc_dev_fn(&[
+        "--credentials-file",
+        &creds,
+        "validate",
+        ADDRESS,
+        "--manifest",
+        bad_manifest.to_str().unwrap(),
+    ])
+    .await;
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(out.starts_with("RUNTIME_INVALID /runtime: "), "{out}");
+    let (code, out, _) = fc_dev_fn(&[
+        "--credentials-file",
+        &creds,
+        "--output",
+        "json",
+        "validate",
+        ADDRESS,
+        "--manifest",
+        manifest,
+    ])
+    .await;
+    assert_eq!(code, 0);
+    let body: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(body["valid"], true, "{body}");
+
     let (code, out, err) = fc_dev_fn(&[
         "--credentials-file",
         &creds,
