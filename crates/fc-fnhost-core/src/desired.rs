@@ -98,6 +98,8 @@ impl fmt::Debug for Entry {
 }
 
 /// One entry of `unload`: close and drop this exact (address, version).
+/// Parsed for completeness; the reconciler derives what to unload itself
+/// and never acts on it (owner decision 5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnloadRef {
     pub address: FunctionAddress,
