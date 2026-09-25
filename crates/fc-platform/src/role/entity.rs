@@ -194,10 +194,38 @@ impl AuthRole {
         self.source == RoleSource::Database
     }
 
+    /// The application this role belongs to: its `application_code`, or,
+    /// on a legacy row without one, the first segment of its name.
+    pub fn owning_application_code(&self) -> &str {
+        if !self.application_code.trim().is_empty() {
+            &self.application_code
+        } else {
+            self.name.split(':').next().unwrap_or(&self.name)
+        }
+    }
+
     /// Extract short role name from full name
     pub fn role_name(&self) -> &str {
         self.name.split(':').nth(1).unwrap_or(&self.name)
     }
+}
+
+/// The permissions in `permissions` that don't belong to `application_code`:
+/// a permission's first segment names its application, and a role may hold
+/// only its own application's (owner ruling 15; Java S1.5, a120e236). In
+/// order, without repeats.
+pub fn permissions_outside_application<'a>(
+    application_code: &str,
+    permissions: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut outside: Vec<String> = Vec::new();
+    for p in permissions {
+        let first = p.split(':').next().unwrap_or_default();
+        if first != application_code && !outside.iter().any(|o| o == p) {
+            outside.push(p.to_string());
+        }
+    }
+    outside
 }
 
 /// Convert from SeaORM model to domain entity
@@ -1151,6 +1179,37 @@ mod tests {
             "platform:admin:*"
         ));
         assert!(!matches_pattern("platform:admin", "platform:admin:*:*"));
+    }
+
+    #[test]
+    fn permissions_outside_their_application() {
+        assert!(permissions_outside_application(
+            "orders",
+            ["orders:order:create", "orders:order:view"]
+        )
+        .is_empty());
+        assert_eq!(
+            permissions_outside_application(
+                "orders",
+                [
+                    "orders:order:create",
+                    "platform:*:*:*",
+                    "hr:x:y",
+                    "platform:*:*:*"
+                ]
+            ),
+            vec!["platform:*:*:*".to_string(), "hr:x:y".to_string()]
+        );
+        // A prefix is not the application.
+        assert_eq!(
+            permissions_outside_application("orders", ["ordersx:a:b:c"]),
+            vec!["ordersx:a:b:c".to_string()]
+        );
+        let legacy = AuthRole {
+            application_code: String::new(),
+            ..AuthRole::new("hr", "clerk", "Clerk")
+        };
+        assert_eq!(legacy.owning_application_code(), "hr");
     }
 
     #[test]

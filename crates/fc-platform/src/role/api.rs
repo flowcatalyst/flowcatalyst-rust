@@ -222,6 +222,9 @@ pub async fn create_role(
         permissions: req.permissions,
         client_managed: req.client_managed,
         source: crate::role::entity::RoleSource::Database,
+        // Owner ruling 15: a super-admin may use another application's
+        // permissions through the admin API.
+        cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
@@ -386,6 +389,7 @@ pub async fn update_role(
         description: req.description,
         permissions: req.permissions,
         client_managed: req.client_managed,
+        cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
@@ -441,6 +445,7 @@ pub async fn grant_permission(
         description: None,
         permissions: Some(role.permissions.iter().cloned().collect()),
         client_managed: None,
+        cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.update_use_case.run(cmd, ctx).await.into_result()?;
@@ -500,6 +505,7 @@ pub async fn revoke_permission(
         description: None,
         permissions: Some(role.permissions.iter().cloned().collect()),
         client_managed: None,
+        cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.update_use_case.run(cmd, ctx).await.into_result()?;

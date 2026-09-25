@@ -960,3 +960,116 @@ async fn sync_mappings_and_role_edits_are_bounded() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
     assert_eq!(code(&resp), "PERMISSION_ABOVE_CALLER");
 }
+
+// ── Ruling 15: a role holds its own application's permissions ────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn roles_hold_only_their_own_applications_permissions() {
+    let app = setup().await;
+    let application = fc_platform::application::entity::Application::new("d15", "D15");
+    app.repos
+        .application_repo
+        .insert(&application)
+        .await
+        .unwrap();
+    // A role writer holding every permission it names, but no super-admin.
+    let writer = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[
+            permissions::iam::ROLE_CREATE,
+            permissions::iam::ROLE_UPDATE,
+            permissions::iam::USER_READ,
+        ],
+    );
+    let body = json!({
+        "applicationCode": "d15", "roleName": "reader", "displayName": "Reader",
+        "permissions": ["d15:thing:view", "platform:iam:user:view"]
+    });
+    for path in ["/api/roles", "/bff/roles"] {
+        let (status, resp) = read_json(app.post(path, &writer, body.clone()).await).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {resp}");
+        assert_eq!(code(&resp), "PERMISSION_OUTSIDE_APPLICATION", "{path}");
+    }
+    assert!(app
+        .repos
+        .role_repo
+        .find_by_name("d15:reader")
+        .await
+        .unwrap()
+        .is_none());
+
+    // Its own application's permissions: fine; adding another's on update
+    // is refused.
+    let (status, resp) = read_json(
+        app.post(
+            "/api/roles",
+            &writer,
+            json!({
+                "applicationCode": "d15", "roleName": "reader", "displayName": "Reader",
+                "permissions": ["d15:thing:view"]
+            }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{resp}");
+    let (status, resp) = read_json(
+        app.put(
+            "/bff/roles/d15:reader",
+            &writer,
+            json!({ "permissions": ["d15:thing:view", "platform:iam:user:view"] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_OUTSIDE_APPLICATION");
+
+    // A super-admin, through the admin API, may.
+    let super_admin = stored_caller(
+        &app,
+        "d15-super@iam.test",
+        UserScope::Anchor,
+        &[permissions::ADMIN_ALL],
+    )
+    .await;
+    let resp = app
+        .put(
+            "/bff/roles/d15:reader",
+            &super_admin,
+            json!({ "permissions": ["d15:thing:view", "platform:iam:user:view"] }),
+        )
+        .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let role = app
+        .repos
+        .role_repo
+        .find_by_name("d15:reader")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(role.permissions.contains("platform:iam:user:view"));
+
+    // The SDK sync never, not even for a super-admin.
+    let (status, resp) = read_json(
+        app.post(
+            "/api/applications/d15/roles/sync",
+            &super_admin,
+            json!({ "roles": [{ "name": "synced", "permissions": ["platform:*:*:*"] }] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_OUTSIDE_APPLICATION");
+    assert!(app
+        .repos
+        .role_repo
+        .find_by_name("d15:synced")
+        .await
+        .unwrap()
+        .is_none());
+}

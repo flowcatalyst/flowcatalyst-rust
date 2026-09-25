@@ -34,6 +34,12 @@ pub struct UpdateRoleCommand {
     /// Whether clients can manage this role
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_managed: Option<bool>,
+
+    /// May the permissions added include another application's? Only the
+    /// admin API sets this, for a super-admin (owner ruling 15); recorded in
+    /// the audit row when set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cross_application: bool,
 }
 
 impl crate::usecase::AuditMasked for UpdateRoleCommand {}
@@ -168,6 +174,13 @@ impl<U: UnitOfWork> UpdateRoleUseCase<U> {
             permissions_added = new_set.difference(&old_set).cloned().collect();
             permissions_removed = old_set.difference(&new_set).cloned().collect();
 
+            // Owner ruling 15, on what this write adds.
+            super::require_confined(
+                role.owning_application_code(),
+                permissions_added.iter().map(String::as_str),
+                command.cross_application,
+            )?;
+
             if !permissions_added.is_empty() || !permissions_removed.is_empty() {
                 role.permissions = new_set;
             }
@@ -213,6 +226,7 @@ mod tests {
             description: None,
             permissions: Some(vec!["orders:read".to_string()]),
             client_managed: None,
+            cross_application: false,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
