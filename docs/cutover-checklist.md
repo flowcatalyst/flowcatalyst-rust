@@ -51,9 +51,11 @@ as they merge to `main`.
 ## Rulings adopted from the Java session, not yet built
 - [ ] Router auth (ruling 2): platform bearer tokens, `router:view`/`operate`, the `router-operator` role,
       dev-only mocks, the PKCE dashboard. **The SDK releases that send the bearer must reach
-      integral/hr/rfp first.**
-- [ ] TS and Laravel SDKs: single-flight refresh (ruling 5) and webhook `check()` (ruling 11)
-- [ ] SPA and SDKs: `allApplications` on service-account create; `passwordHashIgnored` in sync results
+      integral/hr/rfp first** (laravel-sdk 0.10.27; hr is pinned to `^0.8` and must move to `^0.10`).
+      Rust's role catalogue doesn't have `router:view`/`operate` yet: add them, and grant `:view` to
+      `application-service` and `viewer`, when router auth is built.
+- [x] SDKs: single-flight refresh (ruling 5), webhook `check()` (ruling 11), bearer on router calls; licences as published (TS Apache-2.0, Laravel MIT, Go/Rust Apache-2.0)
+- [x] SPA and SDKs: `allApplications` on service-account create; `passwordHashIgnored` in sync results (Java SDK: not done)
 
 ## Already done
 - JWT claims in Go's shape (#3, #20)
