@@ -325,8 +325,8 @@ async fn process_dispatch(
     match repo.claim_for_delivery(&job.id, job.created_at).await {
         Ok(true) => {}
         Ok(false) => match lost_claim(repo, &job_id).await {
-            Ok(taken_over) => return run_claimed(&state, taken_over).await,
-            Err(answer) => return answer,
+            LostClaim::TakenOver(job) => return run_claimed(&state, *job).await,
+            LostClaim::Answer(answer) => return answer,
         },
         Err(e) => {
             error!(job_id = %job_id, error = %e, "dispatch process: claim failed");
@@ -424,6 +424,15 @@ pub fn claim_lease(job: &DispatchJob) -> Duration {
     delivery.min(DELIVERY_CLIENT_CEILING) + CLAIM_LEASE_MARGIN
 }
 
+/// What [`lost_claim`] decided.
+enum LostClaim {
+    /// The previous attempt's lease ran out and this call took the claim
+    /// over: deliver.
+    TakenOver(Box<DispatchJob>),
+    /// Answer the router with this.
+    Answer(Response),
+}
+
 /// This call lost the claim. Go acks such a copy without delivering, which
 /// is right while another attempt is live — and loses the job for good
 /// when that attempt died with its process (a platform killed mid-delivery:
@@ -438,15 +447,13 @@ pub fn claim_lease(job: &DispatchJob) -> Duration {
 ///   deliver again — at-least-once; the subscriber may see it twice;
 /// - anything else (finished, or already back to PENDING for a retry the
 ///   poller owns): ack without delivering, as Go.
-///
-/// `Ok` is the job, taken over and ready to deliver; `Err` is the answer.
-async fn lost_claim(repo: &DispatchJobRepository, job_id: &str) -> Result<DispatchJob, Response> {
+async fn lost_claim(repo: &DispatchJobRepository, job_id: &str) -> LostClaim {
     let job = match repo.find_by_id(job_id).await {
         Ok(Some(job)) => job,
-        Ok(None) => return Err(reply(StatusCode::OK, true, Some("job not found"))),
+        Ok(None) => return LostClaim::Answer(reply(StatusCode::OK, true, Some("job not found"))),
         Err(e) => {
             error!(job_id = %job_id, error = %e, "dispatch process: reload after a lost claim failed");
-            return Err(reply(
+            return LostClaim::Answer(reply(
                 StatusCode::SERVICE_UNAVAILABLE,
                 false,
                 Some("load failed"),
@@ -455,7 +462,7 @@ async fn lost_claim(repo: &DispatchJobRepository, job_id: &str) -> Result<Dispat
     };
     if job.status != crate::dispatch_job::entity::DispatchStatus::Processing {
         info!(job_id = %job_id, status = ?job.status, "dispatch process: already claimed, skipping duplicate delivery");
-        return Err(reply(StatusCode::OK, true, Some("already claimed")));
+        return LostClaim::Answer(reply(StatusCode::OK, true, Some("already claimed")));
     }
     let lease = claim_lease(&job);
     let claimed_at = job.last_attempt_at.unwrap_or(job.updated_at);
@@ -465,7 +472,7 @@ async fn lost_claim(repo: &DispatchJobRepository, job_id: &str) -> Result<Dispat
         let wait = (lease_ends - now).num_milliseconds().max(0) as u64;
         let delay = wait.div_ceil(1000).max(1) as u32;
         info!(job_id = %job_id, delay_seconds = delay, "dispatch process: delivery in progress elsewhere; asking the router to retry");
-        return Err(deferred(delay, "delivery in progress"));
+        return LostClaim::Answer(deferred(delay, "delivery in progress"));
     }
     // `claimed_before` is the claim this call saw expire: a taker that got
     // there first has re-stamped it, and this one loses.
@@ -476,12 +483,12 @@ async fn lost_claim(repo: &DispatchJobRepository, job_id: &str) -> Result<Dispat
         Ok(true) => {
             warn!(job_id = %job_id, claimed_at = %claimed_at, lease_secs = lease.as_secs(),
                 "dispatch process: the previous attempt never finished; delivering again");
-            Ok(job)
+            LostClaim::TakenOver(Box::new(job))
         }
-        Ok(false) => Err(deferred(1, "delivery in progress")),
+        Ok(false) => LostClaim::Answer(deferred(1, "delivery in progress")),
         Err(e) => {
             error!(job_id = %job_id, error = %e, "dispatch process: reclaim failed");
-            Err(reply(
+            LostClaim::Answer(reply(
                 StatusCode::SERVICE_UNAVAILABLE,
                 false,
                 Some("claim failed"),
