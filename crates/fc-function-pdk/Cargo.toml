@@ -1,0 +1,80 @@
+# The Rust guest SDK for FlowCatalyst functions: WASI 0.2 components that
+# export `wasi:http/incoming-handler` and may import `flowcatalyst:function`.
+#
+# Its own Cargo workspace (with the `macros` crate), NOT a member of the root
+# one, for the same reason as `crates/fc-fnhost-core/tests/guests`: it exists
+# for `wasm32-wasip2`, and its wit-bindgen/wasip2 dependency tree has no
+# business in every host build. It still compiles for the host target, so its
+# unit tests (and a function author's own) run natively with `cargo test`.
+#
+#   cargo test                                    # native unit tests
+#   cargo test --target wasm32-wasip2             # the same tests, in wasmtime
+#   cargo build --target wasm32-wasip2 --no-default-features --features json
+#                                                 # the pure wasi:http build
+[workspace]
+resolver = "2"
+members = [".", "macros"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["FlowCatalyst Team"]
+# An SDK, so the SDK licence (as fc-function-abi and fc-sdk).
+license = "MPL-2.0"
+
+[workspace.dependencies]
+# Pinned exactly, and to the same releases as the host's test guests
+# (crates/fc-fnhost-core/tests/guests): wasip2 1.0.4 speaks WASI 0.2.12, the
+# version the host's WIT deps and wasmtime-wasi-http 49 are at.
+wasip2 = "=1.0.4"
+wit-bindgen = "=0.57.1"
+
+[package]
+name = "fc-function-pdk"
+description = "Write FlowCatalyst functions in Rust: WASI 0.2 components over wasi:http, with the flowcatalyst:function host interfaces"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[features]
+default = ["flowcatalyst", "json", "log"]
+# The `flowcatalyst:function` imports: config, secrets, events, the invocation
+# context and host logging. Without it the component imports nothing but
+# WASI 0.2, so it runs on `wasmtime serve`, Spin or wasmCloud unchanged, and
+# the API that needs the host (`Context::config`, `events`, `invocation`,
+# `Request::path_param`, …) does not exist at compile time.
+flowcatalyst = ["dep:wit-bindgen"]
+# serde helpers: `Request::json`, `HttpCall::with_json`, `HttpReply::json`,
+# `json(status, &value)` and `OutboundEventExt::with_json`; and `MultiMap`
+# (query, headers) serializes.
+json = ["dep:serde", "dep:serde_json", "indexmap/serde"]
+# A `log` crate bridge: `log::info!` and friends reach the function's logger.
+log = ["dep:log"]
+
+[dependencies]
+fc-function-abi = { path = "../fc-function-abi", default-features = false }
+fc-function-pdk-macros = { path = "macros", version = "=0.1.0" }
+wasip2 = { workspace = true }
+# Already in the tree through fc-function-abi (its `MultiMap`); named here
+# only so `json` can turn on its serde support.
+indexmap = "2"
+wit-bindgen = { workspace = true, optional = true }
+serde = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+log = { version = "0.4", optional = true, features = ["std"] }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[[example]]
+name = "pure"
+crate-type = ["cdylib"]
+required-features = ["json"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

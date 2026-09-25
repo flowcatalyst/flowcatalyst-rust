@@ -87,9 +87,10 @@ pub struct Schedule {
 }
 
 impl Webhook {
-    /// Parses a subscription / direct dispatch job delivery body.
-    pub fn event(body: &[u8]) -> Result<Event, WebhookFormatError> {
-        let src = decode_utf8_lossy(body);
+    /// Parses a subscription / direct dispatch job delivery body: the bytes
+    /// themselves, or anything that holds them (the guest PDK's request).
+    pub fn event(body: impl AsRef<[u8]>) -> Result<Event, WebhookFormatError> {
+        let src = decode_utf8_lossy(body.as_ref());
         let obj = Obj::parse(&src)?;
         Ok(Event {
             id: obj.require_string("id")?,
@@ -105,9 +106,9 @@ impl Webhook {
         })
     }
 
-    /// Parses a scheduled job firing body.
-    pub fn schedule(body: &[u8]) -> Result<Schedule, WebhookFormatError> {
-        let src = decode_utf8_lossy(body);
+    /// Parses a scheduled job firing body (bytes, or anything holding them).
+    pub fn schedule(body: impl AsRef<[u8]>) -> Result<Schedule, WebhookFormatError> {
+        let src = decode_utf8_lossy(body.as_ref());
         let obj = Obj::parse(&src)?;
         Ok(Schedule {
             job_id: obj.require_string("jobId")?,

@@ -1,0 +1,8 @@
+# A `cargo generate` template for a FlowCatalyst function in Rust:
+#
+#   cargo generate --git https://github.com/flowcatalyst/flowcatalyst-rust templates/function-rust
+#
+# This directory is not buildable as it stands (its Cargo.toml holds
+# placeholders); it is rendered first.
+[template]
+cargo_generate_version = ">=0.18.0"

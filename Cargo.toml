@@ -21,8 +21,15 @@ members = [
     "bin/fc-server",
     "bin/fc-fnhost",
 ]
-# Their own Cargo workspaces, built for wasm targets.
-exclude = ["crates/fc-fnhost-core/tests/guests", "spikes"]
+# Their own Cargo workspaces, built for wasm targets (templates/ holds a
+# `cargo generate` template, not buildable until rendered).
+exclude = [
+    "crates/fc-fnhost-core/tests/guests",
+    "crates/fc-function-pdk",
+    "examples",
+    "spikes",
+    "templates",
+]
 resolver = "2"
 
 [workspace.package]

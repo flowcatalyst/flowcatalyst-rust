@@ -1,0 +1,4 @@
+# `cargo test --target wasm32-wasip2` runs the test binary (a WASI 0.2
+# command component) in the wasmtime CLI.
+[target.wasm32-wasip2]
+runner = "wasmtime run -Shttp"

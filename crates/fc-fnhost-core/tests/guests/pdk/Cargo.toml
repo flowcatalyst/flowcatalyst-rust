@@ -1,0 +1,13 @@
+[package]
+name = "pdk"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+fc-function-pdk = { path = "../../../../fc-function-pdk" }
+serde_json = "1"
+log = "0.4"

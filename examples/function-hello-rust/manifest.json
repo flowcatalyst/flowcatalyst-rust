@@ -1,0 +1,28 @@
+{
+  "$schema": "../../crates/fc-platform/resources/schemas/function-manifest.schema.json",
+  "runtime": "wasm",
+  "entrypoint": "wasi_http_incoming_handler",
+  "pool": "default",
+  "limits": {
+    "maxDurationMs": 10000,
+    "maxConcurrency": 16,
+    "wasmMemoryMb": 32
+  },
+  "endpoints": [
+    { "path": "/events/order-placed", "auth": "webhook", "methods": ["POST"], "timeoutMs": 10000 },
+    { "path": "/healthz", "auth": "none", "methods": ["GET"] }
+  ],
+  "subscriptions": [
+    {
+      "eventType": "shop:orders:order:placed",
+      "path": "/events/order-placed",
+      "mode": "IMMEDIATE",
+      "maxRetries": 5,
+      "timeoutSeconds": 15,
+      "dataOnly": false
+    }
+  ],
+  "config": ["CARRIER_API_URL", "CARRIER_ACCOUNT"],
+  "secrets": ["CARRIER_API_KEY"],
+  "httpAllow": ["api.carrier.example"]
+}
