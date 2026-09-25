@@ -15,7 +15,7 @@
 //! ### Core
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
-//! | `FC_API_PORT` | `3000` | HTTP API port |
+//! | `FC_API_PORT` / `PORT` | `8080` | HTTP API port (Go's default) |
 //! | `FC_METRICS_PORT` | `9090` | Metrics/health port |
 //! | `FC_DATABASE_URL` | `postgresql://localhost:5432/flowcatalyst` | PostgreSQL URL |
 //!
@@ -65,14 +65,14 @@ use tower_http::trace::TraceLayer;
 use anyhow::Result;
 use axum::http::{header as http_header, HeaderValue, Method};
 use tokio::{net::TcpListener, sync::watch};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
 use fc_platform::usecase::PgUnitOfWork;
 
 use fc_common::config::{
-    env_bool, env_bool_alias, env_or, env_or_alias, env_or_alias_parse, env_or_parse,
+    env_bool, env_first_bool_go, env_or, env_or_alias, env_or_alias_parse, env_or_parse,
 };
 
 /// Resolve database URL and (optionally) the live `SecretProvider` it came from.
@@ -193,31 +193,35 @@ async fn main() -> Result<()> {
     info!("Starting FlowCatalyst Unified Server");
 
     // ── Configuration ────────────────────────────────────────────────────────
-    // Each env var supports both the Rust name (FC_ prefix) and the TS name for
-    // compatibility with existing ECS task definitions.
-    let api_port: u16 = env_or_alias_parse("FC_API_PORT", "PORT", 3000);
+    // Go's names first (internal/server/envcfg.go LoadEnv), then the aliases
+    // the ECS task definitions set. Toggles use Go's envBool truth table.
+    // API port: FC_API_PORT, then PORT, default 8080 — Go's. (The router
+    // task definition's API_PORT is not read, exactly as Go ignores it; its
+    // value is Go's default anyway.)
+    let api_port: u16 = env_or_alias_parse("FC_API_PORT", "PORT", 8080);
     let metrics_port: u16 = env_or_parse("FC_METRICS_PORT", 9090);
-    let (database_url, secret_provider) = resolve_database_url().await?;
     // JWT issuer should be the external base URL per OIDC spec
     let jwt_issuer = std::env::var("FC_JWT_ISSUER")
         .or_else(|_| std::env::var("FC_EXTERNAL_BASE_URL"))
         .or_else(|_| std::env::var("EXTERNAL_BASE_URL"))
-        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+        .unwrap_or_else(|_| "http://localhost:8080".to_string());
 
     // Subsystem toggles (TS names: PLATFORM_ENABLED, MESSAGE_ROUTER_ENABLED, etc.)
-    let platform_enabled = env_bool_alias("FC_PLATFORM_ENABLED", "PLATFORM_ENABLED", true);
-    let router_enabled = env_bool_alias("FC_ROUTER_ENABLED", "MESSAGE_ROUTER_ENABLED", false);
-    let scheduler_enabled =
-        env_bool_alias("FC_SCHEDULER_ENABLED", "DISPATCH_SCHEDULER_ENABLED", false);
-    let stream_enabled = env_bool_alias(
-        "FC_STREAM_PROCESSOR_ENABLED",
-        "STREAM_PROCESSOR_ENABLED",
+    let platform_enabled = env_first_bool_go(&["FC_PLATFORM_ENABLED", "PLATFORM_ENABLED"], true);
+    let router_enabled = env_first_bool_go(&["FC_ROUTER_ENABLED", "MESSAGE_ROUTER_ENABLED"], false);
+    let scheduler_enabled = env_first_bool_go(
+        &["FC_SCHEDULER_ENABLED", "DISPATCH_SCHEDULER_ENABLED"],
         false,
     );
-    let outbox_enabled = env_bool_alias("FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED", false);
+    let stream_enabled = env_first_bool_go(
+        &["FC_STREAM_PROCESSOR_ENABLED", "STREAM_PROCESSOR_ENABLED"],
+        false,
+    );
+    let outbox_enabled =
+        env_first_bool_go(&["FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED"], false);
 
     // Standby / HA
-    let standby_enabled = env_bool_alias("FC_STANDBY_ENABLED", "STANDBY_ENABLED", false);
+    let standby_enabled = env_first_bool_go(&["FC_STANDBY_ENABLED", "STANDBY_ENABLED"], false);
     let standby_redis_url = env_or_alias(
         "FC_STANDBY_REDIS_URL",
         "REDIS_URL",
@@ -232,71 +236,35 @@ async fn main() -> Result<()> {
         stream = stream_enabled,
         outbox = outbox_enabled,
         standby = standby_enabled,
+        api_port,
+        metrics_port,
         "Subsystem configuration"
     );
 
+    // The router's environment is validated before anything connects: a
+    // half-configured platform credential refuses to start, as Go's
+    // newRouterServer does.
+    let router_env = if router_enabled {
+        Some(fc_router::bootstrap::RouterEnv::from_env()?)
+    } else {
+        None
+    };
+
     // ── Database ─────────────────────────────────────────────────────────────
-    info!("Connecting to PostgreSQL...");
-    let pg_pool = fc_platform::shared::database::create_pool(&database_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {}", e))?;
-
-    fc_platform::shared::database::run_migrations(
-        &pg_pool,
-        fc_platform::shared::database::MigrationProfile::Production,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
-
-    fc_platform::shared::database::seed_builtin_roles(&pg_pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("Built-in role seeding failed: {}", e))?;
-
-    fc_platform::shared::database::seed_platform_application(&pg_pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
-
-    // Go seeds the platform event-type catalogue on every start.
-    fc_platform::shared::database::seed_platform_event_types(&pg_pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("Platform event type seeding failed: {}", e))?;
-
-    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
-
-    // Create the initial platform admin if no anchor user exists yet. No-op
-    // on subsequent boots; gated on FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL +
-    // _PASSWORD env vars when first run.
-    fc_platform::shared::bootstrap_admin::bootstrap_admin_user(&pg_pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("Bootstrap admin seeding failed: {}", e))?;
-
-    // Referential-integrity scan — warns about orphaned junction rows.
-    fc_platform::shared::integrity_scan::run(&pg_pool).await;
-
-    // Bootstrap of users / clients / applications / service accounts is
-    // owned by `fc-dev init`. fc-server is the production binary path —
-    // it relies on bootstrap_admin (env-driven) above for the first
-    // admin and operators take it from there via the platform UI / API.
-
-    // ── DB credential refresh (AWS Secrets Manager rotation) ─────────────────
-    // When credentials come from a secret provider, poll it on an interval and
-    // update the pool's connect options when the password rotates. This avoids
-    // the failure mode where AWS rotates the password and the pool keeps using
-    // the now-stale credentials. Mirrors the TS implementation.
-    let secret_refresh_interval = std::time::Duration::from_millis(env_or_parse::<u64>(
-        "DB_SECRET_REFRESH_INTERVAL_MS",
-        300_000,
-    ));
-    if let Some(provider) = secret_provider.clone() {
-        fc_platform::shared::database::start_secret_refresh(
-            provider,
-            pg_pool.clone(),
-            database_url.clone(),
-            secret_refresh_interval,
+    // Only the subsystems that read or write Postgres need it (Go:
+    // `needsDB`). A router-only instance (MESSAGE_ROUTER_ENABLED=true,
+    // PLATFORM_ENABLED=false) reads its configuration from the platform API
+    // and connects to no database at all.
+    let needs_db = platform_enabled || stream_enabled || scheduler_enabled || outbox_enabled;
+    let db = if needs_db {
+        Some(connect_database().await?)
+    } else {
+        info!(
+            router = router_enabled,
+            "no database-backed subsystem enabled; skipping postgres connect/migrate/seed"
         );
-    }
+        None
+    };
 
     // ── Leader Election ──────────────────────────────────────────────────────
     // Shared watch channel: true = active (process), false = standby (pause)
@@ -337,177 +305,58 @@ async fn main() -> Result<()> {
 
     let is_leader = move || leader_election.as_ref().is_none_or(|e| e.is_leader());
 
-    // ── Platform API ─────────────────────────────────────────────────────────
-    // Repositories and auth are always initialized (needed by health checks and
-    // potentially by background processors).
-
-    let repos = Repositories::new(&pg_pool);
-    info!("Repositories initialized");
-
-    // Event fan-out runs inside the stream processor (fc-stream). See
-    // `spawn_stream_processor` below.
-
-    // CORS origins cache
-    let cors_origins_cache: Arc<std::sync::RwLock<std::collections::HashSet<String>>> =
-        Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
-    {
-        match repos.cors_repo.get_allowed_origins().await {
-            Ok(origins) => {
-                let mut cache = cors_origins_cache.write().unwrap();
-                for origin in origins {
-                    cache.insert(origin);
-                }
-                info!(count = cache.len(), "CORS origins loaded");
-            }
-            Err(e) => warn!("Failed to load CORS origins: {}", e),
+    // ── Platform ─────────────────────────────────────────────────────────────
+    let (app, repos) = match db.as_ref() {
+        Some(db) => {
+            let (app, repos) =
+                init_platform(db, platform_enabled, api_port, jwt_issuer, standby_enabled).await?;
+            (app, Some(repos))
         }
-    }
-    {
-        let cache = cors_origins_cache.clone();
-        let cors_repo_bg = CorsOriginRepository::new(&pg_pool);
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                match cors_repo_bg.get_allowed_origins().await {
-                    Ok(origins) => {
-                        let mut c = cache.write().unwrap();
-                        c.clear();
-                        for origin in origins {
-                            c.insert(origin);
-                        }
-                    }
-                    Err(e) => warn!("Failed to refresh CORS origins: {}", e),
-                }
-            }
-        });
-    }
-
-    // Sync code-defined roles
-    {
-        let role_sync = fc_platform::service::RoleSyncService::new(std::sync::Arc::new(
-            fc_platform::repository::RoleRepository::new(&pg_pool),
-        ));
-        if let Err(e) = role_sync.sync_code_defined_roles().await {
-            warn!("Role sync failed: {}", e);
-        }
-    }
-
-    // Auth services
-    let auth_init_config = fc_platform::shared::server_setup::AuthInitConfig {
-        issuer: jwt_issuer,
-        ..fc_platform::shared::server_setup::AuthInitConfig::from_env("http://localhost:3000")
-    };
-    let auth_services =
-        fc_platform::shared::server_setup::init_auth_services(&repos, auth_init_config)?;
-    info!("Auth services initialized");
-
-    let unit_of_work = Arc::new(PgUnitOfWork::new(pg_pool.clone()));
-
-    let platform_application_id = repos
-        .application_repo
-        .find_by_code("platform")
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("platform application row missing after seeding"))?
-        .id;
-
-    // Distributed rate-limit store (Redis when FC_REDIS_URL is reachable,
-    // Postgres fallback). Constructed once here so the choice is logged at
-    // startup, then handed to the platform router builder.
-    let rate_limit_store =
-        fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
-    let rate_limit_policies =
-        Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
-
-    // The stranded-sibling reaper (Go's A-01 backstop): platform
-    // housekeeping, run wherever the platform is, not leader-gated (each
-    // sweep is a status-guarded UPDATE).
-    if platform_enabled {
-        tokio::spawn(fc_platform::dispatch_job::reaper::run_reaper(
-            repos.dispatch_job_repo.clone(),
-            fc_platform::dispatch_job::reaper::DEFAULT_REAPER_INTERVAL,
-            fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
-            tokio_util::sync::CancellationToken::new(),
-        ));
-    }
-
-    // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
-    // purger does the same).
-    fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
-        repos.oauth_client_repo.clone(),
-    );
-
-    // Hourly prune of the Postgres rate-limit table (no-op for Redis — TTLs
-    // age keys out automatically). Keeps row count bounded at peak-QPS ×
-    // max-policy-window.
-    {
-        let store = rate_limit_store.clone();
-        let max_window = rate_limit_policies.max_window();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
-            tick.tick().await; // skip the immediate-fire tick
-            loop {
-                tick.tick().await;
-                match store.prune(max_window).await {
-                    Ok(n) if n > 0 => tracing::debug!(rows = n, "rate_limit_events prune"),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!(error = %e, "rate_limit_events prune failed"),
-                }
-            }
-        });
-    }
-
-    // ── Build HTTP app ───────────────────────────────────────────────────────
-    let app = if platform_enabled {
-        build_platform_app(
-            api_port,
-            &auth_services,
-            &unit_of_work,
-            &repos,
-            &cors_origins_cache,
-            standby_enabled,
-            platform_application_id,
-            rate_limit_store.clone(),
-            rate_limit_policies.clone(),
-        )
-    } else {
-        // Minimal app with just health + metrics
-        Router::new()
-            .route("/health", get(health_handler))
-            .layer(TraceLayer::new_for_http())
+        None => (minimal_app(), None),
     };
 
-    // Collect handles for graceful shutdown
-    let mut shutdown_handles: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
+    // ── Router ───────────────────────────────────────────────────────────────
+    // Go mounts the router's HTTP surface under FC_ROUTER_HTTP_PREFIX
+    // (default /router) on the API listener; `/health` at the root stays the
+    // plain liveness answer the load balancer probes.
+    let (app, router_runtime) = match router_env {
+        Some(env) => {
+            info!("Starting message router subsystem...");
+            let (runtime, router_app) = start_router(&env, active_rx.clone()).await?;
+            let prefix = env
+                .http_prefix
+                .clone()
+                .filter(|p| !p.trim().is_empty() && p.trim() != "/")
+                .map(|p| format!("/{}", p.trim().trim_matches('/')))
+                .unwrap_or_else(|| "/router".to_string());
+            info!(prefix = %prefix, "router HTTP mounted");
+            (app.nest(&prefix, router_app), Some(runtime))
+        }
+        None => (app, None),
+    };
 
     // ── Background Processors ────────────────────────────────────────────────
 
-    // Router (SQS message processing)
-    if router_enabled {
-        info!("Starting message router subsystem...");
-        let router_active_rx = active_rx.clone();
-        let router_handle = spawn_router(router_active_rx).await;
-        if let Some(handle) = router_handle {
-            shutdown_handles.push(Box::new(handle));
-        }
-    }
-
     // Scheduler (dispatch job polling)
     if scheduler_enabled {
+        let (db, repos) = (
+            db.as_ref().expect("scheduler needs the database"),
+            repos.as_ref().expect("scheduler needs the repositories"),
+        );
         info!("Starting scheduler subsystem...");
-        spawn_scheduler(&pg_pool, active_rx.clone(), api_port).await?;
-        spawn_scheduled_job_scheduler(&repos, active_rx.clone()).await?;
+        spawn_scheduler(&db.pool, active_rx.clone(), api_port).await?;
+        spawn_scheduled_job_scheduler(repos, active_rx.clone()).await?;
     }
 
     // Stream processor (CQRS projections)
     let _stream_handle = if stream_enabled {
+        let db = db.as_ref().expect("stream processor needs the database");
         info!("Starting stream processor subsystem...");
         Some(
             spawn_stream_processor(
-                &database_url,
-                secret_provider.clone(),
-                secret_refresh_interval,
+                &db.url,
+                db.secret_provider.clone(),
+                db.secret_refresh_interval,
                 active_rx.clone(),
             )
             .await?,
@@ -588,46 +437,16 @@ async fn main() -> Result<()> {
     });
 
     // ── Startup Summary ──────────────────────────────────────────────────────
+    let state = |on: bool| if on { "ENABLED" } else { "DISABLED" };
     info!("=== FlowCatalyst Unified Server Started ===");
+    info!("  Platform API: {}", state(platform_enabled));
+    info!("  Router:       {}", state(router_enabled));
+    info!("  Scheduler:    {}", state(scheduler_enabled));
+    info!("  Stream:       {}", state(stream_enabled));
+    info!("  Outbox:       {}", state(outbox_enabled));
     info!(
-        "  Platform API: {}",
-        if platform_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Router:       {}",
-        if router_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Scheduler:    {}",
-        if scheduler_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Stream:       {}",
-        if stream_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Outbox:       {}",
-        if outbox_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
+        "  Database:     {}",
+        if needs_db { "CONNECTED" } else { "NONE" }
     );
     if standby_enabled {
         info!("  HA Mode:      STANDBY (Redis leader election)");
@@ -644,6 +463,12 @@ async fn main() -> Result<()> {
     // Signal all background processors to stop via the active channel
     let _ = active_tx.send(false);
 
+    // The router drains its pools before the listeners go (Go: Run cancels
+    // the subsystems, then waits for them).
+    if let Some(runtime) = router_runtime {
+        runtime.shutdown().await;
+    }
+
     api_task.abort();
     metrics_task.abort();
 
@@ -654,6 +479,245 @@ async fn main() -> Result<()> {
 
     info!("FlowCatalyst Unified Server shutdown complete");
     Ok(())
+}
+
+/// The platform database, connected, migrated and seeded.
+struct Database {
+    pool: sqlx::PgPool,
+    url: String,
+    secret_provider: Option<Arc<dyn fc_platform::shared::database::SecretProvider>>,
+    secret_refresh_interval: Duration,
+}
+
+/// Connect, migrate and seed the platform database (Go: connect, migrate,
+/// seed — only when a database-backed subsystem runs).
+async fn connect_database() -> Result<Database> {
+    let (database_url, secret_provider) = resolve_database_url().await?;
+    info!("Connecting to PostgreSQL...");
+    let pg_pool = fc_platform::shared::database::create_pool(&database_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("PostgreSQL connection failed: {}", e))?;
+
+    fc_platform::shared::database::run_migrations(
+        &pg_pool,
+        fc_platform::shared::database::MigrationProfile::Production,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("PostgreSQL migrations failed: {}", e))?;
+
+    fc_platform::shared::database::seed_builtin_roles(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Built-in role seeding failed: {}", e))?;
+
+    fc_platform::shared::database::seed_platform_application(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
+
+    // Go seeds the platform event-type catalogue on every start.
+    fc_platform::shared::database::seed_platform_event_types(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Platform event type seeding failed: {}", e))?;
+
+    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
+
+    // Create the initial platform admin if no anchor user exists yet. No-op
+    // on subsequent boots; gated on FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL +
+    // _PASSWORD env vars when first run.
+    fc_platform::shared::bootstrap_admin::bootstrap_admin_user(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Bootstrap admin seeding failed: {}", e))?;
+
+    // Referential-integrity scan — warns about orphaned junction rows.
+    fc_platform::shared::integrity_scan::run(&pg_pool).await;
+
+    // Bootstrap of users / clients / applications / service accounts is
+    // owned by `fc-dev init`. fc-server is the production binary path —
+    // it relies on bootstrap_admin (env-driven) above for the first
+    // admin and operators take it from there via the platform UI / API.
+
+    // ── DB credential refresh (AWS Secrets Manager rotation) ─────────────────
+    // When credentials come from a secret provider, poll it on an interval and
+    // update the pool's connect options when the password rotates. This avoids
+    // the failure mode where AWS rotates the password and the pool keeps using
+    // the now-stale credentials. Mirrors the TS implementation.
+    let secret_refresh_interval = std::time::Duration::from_millis(env_or_parse::<u64>(
+        "DB_SECRET_REFRESH_INTERVAL_MS",
+        300_000,
+    ));
+    if let Some(provider) = secret_provider.clone() {
+        fc_platform::shared::database::start_secret_refresh(
+            provider,
+            pg_pool.clone(),
+            database_url.clone(),
+            secret_refresh_interval,
+        );
+    }
+
+    Ok(Database {
+        pool: pg_pool,
+        url: database_url,
+        secret_provider,
+        secret_refresh_interval,
+    })
+}
+
+/// Platform wiring over the database: repositories, auth, housekeeping,
+/// and the HTTP app (the platform API when enabled, else just `/health`).
+async fn init_platform(
+    db: &Database,
+    platform_enabled: bool,
+    api_port: u16,
+    jwt_issuer: String,
+    standby_enabled: bool,
+) -> Result<(Router, Repositories)> {
+    let pg_pool = &db.pool;
+    // Repositories and auth are always initialized (needed by health checks and
+    // potentially by background processors).
+
+    let repos = Repositories::new(pg_pool);
+    info!("Repositories initialized");
+
+    // Event fan-out runs inside the stream processor (fc-stream). See
+    // `spawn_stream_processor` below.
+
+    // CORS origins cache
+    let cors_origins_cache: Arc<std::sync::RwLock<std::collections::HashSet<String>>> =
+        Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+    {
+        match repos.cors_repo.get_allowed_origins().await {
+            Ok(origins) => {
+                let mut cache = cors_origins_cache.write().unwrap();
+                for origin in origins {
+                    cache.insert(origin);
+                }
+                info!(count = cache.len(), "CORS origins loaded");
+            }
+            Err(e) => warn!("Failed to load CORS origins: {}", e),
+        }
+    }
+    {
+        let cache = cors_origins_cache.clone();
+        let cors_repo_bg = CorsOriginRepository::new(pg_pool);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                match cors_repo_bg.get_allowed_origins().await {
+                    Ok(origins) => {
+                        let mut c = cache.write().unwrap();
+                        c.clear();
+                        for origin in origins {
+                            c.insert(origin);
+                        }
+                    }
+                    Err(e) => warn!("Failed to refresh CORS origins: {}", e),
+                }
+            }
+        });
+    }
+
+    // Sync code-defined roles
+    {
+        let role_sync = fc_platform::service::RoleSyncService::new(std::sync::Arc::new(
+            fc_platform::repository::RoleRepository::new(pg_pool),
+        ));
+        if let Err(e) = role_sync.sync_code_defined_roles().await {
+            warn!("Role sync failed: {}", e);
+        }
+    }
+
+    // Auth services
+    let auth_init_config = fc_platform::shared::server_setup::AuthInitConfig {
+        issuer: jwt_issuer,
+        ..fc_platform::shared::server_setup::AuthInitConfig::from_env("http://localhost:8080")
+    };
+    let auth_services =
+        fc_platform::shared::server_setup::init_auth_services(&repos, auth_init_config)?;
+    info!("Auth services initialized");
+
+    let unit_of_work = Arc::new(PgUnitOfWork::new(pg_pool.clone()));
+
+    let platform_application_id = repos
+        .application_repo
+        .find_by_code("platform")
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("platform application row missing after seeding"))?
+        .id;
+
+    // Distributed rate-limit store (Redis when FC_REDIS_URL is reachable,
+    // Postgres fallback). Constructed once here so the choice is logged at
+    // startup, then handed to the platform router builder.
+    let rate_limit_store =
+        fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
+    let rate_limit_policies =
+        Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
+
+    // The stranded-sibling reaper (Go's A-01 backstop): platform
+    // housekeeping, run wherever the platform is, not leader-gated (each
+    // sweep is a status-guarded UPDATE).
+    if platform_enabled {
+        tokio::spawn(fc_platform::dispatch_job::reaper::run_reaper(
+            repos.dispatch_job_repo.clone(),
+            fc_platform::dispatch_job::reaper::DEFAULT_REAPER_INTERVAL,
+            fc_platform::dispatch_job::reaper::DEFAULT_PROCESSING_LIVE_AFTER,
+            tokio_util::sync::CancellationToken::new(),
+        ));
+    }
+
+    // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
+    // purger does the same).
+    fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
+        repos.oauth_client_repo.clone(),
+    );
+
+    // Hourly prune of the Postgres rate-limit table (no-op for Redis — TTLs
+    // age keys out automatically). Keeps row count bounded at peak-QPS ×
+    // max-policy-window.
+    {
+        let store = rate_limit_store.clone();
+        let max_window = rate_limit_policies.max_window();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            tick.tick().await; // skip the immediate-fire tick
+            loop {
+                tick.tick().await;
+                match store.prune(max_window).await {
+                    Ok(n) if n > 0 => tracing::debug!(rows = n, "rate_limit_events prune"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "rate_limit_events prune failed"),
+                }
+            }
+        });
+    }
+
+    // ── Build HTTP app ───────────────────────────────────────────────────────
+    let app = if platform_enabled {
+        build_platform_app(
+            api_port,
+            &auth_services,
+            &unit_of_work,
+            &repos,
+            &cors_origins_cache,
+            standby_enabled,
+            platform_application_id,
+            rate_limit_store.clone(),
+            rate_limit_policies.clone(),
+        )
+    } else {
+        minimal_app()
+    };
+    Ok((app, repos))
+}
+
+/// The API listener's app when the platform is off: Go's `/health`
+/// (`{"status":"UP","version":…}`, always 200 — the load balancer's probe).
+fn minimal_app() -> Router {
+    Router::new()
+        .route("/health", get(health_handler))
+        .layer(TraceLayer::new_for_http())
 }
 
 // ── Platform App Builder ─────────────────────────────────────────────────────
@@ -764,140 +828,39 @@ fn build_platform_app(
 
 // ── Background Processor Spawners ────────────────────────────────────────────
 
-/// Spawn the message router, gated on leadership.
-async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::task::JoinHandle<()>> {
-    use fc_router::{
-        ConsumerFactory, HealthService, HealthServiceConfig, HttpMediatorConfig, QueueManager,
-        WarningService, WarningServiceConfig,
+/// Start the message router (Go `newRouterServer` + `Server.Run`): the
+/// same runtime as the standalone `fc-router` binary, polling only while
+/// this instance leads. Returns the runtime and its HTTP surface.
+async fn start_router(
+    env: &fc_router::bootstrap::RouterEnv,
+    active_rx: watch::Receiver<bool>,
+) -> Result<(fc_router::bootstrap::RouterRuntime, Router)> {
+    use fc_router::bootstrap::{
+        dev_router_config, sqs_client, RouterRuntime, RouterRuntimeOptions, SchemeConsumerFactory,
+        SqsPublisher,
     };
 
-    let dev_mode = env_bool("FLOWCATALYST_DEV_MODE", false);
-
-    let sqs_client = if dev_mode {
-        let endpoint_url = env_or("LOCALSTACK_ENDPOINT", "http://localhost:4566");
-        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .endpoint_url(&endpoint_url)
-            .load()
-            .await;
-        aws_sdk_sqs::Client::new(&config)
-    } else {
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        aws_sdk_sqs::Client::new(&config)
-    };
-
-    let config_url = std::env::var("FLOWCATALYST_CONFIG_URL").ok();
-    if config_url.is_none() && !dev_mode {
-        error!("FC_ROUTER_ENABLED=true but FLOWCATALYST_CONFIG_URL not set and not in dev mode");
-        return None;
-    }
-
-    let warning_service = Arc::new(WarningService::new(WarningServiceConfig::default()));
-    let health_service = Arc::new(HealthService::new(
-        HealthServiceConfig::default(),
-        warning_service.clone(),
+    let metrics_handle = fc_router::init_prometheus_recorder();
+    let sqs = sqs_client(env.dev_mode).await;
+    let runtime = RouterRuntime::start(
+        env,
+        RouterRuntimeOptions {
+            consumer_factory: Arc::new(SchemeConsumerFactory::new(sqs.clone())),
+            standby: None,
+            leadership: Some(active_rx),
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("router init: {e}"))?;
+    let publisher = Arc::new(SqsPublisher::new(
+        sqs,
+        runtime.queue_manager.clone(),
+        env.dev_mode
+            .then(dev_router_config)
+            .and_then(|c| c.queues.first().map(|q| q.uri.clone())),
     ));
-    // Pass mediator *config* (not a singleton instance) — QueueManager builds
-    // a fresh HttpMediator per pool so each pool has its own HTTP connection
-    // pool, sidestepping AWS's 128-stream cap per H/2 connection.
-    let queue_manager = Arc::new(
-        QueueManager::builder(HttpMediatorConfig::production())
-            .warning_service(warning_service.clone())
-            .health_service(health_service.clone())
-            .consumer_factory(Arc::new(SchemeConsumerFactory {
-                sqs_client: sqs_client.clone(),
-            }))
-            .build(),
-    );
-
-    // Load configuration
-    let router_config = if dev_mode {
-        use fc_common::{PoolConfig, QueueConfig, RouterConfig};
-        let sqs_host = env_or(
-            "LOCALSTACK_SQS_HOST",
-            "http://sqs.eu-west-1.localhost.localstack.cloud:4566",
-        );
-        RouterConfig {
-            processing_pools: vec![PoolConfig {
-                code: "DEFAULT".to_string(),
-                concurrency: 10,
-                rate_limit_per_minute: None,
-            }],
-            queues: vec![QueueConfig {
-                name: "fc-default.fifo".to_string(),
-                uri: format!("{}/000000000000/fc-default.fifo", sqs_host),
-                connections: 2,
-                visibility_timeout: 120,
-            }],
-        }
-    } else {
-        let config_url = config_url.unwrap();
-        let config_sync_config = fc_router::ConfigSyncConfig::new(config_url);
-        let sync_service = Arc::new(fc_router::ConfigSyncService::new(
-            config_sync_config,
-            queue_manager.clone(),
-            warning_service.clone(),
-        ));
-        match sync_service.initial_sync().await {
-            Ok(config) => config,
-            Err(e) => {
-                error!("Router config sync failed: {}", e);
-                return None;
-            }
-        }
-    };
-
-    // Add consumers, dispatching on each queue URI's scheme (item 1 — every
-    // queue used to be handed to the SQS consumer regardless of scheme).
-    //
-    // Item 1 (router bench rig, 2026-09-07; identical fix to
-    // `bin/fc-router/src/main.rs` — see that file's doc comment for the
-    // full mechanism): when `!dev_mode`, `sync_service.initial_sync()`
-    // above already created AND spawned a poll task for every one of these
-    // queues via `QueueManager::reload_config` -> `sync_queue_consumers`
-    // (the manager was built with a `consumer_factory` specifically so
-    // that path could do this). Running this loop unconditionally used to
-    // create a SECOND, independent consumer per queue here too and
-    // `add_consumer` it — orphaning the first poll task and racing it with
-    // a second one spawned later by `QueueManager::start()`. Dev mode
-    // synthesises `router_config` inline above with no config-sync
-    // service involved at all, so this loop is still the only thing that
-    // ever creates a consumer there.
-    if dev_mode {
-        let scheme_factory = SchemeConsumerFactory {
-            sqs_client: sqs_client.clone(),
-        };
-        for queue_config in &router_config.queues {
-            match scheme_factory.create_consumer(queue_config).await {
-                Ok(consumer) => queue_manager.add_consumer(consumer).await,
-                Err(e) => {
-                    error!(queue = %queue_config.name, error = %e, "Failed to create queue consumer");
-                    return None;
-                }
-            }
-        }
-    }
-
-    // Losing leadership only pauses polling (owner ruling; as `fc-router`):
-    // the manager starts once and follows the leadership watch, so in-flight
-    // work finishes and a regained lead resumes the same consumers. Shutting
-    // the manager down on a lost lead and calling `start()` again never
-    // recovered a shut-down manager.
-    queue_manager.set_leader(*active_rx.borrow());
-    let follower = queue_manager.clone();
-    tokio::spawn(async move {
-        while active_rx.changed().await.is_ok() {
-            let leader = *active_rx.borrow();
-            follower.set_leader(leader);
-        }
-    });
-    let manager = queue_manager.clone();
-    let handle = tokio::spawn(async move {
-        if let Err(e) = manager.start().await {
-            error!("QueueManager error: {}", e);
-        }
-    });
-
-    Some(handle)
+    let app = runtime.api_router(publisher, Some(metrics_handle), None);
+    Ok((runtime, app))
 }
 
 /// Spawn the dispatch scheduler, gated on leadership.
@@ -1287,117 +1250,4 @@ async fn metrics_handler() -> &'static str {
 
 async fn ready_handler() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "READY" }))
-}
-
-// ── Consumer factory: dispatch by queue URI scheme (item 1) ─────────────────
-//
-// Mirrors the identical factory in `bin/fc-router/src/main.rs` — kept as a
-// separate copy per binary (same pattern the pre-existing SQS-only wiring
-// used) rather than shared, since `fc-server` is a single monolithic
-// `main.rs` with no internal module split today.
-
-struct SchemeConsumerFactory {
-    sqs_client: aws_sdk_sqs::Client,
-}
-
-#[async_trait::async_trait]
-impl fc_router::ConsumerFactory for SchemeConsumerFactory {
-    async fn create_consumer(
-        &self,
-        config: &fc_common::QueueConfig,
-    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-        let scheme = fc_queue::resolve_scheme(&config.uri).map_err(
-            fc_router::RouterError::consumer(&config.name, "resolve queue scheme"),
-        )?;
-
-        match scheme {
-            fc_queue::QueueScheme::Sqs => {
-                info!(
-                    queue_name = %config.name,
-                    queue_uri = %config.uri,
-                    visibility_timeout = config.visibility_timeout,
-                    "Creating SQS consumer from config"
-                );
-                let consumer = fc_queue::sqs::SqsQueueConsumer::from_queue_url(
-                    self.sqs_client.clone(),
-                    config.uri.clone(),
-                    config.visibility_timeout as i32,
-                )
-                .await;
-                Ok(Arc::new(consumer))
-            }
-            fc_queue::QueueScheme::Nats => build_nats_consumer(config).await,
-            fc_queue::QueueScheme::Postgres => build_postgres_consumer(config).await,
-        }
-    }
-}
-
-/// Build a NATS JetStream consumer from a `nats://` queue URI — see the
-/// identical helper's doc comment in `bin/fc-router/src/main.rs`.
-async fn build_nats_consumer(
-    config: &fc_common::QueueConfig,
-) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(
-        fc_router::RouterError::consumer(&config.name, "invalid NATS URI"),
-    )?;
-    info!(
-        queue_name = %config.name,
-        stream = %nats_config.stream_name,
-        consumer = %nats_config.consumer_name,
-        subject = %nats_config.subject,
-        "Creating NATS JetStream consumer from config"
-    );
-    let consumer = fc_queue::nats::NatsQueueConsumer::new(nats_config)
-        .await
-        .map_err(fc_router::RouterError::consumer(
-            &config.name,
-            "NATS consumer setup failed",
-        ))?;
-    Ok(Arc::new(consumer))
-}
-
-/// Build a Postgres queue consumer from a `postgres://` queue URI — connects
-/// from the URI itself (a dedicated pool per queue), matching the other
-/// routers per `docs/spec/router.md` §7.3. See the identical helper's doc
-/// comment in `bin/fc-router/src/main.rs`.
-async fn build_postgres_consumer(
-    config: &fc_common::QueueConfig,
-) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-    // Item 1 (router bench rig, 2026-09-07) — see the identical fix's doc
-    // comment on `fc_queue::postgres::default_max_connections` and on the
-    // sibling helper in `bin/fc-router/src/main.rs`: a hardcoded
-    // max_connections(4) starved this queue's acks under load.
-    let max_connections = fc_queue::postgres::default_max_connections();
-    info!(
-        queue_name = %config.name,
-        max_connections,
-        "Creating Postgres queue consumer from config"
-    );
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(max_connections)
-        .acquire_timeout(Duration::from_secs(10))
-        .connect(&config.uri)
-        .await
-        .map_err(fc_router::RouterError::consumer(
-            &config.name,
-            "Postgres pool connect failed",
-        ))?;
-
-    let visibility = if config.visibility_timeout == 0 {
-        30
-    } else {
-        config.visibility_timeout
-    };
-    let consumer = fc_queue::postgres::PostgresQueue::new(pool, config.name.clone(), visibility);
-
-    use fc_queue::EmbeddedQueue;
-    consumer
-        .init_schema()
-        .await
-        .map_err(fc_router::RouterError::consumer(
-            &config.name,
-            "Postgres schema init failed",
-        ))?;
-
-    Ok(Arc::new(consumer))
 }

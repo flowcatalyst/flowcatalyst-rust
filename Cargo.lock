@@ -3242,15 +3242,12 @@ name = "fc-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "aws-config",
  "aws-sdk-secretsmanager",
- "aws-sdk-sqs",
  "axum",
  "fc-common",
  "fc-outbox",
  "fc-platform",
- "fc-queue",
  "fc-router",
  "fc-standby",
  "fc-stream",
