@@ -276,6 +276,11 @@ async fn main() -> Result<()> {
         }
     }
     let cb_max_idle = lifecycle_config.circuit_breaker_max_idle;
+    // POST /config/reload re-fetches from the same config source (Go:
+    // Server.Reload). None in dev mode: there is no source to re-fetch.
+    let config_reloader: Option<Arc<dyn fc_router::api::ConfigReloader>> = config_sync
+        .clone()
+        .map(|s| s as Arc<dyn fc_router::api::ConfigReloader>);
     let mut lifecycle = LifecycleManager::start_with_features(
         queue_manager.clone(),
         warning_service.clone(),
@@ -357,6 +362,7 @@ async fn main() -> Result<()> {
             metrics_handle: Some(metrics_handle),
             auth_state,
             router_http_prefix,
+            config_reloader,
             ..RouterOptions::default()
         },
     )

@@ -1,160 +1,108 @@
 //! Config reload, local config snapshot, and standby/traffic status.
 
 use super::AppState;
-use axum::{extract::State, http::StatusCode, response::{IntoResponse, Response}, Json};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use chrono::Utc;
-use fc_common::PoolConfig;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tracing::{error, info, warn};
 use utoipa::ToSchema;
 
-/// Request to reload router configuration
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct ConfigReloadRequest {
-    /// List of pool configurations
-    pub processing_pools: Vec<PoolConfigRequest>,
+/// Triggers an immediate re-fetch of the router's configuration from its
+/// config source and applies it (Go: `api.ConfigReloader` /
+/// `Server.Reload`). Implemented by [`crate::ConfigSyncService`].
+#[async_trait::async_trait]
+pub trait ConfigReloader: Send + Sync {
+    /// Fetch and apply. `Ok` when what is running now matches the source
+    /// (whether or not anything changed).
+    async fn reload(&self) -> Result<(), String>;
 }
 
-/// Pool configuration in reload request
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct PoolConfigRequest {
-    /// Pool code/identifier
-    pub code: String,
-    /// Worker concurrency
-    pub concurrency: u32,
-    /// Optional rate limit (messages per minute)
-    pub rate_limit_per_minute: Option<u32>,
+#[async_trait::async_trait]
+impl ConfigReloader for crate::ConfigSyncService {
+    async fn reload(&self) -> Result<(), String> {
+        self.apply_latest()
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
 }
 
-/// Response after config reload
+/// Response after a config reload (Go: `ConfigReloadResponse`).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ConfigReloadResponse {
-    /// Whether the reload was successful
+    /// Whether the configuration now running matches the config source
     pub success: bool,
-    /// Number of pools updated
-    pub pools_updated: usize,
-    /// Number of new pools created
-    pub pools_created: usize,
-    /// Number of pools removed (draining)
-    pub pools_removed: usize,
-    /// Total active pools after reload
-    pub total_active_pools: usize,
-    /// Total pools currently draining
-    pub total_draining_pools: usize,
 }
 
-/// Reload configuration (hot reload)
+/// Error body, shaped as Go's huma problem responses.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConfigReloadError {
+    pub title: String,
+    pub status: u16,
+    pub detail: String,
+}
+
+fn reload_error(status: StatusCode, detail: String) -> Response {
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+        Json(ConfigReloadError {
+            title: status.canonical_reason().unwrap_or("Error").to_string(),
+            status: status.as_u16(),
+            detail,
+        }),
+    )
+        .into_response()
+}
+
+/// Reload configuration: re-fetch it from the config source now and apply
+/// it, ahead of the watcher's next tick (Go: `POST /config/reload` →
+/// `Server.Reload`). Any request body is ignored. The previous handler
+/// built a config from the request body with NO queues, so the reconcile
+/// treated every queue as removed and stopped every consumer — and the
+/// watcher never restored them, because the source's hash had not changed.
 #[utoipa::path(
     post,
     path = "/config/reload",
     tag = "monitoring",
-    request_body = ConfigReloadRequest,
     responses(
-        (status = 200, description = "Configuration reloaded", body = ConfigReloadResponse),
-        (status = 409, description = "Not the leader — reload refused", body = ConfigReloadResponse),
-        (status = 503, description = "Service unavailable", body = ConfigReloadResponse),
-        (status = 500, description = "Internal error", body = ConfigReloadResponse)
+        (status = 200, description = "Configuration matches the config source", body = ConfigReloadResponse),
+        (status = 409, description = "Not the leader — reload refused", body = ConfigReloadError),
+        (status = 500, description = "Fetch or apply failed, or no config source", body = ConfigReloadError)
     )
 )]
-pub(crate) async fn reload_config(
-    State(state): State<AppState>,
-    Json(req): Json<ConfigReloadRequest>,
-) -> Response {
-    use fc_common::RouterConfig;
-
+pub(crate) async fn reload_config(State(state): State<AppState>) -> Response {
     // R-33: gate on leadership, before any fetch/reconfigure. A follower
     // must never start/reconfigure consumers or pools. When standby is
-    // disabled (state.standby_enabled == false) this is unchanged —
-    // QueueManager::is_leader defaults `true` and nothing ever flips it, so
-    // every instance is its own leader in that mode.
+    // disabled this is unchanged — every instance is its own leader.
     if state.standby_enabled && !state.queue_manager.is_leader() {
         warn!("Configuration reload refused — this instance is not the leader");
-        return (
+        return reload_error(
             StatusCode::CONFLICT,
-            Json(ConfigReloadResponse {
-                success: false,
-                pools_updated: 0,
-                pools_created: 0,
-                pools_removed: 0,
-                total_active_pools: 0,
-                total_draining_pools: 0,
-            }),
-        )
-            .into_response();
+            "not leader; config reload is only served by the current leader".to_string(),
+        );
     }
 
-    let router_config = RouterConfig {
-        processing_pools: req
-            .processing_pools
-            .into_iter()
-            .map(|p| PoolConfig {
-                code: p.code,
-                concurrency: p.concurrency,
-                rate_limit_per_minute: p.rate_limit_per_minute,
-            })
-            .collect(),
-        queues: vec![],
+    let Some(reloader) = state.config_reloader.clone() else {
+        return reload_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "reload: router has no config source configured".to_string(),
+        );
     };
 
-    let pools_before = state.queue_manager.pool_codes().len();
-
-    match state.queue_manager.reload_config(router_config).await {
-        Ok(true) => {
-            let pools_after = state.queue_manager.pool_codes().len();
-            let pool_stats = state.queue_manager.get_pool_stats();
-            let pools_created = pools_after.saturating_sub(pools_before);
-            let pools_removed = pools_before.saturating_sub(pools_after);
-
-            info!(
-                pools_before = pools_before,
-                pools_after = pools_after,
-                pools_created = pools_created,
-                pools_removed = pools_removed,
-                "Configuration reloaded via API"
-            );
-
-            (
-                StatusCode::OK,
-                Json(ConfigReloadResponse {
-                    success: true,
-                    pools_updated: 0,
-                    pools_created,
-                    pools_removed,
-                    total_active_pools: pool_stats.len(),
-                    total_draining_pools: 0,
-                }),
-            )
-                .into_response()
-        }
-        Ok(false) => {
-            warn!("Configuration reload was skipped (shutdown in progress)");
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ConfigReloadResponse {
-                    success: false,
-                    pools_updated: 0,
-                    pools_created: 0,
-                    pools_removed: 0,
-                    total_active_pools: 0,
-                    total_draining_pools: 0,
-                }),
-            )
-                .into_response()
+    match reloader.reload().await {
+        Ok(()) => {
+            info!("Configuration reloaded via API");
+            (StatusCode::OK, Json(ConfigReloadResponse { success: true })).into_response()
         }
         Err(e) => {
             error!(error = %e, "Failed to reload configuration");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ConfigReloadResponse {
-                    success: false,
-                    pools_updated: 0,
-                    pools_created: 0,
-                    pools_removed: 0,
-                    total_active_pools: 0,
-                    total_draining_pools: 0,
-                }),
-            )
-                .into_response()
+            reload_error(StatusCode::INTERNAL_SERVER_ERROR, format!("reload: {e}"))
         }
     }
 }
@@ -382,58 +330,164 @@ mod tests {
             traffic_strategy: None,
             metrics_handle: None,
             cached_broker_stats: Arc::new(super::super::CachedBrokerStats::new(queue_manager)),
+            config_reloader: None,
         }
     }
 
-    fn reload_request() -> ConfigReloadRequest {
-        ConfigReloadRequest {
-            processing_pools: vec![PoolConfigRequest {
-                code: "DEFAULT".to_string(),
-                concurrency: 5,
-                rate_limit_per_minute: None,
-            }],
+    struct StubReloader {
+        calls: std::sync::atomic::AtomicU32,
+        fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl ConfigReloader for StubReloader {
+        async fn reload(&self) -> Result<(), String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail {
+                Err("config: all 1 source(s) failed".to_string())
+            } else {
+                Ok(())
+            }
         }
     }
 
-    /// R-33: standby enabled + not leader ⇒ reload refused (409), and —
-    /// critically — before any fetch/reconfigure: pool_codes() must be
-    /// unchanged.
+    fn with_reloader(mut state: AppState, fail: bool) -> (AppState, Arc<StubReloader>) {
+        let r = Arc::new(StubReloader {
+            calls: std::sync::atomic::AtomicU32::new(0),
+            fail,
+        });
+        state.config_reloader = Some(r.clone());
+        (state, r)
+    }
+
+    /// R-33: standby enabled + not leader ⇒ reload refused (409) before any
+    /// fetch.
     #[tokio::test]
     async fn reload_config_refused_when_standby_enabled_and_not_leader() {
         let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
         manager.set_leader(false);
-        let state = test_app_state(manager.clone(), true);
+        let (state, r) = with_reloader(test_app_state(manager.clone(), true), false);
 
-        let response = reload_config(State(state), Json(reload_request())).await;
+        let response = reload_config(State(state)).await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
-        assert!(
-            manager.pool_codes().is_empty(),
-            "no pool should have been created — the gate must run before any reconfigure"
-        );
+        assert_eq!(r.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
-    /// R-33: standby enabled + leader ⇒ reload proceeds normally (200).
+    /// C5 (Go `Server.Reload`): the reload re-fetches from the config
+    /// source; it never builds a config of its own.
     #[tokio::test]
-    async fn reload_config_allowed_when_standby_enabled_and_leader() {
+    async fn reload_config_refetches_from_the_config_source() {
         let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
         manager.set_leader(true);
-        let state = test_app_state(manager.clone(), true);
+        let (state, r) = with_reloader(test_app_state(manager.clone(), true), false);
 
-        let response = reload_config(State(state), Json(reload_request())).await;
+        let response = reload_config(State(state)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(manager.pool_codes(), vec!["DEFAULT".to_string()]);
+        assert_eq!(r.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], br#"{"success":true}"#);
     }
 
-    /// R-33: standby disabled ⇒ unchanged, even though `QueueManager` was
-    /// never told it's the leader — `is_leader()` defaults `true` but the
-    /// gate must not even consult it when standby is off.
+    /// A failed fetch/apply is a 500 naming the reason; standby off never
+    /// consults leadership.
     #[tokio::test]
-    async fn reload_config_unaffected_by_leadership_when_standby_disabled() {
+    async fn reload_config_failure_is_a_500() {
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
+        let (state, _r) = with_reloader(test_app_state(manager.clone(), false), true);
+        let response = reload_config(State(state)).await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// No config source (dev/default broker) — Go: 500 "router has no
+    /// config source configured".
+    #[tokio::test]
+    async fn reload_config_without_a_config_source_is_a_500() {
         let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
         let state = test_app_state(manager.clone(), false);
+        let response = reload_config(State(state)).await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 
-        let response = reload_config(State(state), Json(reload_request())).await;
+    /// C5 end to end: a running consumer survives an API reload. The old
+    /// handler applied a config with no queues, which stopped every
+    /// consumer; the watcher never put them back because the source had
+    /// not changed.
+    #[tokio::test]
+    async fn api_reload_keeps_consumers_running() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        struct NullFactory;
+        #[async_trait::async_trait]
+        impl crate::ConsumerFactory for NullFactory {
+            async fn create_consumer(
+                &self,
+                config: &fc_common::QueueConfig,
+            ) -> crate::Result<Arc<dyn fc_queue::QueueConsumer>> {
+                Ok(Arc::new(IdleConsumer(config.name.clone())))
+            }
+        }
+        struct IdleConsumer(String);
+        #[async_trait::async_trait]
+        impl fc_queue::QueueConsumer for IdleConsumer {
+            fn identifier(&self) -> &str {
+                &self.0
+            }
+            async fn poll(&self, _: u32) -> fc_queue::Result<Vec<fc_common::QueuedMessage>> {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            async fn stop(&self) {}
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "processingPools": [{"code": "P", "concurrency": 2}],
+                "queues": [{"queueName": "q1", "queueUri": "test://q1"}],
+            })))
+            .mount(&server)
+            .await;
+
+        let manager = Arc::new(
+            QueueManager::builder(HttpMediatorConfig::dev())
+                .consumer_factory(Arc::new(NullFactory))
+                .build(),
+        );
+        let mut cfg = crate::ConfigSyncConfig::new(server.uri());
+        cfg.max_retry_attempts = 1;
+        let sync = Arc::new(crate::ConfigSyncService::new(
+            cfg,
+            manager.clone(),
+            Arc::new(WarningService::noop()),
+        ));
+        sync.apply_latest().await.unwrap();
+        assert_eq!(manager.consumer_ids().await, vec!["q1".to_string()]);
+
+        let mut state = test_app_state(manager.clone(), false);
+        state.config_reloader = Some(sync.clone());
+        let response = reload_config(State(state)).await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(manager.pool_codes(), vec!["DEFAULT".to_string()]);
+        assert_eq!(
+            manager.consumer_ids().await,
+            vec!["q1".to_string()],
+            "an API reload must never tear down the configured queues"
+        );
+        assert_eq!(manager.detaching_consumer_count(), 0);
+        manager.shutdown().await;
     }
 }

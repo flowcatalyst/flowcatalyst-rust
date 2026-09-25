@@ -40,6 +40,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 pub mod auth;
 pub(crate) mod config;
+pub use config::ConfigReloader;
 pub(crate) mod dashboard;
 pub(crate) mod group_monitoring;
 pub(crate) mod health;
@@ -77,6 +78,10 @@ pub struct AppState {
     /// Cached SQS broker stats — refreshed every 60s by background task,
     /// or on demand via POST /monitoring/broker-stats/refresh.
     pub cached_broker_stats: Arc<CachedBrokerStats>,
+    /// Re-fetches and applies the config from its source for
+    /// `POST /config/reload` (Go: `ConfigReloader`). `None` when the router
+    /// has no config source.
+    pub config_reloader: Option<Arc<dyn config::ConfigReloader>>,
 }
 
 /// Cumulative per-queue counters captured at a point in time; used to compute
@@ -288,9 +293,8 @@ impl CachedBrokerStats {
         monitoring::MonitoringResponse,
         warnings::WarningsQuery,
         mutations::PoolConfigUpdateRequest,
-        config::ConfigReloadRequest,
-        config::PoolConfigRequest,
         config::ConfigReloadResponse,
+        config::ConfigReloadError,
         monitoring::QueueMetricsResponse,
         model::PublishMessageRequest,
         model::PublishMessageResponse,
@@ -352,6 +356,8 @@ pub struct RouterOptions {
     pub auth_state: Option<AuthState>,
     /// Additionally nest the whole route tree under this path prefix.
     pub router_http_prefix: Option<String>,
+    /// Config source behind `POST /config/reload`.
+    pub config_reloader: Option<Arc<dyn config::ConfigReloader>>,
 }
 
 impl Default for RouterOptions {
@@ -364,6 +370,7 @@ impl Default for RouterOptions {
             metrics_handle: None,
             auth_state: None,
             router_http_prefix: None,
+            config_reloader: None,
         }
     }
 }
@@ -426,6 +433,7 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         metrics_handle,
         auth_state,
         router_http_prefix,
+        config_reloader,
     } = options;
     let cached_broker_stats = Arc::new(CachedBrokerStats::new(queue_manager.clone()));
 
@@ -461,6 +469,7 @@ pub fn create_router_with_options(deps: RouterDeps, options: RouterOptions) -> R
         traffic_strategy,
         metrics_handle,
         cached_broker_stats,
+        config_reloader,
     };
 
     // Public routes — no authentication required

@@ -47,7 +47,7 @@ use tracing::{debug, info, warn};
 #[cfg(feature = "oidc-flow")]
 use crate::api::oidc_flow::{PendingOidcStateStore, SessionStore};
 use crate::circuit_breaker_registry::CircuitBreakerRegistry;
-use crate::config_sync::{spawn_config_sync_task, ConfigSyncService};
+use crate::config_sync::ConfigSyncService;
 use crate::health::HealthService;
 use crate::manager::QueueManager;
 use crate::standby::{spawn_leadership_monitor, StandbyAwareProcessor};
@@ -389,12 +389,15 @@ impl LifecycleManager {
         // Start the base lifecycle manager
         let mut lifecycle = Self::start(manager, warning_service, health_service, config);
 
-        // Start config sync task if provided and enabled
+        // Start the config watcher if provided and enabled (Go: `Watch`):
+        // it retries until a configuration lands, then polls on the sync
+        // interval. A config already applied by the caller hashes the same,
+        // so its first pass is a no-op.
         if let Some(ref sync_service) = config_sync {
             if sync_service.is_enabled() {
                 info!("Starting configuration sync background task");
                 let handle =
-                    spawn_config_sync_task(sync_service.clone(), lifecycle.shutdown.child_token());
+                    tokio::spawn(sync_service.clone().run(lifecycle.shutdown.child_token()));
                 lifecycle.tasks.push(handle);
             }
         }

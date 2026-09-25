@@ -206,6 +206,9 @@ pub struct ConfigSyncService {
     /// the moment the source recovers. Absence of an entry means the source
     /// is currently healthy (or has never been warned about).
     source_warnings: parking_lot::Mutex<HashMap<String, String>>,
+    /// The active "config sync failed" warning, if any — one per failure
+    /// streak (Go: `watchWarnID`).
+    watch_warning: parking_lot::Mutex<Option<String>>,
 }
 
 impl ConfigSyncService {
@@ -227,6 +230,7 @@ impl ConfigSyncService {
             last_config_hash: parking_lot::Mutex::new(None),
             source_cache: parking_lot::Mutex::new(HashMap::new()),
             source_warnings: parking_lot::Mutex::new(HashMap::new()),
+            watch_warning: parking_lot::Mutex::new(None),
         }
     }
 
@@ -481,48 +485,20 @@ impl ConfigSyncService {
         hasher.finish()
     }
 
-    /// Sync configuration - fetch and apply if changed
-    pub async fn sync(&self) -> ConfigSyncResult {
-        // Fetch new config
-        let new_config = match self.fetch_config().await {
-            Ok(config) => config,
-            Err(e) => {
-                // Java: periodic sync failure → CONFIG_SYNC_FAILED WARN (not CRITICAL/ERROR)
-                // continues processing with existing configuration
-                self.warning_service.add_warning(
-                    fc_common::WarningCategory::Configuration,
-                    fc_common::WarningSeverity::Warn,
-                    format!("Config sync failed: {}", e),
-                    "ConfigSyncService".to_string(),
-                );
-                return ConfigSyncResult {
-                    success: false,
-                    pools_updated: 0,
-                    pools_created: 0,
-                    pools_removed: 0,
-                    error: Some(e.to_string()),
-                };
-            }
-        };
-
-        // Check if config has changed
+    /// Fetch the config and apply it if it changed (Go: one `apply` of
+    /// `Watch`, and `Server.Reload`). `Ok(true)` when a changed config was
+    /// applied, `Ok(false)` when it matched the last applied one.
+    ///
+    /// A config the manager fails to apply (a consumer could not be built,
+    /// the manager is shutting down) is NOT recorded as applied — the change
+    /// baseline is forgotten, as Go's `forgetLast` does — so the next sync
+    /// applies it again instead of reporting "unchanged" for ever.
+    pub async fn apply_latest(&self) -> Result<bool, ConfigSyncError> {
+        let new_config = self.fetch_config().await?;
         let new_hash = Self::compute_config_hash(&new_config);
-
-        // Check hash with lock held briefly
-        let config_changed = {
-            let last_hash = self.last_config_hash.lock();
-            Some(new_hash) != *last_hash
-        };
-
-        if !config_changed {
+        if *self.last_config_hash.lock() == Some(new_hash) {
             debug!("Configuration unchanged, skipping reload");
-            return ConfigSyncResult {
-                success: true,
-                pools_updated: 0,
-                pools_created: 0,
-                pools_removed: 0,
-                error: None,
-            };
+            return Ok(false);
         }
 
         info!(
@@ -530,13 +506,9 @@ impl ConfigSyncService {
             queues = new_config.queues.len(),
             "Configuration changed, applying updates"
         );
-
-        // Apply config changes (lock is not held here)
         match self.queue_manager.reload_config(new_config).await {
             Ok(true) => {
-                // Update the hash after successful reload
                 *self.last_config_hash.lock() = Some(new_hash);
-
                 // Java: QueueValidationService — validate consumer connectivity after config sync
                 if !self.queue_manager.check_broker_connectivity().await {
                     self.warning_service.add_warning(
@@ -546,8 +518,29 @@ impl ConfigSyncService {
                         "ConfigSyncService".to_string(),
                     );
                 }
+                Ok(true)
+            }
+            Ok(false) => {
+                *self.last_config_hash.lock() = None;
+                Err(ConfigSyncError::Apply(
+                    "the queue manager is shutting down".to_string(),
+                ))
+            }
+            Err(e) => {
+                *self.last_config_hash.lock() = None;
+                Err(ConfigSyncError::Apply(e.to_string()))
+            }
+        }
+    }
 
-                info!("Configuration sync completed successfully");
+    /// Sync configuration - fetch and apply if changed. On failure the
+    /// existing configuration keeps running and one CONFIGURATION warning
+    /// is raised per failure streak (Go: `raiseWatchWarning`), resolved on
+    /// the next successful sync — not one warning per tick.
+    pub async fn sync(&self) -> ConfigSyncResult {
+        match self.apply_latest().await {
+            Ok(_) => {
+                self.clear_watch_warning();
                 ConfigSyncResult {
                     success: true,
                     pools_updated: 0,
@@ -556,25 +549,9 @@ impl ConfigSyncService {
                     error: None,
                 }
             }
-            Ok(false) => {
-                warn!("Configuration reload returned false (shutting down?)");
-                ConfigSyncResult {
-                    success: false,
-                    pools_updated: 0,
-                    pools_created: 0,
-                    pools_removed: 0,
-                    error: Some("Reload returned false".to_string()),
-                }
-            }
             Err(e) => {
-                error!(error = %e, "Failed to apply configuration");
-                // Java: periodic sync failure → CONFIG_SYNC_FAILED WARN
-                self.warning_service.add_warning(
-                    fc_common::WarningCategory::Configuration,
-                    fc_common::WarningSeverity::Warn,
-                    format!("Config reload failed: {}", e),
-                    "ConfigSyncService".to_string(),
-                );
+                error!(error = %e, "Configuration sync failed; the current configuration keeps running");
+                self.raise_watch_warning(format!("Config sync failed: {}", e));
                 ConfigSyncResult {
                     success: false,
                     pools_updated: 0,
@@ -586,15 +563,30 @@ impl ConfigSyncService {
         }
     }
 
-    /// Perform initial sync (blocks until successful or fails)
-    /// Returns the fetched RouterConfig on success so consumers can be created from queue URLs
+    fn raise_watch_warning(&self, message: String) {
+        let mut id = self.watch_warning.lock();
+        if id.is_none() {
+            *id = Some(self.warning_service.add_warning(
+                WarningCategory::Configuration,
+                WarningSeverity::Warn,
+                message,
+                "ConfigSyncService".to_string(),
+            ));
+        }
+    }
+
+    fn clear_watch_warning(&self) {
+        if let Some(id) = self.watch_warning.lock().take() {
+            self.warning_service.acknowledge_warning(&id);
+        }
+    }
+
+    /// Perform one initial fetch-and-apply. Kept for callers that manage
+    /// their own retry; the router binary uses [`Self::run`], which retries
+    /// until a configuration lands.
     pub async fn initial_sync(&self) -> Result<RouterConfig, ConfigSyncError> {
         info!("Performing initial configuration sync...");
-
-        // Fetch config first
         let config = self.fetch_config().await?;
-
-        // Apply to queue manager
         if let Err(e) = self.queue_manager.reload_config(config.clone()).await {
             let error = ConfigSyncError::Apply(e.to_string());
             if self.config.fail_on_initial_sync_error {
@@ -603,18 +595,67 @@ impl ConfigSyncService {
                 warn!("{}", error);
             }
         }
-
-        // Update hash
-        let new_hash = Self::compute_config_hash(&config);
-        *self.last_config_hash.lock() = Some(new_hash);
-
+        *self.last_config_hash.lock() = Some(Self::compute_config_hash(&config));
         info!(
             pools = config.processing_pools.len(),
             queues = config.queues.len(),
             "Initial configuration sync completed successfully"
         );
-
         Ok(config)
+    }
+
+    /// Go's `Watch`: apply the configuration, retrying at the retry cadence
+    /// (`retry_delay`, 5s) until one lands — however long the config source
+    /// is down at boot — and only then poll every `sync_interval`. A router
+    /// that boots while its platform is down therefore keeps running (HTTP
+    /// up, health answering) and picks the config up the moment the source
+    /// recovers, instead of exiting after one fetch's retry budget. Returns
+    /// when `shutdown` is cancelled.
+    pub async fn run(self: Arc<Self>, shutdown: CancellationToken) {
+        let retry = if self.config.retry_delay.is_zero() {
+            Duration::from_secs(5)
+        } else {
+            self.config.retry_delay
+        };
+        let mut failures = 0u32;
+        loop {
+            match self.apply_latest().await {
+                Ok(_) => {
+                    self.clear_watch_warning();
+                    info!(failed_attempts = failures, "Router configuration applied");
+                    break;
+                }
+                Err(e) => {
+                    if failures == 0 {
+                        warn!(error = %e, "Initial configuration not applied yet; retrying");
+                    }
+                    failures += 1;
+                    self.raise_watch_warning(format!("Config sync failed: {}", e));
+                }
+            }
+            tokio::select! {
+                _ = shutdown.cancelled() => return,
+                _ = tokio::time::sleep(retry) => {}
+            }
+        }
+
+        let mut ticker = tokio::time::interval(self.config.sync_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await; // the first tick fires immediately
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let result = self.sync().await;
+                    if !result.success {
+                        warn!(error = ?result.error, "Scheduled config sync failed - continuing with existing config");
+                    }
+                }
+                _ = shutdown.cancelled() => {
+                    info!("Config sync task shutting down");
+                    return;
+                }
+            }
+        }
     }
 
     /// Get the sync interval
