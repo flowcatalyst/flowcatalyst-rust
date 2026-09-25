@@ -26,7 +26,7 @@ use serde_json::json;
 
 use super::entity::MethodType;
 use super::login_api::{coded, decode, email_of, enroll_error, unauthorized, TwoFactorLogin};
-use crate::shared::middleware::Authenticated;
+use crate::shared::middleware::OptionalAuth;
 use crate::Principal;
 
 /// The menu when a domain doesn't restrict methods.
@@ -34,9 +34,13 @@ const ALL_METHODS: [&str; 2] = ["TOTP", "EMAIL_PIN"];
 
 async fn principal_from_session(
     s: &TwoFactorLogin,
-    auth: &Authenticated,
+    auth: &OptionalAuth,
 ) -> Result<Principal, Box<Response>> {
-    match s.principal_repo.find_by_id(&auth.0.principal_id).await {
+    // No or stale credential: Go's handler answers its own 401.
+    let Some(ctx) = auth.0.as_ref() else {
+        return Err(Box::new(unauthorized("Not authenticated")));
+    };
+    match s.principal_repo.find_by_id(&ctx.principal_id).await {
         Ok(Some(p)) if p.active => Ok(p),
         _ => Err(Box::new(unauthorized("Not authenticated"))),
     }
@@ -62,7 +66,7 @@ struct StatusResponse {
 }
 
 /// `GET /auth/2fa/status`.
-async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) -> Response {
+async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -97,7 +101,7 @@ async fn status(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) -> Re
 }
 
 /// `POST /auth/2fa/methods/totp/begin`.
-async fn totp_begin(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) -> Response {
+async fn totp_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -130,7 +134,7 @@ struct CodeRequest {
 /// comes back (empty when the user already had codes).
 async fn totp_confirm(
     State(s): State<Arc<TwoFactorLogin>>,
-    auth: Authenticated,
+    auth: OptionalAuth,
     body: Bytes,
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
@@ -158,7 +162,7 @@ async fn totp_confirm(
 }
 
 /// `POST /auth/2fa/methods/email/begin`.
-async fn email_begin(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) -> Response {
+async fn email_begin(State(s): State<Arc<TwoFactorLogin>>, auth: OptionalAuth) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -191,7 +195,7 @@ async fn email_begin(State(s): State<Arc<TwoFactorLogin>>, auth: Authenticated) 
 /// `POST /auth/2fa/methods/email/confirm`.
 async fn email_confirm(
     State(s): State<Arc<TwoFactorLogin>>,
-    auth: Authenticated,
+    auth: OptionalAuth,
     body: Bytes,
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
@@ -230,7 +234,7 @@ async fn email_confirm(
 /// can't remove their last confirmed factor.
 async fn remove_method(
     State(s): State<Arc<TwoFactorLogin>>,
-    auth: Authenticated,
+    auth: OptionalAuth,
     Path(method): Path<String>,
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
@@ -277,7 +281,7 @@ async fn remove_method(
 /// users.
 async fn regenerate_recovery_codes(
     State(s): State<Arc<TwoFactorLogin>>,
-    auth: Authenticated,
+    auth: OptionalAuth,
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
@@ -312,7 +316,7 @@ async fn regenerate_recovery_codes(
 /// `GET /auth/2fa/trusted-devices`.
 async fn list_trusted_devices(
     State(s): State<Arc<TwoFactorLogin>>,
-    auth: Authenticated,
+    auth: OptionalAuth,
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
@@ -327,7 +331,7 @@ async fn list_trusted_devices(
 /// `DELETE /auth/2fa/trusted-devices/{id}` (only the caller's own).
 async fn revoke_trusted_device(
     State(s): State<Arc<TwoFactorLogin>>,
-    auth: Authenticated,
+    auth: OptionalAuth,
     Path(id): Path<String>,
 ) -> Response {
     let p = match principal_from_session(&s, &auth).await {

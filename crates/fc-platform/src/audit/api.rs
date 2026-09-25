@@ -243,6 +243,7 @@ pub async fn get_entity_types(
     auth: Authenticated,
 ) -> Result<Json<EntityTypesResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_audit_logs(&auth.0)?;
 
     let entity_types = state.audit_log_repo.find_distinct_entity_types().await?;
 
@@ -265,6 +266,7 @@ pub async fn get_operations(
     auth: Authenticated,
 ) -> Result<Json<OperationsResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_audit_logs(&auth.0)?;
 
     let operations = state.audit_log_repo.find_distinct_operations().await?;
 
@@ -292,6 +294,7 @@ pub async fn get_audit_log(
     Path(id): Path<String>,
 ) -> Result<Json<AuditLogDetailResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_audit_logs(&auth.0)?;
 
     let mut log = state
         .audit_log_repo
@@ -324,6 +327,7 @@ pub async fn list_audit_logs(
     use crate::shared::api_common::{decode_cursor, encode_cursor};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_audit_logs(&auth.0)?;
 
     let size = query.page_size.clamp(1, 200) as usize;
     let cursor = match query.after.as_deref() {
@@ -385,6 +389,7 @@ pub async fn get_entity_audit_logs(
     Path((entity_type, entity_id)): Path<(String, String)>,
 ) -> Result<Json<EntityAuditLogsResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_audit_logs(&auth.0)?;
 
     let mut logs = state
         .audit_log_repo
@@ -423,7 +428,9 @@ pub async fn get_principal_audit_logs(
     auth: Authenticated,
     Path(principal_id): Path<String>,
 ) -> Result<Json<Vec<AuditLogResponse>>, PlatformError> {
-    // Allow principals to view their own audit logs
+    // Go asks the audit-log read permission here too; reach stays anchor
+    // unless the principal reads its own trail.
+    crate::checks::can_read_audit_logs(&auth.0)?;
     if !auth.0.is_anchor() && auth.0.principal_id != principal_id {
         return Err(PlatformError::forbidden(
             "Cannot view other principal's audit logs",
@@ -458,6 +465,7 @@ pub async fn get_recent_audit_logs(
     auth: Authenticated,
 ) -> Result<Json<Vec<AuditLogResponse>>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_audit_logs(&auth.0)?;
 
     let mut logs = state.audit_log_repo.find_recent(100).await?;
 
@@ -484,6 +492,7 @@ pub async fn get_application_ids(
     auth: Authenticated,
 ) -> Result<Json<ApplicationIdsResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_audit_logs(&auth.0)?;
 
     let application_ids = state.audit_log_repo.find_distinct_application_ids().await?;
 
@@ -506,6 +515,7 @@ pub async fn get_client_ids(
     auth: Authenticated,
 ) -> Result<Json<ClientIdsResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_audit_logs(&auth.0)?;
 
     let client_ids = state.audit_log_repo.find_distinct_client_ids().await?;
 

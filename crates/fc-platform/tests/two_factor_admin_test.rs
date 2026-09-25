@@ -76,7 +76,7 @@ async fn an_administrator_resets_a_users_two_factor() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "NOT_USER");
+    assert_eq!(body["error"], "NOT_USER");
 
     let resp = app
         .post(
@@ -174,7 +174,7 @@ async fn a_client_administrator_decides_lost_device_resets() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "ALREADY_DECIDED");
+    assert_eq!(body["error"], "ALREADY_DECIDED");
     let (status, body) = read_json(
         app.post(
             "/api/reset-approvals/rar_0000000000002/deny",

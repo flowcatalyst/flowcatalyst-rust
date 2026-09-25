@@ -205,6 +205,21 @@ impl EmailDomainMappingRepository {
         }
     }
 
+    /// Whether `domain` is federated: mapped to an OIDC (external) identity
+    /// provider. A mapping to an INTERNAL provider — the one Go's `fcdev
+    /// init` creates for the anchor domain — is not federated.
+    pub async fn is_federated_domain(&self, domain: &str) -> Result<bool> {
+        let (federated,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM tnt_email_domain_mappings m \
+             JOIN oauth_identity_providers p ON p.id = m.identity_provider_id \
+             WHERE m.email_domain = $1 AND p.type = 'OIDC')",
+        )
+        .bind(domain)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(federated)
+    }
+
     pub async fn find_all(&self) -> Result<Vec<EmailDomainMapping>> {
         let rows = sqlx::query_as::<_, EmailDomainMappingRow>(
             "SELECT * FROM tnt_email_domain_mappings ORDER BY email_domain",

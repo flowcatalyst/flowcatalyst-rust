@@ -31,6 +31,7 @@ struct OAuthClientRow {
     pkce_required: bool,
     service_account_principal_id: Option<String>,
     active: bool,
+    api_access: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     portal_client_id: Option<String>,
@@ -69,6 +70,7 @@ impl TryFrom<OAuthClientRow> for OAuthClient {
             allowed_origins: vec![], // loaded separately
             service_account_principal_id: r.service_account_principal_id,
             active: r.active,
+            api_access: r.api_access,
             created_at: r.created_at,
             updated_at: r.updated_at,
             created_by: None,

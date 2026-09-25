@@ -686,6 +686,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_OAUTH,
                 oauth_router(self.oauth)
+                    .layer(axum::middleware::map_response(
+                        crate::auth::oauth_api::oauth_errors_no_store,
+                    ))
                     .layer(distributed_oauth_token_layer)
                     .layer(oauth_layer.clone()),
             )
@@ -802,6 +805,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 }),
             );
 
+        // Extractor rejections (unreadable body, query or path) answer in
+        // Go's envelope: 400 `VALIDATION`, or `invalid_request` on /oauth.
+        let app = app.layer(axum::middleware::from_fn(
+            crate::shared::rejection::go_rejections,
+        ));
+
         // SPA serving (if static_dir is configured). No static_dir: no root
         // handler. The binary can add its own (fc-dev uses embedded assets,
         // fc-server/fc-platform-server may redirect to Swagger).
@@ -809,6 +818,13 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             Some(ref static_dir) => serve_spa(app, static_dir),
             None => app,
         };
+
+        // A USER with no platform role reaches only its own profile (Go
+        // `ProfileOnlyWithoutRole`). Runs inside the binaries' `AuthLayer`,
+        // which installs the auth services it authenticates with.
+        let app = app.layer(axum::middleware::from_fn(
+            crate::shared::profile_only::profile_only_without_role,
+        ));
 
         (app, openapi)
     }

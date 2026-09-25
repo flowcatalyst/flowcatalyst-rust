@@ -123,6 +123,7 @@ pub async fn create_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_connections(&auth.0)?;
 
     let cmd = CreateConnectionCommand {
         code: req.code,
@@ -161,9 +162,11 @@ pub async fn create_connection(
 )]
 pub async fn list_connections(
     State(state): State<ConnectionsState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Query(query): Query<ConnectionsQuery>,
 ) -> Result<Json<ConnectionsListResponse>, PlatformError> {
+    crate::checks::can_read_connections(&auth.0)?;
+
     let connections = state
         .connection_repo
         .find_with_filters(
@@ -172,6 +175,16 @@ pub async fn list_connections(
             query.service_account_id.as_deref(),
         )
         .await?;
+    // Go `FilterClientScoped`: platform connections to every holder of the
+    // read permission, a client's only to callers reaching that client.
+    let connections: Vec<_> = connections
+        .into_iter()
+        .filter(|c| {
+            c.client_id
+                .as_deref()
+                .is_none_or(|cid| crate::shared::caller_reach::reaches_client(&auth.0, cid))
+        })
+        .collect();
     let total = connections.len();
     Ok(Json(ConnectionsListResponse {
         connections: connections.into_iter().map(|c| c.into()).collect(),
@@ -196,14 +209,21 @@ pub async fn list_connections(
 )]
 pub async fn get_connection(
     State(state): State<ConnectionsState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ConnectionResponse>, PlatformError> {
+    crate::checks::can_read_connections(&auth.0)?;
+
     let conn = state
         .connection_repo
         .find_by_id(&id)
         .await?
         .or_not_found("Connection", &id)?;
+    if let Some(cid) = conn.client_id.as_deref() {
+        if !crate::shared::caller_reach::reaches_client(&auth.0, cid) {
+            return Err(PlatformError::forbidden("No access to this connection"));
+        }
+    }
     Ok(Json(conn.into()))
 }
 
@@ -233,6 +253,7 @@ pub async fn update_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_connections(&auth.0)?;
 
     let cmd = UpdateConnectionCommand {
         connection_id: id,
@@ -273,6 +294,7 @@ pub async fn delete_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_connections(&auth.0)?;
 
     let cmd = DeleteConnectionCommand { connection_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -304,6 +326,7 @@ pub async fn pause_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_connections(&auth.0)?;
 
     let cmd = UpdateConnectionCommand {
         connection_id: id.clone(),
@@ -347,6 +370,7 @@ pub async fn activate_connection(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_connections(&auth.0)?;
 
     let cmd = UpdateConnectionCommand {
         connection_id: id.clone(),

@@ -675,7 +675,10 @@ fn user_admin_token(app: &TestApp, principal: &Principal) -> String {
     app.auth_service
         .generate_access_token_with_scope(
             principal,
-            &[fc_platform::role::entity::permissions::iam::USER_UPDATE.to_string()],
+            &[
+                fc_platform::role::entity::permissions::iam::USER_UPDATE.to_string(),
+                fc_platform::role::entity::permissions::iam::USER_READ.to_string(),
+            ],
             None,
         )
         .expect("token")

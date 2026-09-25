@@ -188,11 +188,16 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
     (router, auth_service)
 }
 
-/// Create an anchor-scoped principal and generate an access token for it.
+/// An anchor-scoped principal granted the client read permission (Go's
+/// `anchorWith(platform:admin:client:view)` on the client reads).
 fn generate_anchor_token(auth_service: &AuthService) -> String {
     let principal = Principal::new_user("admin@flowcatalyst.local", UserScope::Anchor);
     auth_service
-        .generate_access_token(&principal)
+        .generate_access_token_with_scope(
+            &principal,
+            &[fc_platform::permissions::admin::CLIENT_READ.to_string()],
+            None,
+        )
         .expect("Failed to generate access token")
 }
 
@@ -385,10 +390,11 @@ async fn test_unauthorized_request() {
         .unwrap();
 
     let status = response.status();
+    // No credential: Go's 403 `UNAUTHENTICATED`.
     assert_eq!(
         status.as_u16(),
-        401,
-        "Expected 401 Unauthorized, got {}",
+        403,
+        "Expected 403 UNAUTHENTICATED, got {}",
         status
     );
 }
@@ -485,7 +491,7 @@ async fn test_batch_events_exceeds_limit() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(status.as_u16(), 400, "{json}");
-    assert_eq!(json["code"], "BATCH_TOO_LARGE", "{json}");
+    assert_eq!(json["error"], "BATCH_TOO_LARGE", "{json}");
 }
 
 #[tokio::test]

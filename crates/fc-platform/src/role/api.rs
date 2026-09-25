@@ -261,9 +261,11 @@ pub async fn create_role(
 )]
 pub async fn get_role(
     State(state): State<RolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(role_name): Path<String>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
+    crate::checks::can_read_roles(&auth.0)?;
+
     // Try by name first if it looks like a role name (contains ":")
     let role = if role_name.contains(':') {
         state.role_repo.find_by_name(&role_name).await?
@@ -293,9 +295,11 @@ pub async fn get_role(
 )]
 pub async fn get_role_by_code(
     State(state): State<RolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<RoleResponse>, PlatformError> {
+    crate::checks::can_read_roles(&auth.0)?;
+
     let role = state
         .role_repo
         .find_by_name(&code)
@@ -319,9 +323,11 @@ pub async fn get_role_by_code(
 )]
 pub async fn list_roles(
     State(state): State<RolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Query(query): Query<RolesQuery>,
 ) -> Result<Json<RoleListResponse>, PlatformError> {
+    crate::checks::can_read_roles(&auth.0)?;
+
     let source: Option<RoleSource> = crate::shared::enum_str::parse_opt(query.source.as_deref())?;
 
     let roles = state
@@ -581,8 +587,10 @@ pub async fn delete_role(
 )]
 pub async fn get_filter_applications(
     State(state): State<RolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
 ) -> Result<Json<ApplicationOptionsResponse>, PlatformError> {
+    crate::checks::can_read_roles(&auth.0)?;
+
     let apps = state.application_repo.find_active().await?;
     let options = apps
         .into_iter()
@@ -608,8 +616,10 @@ pub async fn get_filter_applications(
     security(("bearer_auth" = []))
 )]
 pub async fn list_permissions(
-    _auth: Authenticated,
+    auth: Authenticated,
 ) -> Result<Json<PermissionListResponse>, PlatformError> {
+    crate::checks::can_read_roles(&auth.0)?;
+
     // Return built-in platform permissions
     let permissions = get_builtin_permissions();
     let total = permissions.len();
@@ -632,9 +642,11 @@ pub async fn list_permissions(
     security(("bearer_auth" = []))
 )]
 pub async fn get_permission(
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(permission): Path<String>,
 ) -> Result<Json<PermissionResponse>, PlatformError> {
+    crate::checks::can_read_roles(&auth.0)?;
+
     let permissions = get_builtin_permissions();
     let found = permissions
         .into_iter()
@@ -661,9 +673,11 @@ pub async fn get_permission(
 )]
 pub async fn get_roles_by_source(
     State(state): State<RolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(source): Path<String>,
 ) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
+    crate::checks::can_read_roles(&auth.0)?;
+
     let source: RoleSource = source.parse()?;
     let roles = state.role_repo.find_by_source(source).await?;
     let response: Vec<RoleResponse> = roles.into_iter().map(|r| r.into()).collect();
@@ -686,9 +700,11 @@ pub async fn get_roles_by_source(
 )]
 pub async fn get_roles_by_application_id(
     State(state): State<RolesState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(application_id): Path<String>,
 ) -> Result<Json<Vec<RoleResponse>>, PlatformError> {
+    crate::checks::can_read_roles(&auth.0)?;
+
     let roles = state
         .role_repo
         .find_by_application_id(&application_id)

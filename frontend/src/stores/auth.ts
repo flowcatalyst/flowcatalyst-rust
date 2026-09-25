@@ -1,6 +1,9 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 
+/** The principal's tenancy tier, as `/auth/me` reports it. */
+export type UserScope = "ANCHOR" | "PARTNER" | "CLIENT";
+
 export interface User {
 	id: string;
 	email: string;
@@ -19,6 +22,12 @@ export interface User {
 	 * its password: the SPA hides password self-service. Absent means false.
 	 */
 	ssoManaged?: boolean;
+	/**
+	 * The tenancy tier from `/auth/me`: anchor-only pages need `ANCHOR`.
+	 * Absent (`undefined`/`null`) from a backend that predates it; the SPA
+	 * then gates on permissions alone.
+	 */
+	scope?: UserScope | null;
 }
 
 export const useAuthStore = defineStore("auth", () => {

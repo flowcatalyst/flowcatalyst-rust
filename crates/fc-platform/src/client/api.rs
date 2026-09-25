@@ -260,6 +260,8 @@ pub async fn get_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientResponse>, PlatformError> {
+    crate::checks::can_read_clients(&auth.0)?;
+
     // Check access
     if !auth.0.is_anchor() && !auth.0.can_access_client(&id) {
         return Err(PlatformError::forbidden("No access to this client"));
@@ -303,6 +305,8 @@ pub async fn list_clients(
     auth: Authenticated,
     Query(query): Query<ClientsQuery>,
 ) -> Result<Json<ClientListResponse>, PlatformError> {
+    crate::checks::can_read_clients(&auth.0)?;
+
     let status = list_status_filter(query.status.as_deref())?;
     let clients = state.client_repo.list(status).await?;
 
@@ -555,6 +559,8 @@ pub async fn search_clients(
     auth: Authenticated,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<ClientListResponse>, PlatformError> {
+    crate::checks::can_read_clients(&auth.0)?;
+
     let search_term = query.q.or(query.query).unwrap_or_default();
 
     let clients = if search_term.is_empty() {
@@ -602,6 +608,8 @@ pub async fn get_client_by_identifier(
     auth: Authenticated,
     Path(identifier): Path<String>,
 ) -> Result<Json<ClientResponse>, PlatformError> {
+    crate::checks::can_read_clients(&auth.0)?;
+
     let client = state
         .client_repo
         .find_by_identifier(&identifier)

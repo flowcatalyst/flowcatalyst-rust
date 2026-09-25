@@ -257,7 +257,7 @@ async fn the_permission_catalogue_is_defined_and_deleted() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], "INVALID_PERMISSION");
+    assert_eq!(body["error"], "INVALID_PERMISSION");
 
     let (status, _) = read_json(
         app.post(
@@ -388,7 +388,7 @@ async fn a_service_account_token_is_minted_and_deactivation_stops_it() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], "SERVICE_ACCOUNT_INACTIVE");
+    assert_eq!(body["error"], "SERVICE_ACCOUNT_INACTIVE");
     assert_eq!(
         app.event_count_by_type("platform:iam:serviceaccount:deactivated")
             .await,
@@ -624,7 +624,7 @@ async fn config_properties_are_set_read_and_deleted_as_go() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], "INVALID_VALUE_TYPE");
+    assert_eq!(body["error"], "INVALID_VALUE_TYPE");
 
     let list = assert_status(
         app.get("/api/platform-config/parity-unregistered", &admin)
@@ -857,7 +857,7 @@ async fn email_domain_mappings_are_created_looked_up_and_moved_as_go() {
     ] {
         let (s, b) = read_json(app.post("/api/email-domain-mappings", &admin, body).await).await;
         assert_eq!(s, status, "{b}");
-        assert_eq!(b["code"], code);
+        assert_eq!(b["error"], code);
     }
 
     // Lookup: no auth needed; {found:false} when absent; 400 without a domain.
@@ -877,7 +877,7 @@ async fn email_domain_mappings_are_created_looked_up_and_moved_as_go() {
     assert_eq!(missing, json!({ "found": false }));
     let (s, b) = read_json(app.get_unauth("/api/email-domain-mappings/lookup").await).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
-    assert_eq!(b["code"], "DOMAIN_REQUIRED");
+    assert_eq!(b["error"], "DOMAIN_REQUIRED");
 
     // By domain: anchor + view permission.
     let got = assert_status(
@@ -1101,7 +1101,7 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
     ] {
         let (s, b) = read_json(app.post("/api/principals/bulk-import", &admin, body).await).await;
         assert_eq!(s, StatusCode::BAD_REQUEST);
-        assert_eq!(b["code"], code);
+        assert_eq!(b["error"], code);
     }
     let (s, b) = read_json(
         app.post(
@@ -1113,7 +1113,8 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
     )
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
-    assert_eq!(b["code"], "SCOPE_FORBIDDEN");
+    // A role-less caller reaches only its profile (Go ProfileOnlyWithoutRole).
+    assert_eq!(b["error"], "NO_PLATFORM_ROLE");
 
     // Version: the admin reads anyone's; a stranger's is a 404.
     let v = assert_status(
@@ -1205,7 +1206,7 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
         (
             json!({ "clientId": "clt_nope", "mode": "CHANGE_CLIENT" }),
             StatusCode::NOT_FOUND,
-            "CLIENT_NOT_FOUND",
+            "Client_NOT_FOUND",
         ),
     ] {
         let (s, b) = read_json(
@@ -1218,7 +1219,7 @@ async fn principals_are_bulk_imported_versioned_and_reassociated() {
         )
         .await;
         assert_eq!(s, status, "{b}");
-        assert_eq!(b["code"], code);
+        assert_eq!(b["error"], code);
     }
     let (s, _) = read_json(
         app.put(
@@ -1279,7 +1280,7 @@ async fn application_service_accounts_attach_and_client_configs_read() {
     );
     let (s, b) = read_json(app.post(&path, &admin, body).await).await;
     assert_eq!(s, StatusCode::CONFLICT);
-    assert_eq!(b["code"], "APPLICATION_HAS_SERVICE_ACCOUNT");
+    assert_eq!(b["error"], "APPLICATION_HAS_SERVICE_ACCOUNT");
     let (s, _) = read_json(
         app.post(
             &path,
@@ -1387,7 +1388,7 @@ async fn event_type_schemas_and_read_aliases_answer_as_go() {
         )
         .await;
         assert_eq!(s, status, "{r}");
-        assert_eq!(r["code"], code);
+        assert_eq!(r["error"], code);
     }
     let (s, _) = read_json(
         app.post(
@@ -1607,7 +1608,7 @@ async fn connections_and_processes_sync_as_go() {
     )
     .await;
     assert_eq!(s, StatusCode::CONFLICT, "{b}");
-    assert_eq!(b["code"], "CONNECTION_REFERENCED");
+    assert_eq!(b["error"], "CONNECTION_REFERENCED");
 
     for (body, code) in [
         (
@@ -1625,7 +1626,7 @@ async fn connections_and_processes_sync_as_go() {
     ] {
         let (s, b) = read_json(app.post(path, &admin, body).await).await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
-        assert_eq!(b["code"], code);
+        assert_eq!(b["error"], code);
     }
     let (s, _) = read_json(
         app.post(
@@ -1662,7 +1663,7 @@ async fn connections_and_processes_sync_as_go() {
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
-    assert_eq!(b["code"], "APPLICATION_SERVICE_ACCOUNT_REQUIRED");
+    assert_eq!(b["error"], "APPLICATION_SERVICE_ACCOUNT_REQUIRED");
 
     // Processes by body.
     let body = assert_status(
@@ -1751,7 +1752,7 @@ async fn documentation_is_synced_and_read_as_go() {
     ] {
         let (s, b) = read_json(app.post(path, &admin, json!({ "docs": docs })).await).await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
-        assert_eq!(b["code"], code);
+        assert_eq!(b["error"], code);
     }
     let (s, _) = read_json(
         app.post(path, &nobody_token(&app), json!({ "docs": [] }))
@@ -1838,7 +1839,7 @@ async fn dispatch_jobs_are_requeued_settled_and_signed_as_go() {
     )
     .await;
     assert_eq!(s, StatusCode::CONFLICT, "{b}");
-    assert_eq!(b["code"], "NOT_FAILED");
+    assert_eq!(b["error"], "NOT_FAILED");
     let body = assert_status(
         app.post(
             &format!("/bff/dispatch-jobs/{fid}/complete"),

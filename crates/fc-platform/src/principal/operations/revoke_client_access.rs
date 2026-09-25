@@ -117,7 +117,7 @@ impl<U: UnitOfWork> RevokeClientAccessUseCase<U> {
             .await
             .or_not_found(
                 "GRANT_NOT_FOUND",
-                "No access grant found for this user and client",
+                format!("Grant not found: {}:{}", command.user_id, command.client_id),
             )?;
 
         let event = ClientAccessRevoked::new(ctx, &command.user_id, &command.client_id);

@@ -30,7 +30,7 @@ use tracing::warn;
 
 use super::entity::MethodType;
 use super::login_api::{coded, decode, email_of, unauthorized, TwoFactorLogin};
-use crate::shared::middleware::Authenticated;
+use crate::shared::middleware::OptionalAuth;
 use crate::Principal;
 
 /// What the account routes need beyond the 2FA state.
@@ -42,12 +42,16 @@ pub struct AccountState {
 
 async fn principal_from_session(
     s: &AccountState,
-    auth: &Authenticated,
+    auth: &OptionalAuth,
 ) -> Result<Principal, Box<Response>> {
+    // No or stale credential: Go's handler answers its own 401.
+    let Some(ctx) = auth.0.as_ref() else {
+        return Err(Box::new(unauthorized("Not authenticated")));
+    };
     match s
         .two_factor
         .principal_repo
-        .find_by_id(&auth.0.principal_id)
+        .find_by_id(&ctx.principal_id)
         .await
     {
         Ok(Some(p)) if p.active => Ok(p),
@@ -91,7 +95,7 @@ async fn verify_any_second_factor(
 /// `POST /auth/change-password` (Go `handleChangePassword`).
 async fn change_password(
     State(s): State<Arc<AccountState>>,
-    auth: Authenticated,
+    auth: OptionalAuth,
     jar: CookieJar,
     body: Bytes,
 ) -> Response {
@@ -196,7 +200,7 @@ async fn change_password(
 }
 
 /// `POST /auth/change-password/send-email-code`.
-async fn send_email_code(State(s): State<Arc<AccountState>>, auth: Authenticated) -> Response {
+async fn send_email_code(State(s): State<Arc<AccountState>>, auth: OptionalAuth) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,
@@ -249,7 +253,7 @@ struct LoginHistoryItem {
 }
 
 /// `GET /auth/login-history` (Go `handleLoginHistory`).
-async fn login_history(State(s): State<Arc<AccountState>>, auth: Authenticated) -> Response {
+async fn login_history(State(s): State<Arc<AccountState>>, auth: OptionalAuth) -> Response {
     let p = match principal_from_session(&s, &auth).await {
         Ok(p) => p,
         Err(resp) => return *resp,

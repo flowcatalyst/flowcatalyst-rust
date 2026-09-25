@@ -3,27 +3,36 @@
 //! unauthenticated. Rust serves its own document (the one at `/q/openapi`,
 //! `/bff/*` stripped), serialised once at boot.
 
-use axum::{body::Bytes, http::header::CONTENT_TYPE, routing::get, Router};
+use axum::{
+    body::Bytes, extract::State, http::header::CONTENT_TYPE, response::IntoResponse, routing::get,
+    Router,
+};
+
+/// The document, serialised once.
+#[derive(Clone)]
+struct Specs {
+    json: Bytes,
+    yaml: Bytes,
+}
+
+async fn openapi_json(State(specs): State<Specs>) -> impl IntoResponse {
+    ([(CONTENT_TYPE, "application/json")], specs.json)
+}
+
+async fn openapi_yaml(State(specs): State<Specs>) -> impl IntoResponse {
+    ([(CONTENT_TYPE, "application/yaml")], specs.yaml)
+}
 
 /// The two spec routes for `openapi`.
 pub fn openapi_router(openapi: &utoipa::openapi::OpenApi) -> Router {
-    let json: Bytes = serde_json::to_vec(openapi)
-        .map(Bytes::from)
-        .unwrap_or_default();
-    let yaml: Bytes = openapi.to_yaml().map(Bytes::from).unwrap_or_default();
+    let specs = Specs {
+        json: serde_json::to_vec(openapi)
+            .map(Bytes::from)
+            .unwrap_or_default(),
+        yaml: openapi.to_yaml().map(Bytes::from).unwrap_or_default(),
+    };
     Router::new()
-        .route(
-            "/api/openapi.json",
-            get(move || {
-                let body = json.clone();
-                async move { ([(CONTENT_TYPE, "application/json")], body) }
-            }),
-        )
-        .route(
-            "/api/openapi.yaml",
-            get(move || {
-                let body = yaml.clone();
-                async move { ([(CONTENT_TYPE, "application/yaml")], body) }
-            }),
-        )
+        .route("/api/openapi.json", get(openapi_json))
+        .route("/api/openapi.yaml", get(openapi_yaml))
+        .with_state(specs)
 }

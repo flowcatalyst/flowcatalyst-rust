@@ -195,7 +195,7 @@ async fn set_password(app: &TestApp, invite_url: &str, password: &str) -> Value 
 #[ignore = "requires Docker"]
 async fn portal_users_admin_surface_follows_go() {
     let app = setup().await;
-    let anchor = app.anchor_token();
+    let anchor = app.anchor_admin_token().await;
     let client_id = client(&app, "portal-users").await;
     let other_client = client(&app, "portal-other").await;
 
@@ -211,7 +211,8 @@ async fn portal_users_admin_surface_follows_go() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body["error"], "PERMISSION_REQUIRED");
+    // A role-less user is stopped by Go's profile-only gate first.
+    assert_eq!(body["error"], "NO_PLATFORM_ROLE");
     let padmin = portal_admin_token(&app, &client_id).await;
     let (status, body) = ensure(
         &app,
@@ -236,7 +237,7 @@ async fn portal_users_admin_surface_follows_go() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["error"], "CLIENT_NOT_FOUND");
+    assert_eq!(body["error"], "Client_NOT_FOUND");
     let (status, body) = ensure(
         &app,
         &anchor,
@@ -392,7 +393,7 @@ async fn portal_users_admin_surface_follows_go() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["error"], "PORTAL_IDENTITY_NOT_FOUND");
+    assert_eq!(body["error"], "PortalIdentity_NOT_FOUND");
 
     // Delete, then again.
     let (status, _) = read_json(
@@ -420,7 +421,7 @@ async fn portal_users_admin_surface_follows_go() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["error"], "PORTAL_IDENTITY_NOT_FOUND");
+    assert_eq!(body["error"], "PortalIdentity_NOT_FOUND");
     assert_eq!(
         app.event_count_by_type("platform:portal:identity:deleted")
             .await,
@@ -432,7 +433,7 @@ async fn portal_users_admin_surface_follows_go() {
 #[ignore = "requires Docker"]
 async fn portal_apps_admin_surface_follows_go() {
     let app = setup().await;
-    let anchor = app.anchor_token();
+    let anchor = app.anchor_admin_token().await;
     let client_id = client(&app, "portal-apps").await;
     let padmin = portal_admin_token(&app, &client_id).await;
 
@@ -585,7 +586,7 @@ async fn portal_apps_admin_surface_follows_go() {
     .await;
     assert_eq!(
         (status, body["error"].as_str().unwrap()),
-        (StatusCode::NOT_FOUND, "PORTAL_APP_NOT_FOUND")
+        (StatusCode::NOT_FOUND, "PortalApp_NOT_FOUND")
     );
 
     // Grants and bulk assignment.
@@ -611,7 +612,7 @@ async fn portal_apps_admin_surface_follows_go() {
     .await;
     assert_eq!(
         (status, body["error"].as_str().unwrap()),
-        (StatusCode::NOT_FOUND, "PORTAL_APP_NOT_FOUND")
+        (StatusCode::NOT_FOUND, "PortalApp_NOT_FOUND")
     );
     let body = assert_status(
         app.get(
@@ -832,7 +833,7 @@ async fn portal_apps_admin_surface_follows_go() {
 #[ignore = "requires Docker"]
 async fn portal_password_login_issues_a_portal_code() {
     let app = setup().await;
-    let anchor = app.anchor_token();
+    let anchor = app.anchor_admin_token().await;
     let client_id = client(&app, "portal-login").await;
     let gate_a = create_app(&app, &anchor, &client_id, "gate-a", json!({})).await;
     let gate_b = create_app(&app, &anchor, &client_id, "gate-b", json!({})).await;
@@ -1168,7 +1169,7 @@ async fn portal_password_login_issues_a_portal_code() {
 #[ignore = "requires Docker"]
 async fn sso_owned_domains_route_to_their_idp() {
     let app = setup().await;
-    let anchor = app.anchor_token();
+    let anchor = app.anchor_admin_token().await;
     let client_id = client(&app, "portal-sso").await;
     let portal = create_app(&app, &anchor, &client_id, "sso-portal", json!({})).await;
     let oauth_client = portal["oauthClientId"].as_str().unwrap().to_string();
@@ -1307,7 +1308,7 @@ async fn portal_login_is_budgeted_per_client_and_email() {
     })
     .await;
     std::env::remove_var("FC_RL_PORTAL_LOGIN_PER_15MIN");
-    let anchor = app.anchor_token();
+    let anchor = app.anchor_admin_token().await;
     let client_id = client(&app, "portal-budget").await;
     let portal = create_app(&app, &anchor, &client_id, "budget", json!({})).await;
     let flow = authorize(
@@ -1448,7 +1449,7 @@ async fn oauth_clients_carry_the_portal_flags() {
     .await;
     assert_eq!(
         (status, body["error"].as_str().unwrap()),
-        (StatusCode::NOT_FOUND, "PORTAL_APP_NOT_FOUND")
+        (StatusCode::NOT_FOUND, "PortalApp_NOT_FOUND")
     );
 
     // Update: link, unlink, and clearing the portal owner clears the link.

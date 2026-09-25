@@ -6,35 +6,39 @@ existing behaviour, Java for functions, and owner rulings override both
 as they merge to `main`.
 
 ## Correctness gates (decisions #28, #29)
+Delivery harness run 3 (after merging scheduler, outbox, router, lifecycle, events, and the TSID fix): **12/17 PASS**.
+Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart` are in progress on `feat/delivery-fix`.
 - [x] Mediation conformance corpus: a Rust runner, all rows passing, and the deviations from Go listed in
       `docs/parity/router-deviations-from-go.md` (`feat/go-conformance`)
-- [ ] Delivery parity harness, Go vs Rust end to end over SQS: scenarios pass or are ruled
+- [x] Delivery parity harness, Go vs Rust end to end over SQS: scenarios pass or are ruled
       (`feat/harness-delivery`)
 - [x] API parity runner, Go vs Rust on Java's 45 scenario files, built (`harness/parity`); run 1 in
       `docs/parity/api-run-1.md`: 89 OK, 33 ruled, 870 DIFF, 371 ERROR
 - [ ] API parity converged: every diff fixed or ruled
 
 ## Message pipeline (`docs/reviews/message-pipeline-review-2026-09-25.md`)
-- [ ] Scheduler publishes to SQS; jobs are inserted PENDING; Go's claim/hold/backoff model; `/process`
+- [x] Scheduler publishes to SQS; jobs are inserted PENDING; Go's claim/hold/backoff model; `/process`
       authenticated, claimed, ACK semantics as Go; fan-out cache guard (`feat/go-scheduler`)
 - [x] Outbox: status after the outcome; atomic claim for every item type; retries and recovery as Go; SDK
       outbox dispatch jobs carry ids (`feat/go-outbox`)
 - [x] Router delivery semantics: in-pipeline deferred retry; group FIFO; panic slot leak (`feat/go-conformance`)
-- [ ] Router lifecycle: NATS defaults, config reload, shutdown order, consumer rebuild, watchdog, pool update
+- [x] Router lifecycle: NATS defaults, config reload, shutdown order, consumer rebuild, watchdog, pool update
       in place, reaper, leader timeouts, HTTP-before-leadership (`feat/go-router-life`)
 
 ## Platform contract
-- [ ] Domain event type names and `data` match Go (about 40 differ) (`feat/go-events`)
-- [ ] `aws-sm://` secret references resolved as Go; backfill skips references (`feat/go-events`)
-- [ ] Read endpoints enforce Go's read permissions (many only require a login today)
-- [ ] Route-auth guardrail: a convention test that every `/api` and `/bff` route authenticates unless
-      allowlisted
-- [ ] `/auth/me` returns effective permissions plus scope/tier; the SPA hides nav items the user can't use
-      (decision #8)
+- [x] Domain event type names and `data` match Go (about 40 differ) (`feat/go-events`)
+- [x] `aws-sm://` secret references resolved as Go; backfill skips references (`feat/go-events`)
+- [x] Read endpoints enforce Go's read permissions (many only require a login today) (`feat/go-authz`;
+      `docs/parity/read-permissions-vs-go.md`)
+- [x] Route-auth guardrail: a convention test that every `/api` and `/bff` route authenticates unless
+      allowlisted (`feat/go-authz`: `tests/route_auth_convention_test.rs`)
+- [x] `/auth/me` returns effective permissions plus scope/tier; the SPA hides nav items the user can't use
+      (decision #8) (`feat/go-authz`)
 - [ ] Missing Go routes: `connections/sync`, `docs/sync`, `POST /api/processes/sync`, `router-config`,
       `/auth/password-setup/request`, 2FA/TOTP, reset-2fa, developer credentials
-- [ ] Behaviour behind the `client-admin` and `portal-administrator` roles
-- [ ] Go's roleless-user "profile-only" middleware
+- [ ] Behaviour behind the `client-admin` (`feat/go-authz`) and `portal-administrator` (`feat/go-routes-portal`)
+      roles
+- [x] Go's roleless-user "profile-only" middleware (`feat/go-authz`)
 
 ## API convergence (from parity run 1)
 - [ ] Core (`feat/api-core`): `POST /api/principals`; Go's error envelope and codes; extractor rejections as

@@ -63,7 +63,7 @@ async fn a_domain_mapping_carries_its_two_factor_policy() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "INVALID_2FA_METHOD", "{body}");
+    assert_eq!(body["error"], "INVALID_2FA_METHOD", "{body}");
 
     let (status, body) = create_mapping(
         &app,
@@ -74,7 +74,7 @@ async fn a_domain_mapping_carries_its_two_factor_policy() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "2FA_METHOD_REQUIRED", "{body}");
+    assert_eq!(body["error"], "2FA_METHOD_REQUIRED", "{body}");
 
     let (status, body) = create_mapping(
         &app,
@@ -118,7 +118,7 @@ async fn a_domain_mapping_carries_its_two_factor_policy() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "2FA_METHOD_REQUIRED", "{body}");
+    assert_eq!(body["error"], "2FA_METHOD_REQUIRED", "{body}");
 
     let resp = app
         .put(
@@ -805,5 +805,5 @@ async fn an_sso_domain_closes_the_password_path() {
 
     let (status, body, _) = login(&app, "legacy@corp.test", None).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert_eq!(body["code"], "SSO_REQUIRED");
+    assert_eq!(body["error"], "SSO_REQUIRED");
 }

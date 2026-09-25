@@ -145,7 +145,11 @@ pub struct DomainCheckResponse {
 #[into_params(parameter_in = Query)]
 pub struct OidcLoginParams {
     /// Email domain to authenticate
-    pub domain: String,
+    #[serde(default)]
+    pub domain: Option<String>,
+    /// Legacy form: the email, whose domain is used (Go accepts it)
+    #[serde(default)]
+    pub email: Option<String>,
     /// URL to return to after login
     pub return_url: Option<String>,
     // OAuth flow chaining parameters
@@ -174,19 +178,20 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
-/// Error response carrying a machine-readable `code` beside the message.
+/// Error response in Go's envelope: the code in `error`, the text in
+/// `message` (shared/httperror `Envelope`).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CodedErrorResponse {
-    pub code: String,
     pub error: String,
+    pub message: String,
 }
 
-fn coded_error(status: StatusCode, code: &str, error: impl Into<String>) -> Response {
+fn coded_error(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
     (
         status,
         Json(CodedErrorResponse {
-            code: code.to_string(),
-            error: error.into(),
+            error: code.to_string(),
+            message: message.into(),
         }),
     )
         .into_response()
@@ -343,16 +348,30 @@ pub async fn oidc_login(
     uri: Uri,
     Query(params): Query<OidcLoginParams>,
 ) -> Response {
-    let domain = params.domain.trim().to_lowercase();
+    // Go `handleLogin` (auth/bridge/login_endpoint.go:298-315): `domain`,
+    // or the legacy `email`'s domain.
+    let domain = params
+        .domain
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            params
+                .email
+                .as_deref()
+                .and_then(|e| e.rsplit_once('@'))
+                .map(|(_, d)| d.trim().to_string())
+        })
+        .unwrap_or_default()
+        .to_lowercase();
 
     if domain.is_empty() {
-        return (
+        return coded_error(
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "domain parameter is required".to_string(),
-            }),
-        )
-            .into_response();
+            "DOMAIN_REQUIRED",
+            "domain or provider_id query param is required".to_string(),
+        );
     }
 
     // Look up email domain mapping
@@ -417,13 +436,11 @@ pub async fn oidc_login(
     };
 
     if idp.r#type != IdentityProviderType::Oidc {
-        return (
+        return coded_error(
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: format!("Domain {} uses internal authentication, not OIDC", domain),
-            }),
-        )
-            .into_response();
+            "OIDC_NOT_CONFIGURED",
+            "OIDC is not configured for this domain".to_string(),
+        );
     }
 
     if idp.oidc_issuer_url.is_none() || idp.oidc_client_id.is_none() {

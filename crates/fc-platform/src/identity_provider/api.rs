@@ -209,8 +209,10 @@ async fn create_identity_provider(
 )]
 async fn list_identity_providers(
     State(state): State<IdentityProvidersState>,
-    _auth: Authenticated,
+    auth: Authenticated,
 ) -> Result<Json<IdentityProvidersListResponse>, PlatformError> {
+    crate::checks::can_read_identity_providers(&auth.0)?;
+
     let idps = state.idp_repo.find_all().await?;
     let total = idps.len();
     Ok(Json(IdentityProvidersListResponse {
@@ -235,9 +237,11 @@ async fn list_identity_providers(
 )]
 async fn get_identity_provider(
     State(state): State<IdentityProvidersState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<IdentityProviderResponse>, PlatformError> {
+    crate::checks::can_read_identity_providers(&auth.0)?;
+
     let idp = state
         .idp_repo
         .find_by_id(&id)

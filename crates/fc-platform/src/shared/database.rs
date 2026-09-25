@@ -452,10 +452,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "042_password_reset_token_purpose",
             include_str!("../../../../migrations/042_password_reset_token_purpose.sql"),
         ),
-        // Go's 039: the self-service developer API credential.
+        // Go's 042: the OAuth client flag that makes an interactive login's
+        // access token authority-bearing (owner decisions #3/#20).
         (
-            "043_developer_api_credentials",
-            include_str!("../../../../migrations/043_developer_api_credentials.sql"),
+            "043_oauth_client_api_access",
+            include_str!("../../../../migrations/043_oauth_client_api_access.sql"),
         ),
         // Go's 032: the lost-device reset approval queue.
         (
@@ -484,6 +485,11 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
         (
             "051_app_docs",
             include_str!("../../../../migrations/051_app_docs.sql"),
+        ),
+        // Go's 039: the self-service developer API credential.
+        (
+            "052_developer_api_credentials",
+            include_str!("../../../../migrations/052_developer_api_credentials.sql"),
         ),
     ];
 
@@ -668,11 +674,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              AND EXISTS (SELECT 1 FROM pg_constraint \
              WHERE conname = 'chk_iam_password_reset_tokens_purpose')",
         ),
+        // A database Go migrated (its 042) already has the column.
         (
-            "043_developer_api_credentials",
+            "043_oauth_client_api_access",
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-             WHERE table_schema = 'public' AND table_name = 'iam_principals' \
-               AND column_name = 'dev_client_secret_updated_at')",
+             WHERE table_schema = 'public' AND table_name = 'oauth_clients' \
+               AND column_name = 'api_access')",
         ),
         (
             "044_reset_approval_requests",
@@ -714,6 +721,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "051_app_docs",
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
              WHERE table_schema = 'public' AND table_name = 'app_docs')",
+        ),
+        (
+            "052_developer_api_credentials",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_principals' \
+               AND column_name = 'dev_client_secret_updated_at')",
         ),
     ];
 

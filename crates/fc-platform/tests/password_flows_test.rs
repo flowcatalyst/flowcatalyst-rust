@@ -259,7 +259,7 @@ async fn a_confirmed_invite_signs_the_user_in() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "INVALID_TOKEN");
+    assert_eq!(body["error"], "INVALID_TOKEN");
 }
 
 /// A user with an authenticator must prove it to reset (Go `tryIssueToken`
@@ -309,7 +309,7 @@ async fn a_reset_for_an_authenticator_user_needs_a_current_code() {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert_eq!(body["code"], "INVALID_FACTOR");
+        assert_eq!(body["error"], "INVALID_FACTOR");
     }
     let code = totp_code(&secret, chrono::Utc::now().timestamp()).unwrap();
     let (status, body) = read_json(
@@ -337,7 +337,7 @@ async fn a_reset_for_an_authenticator_user_needs_a_current_code() {
         .await
         .1;
     }
-    assert_eq!(last["code"], "INVALID_TOKEN", "{last}");
+    assert_eq!(last["error"], "INVALID_TOKEN", "{last}");
     assert!(token_row(&app, &user.id).await.is_none(), "burned");
 }
 

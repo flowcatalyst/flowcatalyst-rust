@@ -109,7 +109,7 @@ async fn a_developer_mints_tokens_with_their_own_credential() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["code"], "NOT_A_DEVELOPER");
+    assert_eq!(body["error"], "NOT_A_DEVELOPER");
 
     let (status, token) = token_exchange(&app, &dev.id, &secret).await;
     assert_eq!(status, StatusCode::OK, "{token}");

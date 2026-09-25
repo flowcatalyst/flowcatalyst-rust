@@ -22,21 +22,24 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use crate::auth::login_backoff::{self, record_user_login_attempt, BackoffDecision, BackoffPolicy};
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::shared::error::PlatformError;
-use crate::shared::middleware::{Authenticated, ClientIp};
+use crate::shared::middleware::{ClientIp, OptionalAuth};
 use crate::AuthService;
 use crate::LoginOutcome;
 use crate::PasswordService;
 use crate::{EmailDomainMappingRepository, IdentityProviderRepository, LoginAttemptRepository};
 use crate::{PrincipalRepository, RefreshTokenRepository};
 
-/// Login request
-#[derive(Debug, Deserialize, ToSchema)]
+/// Login request. Absent members read as empty, as Go's decoder leaves
+/// them, and an empty email or password is an invalid-credentials 401.
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginRequest {
     /// Email address
+    #[serde(default)]
     pub email: String,
 
     /// Password
+    #[serde(default)]
     pub password: String,
 
     /// Remember me (extends session duration)
@@ -44,10 +47,12 @@ pub struct LoginRequest {
     pub remember_me: bool,
 }
 
-/// Login response
+/// Login response: Go's `loginResponse` (auth/login/endpoint.go:412-430).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginResponse {
+    /// `ok` for a completed login
+    pub status: String,
     /// Principal ID
     pub principal_id: String,
     /// Display name
@@ -56,9 +61,13 @@ pub struct LoginResponse {
     pub email: String,
     /// Assigned roles
     pub roles: Vec<String>,
-    /// Client ID (for CLIENT scope users)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Effective permissions (Go `buildPermissionList`: the roles'
+    /// permissions, then `*` when they include `platform:*:*:*`)
+    pub permissions: Vec<String>,
+    /// Home client ID; `null` when none
     pub client_id: Option<String>,
+    /// Whether the account signs in through a federated identity provider
+    pub sso_managed: bool,
 }
 
 /// Domain check request
@@ -101,35 +110,24 @@ pub enum AuthMethod {
     Saml,
 }
 
-/// Current user info response
+/// `GET /auth/me`: Go's `meResponse`, the login response shape
+/// (auth/login/endpoint.go:412-430, 656-694), field for field, plus the
+/// caller's tier.
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentUserResponse {
+    /// Always empty here; the login response carries `"ok"` (Go reuses the
+    /// login shape without setting it).
+    pub status: String,
+
     /// Principal ID
-    pub id: String,
-
-    /// Principal ID, under Go's name (`principalId`)
     pub principal_id: String,
-
-    /// Principal type (USER, SERVICE)
-    pub principal_type: String,
-
-    /// Email address
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
 
     /// Display name
     pub name: String,
 
-    /// User scope (ANCHOR, PARTNER, CLIENT)
-    pub scope: String,
-
-    /// Client ID (for CLIENT scope users)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-
-    /// Accessible client IDs
-    pub clients: Vec<String>,
+    /// Email address; empty for a principal without one
+    pub email: String,
 
     /// Assigned roles
     pub roles: Vec<String>,
@@ -137,14 +135,26 @@ pub struct CurrentUserResponse {
     /// Effective permissions: every permission the principal's roles grant,
     /// de-duplicated and sorted, then `"*"` when they include the
     /// super-admin `platform:*:*:*` (Go `buildPermissionList`,
-    /// auth/login/endpoint.go:437-450). The SPA gates pages on these.
-    pub permissions: Vec<String>,
+    /// auth/login/endpoint.go:437-450). `null` when there are none, as Go's
+    /// empty list serialises. The SPA gates pages on these.
+    #[schema(nullable)]
+    pub permissions: Option<Vec<String>>,
+
+    /// The principal's home client, `null` when it has none
+    #[schema(nullable)]
+    pub client_id: Option<String>,
 
     /// Whether the account signs in through a federated identity provider
     /// (a linked external identity, or an email domain mapped to an OIDC
     /// provider); the SPA hides password self-service for it (Go
     /// `ssoManaged`, auth/login/endpoint.go:616-634).
     pub sso_managed: bool,
+
+    /// The tenancy tier (`ANCHOR`, `PARTNER`, `CLIENT`), the JWT's `tier`.
+    /// Not in Go's body: added so the SPA can gate anchor-only pages (owner
+    /// decisions 2026-09-25, follow-up "/auth/me should include the
+    /// caller's scope/tier").
+    pub scope: String,
 }
 
 /// Auth service state
@@ -163,10 +173,9 @@ pub struct AuthState {
     /// `build_platform_routes` so all binaries share the same defaults.
     pub backoff_policy: Arc<BackoffPolicy>,
     pub session_cookie: SessionCookieConfig,
-    /// Two-factor sign-in (Go's login `MFA` + `MFATokens`). When set, a
-    /// user who owes a second factor gets `mfa_required` /
-    /// `enrollment_required` instead of a session, and a completed sign-in
-    /// answers Go's login body.
+    /// Two-factor sign-in (Go's login `MFA` + `MFATokens`). When set, a user
+    /// who owes a second factor gets `mfa_required` / `enrollment_required`
+    /// instead of a session.
     pub two_factor: Option<Arc<crate::mfa::TwoFactorLogin>>,
 }
 
@@ -189,132 +198,92 @@ pub async fn login(
     State(state): State<AuthState>,
     ClientIp(client_ip): ClientIp,
     jar: CookieJar,
-    Json(mut req): Json<LoginRequest>,
+    body: axum::body::Bytes,
 ) -> Result<axum::response::Response, PlatformError> {
+    // Go decodes the body itself (auth/login/endpoint.go:448-452): an
+    // unreadable body is 400 `INVALID_JSON`, absent members are empty.
+    let req: LoginRequest = serde_json::from_slice(&body)
+        .map_err(|e| PlatformError::bad_request_code("INVALID_JSON", e.to_string()))?;
+    // Lower-cased up front so the backoff identifier matches across
+    // attempts whatever the casing typed.
+    let email = req.email.trim().to_lowercase();
+    if email.is_empty() || req.password.is_empty() {
+        // Constant-shape error: which field is missing is not said.
+        return Err(PlatformError::session_unauthorized("Invalid credentials"));
+    }
     let ip = client_ip.as_deref();
-    // Lower-cased up front, as Go: emails are stored lower-case, and the
-    // backoff identifier must match across attempts whatever the casing.
-    req.email = req.email.trim().to_lowercase();
 
-    // Run the layered backoff check BEFORE lookup so the response timing /
-    // shape doesn't leak whether the email exists.
-    match login_backoff::check(
-        &state.login_attempt_repo,
-        &state.backoff_policy,
-        &req.email,
-        ip,
-    )
-    .await?
+    // Brute-force backoff: per-(email, IP) exponential delay plus a
+    // per-email ceiling, before credentials are evaluated.
+    if let BackoffDecision::Reject {
+        retry_after_secs, ..
+    } =
+        login_backoff::check(&state.login_attempt_repo, &state.backoff_policy, &email, ip).await?
     {
-        BackoffDecision::Allow => {}
-        BackoffDecision::Reject {
-            retry_after_secs, ..
-        } => {
-            return Ok(crate::mfa::login_api::too_many_requests(retry_after_secs));
-        }
+        return Err(PlatformError::login_backoff(retry_after_secs));
     }
 
-    // SSO enforcement (Go handleLogin, auth/login/endpoint.go:481-498): a
-    // domain mapped to an OIDC identity provider signs in there, and the
-    // password path is closed even for a user still carrying a hash from
-    // before the domain moved. The domain's method is public (check-domain),
-    // so the refusal says so.
-    if let Some((_, domain)) = req.email.split_once('@').filter(|(_, d)| !d.is_empty()) {
-        if let Ok(Some(mapping)) = state
-            .email_domain_mapping_repo
-            .find_by_email_domain(domain)
-            .await
-        {
-            if let Ok(Some(idp)) = state
-                .identity_provider_repo
-                .find_by_id(&mapping.identity_provider_id)
-                .await
-            {
-                if idp.r#type == IdentityProviderType::Oidc {
-                    record_user_login_attempt(
-                        &state.login_attempt_repo,
-                        Some(&req.email),
-                        None,
-                        ip,
-                        LoginOutcome::Failure,
-                        Some("SSO required"),
-                    )
-                    .await;
-                    return Err(PlatformError::forbidden_code(
-                        "SSO_REQUIRED",
-                        "This email domain signs in through its identity provider; password login is disabled",
-                    ));
-                }
-            }
-        }
-    }
-
-    // Find principal by email
-    let principal = match state.principal_repo.find_by_email(&req.email).await? {
-        Some(p) => p,
-        None => {
-            // Record failed attempt (fire-and-forget)
+    let record_failure = |principal_id: Option<String>, reason: &'static str| {
+        let repo = state.login_attempt_repo.clone();
+        let email = email.clone();
+        let ip = client_ip.clone();
+        async move {
             record_user_login_attempt(
-                &state.login_attempt_repo,
-                Some(&req.email),
-                None,
-                ip,
+                &repo,
+                Some(&email),
+                principal_id.as_deref(),
+                ip.as_deref(),
                 LoginOutcome::Failure,
-                Some("Invalid credentials"),
+                Some(reason),
             )
             .await;
-            return Ok(crate::mfa::login_api::unauthorized("Invalid credentials"));
         }
     };
 
-    // Verify the password: Argon2id, or a bcrypt hash migrated from a
-    // Laravel app (Go passwordhash.Verify).
-    let stored_hash = principal
-        .user_identity
-        .as_ref()
-        .and_then(|id| id.password_hash.as_deref());
-    let password_valid = stored_hash
-        .map(|hash| {
-            state
-                .password_service
-                .verify_password(&req.password, hash)
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
-
-    if !password_valid {
-        record_user_login_attempt(
-            &state.login_attempt_repo,
-            Some(&req.email),
-            Some(&principal.id),
-            ip,
-            LoginOutcome::Failure,
-            Some("Invalid credentials"),
-        )
-        .await;
-        return Ok(crate::mfa::login_api::unauthorized("Invalid credentials"));
+    // SSO enforcement: a domain mapped to an OIDC identity provider signs in
+    // there, and the password path is closed (Go, endpoint.go:480-497).
+    if let Some((_, domain)) = email.split_once('@').filter(|(_, d)| !d.is_empty()) {
+        if state
+            .email_domain_mapping_repo
+            .is_federated_domain(domain)
+            .await?
+        {
+            record_failure(None, "SSO required").await;
+            return Err(PlatformError::forbidden_code(
+                "SSO_REQUIRED",
+                "This email domain signs in through its identity provider; password login is disabled",
+            ));
+        }
     }
 
-    // Check if user is active
-    if !principal.active {
-        record_user_login_attempt(
-            &state.login_attempt_repo,
-            Some(&req.email),
-            Some(&principal.id),
-            ip,
-            LoginOutcome::Failure,
-            Some("Invalid credentials"),
-        )
-        .await;
-        // Go answers an inactive account as it answers a wrong password.
-        return Ok(crate::mfa::login_api::unauthorized("Invalid credentials"));
+    // Not found, inactive, and password-less accounts all read as invalid
+    // credentials (Go, endpoint.go:499-508).
+    let principal = state.principal_repo.find_by_email(&email).await?;
+    let stored_hash = principal
+        .as_ref()
+        .filter(|p| p.active)
+        .and_then(|p| p.user_identity.as_ref())
+        .and_then(|id| id.password_hash.clone());
+    let (Some(principal), Some(stored_hash)) = (principal, stored_hash) else {
+        record_failure(None, "Invalid credentials").await;
+        return Err(PlatformError::session_unauthorized("Invalid credentials"));
+    };
+    // Argon2id, or a bcrypt hash migrated from a Laravel app (Go
+    // passwordhash.Verify).
+    let password_valid = state
+        .password_service
+        .verify_password(&req.password, &stored_hash)
+        .unwrap_or(false);
+    if !password_valid {
+        record_failure(None, "Invalid credentials").await;
+        return Err(PlatformError::session_unauthorized("Invalid credentials"));
     }
 
     // Lazy upgrade: a hash that isn't Argon2id at the current parameters (a
     // migrated bcrypt hash, say) is re-encoded now the user has proved the
     // password. Best-effort, as Go's login (auth/login/endpoint.go:519-525):
     // a failure is logged and the login goes on.
-    if stored_hash.is_some_and(|h| state.password_service.needs_rehash(h)) {
+    if state.password_service.needs_rehash(&stored_hash) {
         match state.password_service.rehash_password(&req.password) {
             Ok(new_hash) => {
                 if let Err(e) = state
@@ -331,10 +300,10 @@ pub async fn login(
         }
     }
 
-    // Second-factor gate (Go handleLogin, auth/login/endpoint.go:533-552):
-    // a challenge instead of a session when one is owed, failing closed
-    // when the requirement can't be evaluated. Passkey and OIDC sign-ins
-    // never reach here.
+    // Second-factor gate (Go handleLogin, endpoint.go:533-552): a challenge
+    // instead of a session when one is owed, failing closed when the
+    // requirement can't be evaluated. Passkey and OIDC sign-ins never reach
+    // here.
     if let Some(two_factor) = &state.two_factor {
         match two_factor.maybe_challenge(&jar, &principal).await {
             Ok(Some(challenge)) => return Ok(challenge),
@@ -351,18 +320,16 @@ pub async fn login(
                     .into_response());
             }
         }
-        return Ok(two_factor.complete_login(jar, &principal, None, ip).await);
     }
 
-    // Generate session token (uses session_token_expiry_secs, not access_token_expiry_secs)
+    // Go `completeLogin` (endpoint.go:559-611): the session cookie, the
+    // recorded success, and the login payload.
     let session_token = state.auth_service.generate_session_token(&principal)?;
-
     let jar = jar.add(state.session_cookie.build_cookie(session_token));
-
-    // Record successful login attempt (fire-and-forget)
+    let principal_email = principal.email().unwrap_or_default().to_string();
     record_user_login_attempt(
         &state.login_attempt_repo,
-        Some(&req.email),
+        Some(&email),
         Some(&principal.id),
         ip,
         LoginOutcome::Success,
@@ -370,16 +337,24 @@ pub async fn login(
     )
     .await;
 
-    // Build response with user info
+    let roles = crate::auth::auth_service::role_names(&principal);
+    // An unresolvable permission set leaves the list empty; the user is
+    // signed in regardless (Go, endpoint.go:586-592).
+    let (permissions, sso_managed) = tokio::join!(
+        effective_permissions(&state, &roles),
+        sso_managed(&state, &principal),
+    );
     let response = LoginResponse {
+        status: "ok".to_string(),
         principal_id: principal.id.clone(),
         name: principal.name.clone(),
-        email: req.email.clone(),
-        roles: principal.roles.iter().map(|r| r.role.clone()).collect(),
+        email: principal_email,
+        roles,
+        permissions: permissions.unwrap_or_default(),
         client_id: principal.client_id.clone(),
+        sso_managed: sso_managed.unwrap_or(false),
     };
 
-    // Return both the cookie jar and JSON response
     Ok((jar, Json(response)).into_response())
 }
 
@@ -395,15 +370,9 @@ pub async fn login(
         (status = 204, description = "Logout successful")
     )
 )]
-pub async fn logout(
-    State(state): State<AuthState>,
-    jar: CookieJar,
-    auth: Authenticated,
-) -> impl IntoResponse {
-    // Verify token is valid (the Authenticated extractor handles this)
-    let _ctx = &auth.0;
-
-    // Clear the session cookie by setting it to expire immediately
+pub async fn logout(State(state): State<AuthState>, jar: CookieJar) -> impl IntoResponse {
+    // Go clears the cookie whatever the request carries: a stale or missing
+    // session logs out all the same (auth/login/endpoint.go handleLogout).
     let jar = jar.add(state.session_cookie.clear_cookie());
 
     (jar, StatusCode::NO_CONTENT)
@@ -486,17 +455,20 @@ pub async fn check_domain(
 )]
 pub async fn get_current_user(
     State(state): State<AuthState>,
-    auth: Authenticated,
+    auth: OptionalAuth,
 ) -> Result<Json<CurrentUserResponse>, PlatformError> {
     // Reload the principal so the answer is current rather than whatever the
     // token was stamped with; a deactivated or deleted principal is not
-    // authenticated (Go handleMe, auth/login/endpoint.go:656-694).
-    let not_authenticated = || PlatformError::Unauthorized {
-        message: "Not authenticated".to_string(),
+    // authenticated (Go handleMe, auth/login/endpoint.go:656-694), and
+    // neither is a request without a session: Go's 401 `UNAUTHENTICATED`
+    // with `WWW-Authenticate: Cookie realm="fc_session"`.
+    let not_authenticated = || PlatformError::session_unauthorized("Not authenticated");
+    let Some(auth) = auth.0 else {
+        return Err(not_authenticated());
     };
     let principal = state
         .principal_repo
-        .find_by_id(&auth.0.principal_id)
+        .find_by_id(&auth.principal_id)
         .await?
         .filter(|p| p.active)
         .ok_or_else(not_authenticated)?;
@@ -508,22 +480,15 @@ pub async fn get_current_user(
     )?;
 
     Ok(Json(CurrentUserResponse {
-        id: principal.id.clone(),
+        status: String::new(),
         principal_id: principal.id.clone(),
-        principal_type: principal.principal_type.as_str().to_string(),
-        email: principal.email().map(String::from),
         name: principal.name.clone(),
-        scope: principal.scope.as_str().to_string(),
-        // Only a CLIENT-tier principal carries one: the SPA reads a missing
-        // clientId as "may act for other owners" (stores/permissions.ts).
-        client_id: principal
-            .client_id
-            .clone()
-            .filter(|_| principal.scope == crate::UserScope::Client),
-        clients: crate::auth::auth_service::clients_claim(&principal),
+        email: principal.email().unwrap_or_default().to_string(),
         roles,
-        permissions,
+        permissions: Some(permissions).filter(|p| !p.is_empty()),
+        client_id: principal.client_id.clone(),
         sso_managed,
+        scope: principal.scope.as_str().to_string(),
     }))
 }
 
@@ -578,6 +543,7 @@ async fn sso_managed(
 #[serde(rename_all = "camelCase")]
 pub struct RefreshTokenRequest {
     /// The refresh token
+    #[serde(default)]
     pub refresh_token: String,
 }
 
@@ -612,8 +578,16 @@ pub struct TokenRefreshResponse {
 )]
 pub async fn refresh_token(
     State(state): State<AuthState>,
-    Json(req): Json<RefreshTokenRequest>,
+    body: axum::body::Bytes,
 ) -> Result<Json<TokenRefreshResponse>, PlatformError> {
+    // Go decodes the body itself (auth/login/endpoint.go:341-350).
+    let req: RefreshTokenRequest = serde_json::from_slice(&body)
+        .map_err(|e| PlatformError::bad_request_code("INVALID_JSON", e.to_string()))?;
+    if req.refresh_token.is_empty() {
+        return Err(PlatformError::session_unauthorized(
+            "Invalid or expired refresh token",
+        ));
+    }
     // Rotate through the same contract as the /oauth/token refresh grant
     // (Go grantstore.Rotate). This endpoint authenticates no client, so a
     // token issued to an OAuth client is refused and not consumed: it
@@ -628,14 +602,14 @@ pub async fn refresh_token(
     {
         Ok(rotated) => rotated,
         Err(crate::auth::refresh_rotation::Rejection::Refused { .. }) => {
-            return Err(PlatformError::InvalidToken {
-                message: "Token was not issued to this client".to_string(),
-            });
+            return Err(PlatformError::session_unauthorized(
+                "Token was not issued to this client",
+            ));
         }
         Err(_) => {
-            return Err(PlatformError::InvalidToken {
-                message: "Invalid or expired refresh token".to_string(),
-            });
+            return Err(PlatformError::session_unauthorized(
+                "Invalid or expired refresh token",
+            ));
         }
     };
     let raw_token = rotated.new_raw;
@@ -646,15 +620,11 @@ pub async fn refresh_token(
         .principal_repo
         .find_by_id(&stored_token.principal_id)
         .await?
-        .ok_or_else(|| PlatformError::InvalidToken {
-            message: "Principal not found".to_string(),
-        })?;
+        .ok_or_else(|| PlatformError::session_unauthorized("Invalid or expired refresh token"))?;
 
     // Check if principal is still active
     if !principal.active {
-        return Err(PlatformError::Unauthorized {
-            message: "Account is not active".to_string(),
-        });
+        return Err(PlatformError::session_unauthorized("Account is not active"));
     }
 
     // Generate new access token
@@ -695,17 +665,30 @@ mod tests {
     #[test]
     fn test_login_response_serialization() {
         let response = LoginResponse {
+            status: "ok".to_string(),
             principal_id: "principal-123".to_string(),
             name: "Test User".to_string(),
             email: "test@example.com".to_string(),
             roles: vec!["admin".to_string()],
-            client_id: Some("client-1".to_string()),
+            permissions: vec!["platform:*:*:*".to_string(), "*".to_string()],
+            client_id: None,
+            sso_managed: false,
         };
 
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("principalId"));
-        assert!(json.contains("test@example.com"));
-        assert!(json.contains("admin"));
+        let json: serde_json::Value = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "status": "ok",
+                "principalId": "principal-123",
+                "name": "Test User",
+                "email": "test@example.com",
+                "roles": ["admin"],
+                "permissions": ["platform:*:*:*", "*"],
+                "clientId": null,
+                "ssoManaged": false,
+            })
+        );
     }
 
     #[test]

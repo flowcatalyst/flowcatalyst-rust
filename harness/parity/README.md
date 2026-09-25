@@ -110,6 +110,13 @@ header says which path the run took.
 | `lockfile-operations.json` | `(method, path, operationId)` of Go's `api/openapi.lock.json`, with the Go commit. Refresh with `cargo run -p fc-parity -- extract-lockfile [--go-src <dir>]` |
 | `expected-diffs.json` | The Go-vs-Rust allow-list. Every entry's `ruling` cites an owner decision in `docs/owner-decisions-2026-09-25.md` |
 
+## Normalisation beyond Java's
+
+Rule 0, applied before Java's rules 1–7: a body's top-level `$schema` member
+(huma's `"<base>/<Model>.json"` link, which Go adds to every JSON response)
+is dropped on both sides. Rust does not emit it, by owner decision #30
+(provisional, flagged for owner confirmation).
+
 ## The allow-list
 
 Same format and matching as Java (`scenario`/`step` may be `"*"`, `scenario`
