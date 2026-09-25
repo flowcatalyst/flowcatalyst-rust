@@ -29,6 +29,7 @@ pub mod platform_token;
 pub mod pool;
 pub mod queue_health_monitor;
 pub mod router_metrics;
+pub mod settled;
 pub mod standby;
 pub mod traffic;
 pub mod warning;
@@ -70,6 +71,7 @@ pub use pool::{
     MAX_IN_PIPELINE_ATTEMPTS,
 };
 pub use queue_health_monitor::{spawn_queue_health_monitor, QueueHealthConfig, QueueHealthMonitor};
+pub use settled::{HttpSettledReporter, SettledJob, SettledReport, SettledReporter, SETTLED_PATH};
 pub use standby::{
     spawn_leadership_monitor, LeadershipStatus, StandbyAwareProcessor, StandbyRouterConfig,
 };

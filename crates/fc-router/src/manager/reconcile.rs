@@ -507,7 +507,8 @@ impl QueueManager {
         // doc — so breaker state is shared across pools and surfaced to
         // monitoring without the pool itself touching a registry at all.
         let pool = ProcessPool::new(pool_config.clone(), self.build_mediator())
-            .with_capacity_notify(self.capacity_notify().clone());
+            .with_capacity_notify(self.capacity_notify().clone())
+            .with_settled_reporter(self.settled_reporter.clone());
 
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;

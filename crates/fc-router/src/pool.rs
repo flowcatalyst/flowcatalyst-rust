@@ -111,11 +111,12 @@ impl QueueSlotReleaser {
 // - A permanent rejection is ACKed away; BLOCK_ON_ERROR then stops the
 //   group.
 //
-// One deliberate difference from Go: under BLOCK_ON_ERROR, Go ACKs the
-// untried siblings behind a failed head and reports them to the platform
-// (its A-01 settled-message hook). That platform half does not exist in this
-// port, so `GroupEffect::Block` here hands the siblings back to the broker
-// (NACK) instead of deleting them.
+// Under BLOCK_ON_ERROR, Go ACKs the untried siblings behind a failed head
+// and reports them to the platform (its A-01 settled-message hook,
+// `crate::settled`). A pool built with a settled reporter (the router has
+// `FC_ROUTER_PLATFORM_URL`) does the same; one without hands the siblings
+// back to the broker (NACK) instead, since nothing would tell the platform
+// the job rows were dropped.
 
 /// Most times a message is retried in place before it is released to the
 /// broker instead (Go `maxInPipelineAttempts`). An in-place retry never
@@ -616,6 +617,47 @@ async fn nack_all(tasks: Vec<PoolTask>, queue_size: &QueueSlotReleaser, delay: O
     }
 }
 
+/// Go `ackBuffered` + `reportSettled`: ACK every sibling buffered behind a
+/// terminally failed BLOCK_ON_ERROR head (giving back the queue slot each
+/// held), then report the dispatch jobs among them to the platform. The
+/// report is fired after the ACKs and never awaited — the broker actions are
+/// what matter, and the platform's reaper is the backstop for a lost report.
+async fn ack_and_report_siblings(
+    siblings: Vec<PoolTask>,
+    queue_size: &QueueSlotReleaser,
+    reporter: &Arc<dyn crate::settled::SettledReporter>,
+    pool_code: &str,
+    group_id: &str,
+) {
+    const REASON: &str = "head failed under BLOCK_ON_ERROR";
+    let jobs: Vec<crate::settled::SettledJob> = siblings
+        .iter()
+        .filter_map(|task| crate::settled::settled_job_from_message(&task.message))
+        .collect();
+    let acked = siblings.len();
+    for task in siblings {
+        queue_size.release();
+        task.callback.ack().await;
+    }
+    warn!(
+        group_id = %group_id,
+        pool_code = %pool_code,
+        acked,
+        reported = jobs.len(),
+        reason = REASON,
+        "Acked untried group messages behind a failed head"
+    );
+    crate::settled::spawn_report(
+        reporter.clone(),
+        crate::settled::SettledReport {
+            pool_code: pool_code.to_string(),
+            group: group_id.to_string(),
+            reason: REASON.to_string(),
+            jobs,
+        },
+    );
+}
+
 /// Hand a whole group back to the broker: the head (first in the buffer)
 /// with `head_delay`, everything behind it with the sibling delay.
 async fn release_group(
@@ -946,6 +988,11 @@ pub struct ProcessPool {
     /// the pool still full rather than one per time it actually became
     /// full.
     capacity_full_warned: AtomicBool,
+
+    /// Ledger A-01: when set, BLOCK_ON_ERROR siblings behind a terminally
+    /// failed head are ACKed and reported to the platform, as Go does;
+    /// when `None` they are handed back to the broker.
+    settled_reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
 }
 
 impl ProcessPool {
@@ -989,7 +1036,19 @@ impl ProcessPool {
             tracker: TaskTracker::new(),
             stop: CancellationToken::new(),
             capacity_full_warned: AtomicBool::new(false),
+            settled_reporter: None,
         }
+    }
+
+    /// Wire (or, with `None`, leave off) the A-01 settled-message reporter
+    /// — see the field's doc comment. `QueueManager` hands every pool it
+    /// creates the one reporter it was built with.
+    pub fn with_settled_reporter(
+        mut self,
+        reporter: Option<Arc<dyn crate::settled::SettledReporter>>,
+    ) -> Self {
+        self.settled_reporter = reporter;
+        self
     }
 
     /// Wire this pool's capacity-freed signal into a shared [`tokio::sync::Notify`]
@@ -1285,6 +1344,7 @@ impl ProcessPool {
         let metrics_collector = self.metrics_collector.clone();
         let flush_registry = self.flush_registry.clone();
         let stop = self.stop.clone();
+        let settled_reporter = self.settled_reporter.clone();
 
         self.tracker.spawn(async move {
             debug!(group_id = %group_id, pool_code = %pool_code, "Group drain task started");
@@ -1399,18 +1459,34 @@ impl ProcessPool {
                         if disposition.group == GroupEffect::Block {
                             // BLOCK_ON_ERROR: the head failed terminally, so
                             // nothing behind it may be delivered past it.
-                            // Handed back, not ACKed — see the Disposition
-                            // section's module doc.
+                            // ACKed and reported when the platform can be
+                            // told (Go `ackBuffered`), otherwise handed back
+                            // — see the Disposition section's module doc.
                             let siblings = take_buffered(&group_handlers, &group_id);
-                            if !siblings.is_empty() {
-                                warn!(
-                                    group_id = %group_id,
-                                    pool_code = %pool_code,
-                                    released = siblings.len(),
-                                    "Head failed under BLOCK_ON_ERROR; handing the group back to the broker"
-                                );
+                            match settled_reporter.as_ref() {
+                                Some(reporter) if !siblings.is_empty() => {
+                                    ack_and_report_siblings(
+                                        siblings,
+                                        &queue_size,
+                                        reporter,
+                                        &pool_code,
+                                        &group_id,
+                                    )
+                                    .await;
+                                }
+                                _ => {
+                                    if !siblings.is_empty() {
+                                        warn!(
+                                            group_id = %group_id,
+                                            pool_code = %pool_code,
+                                            released = siblings.len(),
+                                            "Head failed under BLOCK_ON_ERROR; handing the group back to the broker"
+                                        );
+                                    }
+                                    nack_all(siblings, &queue_size, Some(SIBLING_NACK_DELAY_SECS))
+                                        .await;
+                                }
                             }
-                            nack_all(siblings, &queue_size, Some(SIBLING_NACK_DELAY_SECS)).await;
                         }
                     }
                     BrokerAction::Release => {
