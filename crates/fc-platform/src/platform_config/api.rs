@@ -109,10 +109,68 @@ pub struct ConfigValueResponse {
 #[derive(Clone)]
 pub struct PlatformConfigState {
     pub config_repo: Arc<PlatformConfigRepository>,
+    /// Role-based access grants, for non-anchor callers.
+    pub access_repo: Arc<super::access_repository::PlatformConfigAccessRepository>,
     /// Resolves `{appCode}` and confines the caller to its applications.
     pub app_access: Arc<ApplicationAccessService>,
     pub set_property_use_case:
         Arc<super::operations::SetPlatformConfigPropertyUseCase<crate::usecase::PgUnitOfWork>>,
+}
+
+/// Go's property-route rule (platformconfig/api/api.go:47-57, 90-100,
+/// 147-157, operations/set_property.go:60-73): an anchor caller passes; any
+/// other caller needs a platform-config access grant on one of its roles
+/// for the application, with read or write as asked, else 403.
+async fn require_config_access(
+    state: &PlatformConfigState,
+    ctx: &crate::AuthContext,
+    app_code: &str,
+    write: bool,
+) -> Result<(), PlatformError> {
+    if ctx.is_anchor() {
+        return Ok(());
+    }
+    let granted = if ctx.roles.is_empty() {
+        false
+    } else {
+        state
+            .access_repo
+            .find_by_role_codes(app_code, &ctx.roles)
+            .await?
+            .iter()
+            .any(|a| if write { a.can_write } else { a.can_read })
+    };
+    if granted {
+        Ok(())
+    } else if write {
+        Err(PlatformError::forbidden(format!(
+            "No write access to platform config for {}",
+            app_code
+        )))
+    } else {
+        Err(PlatformError::forbidden(format!(
+            "No read access to platform config for {}",
+            app_code
+        )))
+    }
+}
+
+/// Read a config property: anchor, or a read grant (Go).
+async fn can_read_config(
+    state: &PlatformConfigState,
+    ctx: &crate::AuthContext,
+    app_code: &str,
+) -> Result<(), PlatformError> {
+    require_config_access(state, ctx, app_code, false).await
+}
+
+/// Write a config property: anchor, or a write grant (Go).
+async fn can_write_config(
+    state: &PlatformConfigState,
+    ctx: &crate::AuthContext,
+    app_code: &str,
+) -> Result<(), PlatformError> {
+    require_config_access(state, ctx, app_code, true).await
 }
 
 /// List all configs for an application
@@ -137,7 +195,7 @@ pub async fn list_configs(
     Path(app_code): Path<String>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigListResponse>, PlatformError> {
-    crate::checks::can_read_config(&auth.0)?;
+    can_read_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -178,7 +236,7 @@ pub async fn get_section(
     Path((app_code, section)): Path<(String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigSectionResponse>, PlatformError> {
-    crate::checks::can_read_config(&auth.0)?;
+    can_read_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -231,7 +289,7 @@ pub async fn get_property(
     Path((app_code, section, property)): Path<(String, String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<Json<ConfigValueResponse>, PlatformError> {
-    crate::checks::can_read_config(&auth.0)?;
+    can_read_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -248,8 +306,9 @@ pub async fn get_property(
         )
         .await?
         .ok_or_else(|| {
-            PlatformError::not_found(
-                "PlatformConfig",
+            // Go's httperror.NotFound("Config", …) (platformconfig/api/api.go:107).
+            PlatformError::not_found_code(
+                "Config",
                 format!("{}/{}/{}", app_code, section, property),
             )
         })?;
@@ -280,8 +339,7 @@ pub async fn get_property(
     ),
     request_body = SetConfigRequest,
     responses(
-        (status = 200, description = "Config updated", body = ConfigResponse),
-        (status = 201, description = "Config created", body = ConfigResponse)
+        (status = 200, description = "Config created or updated", body = ConfigResponse)
     ),
     security(("bearer_auth" = []))
 )]
@@ -295,7 +353,7 @@ pub async fn set_property(
     use crate::platform_config::operations::SetPlatformConfigPropertyCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::can_write_config(&auth.0)?;
+    can_write_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
@@ -313,7 +371,7 @@ pub async fn set_property(
         description: req.description,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = state
+    state
         .set_property_use_case
         .run(cmd, ctx)
         .await
@@ -331,12 +389,12 @@ pub async fn set_property(
         .await?
         .ok_or_else(|| PlatformError::internal("Config set committed but row not found"))?;
 
-    let status = if event.was_created {
-        axum::http::StatusCode::CREATED
-    } else {
-        axum::http::StatusCode::OK
-    };
-    Ok((status, Json(ConfigResponse::from_config(config))))
+    // 200 whether the property was created or updated, as Go
+    // (platformconfig/api/api.go:36).
+    Ok((
+        axum::http::StatusCode::OK,
+        Json(ConfigResponse::from_config(config)),
+    ))
 }
 
 /// Delete a config property
@@ -353,8 +411,7 @@ pub async fn set_property(
         ("client_id" = Option<String>, Query, description = "Client ID filter")
     ),
     responses(
-        (status = 204, description = "Config deleted"),
-        (status = 404, description = "Config not found")
+        (status = 204, description = "Config deleted, or already absent")
     ),
     security(("bearer_auth" = []))
 )]
@@ -364,13 +421,15 @@ pub async fn delete_property(
     Path((app_code, section, property)): Path<(String, String, String)>,
     Query(query): Query<ConfigQuery>,
 ) -> Result<axum::http::StatusCode, PlatformError> {
-    crate::checks::can_write_config(&auth.0)?;
+    can_write_config(&state, &auth.0, &app_code).await?;
     state
         .app_access
         .require_application_access(&auth.0, &app_code)
         .await?;
     let scope_str = query.scope_or_global()?.as_str();
-    let deleted = state
+    // Idempotent: 204 whether or not the property existed, as Go
+    // (platformconfig/api/api.go:163-165).
+    state
         .config_repo
         .delete_by_key(
             &app_code,
@@ -380,14 +439,7 @@ pub async fn delete_property(
             query.client_id.as_deref(),
         )
         .await?;
-    if deleted {
-        Ok(axum::http::StatusCode::NO_CONTENT)
-    } else {
-        Err(PlatformError::not_found(
-            "PlatformConfig",
-            format!("{}/{}/{}", app_code, section, property),
-        ))
-    }
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 pub fn admin_platform_config_router(state: PlatformConfigState) -> OpenApiRouter {

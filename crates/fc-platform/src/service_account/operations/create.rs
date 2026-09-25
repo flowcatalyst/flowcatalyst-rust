@@ -36,16 +36,17 @@ fn generate_signing_secret() -> String {
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, bytes)
 }
 
-/// The code rule, as Java's `ServiceAccountCode` has it
-/// (serviceaccount/ServiceAccountCode.java): trimmed and lower-cased, then
-/// it must match `^(app:)?[a-z][a-z0-9-]*$` (so `app:` alone fails).
-/// A code chosen through the API (`user_chosen`) may not use the `app:`
-/// namespace, which belongs to application service accounts. Provisioning
-/// (an application's own account) keeps `app:<applicationCode>` as it is,
-/// unchecked, as Java's provisioning does (ProvisionServiceAccount.java:
-/// 89-93).
+/// The code rule, as Go's create has it
+/// (flowcatalyst-go serviceaccount/operations/create_credentials.go:65-76):
+/// trimmed and lower-cased; empty is `CODE_REQUIRED`; the `app:` namespace,
+/// which belongs to application service accounts, is `RESERVED_CODE` (so
+/// `app:` alone is reserved too); otherwise it must match
+/// `^[a-z][a-z0-9-]*$` (shared/validate/validate.go:18), else
+/// `INVALID_CODE_FORMAT`. Only a code chosen through the API
+/// (`user_chosen`) is checked. Provisioning (an application's own account)
+/// keeps `app:<applicationCode>` as it is, unchecked, as Go's provisioning
+/// does (application/operations/provision_service_account.go:101).
 fn normalise_code(raw: &str, user_chosen: bool) -> Result<String, UseCaseError> {
-    const APP_PREFIX: &str = "app:";
     if !user_chosen {
         let code = raw.trim();
         return if code.is_empty() {
@@ -64,21 +65,20 @@ fn normalise_code(raw: &str, user_chosen: bool) -> Result<String, UseCaseError> 
             "code is required",
         ));
     }
-    let body = code.strip_prefix(APP_PREFIX).unwrap_or(&code);
-    let well_formed = body.chars().next().is_some_and(|c| c.is_ascii_lowercase())
-        && body
+    if code.starts_with("app:") {
+        return Err(UseCaseError::validation(
+            "RESERVED_CODE",
+            "codes starting with 'app:' are reserved for application service accounts",
+        ));
+    }
+    let well_formed = code.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && code
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     if !well_formed {
         return Err(UseCaseError::validation(
             "INVALID_CODE_FORMAT",
             "code must start with a lowercase letter and contain only lowercase alphanumeric and hyphens",
-        ));
-    }
-    if code.starts_with(APP_PREFIX) {
-        return Err(UseCaseError::validation(
-            "RESERVED_CODE",
-            "codes starting with 'app:' are reserved for application service accounts",
         ));
     }
     Ok(code)
@@ -218,8 +218,8 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
         let code = code.as_str();
         let name = command.name.trim();
 
-        // Business rule: code must be unique (Java: 409 CODE_EXISTS,
-        // CreateServiceAccountWithCredentials.java:86-89).
+        // Business rule: code must be unique (Go: 409 CODE_EXISTS,
+        // create_credentials.go:91-98).
         let existing = match self.service_account_repo.find_by_code(code).await {
             Ok(found) => found,
             Err(e) => return UseCaseResult::failure(e.into()),
@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn code_rule_matches_java() {
+    fn code_rule_matches_go() {
         // Trimmed and lower-cased.
         assert_eq!(
             normalise_code(" SACreate-Happy ", true).unwrap(),
@@ -360,8 +360,9 @@ mod tests {
             ("-abc", "INVALID_CODE_FORMAT"),
             ("a_b", "INVALID_CODE_FORMAT"),
             ("a b", "INVALID_CODE_FORMAT"),
-            ("app:", "INVALID_CODE_FORMAT"),
+            ("app:", "RESERVED_CODE"),
             ("app:orders", "RESERVED_CODE"),
+            ("APP:1abc", "RESERVED_CODE"),
         ] {
             assert_eq!(
                 normalise_code(raw, true).unwrap_err().code(),

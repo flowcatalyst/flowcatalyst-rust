@@ -35,8 +35,12 @@ async fn create_client(app: &TestApp, identifier: &str) -> String {
 
 async fn create_sa(app: &TestApp, body: Value) -> (StatusCode, Value) {
     read_json(
-        app.post("/api/service-accounts", &app.anchor_token(), body)
-            .await,
+        app.post(
+            "/api/service-accounts",
+            &app.anchor_admin_token().await,
+            body,
+        )
+        .await,
     )
     .await
 }
@@ -56,16 +60,23 @@ fn token(app: &TestApp, principal: &Principal) -> String {
         .expect("token")
 }
 
-/// Status of an anchor-only write (creating another service account) made
-/// with `token`.
-async fn anchor_only_status(app: &TestApp, token: &str, code: &str) -> StatusCode {
-    app.post(
-        "/api/service-accounts",
-        token,
-        json!({ "code": code, "name": code }),
+/// The 403 code an anchor-gated write (creating another service account)
+/// made with `token` answers. The token's principal holds no permissions, so
+/// an anchor caller passes the anchor check and stops at the permission
+/// check (`PERMISSION_REQUIRED`); any other caller stops at the anchor check
+/// (`ANCHOR_REQUIRED`), as Go's bodies have it.
+async fn anchor_only_status(app: &TestApp, token: &str, code: &str) -> String {
+    let (status, body) = read_json(
+        app.post(
+            "/api/service-accounts",
+            token,
+            json!({ "code": code, "name": code }),
+        )
+        .await,
     )
-    .await
-    .status()
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    body["error"].as_str().unwrap_or_default().to_string()
 }
 
 #[tokio::test]
@@ -96,10 +107,10 @@ async fn client_scope_service_account_is_not_anchor() {
     assert_eq!(claims.clients.len(), 1);
     assert!(claims.clients[0].starts_with(&clt), "{:?}", claims.clients);
 
-    // And `require_anchor` turns it away.
+    // And the anchor check turns it away.
     assert_eq!(
         anchor_only_status(&app, &token, "escalated").await,
-        StatusCode::FORBIDDEN
+        "ANCHOR_REQUIRED"
     );
 }
 
@@ -122,9 +133,10 @@ async fn anchor_scope_service_account_is_still_anchor() {
         app.auth_service.validate_token(&token).unwrap().scope,
         UserScope::Anchor
     );
+    // It passes the anchor check; only the permission check stops it.
     assert_eq!(
         anchor_only_status(&app, &token, "made-by-anchor-bot").await,
-        StatusCode::CREATED
+        "PERMISSION_REQUIRED"
     );
 }
 
@@ -251,7 +263,7 @@ async fn update_moves_the_principal_reach() {
     .await;
     let id = body["serviceAccount"]["id"].as_str().unwrap().to_string();
     let path = format!("/api/service-accounts/{id}");
-    let admin = app.anchor_token();
+    let admin = app.anchor_admin_token().await;
 
     let resp = app
         .put(

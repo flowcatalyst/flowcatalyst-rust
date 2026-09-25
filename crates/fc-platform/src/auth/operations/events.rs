@@ -280,9 +280,16 @@ impl IdpRoleMappingDeleted {
 }
 
 // ── OAuthClient events ───────────────────────────────────────────────────────
+//
+// Type, source, subject, message group and payload are Go's
+// (flowcatalyst-go auth/operations/events.go:14-41 and the ToDataJSON of
+// each event): source `platform:admin`, subject `platform.oauthclient.{id}`,
+// group `platform:oauthclient:{id}`, and each payload carries exactly Go's
+// fields, since subscribers consume them.
 
 macro_rules! oauth_client_event {
-    ($name:ident, $event_type:expr) => {
+    ($(#[$doc:meta])* $name:ident, $event_type:expr $(, $field:ident)*) => {
+        $(#[$doc])*
         #[derive(Debug, Clone, Serialize, Deserialize)]
         #[serde(rename_all = "camelCase")]
         pub struct $name {
@@ -290,7 +297,7 @@ macro_rules! oauth_client_event {
             pub metadata: EventMetadata,
 
             pub oauth_client_id: String,
-            pub client_id: String,
+            $(pub $field: String,)*
         }
 
         impl_domain_event!($name);
@@ -300,7 +307,7 @@ macro_rules! oauth_client_event {
             const SPEC_VERSION: &'static str = "1.0";
             const SOURCE: &'static str = "platform:admin";
 
-            pub fn new(ctx: &ExecutionContext, id: &str, client_id: &str) -> Self {
+            pub fn new(ctx: &ExecutionContext, id: &str $(, $field: &str)*) -> Self {
                 Self {
                     metadata: EventMetadata::from_ctx(
                         ctx,
@@ -311,32 +318,52 @@ macro_rules! oauth_client_event {
                         format!("platform:oauthclient:{}", id),
                     ),
                     oauth_client_id: id.to_string(),
-                    client_id: client_id.to_string(),
+                    $($field: $field.to_string(),)*
                 }
             }
         }
     };
 }
 
-oauth_client_event!(OAuthClientCreated, "platform:admin:oauth-client:created");
-oauth_client_event!(OAuthClientUpdated, "platform:admin:oauth-client:updated");
-oauth_client_event!(OAuthClientDeleted, "platform:admin:oauth-client:deleted");
 oauth_client_event!(
+    /// `{oauthClientId, clientId, clientName}` (Go events.go:81-87).
+    OAuthClientCreated,
+    "platform:admin:oauth-client:created",
+    client_id,
+    client_name
+);
+oauth_client_event!(
+    /// `{oauthClientId, clientName}` (Go events.go:106-111).
+    OAuthClientUpdated,
+    "platform:admin:oauth-client:updated",
+    client_name
+);
+oauth_client_event!(
+    /// `{oauthClientId, clientId}` (Go events.go:174-179).
+    OAuthClientDeleted,
+    "platform:admin:oauth-client:deleted",
+    client_id
+);
+oauth_client_event!(
+    /// `{oauthClientId}` (Go events.go:129-133).
     OAuthClientActivated,
     "platform:admin:oauth-client:activated"
 );
 oauth_client_event!(
+    /// `{oauthClientId}` (Go events.go:151-155).
     OAuthClientDeactivated,
     "platform:admin:oauth-client:deactivated"
 );
 oauth_client_event!(
+    /// `{oauthClientId}` (Go events.go:232-236).
     OAuthClientPreviousSecretRevoked,
     "platform:admin:oauth-client:previous-secret-revoked"
 );
 
-/// A client's secret was rotated. `previous_secret_expires_at` is when the
+/// A client's secret was rotated: `{oauthClientId, previousSecretExpiresAt?}`
+/// (Go events.go:201-206). `previous_secret_expires_at` is when the
 /// superseded secret stops being accepted; absent when the rotation was an
-/// immediate cutover (Go's `OAuthClientSecretRotated`).
+/// immediate cutover.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthClientSecretRotated {
@@ -344,7 +371,6 @@ pub struct OAuthClientSecretRotated {
     pub metadata: EventMetadata,
 
     pub oauth_client_id: String,
-    pub client_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_secret_expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -356,7 +382,7 @@ impl OAuthClientSecretRotated {
     const SPEC_VERSION: &'static str = "1.0";
     const SOURCE: &'static str = "platform:admin";
 
-    pub fn new(ctx: &ExecutionContext, id: &str, client_id: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, id: &str) -> Self {
         Self {
             metadata: EventMetadata::from_ctx(
                 ctx,
@@ -367,8 +393,76 @@ impl OAuthClientSecretRotated {
                 format!("platform:oauthclient:{}", id),
             ),
             oauth_client_id: id.to_string(),
-            client_id: client_id.to_string(),
             previous_secret_expires_at: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The payload keys an event serialises besides its flattened metadata.
+    fn payload_keys<T: Serialize>(event: &T) -> Vec<String> {
+        const METADATA: &[&str] = &[
+            "event_id",
+            "event_type",
+            "spec_version",
+            "source",
+            "subject",
+            "time",
+            "execution_id",
+            "correlation_id",
+            "causation_id",
+            "principal_id",
+            "message_group",
+        ];
+        let json = serde_json::to_value(event).unwrap();
+        let mut keys: Vec<String> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|k| !METADATA.contains(&k.as_str()))
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// Payloads are Go's, key for key (auth/operations/events.go ToDataJSON).
+    #[test]
+    fn oauth_client_payloads_match_go() {
+        let ctx = ExecutionContext::create("prn_actor");
+        assert_eq!(
+            payload_keys(&OAuthClientCreated::new(&ctx, "oac_1", "cid", "Name")),
+            ["clientId", "clientName", "oauthClientId"]
+        );
+        assert_eq!(
+            payload_keys(&OAuthClientUpdated::new(&ctx, "oac_1", "Name")),
+            ["clientName", "oauthClientId"]
+        );
+        assert_eq!(
+            payload_keys(&OAuthClientDeleted::new(&ctx, "oac_1", "cid")),
+            ["clientId", "oauthClientId"]
+        );
+        for keys in [
+            payload_keys(&OAuthClientActivated::new(&ctx, "oac_1")),
+            payload_keys(&OAuthClientDeactivated::new(&ctx, "oac_1")),
+            payload_keys(&OAuthClientPreviousSecretRevoked::new(&ctx, "oac_1")),
+            payload_keys(&OAuthClientSecretRotated::new(&ctx, "oac_1")),
+        ] {
+            assert_eq!(keys, ["oauthClientId"]);
+        }
+        let mut rotated = OAuthClientSecretRotated::new(&ctx, "oac_1");
+        rotated.previous_secret_expires_at = Some(chrono::Utc::now());
+        assert_eq!(
+            payload_keys(&rotated),
+            ["oauthClientId", "previousSecretExpiresAt"]
+        );
+
+        let created = OAuthClientCreated::new(&ctx, "oac_1", "cid", "Name");
+        assert_eq!(created.metadata.source, "platform:admin");
+        assert_eq!(created.metadata.subject, "platform.oauthclient.oac_1");
+        assert_eq!(created.metadata.message_group, "platform:oauthclient:oac_1");
     }
 }

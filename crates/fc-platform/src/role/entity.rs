@@ -290,6 +290,7 @@ pub mod permissions {
         pub const CONNECTION_UPDATE: &str = "platform:messaging:connection:update";
         pub const CONNECTION_DELETE: &str = "platform:messaging:connection:delete";
         pub const CONNECTION_MANAGE: &str = "platform:messaging:connection:manage";
+        pub const CONNECTION_SYNC: &str = "platform:messaging:connection:sync";
 
         // Subscription management (messaging context in DB)
         pub const SUBSCRIPTION_READ: &str = "platform:messaging:subscription:view";
@@ -351,13 +352,11 @@ pub mod permissions {
         pub const AUDIT_LOG_READ: &str = "platform:admin:audit-log:view";
         pub const AUDIT_LOG_EXPORT: &str = "platform:admin:audit-log:export";
 
-        // Config management. Java's rule (config-permissions.md §A.2): view
-        // reads the property routes, manage writes them. `update` is the
-        // older code (Go's, and Java's before V17) for the same authority;
-        // roles in the shared database still carry it, so it passes the
-        // manage check too, and it still gates the config-access grants.
+        // Platform documentation (embedded docs served at /api/docs)
+        pub const DOCS_READ: &str = "platform:admin:docs:view";
+
+        // Config management
         pub const CONFIG_READ: &str = "platform:admin:config:view";
-        pub const CONFIG_MANAGE: &str = "platform:admin:config:manage";
         pub const CONFIG_UPDATE: &str = "platform:admin:config:update";
 
         // Batch operations
@@ -415,6 +414,7 @@ pub mod permissions {
             CONNECTION_UPDATE,
             CONNECTION_DELETE,
             CONNECTION_MANAGE,
+            CONNECTION_SYNC,
             SUBSCRIPTION_READ,
             SUBSCRIPTION_CREATE,
             SUBSCRIPTION_UPDATE,
@@ -456,6 +456,9 @@ pub mod permissions {
             LOGIN_ATTEMPT_READ,
             AUDIT_LOG_READ,
             AUDIT_LOG_EXPORT,
+            DOCS_READ,
+            CONFIG_READ,
+            CONFIG_UPDATE,
             BATCH_EVENTS_WRITE,
             BATCH_DISPATCH_JOBS_WRITE,
             BATCH_AUDIT_LOGS_WRITE,
@@ -489,6 +492,10 @@ pub mod permissions {
         // Permission read
         pub const PERMISSION_READ: &str = "platform:iam:permission:view";
 
+        // Portal identity plane (Go seed/permissions.go:195-196)
+        pub const PORTAL_USER_READ: &str = "platform:iam:portal-user:view";
+        pub const PORTAL_USER_MANAGE: &str = "platform:iam:portal-user:manage";
+
         // Auth config
         pub const AUTH_CONFIG_READ: &str = "platform:iam:auth-config:view";
         pub const AUTH_CONFIG_CREATE: &str = "platform:iam:auth-config:create";
@@ -515,6 +522,8 @@ pub mod permissions {
             CLIENT_ACCESS_REVOKE,
             CLIENT_ACCESS_READ,
             PERMISSION_READ,
+            PORTAL_USER_READ,
+            PORTAL_USER_MANAGE,
             AUTH_CONFIG_READ,
             AUTH_CONFIG_CREATE,
             AUTH_CONFIG_UPDATE,
@@ -571,6 +580,11 @@ pub mod permissions {
         pub const SUBSCRIPTION_UPDATE: &str = "platform:application-service:subscription:update";
         pub const SUBSCRIPTION_DELETE: &str = "platform:application-service:subscription:delete";
 
+        pub const CONNECTION_READ: &str = "platform:application-service:connection:view";
+        pub const CONNECTION_CREATE: &str = "platform:application-service:connection:create";
+        pub const CONNECTION_UPDATE: &str = "platform:application-service:connection:update";
+        pub const CONNECTION_DELETE: &str = "platform:application-service:connection:delete";
+
         pub const ROLE_READ: &str = "platform:application-service:role:view";
         pub const ROLE_CREATE: &str = "platform:application-service:role:create";
         pub const ROLE_UPDATE: &str = "platform:application-service:role:update";
@@ -585,11 +599,15 @@ pub mod permissions {
         // Scheduled job: SDK sync of definitions
         pub const SCHEDULED_JOB_SYNC: &str = "platform:application-service:scheduled-job:sync";
 
+        // Application documentation pages: SDK sync
+        pub const DOCS_SYNC: &str = "platform:application-service:docs:sync";
+
         // Process documentation: SDK sync of process definitions
         pub const PROCESS_READ: &str = "platform:application-service:process:view";
         pub const PROCESS_SYNC: &str = "platform:application-service:process:sync";
 
-        /// All application service permissions
+        /// All application service permissions, in Go's order
+        /// (seed/permissions.go:200-225).
         pub const ALL: &[&str] = &[
             EVENT_CREATE,
             EVENT_TYPE_READ,
@@ -600,6 +618,10 @@ pub mod permissions {
             SUBSCRIPTION_CREATE,
             SUBSCRIPTION_UPDATE,
             SUBSCRIPTION_DELETE,
+            CONNECTION_READ,
+            CONNECTION_CREATE,
+            CONNECTION_UPDATE,
+            CONNECTION_DELETE,
             ROLE_READ,
             ROLE_CREATE,
             ROLE_UPDATE,
@@ -607,6 +629,7 @@ pub mod permissions {
             PERMISSION_READ,
             PERMISSION_SYNC,
             SCHEDULED_JOB_INSTANCE_WRITE,
+            DOCS_SYNC,
             SCHEDULED_JOB_SYNC,
             PROCESS_READ,
             PROCESS_SYNC,
@@ -619,6 +642,9 @@ pub mod permissions {
         pub const APPLICATION_OPENAPI_SYNC: &str = "platform:developer:application-openapi:sync";
         pub const APPLICATION_OPENAPI_MANAGE: &str =
             "platform:developer:application-openapi:manage";
+        /// Self-service developer client_credentials: create, rotate and
+        /// revoke your own credential (Go seed/permissions.go:192).
+        pub const API_CREDENTIAL_MANAGE: &str = "platform:developer:api-credential:manage";
     }
 
     /// The function registry (Java `shared/auth/Permission.java:271-293`),
@@ -684,7 +710,11 @@ pub mod permissions {
     }
 }
 
-/// Built-in platform roles (matches TypeScript role definitions)
+/// Built-in platform roles. Go's catalogue is the reference
+/// (flowcatalyst-go internal/platform/seed/roles.go `PlatformRoles`): the
+/// same roles, names, display names, descriptions and permission sets.
+/// The function-runner roles and grants are Rust additions, from Java.
+/// `role_catalogue_go_parity_test` pins this.
 pub mod roles {
     use super::*;
 
@@ -721,10 +751,13 @@ pub mod roles {
                 permissions::admin::AUDIT_LOG_READ,
                 permissions::admin::AUDIT_LOG_EXPORT,
                 permissions::admin::LOGIN_ATTEMPT_READ,
+                permissions::admin::DOCS_READ,
                 permissions::developer::APPLICATION_OPENAPI_MANAGE,
-                // Java PlatformRoles.java:42: view + manage.
                 permissions::admin::CONFIG_READ,
-                permissions::admin::CONFIG_MANAGE,
+                permissions::admin::CONFIG_UPDATE,
+                permissions::admin::CORS_ORIGIN_READ,
+                permissions::admin::CORS_ORIGIN_CREATE,
+                permissions::admin::CORS_ORIGIN_DELETE,
             ])
     }
 
@@ -741,9 +774,10 @@ pub mod roles {
                 permissions::admin::APPLICATION_READ,
                 permissions::admin::AUDIT_LOG_READ,
                 permissions::admin::LOGIN_ATTEMPT_READ,
+                permissions::admin::DOCS_READ,
                 permissions::developer::APPLICATION_OPENAPI_VIEW,
-                // Java PlatformRoles.java:57.
                 permissions::admin::CONFIG_READ,
+                permissions::admin::CORS_ORIGIN_READ,
             ])
     }
 
@@ -767,6 +801,14 @@ pub mod roles {
                 permissions::iam::CLIENT_ACCESS_GRANT,
                 permissions::iam::CLIENT_ACCESS_REVOKE,
                 permissions::iam::CLIENT_ACCESS_READ,
+                permissions::admin::IDENTITY_PROVIDER_READ,
+                permissions::admin::IDENTITY_PROVIDER_CREATE,
+                permissions::admin::IDENTITY_PROVIDER_UPDATE,
+                permissions::admin::IDENTITY_PROVIDER_DELETE,
+                permissions::admin::EMAIL_DOMAIN_MAPPING_READ,
+                permissions::admin::EMAIL_DOMAIN_MAPPING_CREATE,
+                permissions::admin::EMAIL_DOMAIN_MAPPING_UPDATE,
+                permissions::admin::EMAIL_DOMAIN_MAPPING_DELETE,
             ])
     }
 
@@ -779,6 +821,30 @@ pub mod roles {
                 permissions::iam::USER_READ,
                 permissions::iam::ROLE_READ,
                 permissions::iam::CLIENT_ACCESS_READ,
+                permissions::admin::IDENTITY_PROVIDER_READ,
+                permissions::admin::EMAIL_DOMAIN_MAPPING_READ,
+            ])
+    }
+
+    /// PLATFORM_CLIENT_ADMIN — delegated user management within the
+    /// administrator's own client(s): iam-admin's user permissions without
+    /// client-access grants or role authoring (Go seed/roles.go:89-102).
+    /// Go also confines each action to the admin's clients and bounds role
+    /// assignment to the client's own application roles; that enforcement
+    /// lives in the principal routes, not here.
+    pub fn client_admin() -> AuthRole {
+        AuthRole::new("platform", "client-admin", "Client Administrator")
+            .with_description("Manages users within the administrator's own client")
+            .with_source(RoleSource::Code)
+            .with_permissions([
+                permissions::iam::USER_READ,
+                permissions::iam::USER_CREATE,
+                permissions::iam::USER_UPDATE,
+                permissions::iam::USER_DELETE,
+                permissions::iam::USER_ACTIVATE,
+                permissions::iam::USER_DEACTIVATE,
+                permissions::iam::USER_ASSIGN_ROLES,
+                permissions::iam::ROLE_READ,
             ])
     }
 
@@ -853,6 +919,7 @@ pub mod roles {
                 permissions::admin::CONNECTION_CREATE,
                 permissions::admin::CONNECTION_UPDATE,
                 permissions::admin::CONNECTION_DELETE,
+                permissions::admin::CONNECTION_SYNC,
                 permissions::admin::EVENT_READ,
                 permissions::admin::EVENT_VIEW_RAW,
                 permissions::admin::DISPATCH_JOB_READ,
@@ -871,8 +938,10 @@ pub mod roles {
                 permissions::admin::PROCESS_DELETE,
                 permissions::admin::PROCESS_ARCHIVE,
                 permissions::admin::PROCESS_SYNC,
-                // Java PlatformRoles.java:149-150: every function grant
-                // except host control, which is `function-host` alone.
+                // Rust addition for the function runner (Java
+                // PlatformRoles.java:149-150; Go has no functions): every
+                // function grant except host control, which is
+                // `function-host` alone.
                 permissions::function::FUNCTION_VIEW,
                 permissions::function::FUNCTION_MANAGE,
                 permissions::function::FUNCTION_PUBLISH,
@@ -906,8 +975,35 @@ pub mod roles {
                 permissions::admin::PROCESS_READ,
                 permissions::admin::AUDIT_LOG_READ,
                 permissions::admin::LOGIN_ATTEMPT_READ,
-                // Java PlatformRoles.java:174.
+                permissions::admin::IDENTITY_PROVIDER_READ,
+                permissions::admin::EMAIL_DOMAIN_MAPPING_READ,
                 permissions::admin::CONFIG_READ,
+                permissions::admin::CORS_ORIGIN_READ,
+            ])
+    }
+
+    /// PLATFORM_ROUTER — the deployed message router's own role: it fetches
+    /// its configuration document and nothing else (Go seed/roles.go:
+    /// 179-185).
+    pub fn router() -> AuthRole {
+        AuthRole::new("platform", "router", "Router")
+            .with_description("Fetches the dispatch router configuration")
+            .with_source(RoleSource::Code)
+            .with_permission(permissions::admin::DISPATCH_POOL_READ)
+    }
+
+    /// PLATFORM_PORTAL_ADMINISTRATOR — manages a client's portal users;
+    /// client confinement comes from the holder's own client scope, not
+    /// from the role (Go seed/roles.go:187-196).
+    pub fn portal_administrator() -> AuthRole {
+        AuthRole::new("platform", "portal-administrator", "Portal Administrator")
+            .with_description(
+                "Manage the client's portal users: invite, suspend, and remove portal identities",
+            )
+            .with_source(RoleSource::Code)
+            .with_permissions([
+                permissions::iam::PORTAL_USER_READ,
+                permissions::iam::PORTAL_USER_MANAGE,
             ])
     }
 
@@ -918,10 +1014,13 @@ pub mod roles {
     /// principal's `iam_principal_application_access` grants at request time.
     pub fn developer() -> AuthRole {
         AuthRole::new("platform", "developer", "Developer")
-            .with_description("Developer portal: API documentation + accessible event types")
+            .with_description(
+                "Developer portal: API documentation, accessible event types, and a self-service API credential for local testing",
+            )
             .with_source(RoleSource::Code)
             .with_permissions([
                 permissions::developer::APPLICATION_OPENAPI_VIEW,
+                permissions::developer::API_CREDENTIAL_MANAGE,
                 permissions::admin::EVENT_TYPE_READ,
                 permissions::admin::PROCESS_READ,
                 permissions::admin::PROCESS_CREATE,
@@ -980,11 +1079,14 @@ pub mod roles {
             platform_admin_readonly(),
             iam_admin(),
             iam_readonly(),
+            client_admin(),
             auth_admin(),
             auth_readonly(),
             ai_agent_readonly(),
             messaging_admin(),
             viewer(),
+            router(),
+            portal_administrator(),
             developer(),
             application_service(),
             function_publisher(),
@@ -1066,7 +1168,7 @@ mod tests {
         // Bump this number whenever you add a built-in role in `roles::all()`.
         // The test is a tripwire against accidentally orphaning a new role
         // from `role_sync_service::seed_built_in_roles`'s consumption path.
-        assert_eq!(all_roles.len(), 14);
+        assert_eq!(all_roles.len(), 17);
 
         // Super admin has wildcard
         let super_admin = roles::super_admin();

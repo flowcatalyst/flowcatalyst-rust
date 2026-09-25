@@ -134,7 +134,7 @@ impl<U: UnitOfWork> RotateOAuthClientSecretUseCase<U> {
         let previous_expires_at =
             client.rotate_secret_ref(command.new_client_secret_ref.clone(), grace);
 
-        let mut event = OAuthClientSecretRotated::new(ctx, &client.id, &client.client_id);
+        let mut event = OAuthClientSecretRotated::new(ctx, &client.id);
         event.previous_secret_expires_at = previous_expires_at;
         Ok((client, event))
     }

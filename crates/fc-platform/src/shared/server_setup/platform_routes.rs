@@ -813,6 +813,7 @@ pub fn build_platform_routes(
     );
     let platform_config_state = PlatformConfigState {
         config_repo: repos.platform_config_repo.clone(),
+        access_repo: repos.platform_config_access_repo.clone(),
         app_access: app_access.clone(),
         set_property_use_case: set_platform_config_property_use_case,
     };
