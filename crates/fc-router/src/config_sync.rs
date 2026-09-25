@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::manager::QueueManager;
+use crate::platform_token::{origin_of, PlatformTokenSource};
 use crate::warning::WarningService;
 use fc_common::{PoolConfig, QueueConfig, RouterConfig, WarningCategory, WarningSeverity};
 
@@ -20,9 +21,9 @@ pub struct ConfigSyncConfig {
     /// Enable configuration sync
     pub enabled: bool,
 
-    /// URLs to fetch configuration from (merged when multiple).
-    /// Pools with the same code are deduplicated (last wins).
-    /// Queues are merged (all included).
+    /// URLs to fetch configuration from (`FLOWCATALYST_CONFIG_URL`,
+    /// comma-separated), fetched in parallel and merged first-wins: pools
+    /// by code, queues by URI (Go `mergeConfigs`).
     pub config_urls: Vec<String>,
 
     /// Sync interval (how often to check for config changes)
@@ -49,7 +50,8 @@ impl Default for ConfigSyncConfig {
             sync_interval: Duration::from_secs(300), // 5 minutes
             max_retry_attempts: 12,                  // 12 attempts
             retry_delay: Duration::from_secs(5),     // 5 seconds between retries
-            request_timeout: Duration::from_secs(30),
+            // Go: `http.Client{Timeout: 10 * time.Second}`.
+            request_timeout: Duration::from_secs(10),
             fail_on_initial_sync_error: true,
         }
     }
@@ -215,11 +217,20 @@ pub enum ConfigSyncError {
     #[error("HTTP request failed ({url}): {message}")]
     Request { url: String, message: String },
 
-    #[error("Config service returned status {status} ({url})")]
+    #[error("Config service returned status {status} ({url}){hint}")]
     BadStatus {
         url: String,
         status: reqwest::StatusCode,
+        /// A refusal another attempt cannot change (Go
+        /// `permanentFetchError`): 403, 404, any 4xx but 408/425/429, and
+        /// a 401 on a request sent without credentials.
+        permanent: bool,
+        /// Operator guidance appended to the message (empty when none).
+        hint: String,
     },
+
+    #[error("Config fetch could not mint the platform token ({url}): {message}")]
+    Token { url: String, message: String },
 
     #[error("Failed to read response body ({url}): {message}")]
     Body { url: String, message: String },
@@ -232,6 +243,38 @@ pub enum ConfigSyncError {
 
     #[error("Failed to apply config: {0}")]
     Apply(String),
+}
+
+impl ConfigSyncError {
+    /// Whether retrying this source can change the answer. A permanent
+    /// refusal fails the source at once instead of spending its retry
+    /// budget — which would only hold every other source's configuration
+    /// back, since nothing is applied until each source has finished (Go).
+    pub fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            ConfigSyncError::BadStatus {
+                permanent: true,
+                ..
+            }
+        )
+    }
+}
+
+/// Go `retryableStatus`: server-side and throttling failures, and a 401 on
+/// an authenticated request (the rejected token was just dropped, so the
+/// next attempt mints a fresh one). Every other client error answers the
+/// same way until someone changes the deployment.
+fn retryable_status(status: reqwest::StatusCode, authenticated: bool) -> bool {
+    let code = status.as_u16();
+    code >= 500 || matches!(code, 408 | 425 | 429) || (code == 401 && authenticated)
+}
+
+/// The router's credential for its own platform and the origin it may be
+/// sent to (Go `ConfigSource.Credentials` / `CredentialOrigin`).
+struct PlatformCredentials {
+    token: std::sync::Arc<PlatformTokenSource>,
+    origin: String,
 }
 
 /// Configuration sync result
@@ -263,6 +306,9 @@ pub struct ConfigSyncService {
     /// The active "config sync failed" warning, if any — one per failure
     /// streak (Go: `watchWarnID`).
     watch_warning: parking_lot::Mutex<Option<String>>,
+    /// Set by [`Self::with_credentials`]: requests to that origin, and only
+    /// those, carry the platform bearer token.
+    credentials: Option<PlatformCredentials>,
 }
 
 impl ConfigSyncService {
@@ -285,7 +331,36 @@ impl ConfigSyncService {
             source_cache: parking_lot::Mutex::new(HashMap::new()),
             source_warnings: parking_lot::Mutex::new(HashMap::new()),
             watch_warning: parking_lot::Mutex::new(None),
+            credentials: None,
         }
+    }
+
+    /// Authenticate every request to `platform_url`'s origin — and no other
+    /// — with a bearer token from `token` (Go `ConfigSource.SetCredentials`).
+    /// A blank or origin-less `platform_url` leaves every URL
+    /// unauthenticated.
+    pub fn with_credentials(mut self, token: Arc<PlatformTokenSource>, platform_url: &str) -> Self {
+        match origin_of(platform_url) {
+            Some(origin) => {
+                self.credentials = Some(PlatformCredentials { token, origin });
+            }
+            None => warn!(
+                platform_url = %platform_url,
+                "platform URL has no scheme://host origin; config sources are fetched without credentials"
+            ),
+        }
+        self
+    }
+
+    /// The HTTP client config fetches use (the token source shares it).
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
+    }
+
+    /// The credential for `url`, when it is on the platform's origin.
+    fn credentials_for(&self, url: &str) -> Option<&PlatformCredentials> {
+        let creds = self.credentials.as_ref()?;
+        (origin_of(url).as_deref() == Some(creds.origin.as_str())).then_some(creds)
     }
 
     /// R-30: source recovered — clear (acknowledge) its active "failing"
@@ -432,6 +507,15 @@ impl ConfigSyncService {
                     }
                     return Ok(config);
                 }
+                Err(e) if e.is_permanent() => {
+                    error!(
+                        attempt = attempt,
+                        url = %url,
+                        error = %e,
+                        "Config source refused the request; not retrying"
+                    );
+                    return Err(e);
+                }
                 Err(e) => {
                     if attempt < self.config.max_retry_attempts {
                         warn!(
@@ -470,21 +554,52 @@ impl ConfigSyncService {
 
     /// Single fetch attempt from a specific URL
     async fn fetch_config_once(&self, url: &str) -> Result<RouterConfig, ConfigSyncError> {
-        let response =
-            self.http_client
-                .get(url)
-                .send()
+        let mut request = self.http_client.get(url);
+        // The credential goes to this router's own platform and nowhere
+        // else. A minting failure is an attempt failure like a transport
+        // one: the retry loop keeps trying.
+        let creds = self.credentials_for(url);
+        if let Some(creds) = creds {
+            let token = creds
+                .token
+                .token()
                 .await
-                .map_err(|e| ConfigSyncError::Request {
+                .map_err(|e| ConfigSyncError::Token {
                     url: url.to_string(),
                     message: e.to_string(),
                 })?;
+            request = request.bearer_auth(token);
+        }
+        let authenticated = creds.is_some();
+
+        let response = request.send().await.map_err(|e| ConfigSyncError::Request {
+            url: url.to_string(),
+            message: e.to_string(),
+        })?;
 
         let status = response.status();
         if !status.is_success() {
+            // A rejected token is the one failure re-minting can fix.
+            if let (Some(creds), reqwest::StatusCode::UNAUTHORIZED) = (creds, status) {
+                creds.token.invalidate().await;
+            }
+            let hint = if !authenticated
+                && matches!(
+                    status,
+                    reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+                ) {
+                " (sent without credentials: a platform's /api/dispatch/router-config needs \
+                 FC_ROUTER_PLATFORM_URL set to that platform plus \
+                 FC_ROUTER_CLIENT_ID/FC_ROUTER_CLIENT_SECRET)"
+                    .to_string()
+            } else {
+                String::new()
+            };
             return Err(ConfigSyncError::BadStatus {
                 url: url.to_string(),
                 status,
+                permanent: !retryable_status(status, authenticated),
+                hint,
             });
         }
 
@@ -1248,6 +1363,166 @@ mod tests {
             .await
             .expect("run() exits on cancel")
             .unwrap();
+    }
+
+    // ========================================================================
+    // Platform credentials (Go ConfigSource.SetCredentials)
+    // ========================================================================
+
+    /// A platform that mints `tok-<n>` at /oauth/token and serves its
+    /// router-config only to `Bearer tok-<accept_from>` or later.
+    async fn platform_server(
+        accept_from: u32,
+    ) -> (wiremock::MockServer, Arc<std::sync::atomic::AtomicU32>) {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mints = Arc::new(AtomicU32::new(0));
+        let counter = mints.clone();
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(move |_: &wiremock::Request| {
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "access_token": format!("tok-{n}"), "expires_in": 3600
+                }))
+            })
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/dispatch/router-config"))
+            .respond_with(move |req: &wiremock::Request| {
+                let auth = req
+                    .headers
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                let ok = auth
+                    .strip_prefix("Bearer tok-")
+                    .and_then(|n| n.parse::<u32>().ok())
+                    .is_some_and(|n| n >= accept_from);
+                if ok {
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                        "processingPools": [{"code": "PLATFORM-POOL", "concurrency": 5}],
+                        "queues": [{"queueName": "platform-q", "queueUri": "sqs://platform-q"}],
+                    }))
+                } else {
+                    ResponseTemplate::new(401)
+                }
+            })
+            .mount(&server)
+            .await;
+        (server, mints)
+    }
+
+    fn credentialed_service(urls: &str, platform: &str, attempts: u32) -> ConfigSyncService {
+        let manager = Arc::new(QueueManager::new(crate::mediator::HttpMediatorConfig::dev()));
+        let mut config = ConfigSyncConfig::new(urls.to_string());
+        config.max_retry_attempts = attempts;
+        config.retry_delay = Duration::from_millis(1);
+        let svc = ConfigSyncService::new(config, manager, Arc::new(WarningService::noop()));
+        let token = Arc::new(PlatformTokenSource::new(
+            platform,
+            "router-id",
+            "router-secret",
+            svc.http_client().clone(),
+        ));
+        svc.with_credentials(token, platform)
+    }
+
+    /// The token goes to the platform's origin only: a third-party source
+    /// on another origin is fetched without it, and both merge.
+    #[tokio::test]
+    async fn credential_is_sent_only_to_the_platform_origin_and_sources_merge() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let (platform, mints) = platform_server(0).await;
+        let integral = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "processingPools": [{"code": "INTEGRAL-POOL", "concurrency": 2}],
+                "queues": [{"queueName": "integral-q", "queueUri": "sqs://integral-q", "connections": 0}],
+            })))
+            .mount(&integral)
+            .await;
+
+        let urls = format!(
+            "{}/api/config, {}/api/dispatch/router-config",
+            integral.uri(),
+            platform.uri()
+        );
+        let svc = credentialed_service(&urls, &format!("{}/", platform.uri()), 1);
+        let merged = svc.fetch_config().await.expect("both sources answer");
+
+        let pools: Vec<&str> = merged
+            .processing_pools
+            .iter()
+            .map(|p| p.code.as_str())
+            .collect();
+        assert_eq!(pools, vec!["INTEGRAL-POOL", "PLATFORM-POOL"]);
+        assert_eq!(merged.queues.len(), 2);
+        assert_eq!(mints.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let integral_requests = integral.received_requests().await.unwrap();
+        assert!(!integral_requests.is_empty());
+        for req in integral_requests {
+            assert!(
+                req.headers.get("authorization").is_none(),
+                "the platform credential must never reach another origin"
+            );
+        }
+    }
+
+    /// A 401 on an authenticated request drops the cached token, and the
+    /// next attempt mints a fresh one (Go `Invalidate`).
+    #[tokio::test]
+    async fn a_rejected_token_is_reminted_on_the_next_attempt() {
+        let (platform, mints) = platform_server(1).await;
+        let url = format!("{}/api/dispatch/router-config", platform.uri());
+        let svc = credentialed_service(&url, &platform.uri(), 3);
+        let cfg = svc.fetch_config().await.expect("second token is accepted");
+        assert_eq!(cfg.processing_pools[0].code, "PLATFORM-POOL");
+        assert_eq!(mints.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    /// A refusal retrying cannot change fails the source at once; an
+    /// unauthenticated 401 says which variables are missing.
+    #[tokio::test]
+    async fn permanent_refusals_are_not_retried() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let mut service = test_service(server.uri());
+        service.config.max_retry_attempts = 5;
+        let err = service
+            .fetch_config_from_url(&server.uri())
+            .await
+            .unwrap_err();
+        assert!(err.is_permanent());
+        assert!(err.to_string().contains("FC_ROUTER_CLIENT_ID"), "{err}");
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+        assert!(retryable_status(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            false
+        ));
+        assert!(retryable_status(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            false
+        ));
+        assert!(retryable_status(reqwest::StatusCode::UNAUTHORIZED, true));
+        assert!(!retryable_status(reqwest::StatusCode::FORBIDDEN, true));
+        assert!(!retryable_status(reqwest::StatusCode::NOT_FOUND, false));
     }
 
     /// R-30: a source that has never succeeded (no cache yet — first boot)

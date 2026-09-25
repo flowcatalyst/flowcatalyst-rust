@@ -25,6 +25,7 @@ pub mod manager;
 pub mod mediator;
 pub mod metrics;
 pub mod notification;
+pub mod platform_token;
 pub mod pool;
 pub mod queue_health_monitor;
 pub mod router_metrics;
@@ -62,6 +63,7 @@ pub use notification::{
 };
 #[cfg(feature = "email")]
 pub use notification::{EmailConfig, EmailNotificationService};
+pub use platform_token::{origin_of, PlatformTokenSource, TokenError};
 pub use pool::{
     deferred_delay, disposition_of, retry_delay, BrokerAction, Disposition, DispositionMetric,
     GroupEffect, GroupInfo, MediatingEntry, PoolConfigUpdate, ProcessPool,
