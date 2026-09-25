@@ -13,13 +13,19 @@ class CreateProcessRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Diagram body (typically Mermaid source).
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
+     * Process documentation body
      *
      * @var string|null
      */
     protected $body;
     /**
-     * Process code: {application}:{subdomain}:{process-name}
+     * Process code in application:subdomain:name format
      *
      * @var string|null
      */
@@ -29,7 +35,7 @@ class CreateProcessRequest extends \ArrayObject
      */
     protected $description;
     /**
-     * Defaults to `mermaid` if unset.
+     * Diagram syntax (e.g. mermaid)
      *
      * @var string|null
      */
@@ -43,7 +49,29 @@ class CreateProcessRequest extends \ArrayObject
      */
     protected $tags;
     /**
-     * Diagram body (typically Mermaid source).
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * Process documentation body
      *
      * @return string|null
      */
@@ -52,7 +80,7 @@ class CreateProcessRequest extends \ArrayObject
         return $this->body;
     }
     /**
-     * Diagram body (typically Mermaid source).
+     * Process documentation body
      *
      * @param string|null $body
      *
@@ -65,7 +93,7 @@ class CreateProcessRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Process code: {application}:{subdomain}:{process-name}
+     * Process code in application:subdomain:name format
      *
      * @return string|null
      */
@@ -74,7 +102,7 @@ class CreateProcessRequest extends \ArrayObject
         return $this->code;
     }
     /**
-     * Process code: {application}:{subdomain}:{process-name}
+     * Process code in application:subdomain:name format
      *
      * @param string|null $code
      *
@@ -105,7 +133,7 @@ class CreateProcessRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Defaults to `mermaid` if unset.
+     * Diagram syntax (e.g. mermaid)
      *
      * @return string|null
      */
@@ -114,7 +142,7 @@ class CreateProcessRequest extends \ArrayObject
         return $this->diagramType;
     }
     /**
-     * Defaults to `mermaid` if unset.
+     * Diagram syntax (e.g. mermaid)
      *
      * @param string|null $diagramType
      *

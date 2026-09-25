@@ -37,17 +37,17 @@ class CreatedResponseNormalizer implements DenormalizerInterface, NormalizerInte
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('id', $data) && $data['id'] !== null) {
             $object->setId($data['id']);
-            unset($data['id']);
         }
         elseif (\array_key_exists('id', $data) && $data['id'] === null) {
             $object->setId(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -55,11 +55,6 @@ class CreatedResponseNormalizer implements DenormalizerInterface, NormalizerInte
     {
         $dataArray = [];
         $dataArray['id'] = $data->getId();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

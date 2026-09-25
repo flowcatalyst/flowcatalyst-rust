@@ -81,7 +81,68 @@ final readonly class FlowCatalystUser
          * `'session'` for browser flow, `'bearer'` for API callers.
          */
         public ?string $mechanism = null,
+
+        /**
+         * Decoded claims of the *access* token specifically — distinct from
+         * {@see $claims}, which holds the ID token's claims at login but the
+         * access token's claims after a {@see refresh()}. `accessTokenClaims`
+         * is always access-token-shaped, so `exp`/`iat` checks (session
+         * capping, the opt-in revocation check) have one consistent source
+         * regardless of whether the principal just logged in or was refreshed.
+         *
+         * @var array<string, mixed>
+         */
+        public array $accessTokenClaims = [],
     ) {}
+
+    /**
+     * The access token's own expiry (`exp` claim), or null if unavailable.
+     */
+    public function getAccessTokenExpiresAt(): ?int
+    {
+        $exp = $this->accessTokenClaims['exp'] ?? null;
+        return is_int($exp) ? $exp : null;
+    }
+
+    /**
+     * The access token's own issued-at (`iat` claim), or null if unavailable.
+     */
+    public function getAccessTokenIssuedAt(): ?int
+    {
+        $iat = $this->accessTokenClaims['iat'] ?? null;
+        return is_int($iat) ? $iat : null;
+    }
+
+    /**
+     * Portal-plane logins: the code of the portal app the user signed in to
+     * (the `portal_app_code` ID-token claim), or null for non-portal logins
+     * and legacy portal OAuth clients not linked to a portal app. It matches
+     * the `portalAppCode` your backend sends to /api/portal-users.
+     */
+    public function getPortalAppCode(): ?string
+    {
+        $code = $this->claims['portal_app_code'] ?? null;
+        return is_string($code) && $code !== '' ? $code : null;
+    }
+
+    /**
+     * Portal-plane logins: the portal app's id (`portal_app_id` claim).
+     */
+    public function getPortalAppId(): ?string
+    {
+        $id = $this->claims['portal_app_id'] ?? null;
+        return is_string($id) && $id !== '' ? $id : null;
+    }
+
+    /**
+     * Portal-plane logins: the tenant client whose portal identity signed in
+     * (`portal_client_id` claim).
+     */
+    public function getPortalClientId(): ?string
+    {
+        $id = $this->claims['portal_client_id'] ?? null;
+        return is_string($id) && $id !== '' ? $id : null;
+    }
 
     /**
      * Get the raw clients claim entries.
@@ -268,33 +329,125 @@ final readonly class FlowCatalystUser
     }
 
     /**
-     * User scope (`'anchor' | 'partner' | 'client'`) — lower-cased from
-     * the `scope` claim. Returns `null` if the claim is missing.
+     * Tenancy tier (`'anchor' | 'partner' | 'client'`) — lower-cased from the
+     * `tier` claim. Returns `null` if the claim is missing.
+     *
+     * The platform moved this off the `scope` claim; `scope` now carries the
+     * granted permissions (see {@see getGrantedPermissions()}).
+     */
+    public function getTier(): ?string
+    {
+        $tier = $this->claims['tier'] ?? null;
+        return is_string($tier) ? strtolower($tier) : null;
+    }
+
+    /**
+     * @deprecated Use {@see getTier()}. The `scope` claim now holds granted
+     * permissions, not the tenancy tier; this returns the tier for back-compat.
      */
     public function getScope(): ?string
     {
-        $scope = $this->claims['scope'] ?? null;
-        return is_string($scope) ? strtolower($scope) : null;
+        return $this->getTier();
     }
 
     /**
-     * Whether this user has anchor (full platform) access. Anchor users
-     * have `scope == 'anchor'` and/or `clients` containing `'*'`.
+     * The principal's granted permissions, read straight off the `scope` claim
+     * (space-delimited string, or array). Stateless — no resolver required.
+     *
+     * @return array<int, string>
+     */
+    public function getGrantedPermissions(): array
+    {
+        $scope = $this->claims['scope'] ?? null;
+        if (is_string($scope)) {
+            $parts = preg_split('/\s+/', trim($scope));
+            return $parts === false ? [] : array_values(array_filter($parts, static fn ($p) => $p !== ''));
+        }
+
+        return is_array($scope) ? array_values(array_filter($scope, 'is_string')) : [];
+    }
+
+    /**
+     * Whether this principal has anchor (full platform) access — `tier == 'anchor'`
+     * and/or `clients` containing `'*'`.
      */
     public function isAnchor(): bool
     {
-        return $this->getScope() === 'anchor' || $this->hasFullAccess();
+        return $this->getTier() === 'anchor' || $this->hasFullAccess();
     }
 
     /**
-     * Application codes derived from roles (the `applications` claim).
+     * Application IDs the principal may reach (parsed from the `applications`
+     * claim).
+     *
+     * The claim mirrors `clients`: `"{id}:{code}"` pairs, or the single `"*"`
+     * sentinel meaning every application. Bare IDs — the form minted before
+     * pairs existed — are still accepted, so a token issued just before a
+     * platform upgrade keeps working for its TTL.
+     *
+     * Empty when {@see hasAllApplications()} is true: there is no restriction
+     * to enumerate.
      *
      * @return array<int, string>
      */
     public function getApplications(): array
     {
-        $apps = $this->claims['applications'] ?? [];
-        return is_array($apps) ? array_values(array_filter($apps, 'is_string')) : [];
+        return $this->parsedApplications()['ids'];
+    }
+
+    /**
+     * Application codes, positionally aligned with {@see getApplications()}.
+     * An ID whose code the platform could not resolve contributes no entry.
+     *
+     * @return array<int, string>
+     */
+    public function getApplicationCodes(): array
+    {
+        return $this->parsedApplications()['codes'];
+    }
+
+    /**
+     * Whether the principal reaches every application, present and future —
+     * the `"*"` entry in the claim.
+     *
+     * Also honours the deprecated `all_applications` boolean, so this reads
+     * correctly against a platform that emits only that.
+     */
+    public function hasAllApplications(): bool
+    {
+        return $this->parsedApplications()['all'];
+    }
+
+    /**
+     * Split the `applications` claim once. Only the FIRST colon delimits, so
+     * an application code containing one survives intact.
+     *
+     * @return array{ids: array<int, string>, codes: array<int, string>, all: bool}
+     */
+    private function parsedApplications(): array
+    {
+        $entries = $this->claims['applications'] ?? [];
+        $entries = is_array($entries) ? array_filter($entries, 'is_string') : [];
+
+        $ids = [];
+        $codes = [];
+        $all = ($this->claims['all_applications'] ?? false) === true;
+
+        foreach ($entries as $entry) {
+            if ($entry === '*') {
+                $all = true;
+                continue;
+            }
+            $i = strpos($entry, ':');
+            if ($i !== false && $i > 0) {
+                $ids[] = substr($entry, 0, $i);
+                $codes[] = substr($entry, $i + 1);
+            } elseif ($entry !== '') {
+                $ids[] = $entry;
+            }
+        }
+
+        return ['ids' => array_values($ids), 'codes' => array_values($codes), 'all' => $all];
     }
 
     /**
@@ -328,6 +481,29 @@ final readonly class FlowCatalystUser
             refreshToken: $this->refreshToken,
             permissions: $catalogue->resolve($this->getRoles()),
             mechanism: $this->mechanism,
+            accessTokenClaims: $this->accessTokenClaims,
+        );
+    }
+
+    /**
+     * Return a copy with the given effective permissions (resolved by a
+     * {@see \FlowCatalyst\Auth\Contracts\PermissionResolver}). Roles/clients/
+     * applications keep their token-derived values. The original is unchanged.
+     *
+     * @param array<int,string> $permissions
+     */
+    public function withPermissions(array $permissions): self
+    {
+        return new self(
+            sub: $this->sub,
+            email: $this->email,
+            name: $this->name,
+            claims: $this->claims,
+            accessToken: $this->accessToken,
+            refreshToken: $this->refreshToken,
+            permissions: $permissions,
+            mechanism: $this->mechanism,
+            accessTokenClaims: $this->accessTokenClaims,
         );
     }
 
@@ -346,18 +522,25 @@ final readonly class FlowCatalystUser
             refreshToken: $this->refreshToken,
             permissions: $this->permissions,
             mechanism: $mechanism,
+            accessTokenClaims: $this->accessTokenClaims,
         );
     }
 
     /**
-     * Create from decoded JWT claims.
+     * Create from decoded JWT claims (the ID token, at login).
      *
      * @param array<string, mixed> $claims
+     * @param array<string, mixed> $accessTokenClaims decoded claims of the
+     *   access token issued alongside this ID token — the source of
+     *   `exp`/`iat` for session-capping and the opt-in revocation check,
+     *   since the ID token's own `exp` is deliberately short-lived (see
+     *   {@see getAccessTokenExpiresAt()}).
      */
     public static function fromClaims(
         array $claims,
         ?string $accessToken = null,
-        ?string $refreshToken = null
+        ?string $refreshToken = null,
+        array $accessTokenClaims = [],
     ): self {
         return new self(
             sub: $claims['sub'] ?? throw new \InvalidArgumentException('Missing sub claim'),
@@ -366,6 +549,7 @@ final readonly class FlowCatalystUser
             claims: $claims,
             accessToken: $accessToken,
             refreshToken: $refreshToken,
+            accessTokenClaims: $accessTokenClaims,
         );
     }
 
@@ -391,6 +575,9 @@ final readonly class FlowCatalystUser
             refreshToken: $refreshToken,
             permissions: [],
             mechanism: $mechanism,
+            // $claims IS the access token's own claims here (unlike fromClaims,
+            // called with the ID token's claims at login).
+            accessTokenClaims: $claims,
         );
     }
 }

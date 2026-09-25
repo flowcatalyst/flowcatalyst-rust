@@ -30,6 +30,22 @@ class TsidGenerator
     }
 
     /**
+     * Generate a BRANDED (typed) TSID: "{prefix}_{raw}" — matching the
+     * FlowCatalyst platform convention (e.g. `aud_…`, `prn_…`). Use a short
+     * lowercase prefix for your own entities (e.g. "cmt" → `cmt_6F7JC2A6JFR7N`).
+     *
+     * @throws \InvalidArgumentException when the prefix is empty or contains "_"
+     */
+    public static function generateWithPrefix(string $prefix): string
+    {
+        if ($prefix === '' || str_contains($prefix, '_')) {
+            throw new \InvalidArgumentException('TSID prefix must be non-empty and contain no underscore.');
+        }
+
+        return $prefix . '_' . self::generate();
+    }
+
+    /**
      * Decode a Crockford Base32 string to a 64-bit value.
      */
     public static function decode(string $tsid): int

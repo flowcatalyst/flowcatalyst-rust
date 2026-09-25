@@ -5,1725 +5,2834 @@ namespace FlowCatalyst\Generated;
 class Client extends \FlowCatalyst\Generated\Runtime\Client\Client
 {
     /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AnchorDomainListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listAnchorDomains(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListAnchorDomains(), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateAnchorDomainRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createAnchorDomain(?\FlowCatalyst\Generated\Model\CreateAnchorDomainRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateAnchorDomain($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteAnchorDomain(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteAnchorDomain($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateAnchorDomainRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateAnchorDomain(string $id, ?\FlowCatalyst\Generated\Model\UpdateAnchorDomainRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateAnchorDomain($id, $requestBody), $fetch);
+    }
+    /**
+     * @param array{
+     *    "type"?: string,
+     *    "active"?: string,
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listApplications(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListApplications($queryParameters), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateApplicationRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createApplication(?\FlowCatalyst\Generated\Model\CreateApplicationRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateApplication($requestBody), $fetch);
+    }
+    /**
+     * @param string $code
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getApplicationByCode(string $code, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApplicationByCode($code), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationRolesResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listApplicationRoles(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListApplicationRoles($id), $fetch);
+    }
+    /**
      * @param string $appCode Application code
      * @param null|\FlowCatalyst\Generated\Model\SyncDispatchPoolsRequest $requestBody
      * @param array{
-     *    "removeUnlisted"?: bool, //Archive pools not in list
+     *    "removeUnlisted"?: bool, //Archive pools not in the list
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeDispatchPoolsSyncBadRequestException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiApplicationsByAppCodeDispatchPoolsSync(string $appCode, ?\FlowCatalyst\Generated\Model\SyncDispatchPoolsRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function syncDispatchPools(string $appCode, ?\FlowCatalyst\Generated\Model\SyncDispatchPoolsRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiApplicationsByAppCodeDispatchPoolsSync($appCode, $requestBody, $queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncDispatchPools($appCode, $requestBody, $queryParameters), $fetch);
+    }
+    /**
+     * @param string $appCode Application code
+     * @param null|\FlowCatalyst\Generated\Model\SyncDocsRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function syncAppDocs(string $appCode, ?\FlowCatalyst\Generated\Model\SyncDocsRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncAppDocs($appCode, $requestBody), $fetch);
     }
     /**
      * @param string $appCode Application code
      * @param null|\FlowCatalyst\Generated\Model\SyncEventTypesRequest $requestBody
      * @param array{
-     *    "removeUnlisted"?: bool, //Remove API-sourced event types not in list
+     *    "removeUnlisted"?: bool, //Remove API-sourced event types not in the list
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeEventTypesSyncBadRequestException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiApplicationsByAppCodeEventTypesSync(string $appCode, ?\FlowCatalyst\Generated\Model\SyncEventTypesRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function syncEventTypes(string $appCode, ?\FlowCatalyst\Generated\Model\SyncEventTypesRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiApplicationsByAppCodeEventTypesSync($appCode, $requestBody, $queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncEventTypes($appCode, $requestBody, $queryParameters), $fetch);
     }
     /**
-     * Versioned: the prior CURRENT (if any) is flipped to ARCHIVED with computed
-     * change-notes; the incoming document becomes the new CURRENT. Re-sending an
-     * unchanged spec is a no-op (returns `unchanged: true`).
      * @param string $appCode Application code
-     * @param null|\FlowCatalyst\Generated\Model\SyncOpenApiSpecRequest $requestBody
+     * @param null|\FlowCatalyst\Generated\Model\SyncOpenapiRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeOpenapiSyncBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeOpenapiSyncForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeOpenapiSyncNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncOpenApiSpecResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncOpenApiSpecResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiApplicationsByAppCodeOpenapiSync(string $appCode, ?\FlowCatalyst\Generated\Model\SyncOpenApiSpecRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function syncOpenapi(string $appCode, ?\FlowCatalyst\Generated\Model\SyncOpenapiRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiApplicationsByAppCodeOpenapiSync($appCode, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncOpenapi($appCode, $requestBody), $fetch);
     }
     /**
      * @param string $appCode Application code
      * @param null|\FlowCatalyst\Generated\Model\SyncPrincipalsRequest $requestBody
      * @param array{
-     *    "removeUnlisted"?: bool, //Remove SDK_SYNC roles from unlisted principals
+     *    "removeUnlisted"?: bool, //Strip SDK_SYNC roles from unlisted principals
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodePrincipalsSyncBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodePrincipalsSyncNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiApplicationsByAppCodePrincipalsSync(string $appCode, ?\FlowCatalyst\Generated\Model\SyncPrincipalsRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function syncPrincipals(string $appCode, ?\FlowCatalyst\Generated\Model\SyncPrincipalsRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiApplicationsByAppCodePrincipalsSync($appCode, $requestBody, $queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncPrincipals($appCode, $requestBody, $queryParameters), $fetch);
     }
     /**
      * @param string $appCode Application code
      * @param null|\FlowCatalyst\Generated\Model\SyncProcessesRequest $requestBody
      * @param array{
-     *    "removeUnlisted"?: bool, //Remove API-sourced processes not in list
+     *    "removeUnlisted"?: bool, //Remove API/CODE processes not in the list
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeProcessesSyncBadRequestException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiApplicationsByAppCodeProcessesSync(string $appCode, ?\FlowCatalyst\Generated\Model\SyncProcessesRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function syncProcesses(string $appCode, ?\FlowCatalyst\Generated\Model\SyncProcessesRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiApplicationsByAppCodeProcessesSync($appCode, $requestBody, $queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncProcesses($appCode, $requestBody, $queryParameters), $fetch);
     }
     /**
      * @param string $appCode Application code
      * @param null|\FlowCatalyst\Generated\Model\SyncRolesRequest $requestBody
      * @param array{
-     *    "removeUnlisted"?: bool, //Remove SDK roles not in list
+     *    "removeUnlisted"?: bool, //Remove SDK roles not in the list
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeRolesSyncBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeRolesSyncNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiApplicationsByAppCodeRolesSync(string $appCode, ?\FlowCatalyst\Generated\Model\SyncRolesRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function syncRoles(string $appCode, ?\FlowCatalyst\Generated\Model\SyncRolesRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiApplicationsByAppCodeRolesSync($appCode, $requestBody, $queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncRoles($appCode, $requestBody, $queryParameters), $fetch);
     }
     /**
-     * Body specifies the target client (or null for platform-scoped). Caller
-     * must have access to that client (or be anchor for platform-scoped).
      * @param string $appCode Application code
      * @param null|\FlowCatalyst\Generated\Model\SyncScheduledJobsRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeScheduledJobsSyncBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeScheduledJobsSyncForbiddenException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncScheduledJobsResultResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncScheduledJobsResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiApplicationsByAppCodeScheduledJobsSync(string $appCode, ?\FlowCatalyst\Generated\Model\SyncScheduledJobsRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function syncScheduledJobs(string $appCode, ?\FlowCatalyst\Generated\Model\SyncScheduledJobsRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiApplicationsByAppCodeScheduledJobsSync($appCode, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncScheduledJobs($appCode, $requestBody), $fetch);
     }
     /**
      * @param string $appCode Application code
      * @param null|\FlowCatalyst\Generated\Model\SyncSubscriptionsRequest $requestBody
      * @param array{
-     *    "removeUnlisted"?: bool, //Remove API-sourced subscriptions not in list
+     *    "removeUnlisted"?: bool, //Remove API/CODE subscriptions not in the list
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeSubscriptionsSyncBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiApplicationsByAppCodeSubscriptionsSyncNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiApplicationsByAppCodeSubscriptionsSync(string $appCode, ?\FlowCatalyst\Generated\Model\SyncSubscriptionsRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function syncSubscriptions(string $appCode, ?\FlowCatalyst\Generated\Model\SyncSubscriptionsRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiApplicationsByAppCodeSubscriptionsSync($appCode, $requestBody, $queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncSubscriptions($appCode, $requestBody, $queryParameters), $fetch);
     }
     /**
-    * @param array{
-    *    "after"?: string, //Opaque cursor returned by a previous page's `nextCursor`. Omit for
-    the first page.
-    *    "pageSize"?: int, //Page size (default 50, capped at 200).
-    *    "entityType"?: string, //Filter by entity type
-    *    "entityId"?: string, //Filter by entity ID
-    *    "operation"?: string, //Filter by operation (Java calls this "operation", maps to action internally)
-    *    "principalId"?: string, //Filter by principal ID
-    * } $queryParameters
-    
-    * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-    *
-    * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogListResponse : \Psr\Http\Message\ResponseInterface)
-    */
-    public function getApiAuditLogs(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogs($queryParameters), $fetch);
-    }
-    /**
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationIdsResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiAuditLogsApplicationIds(string $fetch = self::FETCH_OBJECT)
+    public function deleteApplication(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogsApplicationIds(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApplication($id), $fetch);
     }
     /**
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientIdsResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiAuditLogsClientIds(string $fetch = self::FETCH_OBJECT)
+    public function getApplication(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogsClientIds(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApplication($id), $fetch);
     }
     /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateApplicationRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EntityTypesResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiAuditLogsEntityTypes(string $fetch = self::FETCH_OBJECT)
+    public function updateApplication(string $id, ?\FlowCatalyst\Generated\Model\UpdateApplicationRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogsEntityTypes(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateApplication($id, $requestBody), $fetch);
     }
     /**
-     * @param string $entityType Entity type
-     * @param string $entityId Entity ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EntityAuditLogsResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiAuditLogsEntityByEntityTypeByEntityId(string $entityType, string $entityId, string $fetch = self::FETCH_OBJECT)
+    public function activateApplication(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogsEntityByEntityTypeByEntityId($entityType, $entityId), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ActivateApplication($id), $fetch);
     }
     /**
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OperationsResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientConfigListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiAuditLogsOperations(string $fetch = self::FETCH_OBJECT)
+    public function listApplicationClientConfigs(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogsOperations(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListApplicationClientConfigs($id), $fetch);
     }
     /**
-     * @param string $principalId Principal ID
+     * @param string $id
+     * @param string $clientId
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogResponse[] : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientConfigResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiAuditLogsPrincipalByPrincipalId(string $principalId, string $fetch = self::FETCH_OBJECT)
+    public function getApplicationClientConfig(string $id, string $clientId, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogsPrincipalByPrincipalId($principalId), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApplicationClientConfig($id, $clientId), $fetch);
     }
     /**
+     * @param string $id
+     * @param string $clientId
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogResponse[] : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiAuditLogsRecent(string $fetch = self::FETCH_OBJECT)
+    public function disableApplicationForClient(string $id, string $clientId, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogsRecent(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DisableApplicationForClient($id, $clientId), $fetch);
     }
     /**
-     * @param string $id Audit log ID
+     * @param string $id
+     * @param string $clientId
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiAuditLogsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogDetailResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiAuditLogsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function enableApplicationForClient(string $id, string $clientId, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiAuditLogsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\EnableApplicationForClient($id, $clientId), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deactivateApplication(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeactivateApplication($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\ProvisionLoginClientRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationProvisionLoginClientResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function provisionApplicationLoginClient(string $id, ?\FlowCatalyst\Generated\Model\ProvisionLoginClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ProvisionApplicationLoginClient($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationProvisionServiceAccountResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function provisionApplicationServiceAccount(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ProvisionApplicationServiceAccount($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\AttachServiceAccountRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function attachApplicationServiceAccount(string $id, ?\FlowCatalyst\Generated\Model\AttachServiceAccountRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AttachApplicationServiceAccount($id, $requestBody), $fetch);
     }
     /**
      * @param array{
-     *    "page"?: int, //Page number
-     *    "limit"?: int, //Items per page
-     *    "status"?: string, //Filter by status
+     *    "after"?: string, //Opaque cursor from a previous page's nextCursor
+     *    "pageSize"?: int, //Page size (default 50, capped at 200)
+     *    "entityType"?: string,
+     *    "entityId"?: string,
+     *    "principalId"?: string,
+     *    "operation"?: string,
+     *    "applicationIds"?: string, //CSV of application ids
+     *    "clientIds"?: string, //CSV of client ids
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiClients(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listAuditLogs(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiClients($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListAuditLogs($queryParameters), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogApplicationIDsResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function auditLogApplicationIDs(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AuditLogApplicationIDs(), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogClientIDsResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function auditLogClientIDs(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AuditLogClientIDs(), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogEntityTypesResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function auditLogEntityTypes(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AuditLogEntityTypes(), $fetch);
+    }
+    /**
+     * @param string $entityType
+     * @param string $entityId
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function auditLogsByEntity(string $entityType, string $entityId, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AuditLogsByEntity($entityType, $entityId), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogOperationsResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function auditLogOperations(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AuditLogOperations(), $fetch);
+    }
+    /**
+     * @param string $principalId
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function auditLogsByPrincipal(string $principalId, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AuditLogsByPrincipal($principalId), $fetch);
+    }
+    /**
+     * @param array{
+     *    "after"?: string, //Opaque cursor from a previous page's nextCursor
+     *    "pageSize"?: int, //Page size (default 50, capped at 200)
+     *    "entityType"?: string,
+     *    "entityId"?: string,
+     *    "principalId"?: string,
+     *    "operation"?: string,
+     *    "applicationIds"?: string, //CSV of application ids
+     *    "clientIds"?: string, //CSV of client ids
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listAuditLogsRecent(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListAuditLogsRecent($queryParameters), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuditLogResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getAuditLog(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetAuditLog($id), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuthConfigListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listAuthConfigs(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListAuthConfigs(), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateAuthConfigRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createAuthConfig(?\FlowCatalyst\Generated\Model\CreateAuthConfigRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateAuthConfig($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteAuthConfig(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteAuthConfig($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateAuthConfigRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateAuthConfig(string $id, ?\FlowCatalyst\Generated\Model\UpdateAuthConfigRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateAuthConfig($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listClients(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListClients(), $fetch);
     }
     /**
      * @param null|\FlowCatalyst\Generated\Model\CreateClientRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsConflictException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiClients(?\FlowCatalyst\Generated\Model\CreateClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createClient(?\FlowCatalyst\Generated\Model\CreateClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiClients($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateClient($requestBody), $fetch);
     }
     /**
-     * @param string $identifier Client identifier/slug
+     * @param string $identifier
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiClientsByIdentifierByIdentifierNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiClientsByIdentifierByIdentifier(string $identifier, string $fetch = self::FETCH_OBJECT)
+    public function getClientByIdentifier(string $identifier, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiClientsByIdentifierByIdentifier($identifier), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetClientByIdentifier($identifier), $fetch);
     }
     /**
      * @param array{
-     *    "q"?: string, //Search term
+     *    "q"?: string,
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiClientsSearch(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function searchClientsByQuery(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiClientsSearch($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SearchClientsByQuery($queryParameters), $fetch);
     }
     /**
-     * @param string $id Client ID
+     * @param null|\FlowCatalyst\Generated\Model\SearchClientRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiClientsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiClientsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function searchClients(?\FlowCatalyst\Generated\Model\SearchClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiClientsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SearchClients($requestBody), $fetch);
     }
     /**
-     * @param string $id Client ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiClientsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiClientsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function deleteClient(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiClientsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteClient($id), $fetch);
     }
     /**
-     * @param string $id Client ID
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getClient(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetClient($id), $fetch);
+    }
+    /**
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\UpdateClientRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiClientsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiClientsById(string $id, ?\FlowCatalyst\Generated\Model\UpdateClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function updateClient(string $id, ?\FlowCatalyst\Generated\Model\UpdateClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiClientsById($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateClient($id, $requestBody), $fetch);
     }
     /**
-     * Transitions a suspended or pending client to active status.
-     * @param string $id Client ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdActivateForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdActivateNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiClientsByIdActivate(string $id, string $fetch = self::FETCH_OBJECT)
+    public function activateClient(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiClientsByIdActivate($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ActivateClient($id), $fetch);
     }
     /**
-     * @param string $id Client ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiClientsByIdApplicationsNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientApplicationsResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientApplicationsResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiClientsByIdApplications(string $id, string $fetch = self::FETCH_OBJECT)
+    public function getClientApplications(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiClientsByIdApplications($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetClientApplications($id), $fetch);
     }
     /**
-     * @param string $id Client ID
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\UpdateClientApplicationsRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiClientsByIdApplicationsNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiClientsByIdApplications(string $id, ?\FlowCatalyst\Generated\Model\UpdateClientApplicationsRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function updateClientApplications(string $id, ?\FlowCatalyst\Generated\Model\UpdateClientApplicationsRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiClientsByIdApplications($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateClientApplications($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id Client ID
-     * @param string $applicationId Application ID
+     * @param string $id
+     * @param string $applicationId
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdApplicationsByAppIdDisableNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiClientsByIdApplicationsByAppIdDisable(string $id, string $applicationId, string $fetch = self::FETCH_OBJECT)
+    public function disableClientApplication(string $id, string $applicationId, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiClientsByIdApplicationsByAppIdDisable($id, $applicationId), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DisableClientApplication($id, $applicationId), $fetch);
     }
     /**
-     * @param string $id Client ID
-     * @param string $applicationId Application ID
+     * @param string $id
+     * @param string $applicationId
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdApplicationsByAppIdEnableNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiClientsByIdApplicationsByAppIdEnable(string $id, string $applicationId, string $fetch = self::FETCH_OBJECT)
+    public function enableClientApplication(string $id, string $applicationId, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiClientsByIdApplicationsByAppIdEnable($id, $applicationId), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\EnableClientApplication($id, $applicationId), $fetch);
     }
     /**
-     * Deactivates/soft-deletes a client. Requires a reason.
-     * @param string $id Client ID
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\StatusChangeRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdDeactivateForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdDeactivateNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiClientsByIdDeactivate(string $id, ?\FlowCatalyst\Generated\Model\StatusChangeRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function deactivateClient(string $id, ?\FlowCatalyst\Generated\Model\StatusChangeRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiClientsByIdDeactivate($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeactivateClient($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id Client ID
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\AddNoteRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdNotesNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AddNoteResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiClientsByIdNotes(string $id, ?\FlowCatalyst\Generated\Model\AddNoteRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function addClientNote(string $id, ?\FlowCatalyst\Generated\Model\AddNoteRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiClientsByIdNotes($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AddClientNote($id, $requestBody), $fetch);
     }
     /**
-     * Suspends a client (e.g., for billing issues). Requires a reason.
-     * @param string $id Client ID
-     * @param null|\FlowCatalyst\Generated\Model\StatusChangeRequest $requestBody
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\SuspendClientRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdSuspendForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiClientsByIdSuspendNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiClientsByIdSuspend(string $id, ?\FlowCatalyst\Generated\Model\StatusChangeRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function suspendClient(string $id, ?\FlowCatalyst\Generated\Model\SuspendClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiClientsByIdSuspend($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SuspendClient($id, $requestBody), $fetch);
     }
     /**
+     * @param string $app
+     * @param string $section
+     * @param string $property
      * @param array{
-     *    "size"?: int, //Result size. Default 50, capped at 1000.
-     *    "eventId"?: string, //Filter by event ID
-     *    "correlationId"?: string, //Filter by correlation ID
-     *    "subscriptionId"?: string, //Filter by subscription ID
-     *    "clientIds"?: string, //Filter by client IDs (comma-separated)
-     *    "statuses"?: string, //Filter by statuses (comma-separated)
-     *    "applications"?: string, //Filter by application codes (comma-separated)
-     *    "subdomains"?: string, //Filter by subdomains (comma-separated)
-     *    "aggregates"?: string, //Filter by aggregates (comma-separated)
-     *    "codes"?: string, //Filter by codes (comma-separated)
-     *    "source"?: string, //Free-text search across code, subject, source
+     *    "clientId"?: string,
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobReadResponse[] : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiDispatchJobs(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function deletePlatformConfigProperty(string $app, string $section, string $property, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiDispatchJobs($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeletePlatformConfigProperty($app, $section, $property, $queryParameters), $fetch);
     }
     /**
-     * Creates and queues a new dispatch job for webhook delivery.
-     * @param null|\FlowCatalyst\Generated\Model\CreateDispatchJobRequest $requestBody
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiDispatchJobsBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiDispatchJobsForbiddenException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiDispatchJobs(?\FlowCatalyst\Generated\Model\CreateDispatchJobRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiDispatchJobs($requestBody), $fetch);
-    }
-    /**
-     * @param string $eventId Event ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobResponse[] : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiDispatchJobsByEventByEventId(string $eventId, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiDispatchJobsByEventByEventId($eventId), $fetch);
-    }
-    /**
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobFilterOptionsResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiDispatchJobsFilterOptions(string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiDispatchJobsFilterOptions(), $fetch);
-    }
-    /**
+     * @param string $app
+     * @param string $section
+     * @param string $property
      * @param array{
-     *    "size"?: int, //Result size. Default 50, capped at 1000.
+     *    "clientId"?: string,
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobResponse[] : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ConfigResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiDispatchJobsRaw(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function getPlatformConfigProperty(string $app, string $section, string $property, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiDispatchJobsRaw($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetPlatformConfigProperty($app, $section, $property, $queryParameters), $fetch);
     }
     /**
-     * @param string $id Dispatch job ID
+     * @param string $app
+     * @param string $section
+     * @param string $property
+     * @param null|\FlowCatalyst\Generated\Model\SetPropertyRequest $requestBody
+     * @param array{
+     *    "clientId"?: string,
+     * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiDispatchJobsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ConfigResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiDispatchJobsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function setPlatformConfigProperty(string $app, string $section, string $property, ?\FlowCatalyst\Generated\Model\SetPropertyRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiDispatchJobsById($id), $fetch);
-    }
-    /**
-     * Retrieves the full history of webhook delivery attempts for a job.
-     * @param string $id Dispatch job ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiDispatchJobsByIdAttemptsNotFoundException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchAttemptResponse[] : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiDispatchJobsByIdAttempts(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiDispatchJobsByIdAttempts($id), $fetch);
-    }
-    /**
-     * Returns the full DispatchJob entity serialized directly as JSON (not the DTO).
-     * @param string $id Dispatch job ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiDispatchJobsByIdRawNotFoundException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiDispatchJobsByIdRaw(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiDispatchJobsByIdRaw($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SetPlatformConfigProperty($app, $section, $property, $requestBody, $queryParameters), $fetch);
     }
     /**
      * @param array{
-     *    "pagination": array,
-     *    "application"?: string, //Filter by application
-     *    "clientId"?: string, //Filter by client ID
-     *    "status"?: string, //Filter by status
+     *    "status"?: string,
+     *    "clientId"?: string,
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ConnectionListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listConnections(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListConnections($queryParameters), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateConnectionRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ConnectionResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createConnection(?\FlowCatalyst\Generated\Model\CreateConnectionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateConnection($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteConnection(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteConnection($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ConnectionResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getConnection(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetConnection($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateConnectionRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateConnection(string $id, ?\FlowCatalyst\Generated\Model\UpdateConnectionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateConnection($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ConnectionResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function activateConnection(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ActivateConnection($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ConnectionResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function pauseConnection(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PauseConnection($id), $fetch);
+    }
+    /**
+     * @param array{
+     *    "status"?: string,
+     *    "clientId"?: string,
+     *    "dispatchPoolId"?: string,
+     *    "subscriptionId"?: string,
+     *    "code"?: string,
+     *    "since"?: string, //RFC3339 timestamp
+     *    "until"?: string, //RFC3339 timestamp
+     *    "limit"?: int,
+     *    "offset"?: int,
+     *    "size"?: int, //Max rows (default 50, max 1000)
+     *    "clientIds"?: string, //CSV of client ids
+     *    "statuses"?: string, //CSV of statuses
+     *    "applications"?: string, //CSV of application codes
+     *    "subdomains"?: string, //CSV of subdomains
+     *    "aggregates"?: string, //CSV of aggregates
+     *    "codes"?: string, //CSV of codes
+     *    "source"?: string, //Free-text source filter
+     *    "sort"?: string, //createdAt.asc | createdAt.desc (default)
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobRead[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listDispatchJobs(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListDispatchJobs($queryParameters), $fetch);
+    }
+    /**
+     * @param string $eventId
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobRead[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function dispatchJobsByEventAlias(string $eventId, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DispatchJobsByEventAlias($eventId), $fetch);
+    }
+    /**
+     * @param string $eventId
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobRead[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function dispatchJobsByEvent(string $eventId, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DispatchJobsByEvent($eventId), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobFilterOptionsResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function dispatchJobFilterOptions(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DispatchJobFilterOptions(), $fetch);
+    }
+    /**
+     * @param array{
+     *    "status"?: string,
+     *    "clientId"?: string,
+     *    "dispatchPoolId"?: string,
+     *    "subscriptionId"?: string,
+     *    "code"?: string,
+     *    "since"?: string, //RFC3339 timestamp
+     *    "until"?: string, //RFC3339 timestamp
+     *    "limit"?: int,
+     *    "offset"?: int,
+     *    "size"?: int, //Max rows (default 50, max 1000)
+     *    "clientIds"?: string, //CSV of client ids
+     *    "statuses"?: string, //CSV of statuses
+     *    "applications"?: string, //CSV of application codes
+     *    "subdomains"?: string, //CSV of subdomains
+     *    "aggregates"?: string, //CSV of aggregates
+     *    "codes"?: string, //CSV of codes
+     *    "source"?: string, //Free-text source filter
+     *    "sort"?: string, //createdAt.asc | createdAt.desc (default)
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobRead[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listDispatchJobsRaw(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListDispatchJobsRaw($queryParameters), $fetch);
+    }
+    /**
+     * @param array{
+     *    "status"?: string,
+     *    "clientId"?: string,
+     *    "dispatchPoolId"?: string,
+     *    "subscriptionId"?: string,
+     *    "code"?: string,
+     *    "since"?: string, //RFC3339 timestamp
+     *    "until"?: string, //RFC3339 timestamp
+     *    "limit"?: int,
+     *    "offset"?: int,
+     *    "size"?: int, //Max rows (default 50, max 1000)
+     *    "clientIds"?: string, //CSV of client ids
+     *    "statuses"?: string, //CSV of statuses
+     *    "applications"?: string, //CSV of application codes
+     *    "subdomains"?: string, //CSV of subdomains
+     *    "aggregates"?: string, //CSV of aggregates
+     *    "codes"?: string, //CSV of codes
+     *    "source"?: string, //Free-text source filter
+     *    "sort"?: string, //createdAt.asc | createdAt.desc (default)
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobRead[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listDispatchJobsRawAlias(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListDispatchJobsRawAlias($queryParameters), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\RequeueRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RequeueResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function requeueDispatchJobs(?\FlowCatalyst\Generated\Model\RequeueRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RequeueDispatchJobs($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getDispatchJob(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetDispatchJob($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AttemptDTO[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listDispatchJobAttempts(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListDispatchJobAttempts($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function cancelDispatchJob(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CancelDispatchJob($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function completeDispatchJob(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CompleteDispatchJob($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchJobResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getDispatchJobRaw(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetDispatchJobRaw($id), $fetch);
+    }
+    /**
+     * @param array{
+     *    "status"?: string, //Filter by status (ACTIVE, SUSPENDED, ARCHIVED)
+     *    "clientId"?: string, //Filter by client id
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchPoolListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listDispatchPools(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListDispatchPools($queryParameters), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateDispatchPoolRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createDispatchPool(?\FlowCatalyst\Generated\Model\CreateDispatchPoolRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateDispatchPool($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteDispatchPool(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteDispatchPool($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DispatchPoolResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getDispatchPool(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetDispatchPool($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateDispatchPoolRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateDispatchPool(string $id, ?\FlowCatalyst\Generated\Model\UpdateDispatchPoolRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateDispatchPool($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function activateDispatchPool(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ActivateDispatchPool($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function archiveDispatchPool(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ArchiveDispatchPool($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function suspendDispatchPool(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SuspendDispatchPool($id), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RouterConfig|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getRouterConfig(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetRouterConfig(), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DocListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listDocs(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListDocs(), $fetch);
+    }
+    /**
+     * @param string $appCode
+     * @param string $slug
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DocResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getApplicationDoc(string $appCode, string $slug, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApplicationDoc($appCode, $slug), $fetch);
+    }
+    /**
+     * @param string $slug
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DocResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getPlatformDoc(string $slug, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetPlatformDoc($slug), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\MappingListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listEmailDomainMappings(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListEmailDomainMappings(), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateMappingRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createEmailDomainMapping(?\FlowCatalyst\Generated\Model\CreateMappingRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateEmailDomainMapping($requestBody), $fetch);
+    }
+    /**
+     * @param string $domain Email domain to look up (e.g. example.com)
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\MappingResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getEmailDomainMappingByDomain(string $domain, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetEmailDomainMappingByDomain($domain), $fetch);
+    }
+    /**
+     * @param array{
+     *    "domain"?: string, //Email domain to look up (e.g. example.com)
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function lookupEmailDomainMapping(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\LookupEmailDomainMapping($queryParameters), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteEmailDomainMapping(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteEmailDomainMapping($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\MappingResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getEmailDomainMapping(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetEmailDomainMapping($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateMappingRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateEmailDomainMapping(string $id, ?\FlowCatalyst\Generated\Model\UpdateMappingRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateEmailDomainMapping($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\MoveProviderRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\MoveProviderResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function moveEmailDomainMappingProvider(string $id, ?\FlowCatalyst\Generated\Model\MoveProviderRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\MoveEmailDomainMappingProvider($id, $requestBody), $fetch);
+    }
+    /**
+     * @param array{
+     *    "application"?: string, //Filter by application code
+     *    "clientId"?: string, //Filter by client id
+     *    "status"?: string, //Filter by status (CURRENT, ARCHIVED)
      *    "subdomain"?: string, //Filter by subdomain
      *    "aggregate"?: string, //Filter by aggregate
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiEventTypes(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listEventTypes(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiEventTypes($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListEventTypes($queryParameters), $fetch);
     }
     /**
      * @param null|\FlowCatalyst\Generated\Model\CreateEventTypeRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiEventTypesBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiEventTypesConflictException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiEventTypes(?\FlowCatalyst\Generated\Model\CreateEventTypeRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createEventType(?\FlowCatalyst\Generated\Model\CreateEventTypeRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiEventTypes($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateEventType($requestBody), $fetch);
     }
     /**
-     * @param string $code Event type code
+     * @param string $code Event type code (e.g. platform:iam:user:created)
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiEventTypesByCodeByCodeNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiEventTypesByCodeByCode(string $code, string $fetch = self::FETCH_OBJECT)
+    public function getEventTypeByCode(string $code, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiEventTypesByCodeByCode($code), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetEventTypeByCode($code), $fetch);
     }
     /**
-     * @param string $id Event type ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiEventTypesByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiEventTypesById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function deleteEventType(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiEventTypesById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteEventType($id), $fetch);
     }
     /**
-     * @param string $id Event type ID
+     * @param string $id Event type id (TSID)
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiEventTypesByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiEventTypesById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function getEventType(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiEventTypesById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetEventType($id), $fetch);
     }
     /**
-     * @param string $id Event type ID
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\UpdateEventTypeRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiEventTypesByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiEventTypesById(string $id, ?\FlowCatalyst\Generated\Model\UpdateEventTypeRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function updateEventType(string $id, ?\FlowCatalyst\Generated\Model\UpdateEventTypeRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiEventTypesById($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateEventType($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id Event type ID
-     * @param null|\FlowCatalyst\Generated\Model\AddSchemaVersionRequest $requestBody
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\AddSchemaRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiEventTypesByIdSchemasNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiEventTypesByIdSchemas(string $id, ?\FlowCatalyst\Generated\Model\AddSchemaVersionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function addEventTypeSchema(string $id, ?\FlowCatalyst\Generated\Model\AddSchemaRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiEventTypesByIdSchemas($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AddEventTypeSchema($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\AddSchemaRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventTypeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function addEventTypeVersion(string $id, ?\FlowCatalyst\Generated\Model\AddSchemaRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AddEventTypeVersion($id, $requestBody), $fetch);
     }
     /**
      * @param array{
-     *    "size"?: int, //Result size. Default 50, capped at 1000.
-     *    "clientIds"?: string, //Filter by client IDs (comma-separated)
-     *    "types"?: string, //Filter by event types (comma-separated)
-     *    "applications"?: string, //Filter by application codes (comma-separated)
-     *    "subdomains"?: string, //Filter by subdomains (comma-separated)
-     *    "aggregates"?: string, //Filter by aggregates (comma-separated)
-     *    "correlationId"?: string, //Filter by correlation ID
-     *    "source"?: string, //Free-text search across type, source, subject
+     *    "type"?: string,
+     *    "source"?: string,
+     *    "subject"?: string,
+     *    "clientId"?: string,
+     *    "principalId"?: string,
+     *    "correlationId"?: string,
+     *    "since"?: string, //RFC3339 timestamp
+     *    "until"?: string, //RFC3339 timestamp
+     *    "limit"?: int,
+     *    "offset"?: int,
+     *    "size"?: int, //Max rows (default 50, max 1000)
+     *    "clientIds"?: string, //CSV of client ids
+     *    "applications"?: string, //CSV of application codes
+     *    "subdomains"?: string, //CSV of subdomains
+     *    "aggregates"?: string, //CSV of aggregates
+     *    "types"?: string, //CSV of event types
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventRead[] : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventRead[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiEvents(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listEvents(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiEvents($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListEvents($queryParameters), $fetch);
     }
     /**
-     * Creates a new event in the event store. If a deduplicationId is provided and
-     * an event with that ID already exists, the existing event is returned (idempotent operation).
-     * Dispatch jobs are automatically created for matching subscriptions.
      * @param null|\FlowCatalyst\Generated\Model\CreateEventRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiEventsBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiEventsForbiddenException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreateEventResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreateEventResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiEvents(?\FlowCatalyst\Generated\Model\CreateEventRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createEvent(?\FlowCatalyst\Generated\Model\CreateEventRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiEvents($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateEvent($requestBody), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\BatchRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\BatchResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function batchIngestEvents(?\FlowCatalyst\Generated\Model\BatchRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\BatchIngestEvents($requestBody), $fetch);
     }
     /**
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventFilterOptions : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventFilterOptionsResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiEventsFilterOptions(string $fetch = self::FETCH_OBJECT)
+    public function eventFilterOptions(string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiEventsFilterOptions(), $fetch);
-    }
-    /**
-     * @param array{
-     *    "size"?: int, //Result size. Default 50, capped at 1000.
-     * } $queryParameters
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventSummaryResponse[] : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiEventsRaw(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiEventsRaw($queryParameters), $fetch);
-    }
-    /**
-     * @param string $id Event ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiEventsByIdNotFoundException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiEventsById(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiEventsById($id), $fetch);
-    }
-    /**
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CircuitBreakersResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiMonitoringCircuitBreakers(string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiMonitoringCircuitBreakers(), $fetch);
-    }
-    /**
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DashboardMetrics : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiMonitoringDashboard(string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiMonitoringDashboard(), $fetch);
-    }
-    /**
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\InFlightMessagesResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiMonitoringInFlightMessages(string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiMonitoringInFlightMessages(), $fetch);
-    }
-    /**
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PoolStatsResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiMonitoringPoolStats(string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiMonitoringPoolStats(), $fetch);
-    }
-    /**
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StandbyStatus : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiMonitoringStandbyStatus(string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiMonitoringStandbyStatus(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\EventFilterOptions(), $fetch);
     }
     /**
      * @param array{
-     *    "pagination": array,
-     *    "active"?: bool, //Filter by active status
+     *    "type"?: string,
+     *    "source"?: string,
+     *    "subject"?: string,
+     *    "clientId"?: string,
+     *    "principalId"?: string,
+     *    "correlationId"?: string,
+     *    "since"?: string, //RFC3339 timestamp
+     *    "until"?: string, //RFC3339 timestamp
+     *    "limit"?: int,
+     *    "offset"?: int,
+     *    "size"?: int, //Max rows (default 50, max 1000)
+     *    "clientIds"?: string, //CSV of client ids
+     *    "applications"?: string, //CSV of application codes
+     *    "subdomains"?: string, //CSV of subdomains
+     *    "aggregates"?: string, //CSV of aggregates
+     *    "types"?: string, //CSV of event types
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OAuthClientListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventRead[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiOauthClients(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listEventsRaw(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiOauthClients($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListEventsRaw($queryParameters), $fetch);
+    }
+    /**
+     * @param array{
+     *    "type"?: string,
+     *    "source"?: string,
+     *    "subject"?: string,
+     *    "clientId"?: string,
+     *    "principalId"?: string,
+     *    "correlationId"?: string,
+     *    "since"?: string, //RFC3339 timestamp
+     *    "until"?: string, //RFC3339 timestamp
+     *    "limit"?: int,
+     *    "offset"?: int,
+     *    "size"?: int, //Max rows (default 50, max 1000)
+     *    "clientIds"?: string, //CSV of client ids
+     *    "applications"?: string, //CSV of application codes
+     *    "subdomains"?: string, //CSV of subdomains
+     *    "aggregates"?: string, //CSV of aggregates
+     *    "types"?: string, //CSV of event types
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventRead[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listEventsRawAlias(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListEventsRawAlias($queryParameters), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\EventResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getEvent(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetEvent($id), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\IdentityProviderListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listIdentityProviders(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListIdentityProviders(), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateIdentityProviderRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\IdentityProviderResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createIdentityProvider(?\FlowCatalyst\Generated\Model\CreateIdentityProviderRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateIdentityProvider($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteIdentityProvider(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteIdentityProvider($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\IdentityProviderResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getIdentityProvider(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetIdentityProvider($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateIdentityProviderRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\IdentityProviderResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateIdentityProvider(string $id, ?\FlowCatalyst\Generated\Model\UpdateIdentityProviderRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateIdentityProvider($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\IdpRoleMappingListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listIdpRoleMappings(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListIdpRoleMappings(), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateIdpRoleMappingRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createIdpRoleMapping(?\FlowCatalyst\Generated\Model\CreateIdpRoleMappingRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateIdpRoleMapping($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteIdpRoleMapping(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteIdpRoleMapping($id), $fetch);
+    }
+    /**
+     * @param array{
+     *    "attemptType"?: string,
+     *    "outcome"?: string,
+     *    "identifier"?: string,
+     *    "principalId"?: string,
+     *    "dateFrom"?: string,
+     *    "dateTo"?: string,
+     *    "after"?: string,
+     *    "pageSize"?: int,
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\LoginAttemptListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listLoginAttempts(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListLoginAttempts($queryParameters), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OAuthClientListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listOAuthClients(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListOAuthClients(), $fetch);
     }
     /**
      * @param null|\FlowCatalyst\Generated\Model\CreateOAuthClientRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiOauthClientsBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiOauthClientsConflictException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreateOAuthClientResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreateOAuthClientResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiOauthClients(?\FlowCatalyst\Generated\Model\CreateOAuthClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createOAuthClient(?\FlowCatalyst\Generated\Model\CreateOAuthClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiOauthClients($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateOAuthClient($requestBody), $fetch);
     }
     /**
-     * @param string $clientId OAuth client_id (public identifier)
+     * @param string $clientId
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiOauthClientsByClientIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OAuthClientResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OAuthClientResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiOauthClientsByClientId(string $clientId, string $fetch = self::FETCH_OBJECT)
+    public function getOAuthClientByClientID(string $clientId, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiOauthClientsByClientId($clientId), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetOAuthClientByClientID($clientId), $fetch);
     }
     /**
-     * @param string $id OAuth client ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiOauthClientsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiOauthClientsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function deleteOAuthClient(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiOauthClientsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteOAuthClient($id), $fetch);
     }
     /**
-     * @param string $id OAuth client ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiOauthClientsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OAuthClientResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OAuthClientResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiOauthClientsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function getOAuthClient(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiOauthClientsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetOAuthClient($id), $fetch);
     }
     /**
-     * @param string $id OAuth client ID
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\UpdateOAuthClientRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiOauthClientsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiOauthClientsById(string $id, ?\FlowCatalyst\Generated\Model\UpdateOAuthClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function updateOAuthClient(string $id, ?\FlowCatalyst\Generated\Model\UpdateOAuthClientRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiOauthClientsById($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateOAuthClient($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id OAuth client ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiOauthClientsActivateNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SuccessResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SuccessResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiOauthClientsActivate(string $id, string $fetch = self::FETCH_OBJECT)
+    public function activateOAuthClient(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiOauthClientsActivate($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ActivateOAuthClient($id), $fetch);
     }
     /**
-     * @param string $id OAuth client ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiOauthClientsDeactivateNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SuccessResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SuccessResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiOauthClientsDeactivate(string $id, string $fetch = self::FETCH_OBJECT)
+    public function deactivateOAuthClient(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiOauthClientsDeactivate($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeactivateOAuthClient($id), $fetch);
     }
     /**
-     * @param string $id OAuth client ID
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\RotateOAuthClientSecretRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiOauthClientsRegenerateSecretNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegenerateSecretResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RotateOAuthClientSecretResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiOauthClientsRegenerateSecret(string $id, string $fetch = self::FETCH_OBJECT)
+    public function regenerateOAuthClientSecret(string $id, ?\FlowCatalyst\Generated\Model\RotateOAuthClientSecretRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiOauthClientsRegenerateSecret($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RegenerateOAuthClientSecret($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id OAuth client ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiOauthClientsRotateSecretNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegenerateSecretResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SuccessResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiOauthClientsRotateSecret(string $id, string $fetch = self::FETCH_OBJECT)
+    public function revokeOAuthClientPreviousSecret(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiOauthClientsRotateSecret($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RevokeOAuthClientPreviousSecret($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\RotateOAuthClientSecretRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RotateOAuthClientSecretResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function rotateOAuthClientSecret(string $id, ?\FlowCatalyst\Generated\Model\RotateOAuthClientSecretRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RotateOAuthClientSecret($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function revokePlatformConfigAccess(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RevokePlatformConfigAccess($id), $fetch);
+    }
+    /**
+     * @param string $app
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ConfigListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listPlatformConfigProperties(string $app, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPlatformConfigProperties($app), $fetch);
+    }
+    /**
+     * @param string $app
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AccessListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listPlatformConfigAccess(string $app, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPlatformConfigAccess($app), $fetch);
+    }
+    /**
+     * @param string $app
+     * @param null|\FlowCatalyst\Generated\Model\GrantAccessRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function grantPlatformConfigAccess(string $app, ?\FlowCatalyst\Generated\Model\GrantAccessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GrantPlatformConfigAccess($app, $requestBody), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CorsOriginListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listCorsOrigins(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListCorsOrigins(), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\AddOriginRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function addCorsOrigin(?\FlowCatalyst\Generated\Model\AddOriginRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AddCorsOrigin($requestBody), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PublicAllowedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function publicAllowedOrigins(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PublicAllowedOrigins(), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteCorsOrigin(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteCorsOrigin($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AllowedOriginResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getCorsOrigin(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetCorsOrigin($id), $fetch);
     }
     /**
      * @param array{
-     *    "page"?: int, //Page number
-     *    "limit"?: int, //Items per page
-     *    "type"?: string, //Filter by type
-     *    "scope"?: string, //Filter by scope
-     *    "client_id"?: string, //Filter by client ID
-     *    "email"?: string, //Exact email match (case-insensitive)
-     *    "q"?: string, //Search by name or email (substring)
-     *    "active"?: bool, //Filter by active status
-     *    "roles"?: string, //Filter by roles (comma-separated)
+     *    "clientId"?: string, //Tenant client whose portal apps to list (anchors may omit it for every client's)
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PortalAppListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiPrincipals(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listPortalApps(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiPrincipals($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPortalApps($queryParameters), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreatePortalAppRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatePortalAppResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createPortalApp(?\FlowCatalyst\Generated\Model\CreatePortalAppRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreatePortalApp($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param array{
+     *    "clientId"?: string, //Tenant client that owns the portal app
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deletePortalApp(string $id, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeletePortalApp($id, $queryParameters), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdatePortalAppRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PortalAppResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updatePortalApp(string $id, ?\FlowCatalyst\Generated\Model\UpdatePortalAppRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdatePortalApp($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\AssignUnassignedBody $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AssignUnassignedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function assignUnassignedPortalUsers(string $id, ?\FlowCatalyst\Generated\Model\AssignUnassignedBody $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AssignUnassignedPortalUsers($id, $requestBody), $fetch);
     }
     /**
      * @param array{
-     *    "domain": string, //Email domain to check
+     *    "clientId"?: string, //Tenant client whose portal identities to list
+     *    "q"?: string, //Prefix (TERM%) matched case-insensitively against email and name
+     *    "portalAppCode"?: string, //Only identities granted this portal app
+     *    "unassigned"?: bool, //Only identities granted no portal app (cannot be combined with portalAppCode)
+     *    "page"?: int, //0-based page index (default 0)
+     *    "size"?: int, //Page size (default 100, max 1000)
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CheckEmailDomainResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PortalUserListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiPrincipalsCheckEmailDomain(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listPortalUsers(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiPrincipalsCheckEmailDomain($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPortalUsers($queryParameters), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\PortalUserRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PortalUserResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function ensurePortalUser(?\FlowCatalyst\Generated\Model\PortalUserRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\EnsurePortalUser($requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param array{
+     *    "clientId"?: string, //Tenant client whose portal identity to delete
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deletePortalUser(string $id, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeletePortalUser($id, $queryParameters), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\PortalUserClientBody $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function activatePortalUser(string $id, ?\FlowCatalyst\Generated\Model\PortalUserClientBody $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ActivatePortalUser($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\PortalUserAppGrantBody $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function grantPortalUserApp(string $id, ?\FlowCatalyst\Generated\Model\PortalUserAppGrantBody $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GrantPortalUserApp($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $portalAppCode
+     * @param array{
+     *    "clientId"?: string, //Tenant client that owns the portal identity and app
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function revokePortalUserApp(string $id, string $portalAppCode, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RevokePortalUserApp($id, $portalAppCode, $queryParameters), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\PortalUserClientBody $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deactivatePortalUser(string $id, ?\FlowCatalyst\Generated\Model\PortalUserClientBody $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeactivatePortalUser($id, $requestBody), $fetch);
+    }
+    /**
+     * @param array{
+     *    "type"?: string, //Filter by principal type (USER or SERVICE)
+     *    "clientId"?: string, //Filter to principals homed at, or granted access to, this client
+     *    "active"?: string, //Filter by active status (true/false); absent = both
+     *    "q"?: string, //Case-insensitive substring search across name and email
+     *    "roles"?: string, //CSV of role names; matches principals holding any of them
+     *    "page"?: int, //0-based page index (default 0)
+     *    "pageSize"?: int, //Page size; <=0 returns all matches (default: all)
+     *    "sortField"?: string, //Sort key: name | email | createdAt (default createdAt)
+     *    "sortOrder"?: string, //Sort direction: asc | desc (default asc)
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listPrincipals(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPrincipals($queryParameters), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreatePrincipalRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatePrincipalResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createPrincipal(?\FlowCatalyst\Generated\Model\CreatePrincipalRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreatePrincipal($requestBody), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\BulkImportRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\BulkImportResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function bulkImportUsers(?\FlowCatalyst\Generated\Model\BulkImportRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\BulkImportUsers($requestBody), $fetch);
+    }
+    /**
+     * @param array{
+     *    "email"?: string,
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CheckEmailDomainResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function checkPrincipalEmailDomain(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CheckPrincipalEmailDomain($queryParameters), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DeveloperUserListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listDeveloperUsers(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListDeveloperUsers(), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\SyncUsersRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncUsersResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function syncUsers(?\FlowCatalyst\Generated\Model\SyncUsersRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncUsers($requestBody), $fetch);
     }
     /**
      * @param null|\FlowCatalyst\Generated\Model\CreateUserRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsUsersBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsUsersConflictException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiPrincipalsUsers(?\FlowCatalyst\Generated\Model\CreateUserRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createUser(?\FlowCatalyst\Generated\Model\CreateUserRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiPrincipalsUsers($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateUser($requestBody), $fetch);
     }
     /**
-     * @param string $id Principal ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiPrincipalsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiPrincipalsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function deletePrincipal(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiPrincipalsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeletePrincipal($id), $fetch);
     }
     /**
-     * @param string $id Principal ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiPrincipalsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiPrincipalsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function getPrincipal(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiPrincipalsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetPrincipal($id), $fetch);
     }
     /**
-     * @param string $id Principal ID
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\UpdatePrincipalRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiPrincipalsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiPrincipalsById(string $id, ?\FlowCatalyst\Generated\Model\UpdatePrincipalRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function updatePrincipal(string $id, ?\FlowCatalyst\Generated\Model\UpdatePrincipalRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiPrincipalsById($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdatePrincipal($id, $requestBody), $fetch);
     }
     /**
-     * Reactivates a deactivated principal.
-     * @param string $id Principal ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdActivateForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdActivateNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiPrincipalsByIdActivate(string $id, string $fetch = self::FETCH_OBJECT)
+    public function activatePrincipal(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiPrincipalsByIdActivate($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ActivatePrincipal($id), $fetch);
     }
     /**
-     * Returns all applications the principal has been granted access to.
-     * @param string $id Principal ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiPrincipalsByIdApplicationAccessNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationAccessListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationAccessListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiPrincipalsByIdApplicationAccess(string $id, string $fetch = self::FETCH_OBJECT)
+    public function listPrincipalApplicationAccess(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiPrincipalsByIdApplicationAccess($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPrincipalApplicationAccess($id), $fetch);
     }
     /**
-     * Replaces all application access with the provided list.
-     * @param string $id Principal ID
-     * @param null|\FlowCatalyst\Generated\Model\SetApplicationAccessRequest $requestBody
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\AssignApplicationAccessRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiPrincipalsByIdApplicationAccessNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SetApplicationAccessResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SetApplicationAccessResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiPrincipalsByIdApplicationAccess(string $id, ?\FlowCatalyst\Generated\Model\SetApplicationAccessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function assignPrincipalApplicationAccess(string $id, ?\FlowCatalyst\Generated\Model\AssignApplicationAccessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiPrincipalsByIdApplicationAccess($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AssignPrincipalApplicationAccess($id, $requestBody), $fetch);
     }
     /**
-     * ANCHOR users see all active applications.
-     * CLIENT users see only applications enabled for their accessible client configs.
-     * @param string $id Principal ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiPrincipalsByIdAvailableApplicationsNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AvailableApplicationsResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalAvailableApplicationsResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiPrincipalsByIdAvailableApplications(string $id, string $fetch = self::FETCH_OBJECT)
+    public function listPrincipalAvailableApplications(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiPrincipalsByIdAvailableApplications($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPrincipalAvailableApplications($id), $fetch);
     }
     /**
-     * @param string $id Principal ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiPrincipalsByIdClientAccessNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientAccessListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientAccessGrantListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiPrincipalsByIdClientAccess(string $id, string $fetch = self::FETCH_OBJECT)
+    public function listPrincipalClientAccess(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiPrincipalsByIdClientAccess($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPrincipalClientAccess($id), $fetch);
     }
     /**
-     * @param string $id Principal ID
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\GrantClientAccessRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdClientAccessNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientAccessGrantResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ClientAccessGrantResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiPrincipalsByIdClientAccess(string $id, ?\FlowCatalyst\Generated\Model\GrantClientAccessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function grantPrincipalClientAccess(string $id, ?\FlowCatalyst\Generated\Model\GrantClientAccessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiPrincipalsByIdClientAccess($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GrantPrincipalClientAccess($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id Principal ID
-     * @param string $clientId Client ID to revoke
+     * @param string $id
+     * @param string $clientId
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiPrincipalsByIdClientAccessByClientIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiPrincipalsByIdClientAccessByClientId(string $id, string $clientId, string $fetch = self::FETCH_OBJECT)
+    public function revokePrincipalClientAccess(string $id, string $clientId, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiPrincipalsByIdClientAccessByClientId($id, $clientId), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RevokePrincipalClientAccess($id, $clientId), $fetch);
     }
     /**
-     * Deactivates an active principal.
-     * @param string $id Principal ID
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\ClientAssociationRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdDeactivateForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdDeactivateNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiPrincipalsByIdDeactivate(string $id, string $fetch = self::FETCH_OBJECT)
+    public function setPrincipalClientAssociation(string $id, ?\FlowCatalyst\Generated\Model\ClientAssociationRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiPrincipalsByIdDeactivate($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SetPrincipalClientAssociation($id, $requestBody), $fetch);
     }
     /**
-     * Resets the password for an internal auth user. Does not work for OIDC users.
-     * @param string $id Principal ID
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deactivatePrincipal(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeactivatePrincipal($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function revokePrincipalDeveloperCredential(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RevokePrincipalDeveloperCredential($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SetDeveloperCredentialResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function setPrincipalDeveloperCredential(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SetPrincipalDeveloperCredential($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function resetPrincipalTwoFactor(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ResetPrincipalTwoFactor($id), $fetch);
+    }
+    /**
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\ResetPasswordRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdResetPasswordBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdResetPasswordForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdResetPasswordNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiPrincipalsByIdResetPassword(string $id, ?\FlowCatalyst\Generated\Model\ResetPasswordRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function resetPrincipalPassword(string $id, ?\FlowCatalyst\Generated\Model\ResetPasswordRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiPrincipalsByIdResetPassword($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ResetPrincipalPassword($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id Principal ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiPrincipalsByIdRolesNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RolesListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalRoleListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiPrincipalsByIdRoles(string $id, string $fetch = self::FETCH_OBJECT)
+    public function listPrincipalRoles(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiPrincipalsByIdRoles($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPrincipalRoles($id), $fetch);
     }
     /**
-     * @param string $id Principal ID
-     * @param null|\FlowCatalyst\Generated\Model\AssignRoleRequest $requestBody
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\AddRoleRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdRolesNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiPrincipalsByIdRoles(string $id, ?\FlowCatalyst\Generated\Model\AssignRoleRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function addPrincipalRole(string $id, ?\FlowCatalyst\Generated\Model\AddRoleRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiPrincipalsByIdRoles($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AddPrincipalRole($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id Principal ID
-     * @param null|\FlowCatalyst\Generated\Model\BatchAssignRolesRequest $requestBody
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\AssignPrincipalRolesRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiPrincipalsByIdRolesNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\BatchAssignRolesResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RolesAssignedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiPrincipalsByIdRoles(string $id, ?\FlowCatalyst\Generated\Model\BatchAssignRolesRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function assignPrincipalRoles(string $id, ?\FlowCatalyst\Generated\Model\AssignPrincipalRolesRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiPrincipalsByIdRoles($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AssignPrincipalRoles($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id Principal ID
-     * @param string $role Role to remove
+     * @param string $id
+     * @param string $role
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiPrincipalsByIdRolesByRoleNameNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiPrincipalsByIdRolesByRoleName(string $id, string $role, string $fetch = self::FETCH_OBJECT)
+    public function removePrincipalRole(string $id, string $role, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiPrincipalsByIdRolesByRoleName($id, $role), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RemovePrincipalRole($id, $role), $fetch);
     }
     /**
-     * Sends the same single-use email as the user-initiated
-     * `/auth/password-reset/request` flow. The user clicks the link and sets
-     * their own password; the admin never sees or handles the password.
-     *
-     * Rejects OIDC-federated users (they manage credentials at their IDP) and
-     * users without an email address.
-     * @param string $id Principal ID
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\SendPasswordResetInputBody $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdSendPasswordResetBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdSendPasswordResetForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiPrincipalsByIdSendPasswordResetNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiPrincipalsByIdSendPasswordReset(string $id, string $fetch = self::FETCH_OBJECT)
+    public function sendPrincipalPasswordReset(string $id, ?\FlowCatalyst\Generated\Model\SendPasswordResetInputBody $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiPrincipalsByIdSendPasswordReset($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SendPrincipalPasswordReset($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PrincipalVersionResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getPrincipalVersion(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetPrincipalVersion($id), $fetch);
     }
     /**
      * @param array{
-     *    "pagination": array,
      *    "application"?: string,
      *    "subdomain"?: string,
      *    "status"?: string,
-     *    "search"?: string,
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ProcessListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ProcessListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiProcesses(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listProcesses(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiProcesses($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListProcesses($queryParameters), $fetch);
     }
     /**
      * @param null|\FlowCatalyst\Generated\Model\CreateProcessRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiProcessesBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiProcessesConflictException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiProcesses(?\FlowCatalyst\Generated\Model\CreateProcessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createProcess(?\FlowCatalyst\Generated\Model\CreateProcessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiProcesses($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateProcess($requestBody), $fetch);
     }
     /**
-     * @param string $code Process code
+     * @param string $code
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiProcessesByCodeNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ProcessResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ProcessResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiProcessesByCode(string $code, string $fetch = self::FETCH_OBJECT)
+    public function getProcessByCode(string $code, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiProcessesByCode($code), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetProcessByCode($code), $fetch);
     }
     /**
-     * @param string $id Process ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiProcessesByIdNotFoundException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function deleteApiProcessesById(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiProcessesById($id), $fetch);
-    }
-    /**
-     * @param string $id Process ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiProcessesByIdNotFoundException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ProcessResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiProcessesById(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiProcessesById($id), $fetch);
-    }
-    /**
-     * @param string $id Process ID
-     * @param null|\FlowCatalyst\Generated\Model\UpdateProcessRequest $requestBody
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiProcessesByIdNotFoundException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function putApiProcessesById(string $id, ?\FlowCatalyst\Generated\Model\UpdateProcessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiProcessesById($id, $requestBody), $fetch);
-    }
-    /**
-     * @param string $id Process ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiProcessesByIdArchiveNotFoundException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiProcessesByIdArchive(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiProcessesByIdArchive($id), $fetch);
-    }
-    /**
+     * @param null|\FlowCatalyst\Generated\Model\SyncProcessesByBodyRequest $requestBody
      * @param array{
-     *    "pagination": array,
-     *    "applicationCode"?: string, //Filter by application code
-     *    "source"?: string, //Filter by source
-     *    "clientManaged"?: bool, //Filter client-managed roles only
+     *    "removeUnlisted"?: bool, //Remove API/CODE processes not in the list
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SyncResultResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiRoles(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function syncProcessesByBody(?\FlowCatalyst\Generated\Model\SyncProcessesByBodyRequest $requestBody = null, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiRoles($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\SyncProcessesByBody($requestBody, $queryParameters), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteProcess(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteProcess($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ProcessResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getProcess(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetProcess($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateProcessRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateProcess(string $id, ?\FlowCatalyst\Generated\Model\UpdateProcessRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateProcess($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function archiveProcess(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ArchiveProcess($id), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ListOutputBody|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listResetApprovals(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListResetApprovals(), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function approveResetApproval(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ApproveResetApproval($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\StatusChangeResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function denyResetApproval(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DenyResetApproval($id), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listRoles(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListRoles(), $fetch);
     }
     /**
      * @param null|\FlowCatalyst\Generated\Model\CreateRoleRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiRolesBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiRolesConflictException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiRoles(?\FlowCatalyst\Generated\Model\CreateRoleRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createRole(?\FlowCatalyst\Generated\Model\CreateRoleRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiRoles($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateRole($requestBody), $fetch);
     }
     /**
-     * @param string $applicationId Application ID
+     * @param string $applicationId
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse[] : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiRolesByApplicationByApplicationId(string $applicationId, string $fetch = self::FETCH_OBJECT)
+    public function getRolesByApplication(string $applicationId, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiRolesByApplicationByApplicationId($applicationId), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetRolesByApplication($applicationId), $fetch);
     }
     /**
-     * @param string $code Role code
+     * @param string $code
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiRolesByCodeByCodeNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiRolesByCodeByCode(string $code, string $fetch = self::FETCH_OBJECT)
+    public function getRoleByCode(string $code, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiRolesByCodeByCode($code), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetRoleByCode($code), $fetch);
     }
     /**
-     * @param string $source Role source (CODE, DATABASE, SDK)
+     * @param string $source
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiRolesBySourceBySourceBadRequestException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse[] : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiRolesBySourceBySource(string $source, string $fetch = self::FETCH_OBJECT)
+    public function getRolesBySource(string $source, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiRolesBySourceBySource($source), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetRolesBySource($source), $fetch);
     }
     /**
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationOptionsResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ApplicationFilterListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiRolesFiltersApplications(string $fetch = self::FETCH_OBJECT)
+    public function getRoleApplicationFilters(string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiRolesFiltersApplications(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetRoleApplicationFilters(), $fetch);
     }
     /**
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PermissionListResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PermissionListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiRolesPermissions(string $fetch = self::FETCH_OBJECT)
+    public function listPermissions(string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiRolesPermissions(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListPermissions(), $fetch);
     }
     /**
-     * @param string $permission Permission string
+     * @param string $permission
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiRolesPermissionsByPermissionNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PermissionResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiRolesPermissionsByPermission(string $permission, string $fetch = self::FETCH_OBJECT)
+    public function deletePermission(string $permission, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiRolesPermissionsByPermission($permission), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeletePermission($permission), $fetch);
     }
     /**
-     * @param string $roleName Role name (code) or ID
+     * @param string $permission
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiRolesByNameNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PermissionResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiRolesByName(string $roleName, string $fetch = self::FETCH_OBJECT)
+    public function getPermission(string $permission, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiRolesByName($roleName), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetPermission($permission), $fetch);
     }
     /**
-     * The frontend calls this with the role name (e.g., "platform:super-admin"),
-     * so we try by code first if it contains ":", otherwise by ID.
-     * @param string $roleName Role name (code) or ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiRolesByNameNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiRolesByName(string $roleName, string $fetch = self::FETCH_OBJECT)
+    public function deleteRole(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiRolesByName($roleName), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteRole($id), $fetch);
     }
     /**
-     * @param string $roleName Role name (code) or ID
+     * @param string $id Role id (TSID)
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getRole(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetRole($id), $fetch);
+    }
+    /**
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\UpdateRoleRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiRolesByNameNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiRolesByName(string $roleName, ?\FlowCatalyst\Generated\Model\UpdateRoleRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function updateRole(string $id, ?\FlowCatalyst\Generated\Model\UpdateRoleRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiRolesByName($roleName, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateRole($id, $requestBody), $fetch);
     }
     /**
-     * @param string $roleName Role name (code) or ID
+     * @param string $roleName
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RolePermissionListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listRolePermissions(string $roleName, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListRolePermissions($roleName), $fetch);
+    }
+    /**
+     * @param string $roleName
      * @param null|\FlowCatalyst\Generated\Model\GrantPermissionRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiRolesByNamePermissionsNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiRolesByNamePermissions(string $roleName, ?\FlowCatalyst\Generated\Model\GrantPermissionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function grantRolePermissionByBody(string $roleName, ?\FlowCatalyst\Generated\Model\GrantPermissionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiRolesByNamePermissions($roleName, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GrantRolePermissionByBody($roleName, $requestBody), $fetch);
     }
     /**
-     * @param string $roleName Role name (code) or ID
-     * @param string $permission Permission to revoke
+     * @param string $roleName
+     * @param string $permission
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiRolesByNamePermissionsByPermissionNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiRolesByNamePermissionsByPermission(string $roleName, string $permission, string $fetch = self::FETCH_OBJECT)
+    public function revokeRolePermission(string $roleName, string $permission, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiRolesByNamePermissionsByPermission($roleName, $permission), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RevokeRolePermission($roleName, $permission), $fetch);
+    }
+    /**
+     * @param string $roleName
+     * @param string $permission
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RoleResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function grantRolePermission(string $roleName, string $permission, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GrantRolePermission($roleName, $permission), $fetch);
     }
     /**
      * @param array{
-     *    "clientId"?: string, //Filter by client. Pass the literal `platform` to filter platform-scoped.
      *    "status"?: string,
+     *    "clientId"?: string,
      *    "search"?: string,
-     *    "pagination": array,
+     *    "page"?: int,
+     *    "size"?: int,
+     *    "limit"?: int,
+     *    "pageSize"?: int,
+     *    "page_size"?: int,
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PaginatedResponseScheduledJobResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OffsetPageScheduledJobResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiScheduledJobs(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listScheduledJobs(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiScheduledJobs($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListScheduledJobs($queryParameters), $fetch);
     }
     /**
      * @param null|\FlowCatalyst\Generated\Model\CreateScheduledJobRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsConflictException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiScheduledJobs(?\FlowCatalyst\Generated\Model\CreateScheduledJobRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createScheduledJob(?\FlowCatalyst\Generated\Model\CreateScheduledJobRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiScheduledJobs($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateScheduledJob($requestBody), $fetch);
     }
     /**
-     * @param string $code Scheduled job code
+     * @param string $code
      * @param array{
+     *    "clientId"?: string, //Optional client scope; omit for platform-scoped lookup
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ScheduledJobResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getScheduledJobByCode(string $code, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetScheduledJobByCode($code, $queryParameters), $fetch);
+    }
+    /**
+     * @param string $instanceId
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ScheduledJobInstanceResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getScheduledJobInstance(string $instanceId, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetScheduledJobInstance($instanceId), $fetch);
+    }
+    /**
+     * @param string $instanceId
+     * @param null|\FlowCatalyst\Generated\Model\CompleteInstanceRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function completeScheduledJobInstance(string $instanceId, ?\FlowCatalyst\Generated\Model\CompleteInstanceRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CompleteScheduledJobInstance($instanceId, $requestBody), $fetch);
+    }
+    /**
+     * @param string $instanceId
+     * @param null|\FlowCatalyst\Generated\Model\WriteInstanceLogRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function writeScheduledJobInstanceLog(string $instanceId, ?\FlowCatalyst\Generated\Model\WriteInstanceLogRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\WriteScheduledJobInstanceLog($instanceId, $requestBody), $fetch);
+    }
+    /**
+     * @param string $instanceId
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ScheduledJobInstanceLogResponse[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listScheduledJobInstanceLogs(string $instanceId, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListScheduledJobInstanceLogs($instanceId), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteScheduledJob(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteScheduledJob($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ScheduledJobResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getScheduledJob(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetScheduledJob($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateScheduledJobRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateScheduledJob(string $id, ?\FlowCatalyst\Generated\Model\UpdateScheduledJobRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateScheduledJob($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function archiveScheduledJob(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ArchiveScheduledJob($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\FireNowRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\FireNowResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function fireScheduledJobNow(string $id, ?\FlowCatalyst\Generated\Model\FireNowRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\FireScheduledJobNow($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param array{
+     *    "status"?: string,
+     *    "page"?: int,
+     *    "size"?: int,
+     *    "limit"?: int,
+     *    "pageSize"?: int,
+     *    "page_size"?: int,
+     * } $queryParameters
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\OffsetPageScheduledJobInstanceResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listScheduledJobInstances(string $id, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListScheduledJobInstances($id, $queryParameters), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function pauseScheduledJob(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PauseScheduledJob($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function resumeScheduledJob(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ResumeScheduledJob($id), $fetch);
+    }
+    /**
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ServiceAccountListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listServiceAccounts(string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListServiceAccounts(), $fetch);
+    }
+    /**
+     * @param null|\FlowCatalyst\Generated\Model\CreateServiceAccountRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreateServiceAccountResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function createServiceAccount(?\FlowCatalyst\Generated\Model\CreateServiceAccountRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateServiceAccount($requestBody), $fetch);
+    }
+    /**
+     * @param string $code
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ServiceAccountResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getServiceAccountByCode(string $code, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetServiceAccountByCode($code), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deleteServiceAccount(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteServiceAccount($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ServiceAccountResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function getServiceAccount(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetServiceAccount($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\UpdateServiceAccountRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function updateServiceAccount(string $id, ?\FlowCatalyst\Generated\Model\UpdateServiceAccountRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateServiceAccount($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function deactivateServiceAccount(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeactivateServiceAccount($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegenerateAuthTokenResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function regenerateServiceAccountAuthTokenRegenerateAuthToken(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RegenerateServiceAccountAuthTokenRegenerateAuthToken($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegenerateSigningSecretResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function regenerateServiceAccountSigningSecretRegenerateSecret(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RegenerateServiceAccountSigningSecretRegenerateSecret($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegenerateSigningSecretResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function regenerateServiceAccountSigningSecretRegenerateSigningSecret(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RegenerateServiceAccountSigningSecretRegenerateSigningSecret($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegenerateAuthTokenResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function regenerateServiceAccountAuthTokenRegenerateToken(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\RegenerateServiceAccountAuthTokenRegenerateToken($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ServiceAccountRoleListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function listServiceAccountRoles(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListServiceAccountRoles($id), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param null|\FlowCatalyst\Generated\Model\AssignRolesRequest $requestBody
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ServiceAccountRolesAssignedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function assignServiceAccountRoles(string $id, ?\FlowCatalyst\Generated\Model\AssignRolesRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\AssignServiceAccountRoles($id, $requestBody), $fetch);
+    }
+    /**
+     * @param string $id
+     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
+     *
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ServiceAccountTokenResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
+     */
+    public function mintServiceAccountToken(string $id, string $fetch = self::FETCH_OBJECT)
+    {
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\MintServiceAccountToken($id), $fetch);
+    }
+    /**
+     * @param array{
+     *    "status"?: string,
      *    "clientId"?: string,
      * } $queryParameters
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiScheduledJobsByCodeNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ScheduledJobResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SubscriptionListResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiScheduledJobsByCode(string $code, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function listSubscriptions(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiScheduledJobsByCode($code, $queryParameters), $fetch);
-    }
-    /**
-     * @param string $instanceId Instance ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiScheduledJobsInstancesByIdNotFoundException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ScheduledJobInstanceResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiScheduledJobsInstancesById(string $instanceId, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiScheduledJobsInstancesById($instanceId), $fetch);
-    }
-    /**
-     * @param string $instanceId Instance ID
-     * @param null|\FlowCatalyst\Generated\Model\InstanceCompleteRequest $requestBody
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsInstancesByIdCompleteForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsInstancesByIdCompleteNotFoundException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiScheduledJobsInstancesByIdComplete(string $instanceId, ?\FlowCatalyst\Generated\Model\InstanceCompleteRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiScheduledJobsInstancesByIdComplete($instanceId, $requestBody), $fetch);
-    }
-    /**
-     * @param string $instanceId Instance ID
-     * @param null|\FlowCatalyst\Generated\Model\InstanceLogRequest $requestBody
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsInstancesByIdLogForbiddenException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsInstancesByIdLogNotFoundException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiScheduledJobsInstancesByIdLog(string $instanceId, ?\FlowCatalyst\Generated\Model\InstanceLogRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiScheduledJobsInstancesByIdLog($instanceId, $requestBody), $fetch);
-    }
-    /**
-     * @param string $instanceId Instance ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiScheduledJobsInstancesByIdLogsNotFoundException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\InstanceLogResponse[] : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiScheduledJobsInstancesByIdLogs(string $instanceId, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiScheduledJobsInstancesByIdLogs($instanceId), $fetch);
-    }
-    /**
-     * @param string $id Scheduled job ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiScheduledJobsByIdNotFoundException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function deleteApiScheduledJobsById(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiScheduledJobsById($id), $fetch);
-    }
-    /**
-     * @param string $id Scheduled job ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiScheduledJobsByIdNotFoundException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ScheduledJobResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiScheduledJobsById(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiScheduledJobsById($id), $fetch);
-    }
-    /**
-     * @param string $id Scheduled job ID
-     * @param null|\FlowCatalyst\Generated\Model\UpdateScheduledJobRequest $requestBody
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiScheduledJobsByIdNotFoundException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function putApiScheduledJobsById(string $id, ?\FlowCatalyst\Generated\Model\UpdateScheduledJobRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiScheduledJobsById($id, $requestBody), $fetch);
-    }
-    /**
-     * @param string $id Scheduled job ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsByIdArchiveNotFoundException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsByIdArchiveConflictException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiScheduledJobsByIdArchive(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiScheduledJobsByIdArchive($id), $fetch);
-    }
-    /**
-     * @param string $id Scheduled job ID
-     * @param null|\FlowCatalyst\Generated\Model\FireRequest $requestBody
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsByIdFireNotFoundException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsByIdFireConflictException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiScheduledJobsByIdFire(string $id, ?\FlowCatalyst\Generated\Model\FireRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiScheduledJobsByIdFire($id, $requestBody), $fetch);
-    }
-    /**
-     * @param string $id Scheduled job ID
-     * @param array{
-     *    "status"?: string,
-     *    "triggerKind"?: string,
-     *    "from"?: string,
-     *    "to"?: string,
-     *    "pagination": array,
-     * } $queryParameters
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\PaginatedResponseScheduledJobInstanceResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiScheduledJobsByIdInstances(string $id, array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiScheduledJobsByIdInstances($id, $queryParameters), $fetch);
-    }
-    /**
-     * @param string $id Scheduled job ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsByIdPauseNotFoundException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsByIdPauseConflictException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiScheduledJobsByIdPause(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiScheduledJobsByIdPause($id), $fetch);
-    }
-    /**
-     * @param string $id Scheduled job ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsByIdResumeNotFoundException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiScheduledJobsByIdResumeConflictException
-     *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiScheduledJobsByIdResume(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiScheduledJobsByIdResume($id), $fetch);
-    }
-    /**
-     * @param array{
-     *    "pagination": array,
-     *    "clientId"?: string, //Filter by client ID
-     *    "status"?: string, //Filter by status
-     * } $queryParameters
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SubscriptionListResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getApiSubscriptions(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiSubscriptions($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListSubscriptions($queryParameters), $fetch);
     }
     /**
      * @param null|\FlowCatalyst\Generated\Model\CreateSubscriptionRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiSubscriptionsBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostApiSubscriptionsConflictException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CreatedResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postApiSubscriptions(?\FlowCatalyst\Generated\Model\CreateSubscriptionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function createSubscription(?\FlowCatalyst\Generated\Model\CreateSubscriptionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiSubscriptions($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\CreateSubscription($requestBody), $fetch);
     }
     /**
-     * @param string $id Subscription ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteApiSubscriptionsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function deleteApiSubscriptionsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function deleteSubscription(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteApiSubscriptionsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteSubscription($id), $fetch);
     }
     /**
-     * @param string $id Subscription ID
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetApiSubscriptionsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SubscriptionResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SubscriptionResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getApiSubscriptionsById(string $id, string $fetch = self::FETCH_OBJECT)
+    public function getSubscription(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetApiSubscriptionsById($id), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetSubscription($id), $fetch);
     }
     /**
-     * @param string $id Subscription ID
+     * @param string $id
      * @param null|\FlowCatalyst\Generated\Model\UpdateSubscriptionRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PutApiSubscriptionsByIdNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function putApiSubscriptionsById(string $id, ?\FlowCatalyst\Generated\Model\UpdateSubscriptionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function updateSubscription(string $id, ?\FlowCatalyst\Generated\Model\UpdateSubscriptionRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PutApiSubscriptionsById($id, $requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\UpdateSubscription($id, $requestBody), $fetch);
     }
     /**
-     * @param string $id Subscription ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiSubscriptionsByIdPauseNotFoundException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SubscriptionResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiSubscriptionsByIdPause(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiSubscriptionsByIdPause($id), $fetch);
-    }
-    /**
-     * @param string $id Subscription ID
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostApiSubscriptionsByIdResumeNotFoundException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\SubscriptionResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postApiSubscriptionsByIdResume(string $id, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostApiSubscriptionsByIdResume($id), $fetch);
-    }
-    /**
-     * Determines how a user with the given email should authenticate:
-     * - Internal: username/password
-     * - OIDC: external identity provider
-     *
-     * This is called before showing the login form to determine
-     * if the user should be redirected to an external IDP.
-     * @param array{
-     *    "email": string, //Email address to check
-     * } $queryParameters
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\DomainCheckResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getAuthCheckDomain(array $queryParameters = [], string $fetch = self::FETCH_OBJECT)
+    public function pauseSubscription(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetAuthCheckDomain($queryParameters), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PauseSubscription($id), $fetch);
     }
     /**
-     * Authenticates a user with email and password credentials.
-     * Returns an access token on success and sets a session cookie.
-     * @param null|\FlowCatalyst\Generated\Model\LoginRequest $requestBody
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostAuthLoginUnauthorizedException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\LoginResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postAuthLogin(?\FlowCatalyst\Generated\Model\LoginRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostAuthLogin($requestBody), $fetch);
-    }
-    /**
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postAuthLogout(string $fetch = self::FETCH_OBJECT)
+    public function resumeSubscription(string $id, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostAuthLogout(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ResumeSubscription($id), $fetch);
     }
     /**
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetAuthMeUnauthorizedException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CurrentUserResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function getAuthMe(string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetAuthMe(), $fetch);
-    }
-    /**
-     * Exchange a refresh token for a new access token.
-     * The refresh token is rotated (old one invalidated, new one issued).
-     * @param null|\FlowCatalyst\Generated\Model\RefreshTokenRequest $requestBody
-     * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostAuthRefreshUnauthorizedException
-     *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\TokenRefreshResponse : \Psr\Http\Message\ResponseInterface)
-     */
-    public function postAuthRefresh(?\FlowCatalyst\Generated\Model\RefreshTokenRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
-    {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostAuthRefresh($requestBody), $fetch);
-    }
-    /**
-     * Returns a `PublicKeyCredentialRequestOptions` challenge. The response
-     * shape is identical for known and unknown emails (deterministic-fake
-     * `allowCredentials` is generated for unknown / federated / no-credentials
-     * cases) — clients cannot distinguish them.
      * @param null|\FlowCatalyst\Generated\Model\AuthenticateBeginRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuthenticateBeginResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuthenticateBeginResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postWebauthnAuthenticateBegin(?\FlowCatalyst\Generated\Model\AuthenticateBeginRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function webauthnAuthenticateBegin(?\FlowCatalyst\Generated\Model\AuthenticateBeginRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostWebauthnAuthenticateBegin($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\WebauthnAuthenticateBegin($requestBody), $fetch);
     }
     /**
-     * Validates the assertion, applies counter / backup-state updates,
-     * re-checks the federation gate (hard cutover), and on success issues a
-     * session cookie. All failure modes return 401 `INVALID_CREDENTIALS` with
-     * an identical shape to defeat enumeration.
      * @param null|\FlowCatalyst\Generated\Model\AuthenticateCompleteRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostWebauthnAuthenticateCompleteUnauthorizedException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\AuthenticateCompleteResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\WebauthnAuthenticateCompleteResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postWebauthnAuthenticateComplete(?\FlowCatalyst\Generated\Model\AuthenticateCompleteRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function webauthnAuthenticateComplete(?\FlowCatalyst\Generated\Model\AuthenticateCompleteRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostWebauthnAuthenticateComplete($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\WebauthnAuthenticateComplete($requestBody), $fetch);
     }
     /**
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\GetWebauthnCredentialsUnauthorizedException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\CredentialSummary[] : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\WebauthnCredentialSummary[]|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function getWebauthnCredentials(string $fetch = self::FETCH_OBJECT)
+    public function listWebauthnCredentials(string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\GetWebauthnCredentials(), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\ListWebauthnCredentials(), $fetch);
     }
     /**
-     * @param string $id Credential id (pkc_…)
+     * @param string $id
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\DeleteWebauthnCredentialUnauthorizedException
-     * @throws \FlowCatalyst\Generated\Exception\DeleteWebauthnCredentialNotFoundException
      *
-     * @return ($fetch is 'object' ? null : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
     public function deleteWebauthnCredential(string $id, string $fetch = self::FETCH_OBJECT)
     {
         return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\DeleteWebauthnCredential($id), $fetch);
     }
     /**
-     * Returns a WebAuthn `PublicKeyCredentialCreationOptions` challenge. The
-     * browser passes this to `navigator.credentials.create()` and posts the
-     * result to `/auth/webauthn/register/complete`.
      * @param null|\FlowCatalyst\Generated\Model\RegisterBeginRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostWebauthnRegisterBeginBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostWebauthnRegisterBeginUnauthorizedException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegisterBeginResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegisterBeginResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postWebauthnRegisterBegin(?\FlowCatalyst\Generated\Model\RegisterBeginRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function webauthnRegisterBegin(?\FlowCatalyst\Generated\Model\RegisterBeginRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostWebauthnRegisterBegin($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\WebauthnRegisterBegin($requestBody), $fetch);
     }
     /**
-     * Validates the browser's attestation response and stores the credential.
      * @param null|\FlowCatalyst\Generated\Model\RegisterCompleteRequest $requestBody
      * @param string $fetch Fetch mode to use (can be OBJECT or RESPONSE)
-     * @throws \FlowCatalyst\Generated\Exception\PostWebauthnRegisterCompleteBadRequestException
-     * @throws \FlowCatalyst\Generated\Exception\PostWebauthnRegisterCompleteUnauthorizedException
-     * @throws \FlowCatalyst\Generated\Exception\PostWebauthnRegisterCompleteForbiddenException
      *
-     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegisterCompleteResponse : \Psr\Http\Message\ResponseInterface)
+     * @return ($fetch is 'object' ? null|\FlowCatalyst\Generated\Model\RegisterCompleteResponse|\FlowCatalyst\Generated\Model\ErrorModel : \Psr\Http\Message\ResponseInterface)
      */
-    public function postWebauthnRegisterComplete(?\FlowCatalyst\Generated\Model\RegisterCompleteRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
+    public function webauthnRegisterComplete(?\FlowCatalyst\Generated\Model\RegisterCompleteRequest $requestBody = null, string $fetch = self::FETCH_OBJECT)
     {
-        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\PostWebauthnRegisterComplete($requestBody), $fetch);
+        return $this->executeEndpoint(new \FlowCatalyst\Generated\Endpoint\WebauthnRegisterComplete($requestBody), $fetch);
     }
     public static function create($httpClient = null, array $additionalPlugins = [], array $additionalNormalizers = [])
     {

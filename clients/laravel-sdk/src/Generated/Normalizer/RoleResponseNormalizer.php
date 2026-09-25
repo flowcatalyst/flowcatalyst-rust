@@ -40,51 +40,56 @@ class RoleResponseNormalizer implements DenormalizerInterface, NormalizerInterfa
         if (\array_key_exists('clientManaged', $data) && \is_int($data['clientManaged'])) {
             $data['clientManaged'] = (bool) $data['clientManaged'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
             $object->setApplicationCode($data['applicationCode']);
-            unset($data['applicationCode']);
         }
         elseif (\array_key_exists('applicationCode', $data) && $data['applicationCode'] === null) {
             $object->setApplicationCode(null);
         }
+        if (\array_key_exists('applicationId', $data) && $data['applicationId'] !== null) {
+            $object->setApplicationId($data['applicationId']);
+        }
+        elseif (\array_key_exists('applicationId', $data) && $data['applicationId'] === null) {
+            $object->setApplicationId(null);
+        }
         if (\array_key_exists('clientManaged', $data) && $data['clientManaged'] !== null) {
             $object->setClientManaged($data['clientManaged']);
-            unset($data['clientManaged']);
         }
         elseif (\array_key_exists('clientManaged', $data) && $data['clientManaged'] === null) {
             $object->setClientManaged(null);
         }
         if (\array_key_exists('createdAt', $data) && $data['createdAt'] !== null) {
-            $object->setCreatedAt($data['createdAt']);
-            unset($data['createdAt']);
+            $object->setCreatedAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['createdAt']));
         }
         elseif (\array_key_exists('createdAt', $data) && $data['createdAt'] === null) {
             $object->setCreatedAt(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
         if (\array_key_exists('displayName', $data) && $data['displayName'] !== null) {
             $object->setDisplayName($data['displayName']);
-            unset($data['displayName']);
         }
         elseif (\array_key_exists('displayName', $data) && $data['displayName'] === null) {
             $object->setDisplayName(null);
         }
         if (\array_key_exists('id', $data) && $data['id'] !== null) {
             $object->setId($data['id']);
-            unset($data['id']);
         }
         elseif (\array_key_exists('id', $data) && $data['id'] === null) {
             $object->setId(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
@@ -95,36 +100,21 @@ class RoleResponseNormalizer implements DenormalizerInterface, NormalizerInterfa
                 $values[] = $value;
             }
             $object->setPermissions($values);
-            unset($data['permissions']);
         }
         elseif (\array_key_exists('permissions', $data) && $data['permissions'] === null) {
             $object->setPermissions(null);
         }
-        if (\array_key_exists('shortName', $data) && $data['shortName'] !== null) {
-            $object->setShortName($data['shortName']);
-            unset($data['shortName']);
-        }
-        elseif (\array_key_exists('shortName', $data) && $data['shortName'] === null) {
-            $object->setShortName(null);
-        }
         if (\array_key_exists('source', $data) && $data['source'] !== null) {
             $object->setSource($data['source']);
-            unset($data['source']);
         }
         elseif (\array_key_exists('source', $data) && $data['source'] === null) {
             $object->setSource(null);
         }
         if (\array_key_exists('updatedAt', $data) && $data['updatedAt'] !== null) {
-            $object->setUpdatedAt($data['updatedAt']);
-            unset($data['updatedAt']);
+            $object->setUpdatedAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['updatedAt']));
         }
         elseif (\array_key_exists('updatedAt', $data) && $data['updatedAt'] === null) {
             $object->setUpdatedAt(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -132,9 +122,12 @@ class RoleResponseNormalizer implements DenormalizerInterface, NormalizerInterfa
     {
         $dataArray = [];
         $dataArray['applicationCode'] = $data->getApplicationCode();
+        if ($data->isInitialized('applicationId') && null !== $data->getApplicationId()) {
+            $dataArray['applicationId'] = $data->getApplicationId();
+        }
         $dataArray['clientManaged'] = $data->getClientManaged();
-        $dataArray['createdAt'] = $data->getCreatedAt();
-        if ($data->isInitialized('description')) {
+        $dataArray['createdAt'] = $data->getCreatedAt()->format('Y-m-d\TH:i:sP');
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
         $dataArray['displayName'] = $data->getDisplayName();
@@ -145,14 +138,8 @@ class RoleResponseNormalizer implements DenormalizerInterface, NormalizerInterfa
             $values[] = $value;
         }
         $dataArray['permissions'] = $values;
-        $dataArray['shortName'] = $data->getShortName();
         $dataArray['source'] = $data->getSource();
-        $dataArray['updatedAt'] = $data->getUpdatedAt();
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
+        $dataArray['updatedAt'] = $data->getUpdatedAt()->format('Y-m-d\TH:i:sP');
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

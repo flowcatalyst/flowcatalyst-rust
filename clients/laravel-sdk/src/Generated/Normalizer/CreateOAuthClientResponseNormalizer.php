@@ -37,24 +37,23 @@ class CreateOAuthClientResponseNormalizer implements DenormalizerInterface, Norm
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('client', $data) && $data['client'] !== null) {
             $object->setClient($this->denormalizer->denormalize($data['client'], \FlowCatalyst\Generated\Model\OAuthClientResponse::class, 'json', $context));
-            unset($data['client']);
         }
         elseif (\array_key_exists('client', $data) && $data['client'] === null) {
             $object->setClient(null);
         }
         if (\array_key_exists('clientSecret', $data) && $data['clientSecret'] !== null) {
             $object->setClientSecret($data['clientSecret']);
-            unset($data['clientSecret']);
         }
         elseif (\array_key_exists('clientSecret', $data) && $data['clientSecret'] === null) {
             $object->setClientSecret(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -62,13 +61,8 @@ class CreateOAuthClientResponseNormalizer implements DenormalizerInterface, Norm
     {
         $dataArray = [];
         $dataArray['client'] = $this->normalizer->normalize($data->getClient(), 'json', $context);
-        if ($data->isInitialized('clientSecret')) {
+        if ($data->isInitialized('clientSecret') && null !== $data->getClientSecret()) {
             $dataArray['clientSecret'] = $data->getClientSecret();
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
         }
         return $dataArray;
     }

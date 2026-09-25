@@ -40,8 +40,8 @@ class CheckEmailDomainResponseNormalizer implements DenormalizerInterface, Norma
         if (\array_key_exists('emailExists', $data) && \is_int($data['emailExists'])) {
             $data['emailExists'] = (bool) $data['emailExists'];
         }
-        if (\array_key_exists('hasAuthConfig', $data) && \is_int($data['hasAuthConfig'])) {
-            $data['hasAuthConfig'] = (bool) $data['hasAuthConfig'];
+        if (\array_key_exists('hasIdpConfig', $data) && \is_int($data['hasIdpConfig'])) {
+            $data['hasIdpConfig'] = (bool) $data['hasIdpConfig'];
         }
         if (\array_key_exists('isAnchorDomain', $data) && \is_int($data['isAnchorDomain'])) {
             $data['isAnchorDomain'] = (bool) $data['isAnchorDomain'];
@@ -49,84 +49,93 @@ class CheckEmailDomainResponseNormalizer implements DenormalizerInterface, Norma
         if (\array_key_exists('requiresClientId', $data) && \is_int($data['requiresClientId'])) {
             $data['requiresClientId'] = (bool) $data['requiresClientId'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('allowedClientIds', $data) && $data['allowedClientIds'] !== null) {
             $values = [];
             foreach ($data['allowedClientIds'] as $value) {
                 $values[] = $value;
             }
             $object->setAllowedClientIds($values);
-            unset($data['allowedClientIds']);
         }
         elseif (\array_key_exists('allowedClientIds', $data) && $data['allowedClientIds'] === null) {
             $object->setAllowedClientIds(null);
         }
+        if (\array_key_exists('authMethod', $data) && $data['authMethod'] !== null) {
+            $object->setAuthMethod($data['authMethod']);
+        }
+        elseif (\array_key_exists('authMethod', $data) && $data['authMethod'] === null) {
+            $object->setAuthMethod(null);
+        }
         if (\array_key_exists('authProvider', $data) && $data['authProvider'] !== null) {
             $object->setAuthProvider($data['authProvider']);
-            unset($data['authProvider']);
         }
         elseif (\array_key_exists('authProvider', $data) && $data['authProvider'] === null) {
             $object->setAuthProvider(null);
         }
         if (\array_key_exists('derivedScope', $data) && $data['derivedScope'] !== null) {
             $object->setDerivedScope($data['derivedScope']);
-            unset($data['derivedScope']);
         }
         elseif (\array_key_exists('derivedScope', $data) && $data['derivedScope'] === null) {
             $object->setDerivedScope(null);
         }
         if (\array_key_exists('domain', $data) && $data['domain'] !== null) {
             $object->setDomain($data['domain']);
-            unset($data['domain']);
         }
         elseif (\array_key_exists('domain', $data) && $data['domain'] === null) {
             $object->setDomain(null);
         }
         if (\array_key_exists('emailExists', $data) && $data['emailExists'] !== null) {
             $object->setEmailExists($data['emailExists']);
-            unset($data['emailExists']);
         }
         elseif (\array_key_exists('emailExists', $data) && $data['emailExists'] === null) {
             $object->setEmailExists(null);
         }
-        if (\array_key_exists('hasAuthConfig', $data) && $data['hasAuthConfig'] !== null) {
-            $object->setHasAuthConfig($data['hasAuthConfig']);
-            unset($data['hasAuthConfig']);
+        if (\array_key_exists('hasIdpConfig', $data) && $data['hasIdpConfig'] !== null) {
+            $object->setHasIdpConfig($data['hasIdpConfig']);
         }
-        elseif (\array_key_exists('hasAuthConfig', $data) && $data['hasAuthConfig'] === null) {
-            $object->setHasAuthConfig(null);
+        elseif (\array_key_exists('hasIdpConfig', $data) && $data['hasIdpConfig'] === null) {
+            $object->setHasIdpConfig(null);
+        }
+        if (\array_key_exists('idpIssuer', $data) && $data['idpIssuer'] !== null) {
+            $object->setIdpIssuer($data['idpIssuer']);
+        }
+        elseif (\array_key_exists('idpIssuer', $data) && $data['idpIssuer'] === null) {
+            $object->setIdpIssuer(null);
         }
         if (\array_key_exists('info', $data) && $data['info'] !== null) {
             $object->setInfo($data['info']);
-            unset($data['info']);
         }
         elseif (\array_key_exists('info', $data) && $data['info'] === null) {
             $object->setInfo(null);
         }
         if (\array_key_exists('isAnchorDomain', $data) && $data['isAnchorDomain'] !== null) {
             $object->setIsAnchorDomain($data['isAnchorDomain']);
-            unset($data['isAnchorDomain']);
         }
         elseif (\array_key_exists('isAnchorDomain', $data) && $data['isAnchorDomain'] === null) {
             $object->setIsAnchorDomain(null);
         }
+        if (\array_key_exists('loginUrl', $data) && $data['loginUrl'] !== null) {
+            $object->setLoginUrl($data['loginUrl']);
+        }
+        elseif (\array_key_exists('loginUrl', $data) && $data['loginUrl'] === null) {
+            $object->setLoginUrl(null);
+        }
         if (\array_key_exists('requiresClientId', $data) && $data['requiresClientId'] !== null) {
             $object->setRequiresClientId($data['requiresClientId']);
-            unset($data['requiresClientId']);
         }
         elseif (\array_key_exists('requiresClientId', $data) && $data['requiresClientId'] === null) {
             $object->setRequiresClientId(null);
         }
         if (\array_key_exists('warning', $data) && $data['warning'] !== null) {
             $object->setWarning($data['warning']);
-            unset($data['warning']);
         }
         elseif (\array_key_exists('warning', $data) && $data['warning'] === null) {
             $object->setWarning(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -138,26 +147,22 @@ class CheckEmailDomainResponseNormalizer implements DenormalizerInterface, Norma
             $values[] = $value;
         }
         $dataArray['allowedClientIds'] = $values;
-        if ($data->isInitialized('authProvider')) {
-            $dataArray['authProvider'] = $data->getAuthProvider();
-        }
+        $dataArray['authMethod'] = $data->getAuthMethod();
+        $dataArray['authProvider'] = $data->getAuthProvider();
         $dataArray['derivedScope'] = $data->getDerivedScope();
         $dataArray['domain'] = $data->getDomain();
         $dataArray['emailExists'] = $data->getEmailExists();
-        $dataArray['hasAuthConfig'] = $data->getHasAuthConfig();
-        if ($data->isInitialized('info')) {
-            $dataArray['info'] = $data->getInfo();
+        $dataArray['hasIdpConfig'] = $data->getHasIdpConfig();
+        if ($data->isInitialized('idpIssuer') && null !== $data->getIdpIssuer()) {
+            $dataArray['idpIssuer'] = $data->getIdpIssuer();
         }
+        $dataArray['info'] = $data->getInfo();
         $dataArray['isAnchorDomain'] = $data->getIsAnchorDomain();
+        if ($data->isInitialized('loginUrl') && null !== $data->getLoginUrl()) {
+            $dataArray['loginUrl'] = $data->getLoginUrl();
+        }
         $dataArray['requiresClientId'] = $data->getRequiresClientId();
-        if ($data->isInitialized('warning')) {
-            $dataArray['warning'] = $data->getWarning();
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
+        $dataArray['warning'] = $data->getWarning();
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

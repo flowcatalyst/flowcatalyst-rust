@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class EventTypeResponse extends \ArrayObject
+class EventTypeResponse
 {
     /**
      * @var array
@@ -12,6 +12,12 @@ class EventTypeResponse extends \ArrayObject
     {
         return array_key_exists($property, $this->initialized);
     }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
     /**
      * @var string|null
      */
@@ -23,11 +29,19 @@ class EventTypeResponse extends \ArrayObject
     /**
      * @var string|null
      */
-    protected $code;
+    protected $clientId;
     /**
      * @var string|null
      */
+    protected $code;
+    /**
+     * @var \DateTime|null
+     */
     protected $createdAt;
+    /**
+     * @var string|null
+     */
+    protected $createdBy;
     /**
      * @var string|null
      */
@@ -35,7 +49,7 @@ class EventTypeResponse extends \ArrayObject
     /**
      * @var string|null
      */
-    protected $event;
+    protected $eventName;
     /**
      * @var string|null
      */
@@ -44,6 +58,10 @@ class EventTypeResponse extends \ArrayObject
      * @var string|null
      */
     protected $name;
+    /**
+     * @var string|null
+     */
+    protected $source;
     /**
      * @var list<SpecVersionResponse>|null
      */
@@ -57,9 +75,31 @@ class EventTypeResponse extends \ArrayObject
      */
     protected $subdomain;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $updatedAt;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return string|null
      */
@@ -99,6 +139,24 @@ class EventTypeResponse extends \ArrayObject
     /**
      * @return string|null
      */
+    public function getClientId(): ?string
+    {
+        return $this->clientId;
+    }
+    /**
+     * @param string|null $clientId
+     *
+     * @return self
+     */
+    public function setClientId(?string $clientId): self
+    {
+        $this->initialized['clientId'] = true;
+        $this->clientId = $clientId;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
     public function getCode(): ?string
     {
         return $this->code;
@@ -115,21 +173,39 @@ class EventTypeResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getCreatedAt(): ?string
+    public function getCreatedAt(): ?\DateTime
     {
         return $this->createdAt;
     }
     /**
-     * @param string|null $createdAt
+     * @param \DateTime|null $createdAt
      *
      * @return self
      */
-    public function setCreatedAt(?string $createdAt): self
+    public function setCreatedAt(?\DateTime $createdAt): self
     {
         $this->initialized['createdAt'] = true;
         $this->createdAt = $createdAt;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getCreatedBy(): ?string
+    {
+        return $this->createdBy;
+    }
+    /**
+     * @param string|null $createdBy
+     *
+     * @return self
+     */
+    public function setCreatedBy(?string $createdBy): self
+    {
+        $this->initialized['createdBy'] = true;
+        $this->createdBy = $createdBy;
         return $this;
     }
     /**
@@ -153,19 +229,19 @@ class EventTypeResponse extends \ArrayObject
     /**
      * @return string|null
      */
-    public function getEvent(): ?string
+    public function getEventName(): ?string
     {
-        return $this->event;
+        return $this->eventName;
     }
     /**
-     * @param string|null $event
+     * @param string|null $eventName
      *
      * @return self
      */
-    public function setEvent(?string $event): self
+    public function setEventName(?string $eventName): self
     {
-        $this->initialized['event'] = true;
-        $this->event = $event;
+        $this->initialized['eventName'] = true;
+        $this->eventName = $eventName;
         return $this;
     }
     /**
@@ -202,6 +278,24 @@ class EventTypeResponse extends \ArrayObject
     {
         $this->initialized['name'] = true;
         $this->name = $name;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getSource(): ?string
+    {
+        return $this->source;
+    }
+    /**
+     * @param string|null $source
+     *
+     * @return self
+     */
+    public function setSource(?string $source): self
+    {
+        $this->initialized['source'] = true;
+        $this->source = $source;
         return $this;
     }
     /**
@@ -259,18 +353,18 @@ class EventTypeResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getUpdatedAt(): ?string
+    public function getUpdatedAt(): ?\DateTime
     {
         return $this->updatedAt;
     }
     /**
-     * @param string|null $updatedAt
+     * @param \DateTime|null $updatedAt
      *
      * @return self
      */
-    public function setUpdatedAt(?string $updatedAt): self
+    public function setUpdatedAt(?\DateTime $updatedAt): self
     {
         $this->initialized['updatedAt'] = true;
         $this->updatedAt = $updatedAt;

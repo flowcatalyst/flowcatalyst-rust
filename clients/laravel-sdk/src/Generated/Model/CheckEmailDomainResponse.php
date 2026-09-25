@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class CheckEmailDomainResponse extends \ArrayObject
+class CheckEmailDomainResponse
 {
     /**
      * @var array
@@ -13,77 +13,86 @@ class CheckEmailDomainResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * When the user must pick a client, this is the allow-list to choose
-     * from. Empty when `requiresClientId` is false (no input needed) OR
-     * when there is no per-domain restriction (any active client is valid —
-     * the UI shows the full list it already fetches).
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var list<string>|null
      */
     protected $allowedClientIds;
     /**
-     * Auth provider if configured (INTERNAL, OIDC)
-     *
+     * @var string|null
+     */
+    protected $authMethod;
+    /**
      * @var string|null
      */
     protected $authProvider;
     /**
-     * Scope the user will be created with (ANCHOR / PARTNER / CLIENT).
-     * Derived from anchor domains + email_domain_mappings; unmapped domains
-     * default to CLIENT.
-     *
      * @var string|null
      */
     protected $derivedScope;
     /**
-     * The domain that was checked
-     *
      * @var string|null
      */
     protected $domain;
     /**
-     * Whether the email already exists
-     *
      * @var bool|null
      */
     protected $emailExists;
     /**
-     * Whether this domain has auth configuration
-     *
      * @var bool|null
      */
-    protected $hasAuthConfig;
+    protected $hasIdpConfig;
     /**
-     * Informational message
-     *
+     * @var string|null
+     */
+    protected $idpIssuer;
+    /**
      * @var string|null
      */
     protected $info;
     /**
-     * Whether this is an anchor domain
-     *
      * @var bool|null
      */
     protected $isAnchorDomain;
     /**
-     * True when the create-user form must supply a `clientId`. False for
-     * anchor domains and for mappings that already pin a primary client.
-     *
+     * @var string|null
+     */
+    protected $loginUrl;
+    /**
      * @var bool|null
      */
     protected $requiresClientId;
     /**
-     * Warning message
-     *
      * @var string|null
      */
     protected $warning;
     /**
-     * When the user must pick a client, this is the allow-list to choose
-     * from. Empty when `requiresClientId` is false (no input needed) OR
-     * when there is no per-domain restriction (any active client is valid —
-     * the UI shows the full list it already fetches).
+     * A URL to the JSON Schema for this object.
      *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return list<string>|null
      */
     public function getAllowedClientIds(): ?array
@@ -91,15 +100,10 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->allowedClientIds;
     }
     /**
-    * When the user must pick a client, this is the allow-list to choose
-    from. Empty when `requiresClientId` is false (no input needed) OR
-    when there is no per-domain restriction (any active client is valid —
-    the UI shows the full list it already fetches).
-    *
-    * @param list<string>|null $allowedClientIds
-    *
-    * @return self
-    */
+     * @param list<string>|null $allowedClientIds
+     *
+     * @return self
+     */
     public function setAllowedClientIds(?array $allowedClientIds): self
     {
         $this->initialized['allowedClientIds'] = true;
@@ -107,8 +111,24 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Auth provider if configured (INTERNAL, OIDC)
+     * @return string|null
+     */
+    public function getAuthMethod(): ?string
+    {
+        return $this->authMethod;
+    }
+    /**
+     * @param string|null $authMethod
      *
+     * @return self
+     */
+    public function setAuthMethod(?string $authMethod): self
+    {
+        $this->initialized['authMethod'] = true;
+        $this->authMethod = $authMethod;
+        return $this;
+    }
+    /**
      * @return string|null
      */
     public function getAuthProvider(): ?string
@@ -116,8 +136,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->authProvider;
     }
     /**
-     * Auth provider if configured (INTERNAL, OIDC)
-     *
      * @param string|null $authProvider
      *
      * @return self
@@ -129,10 +147,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Scope the user will be created with (ANCHOR / PARTNER / CLIENT).
-     * Derived from anchor domains + email_domain_mappings; unmapped domains
-     * default to CLIENT.
-     *
      * @return string|null
      */
     public function getDerivedScope(): ?string
@@ -140,14 +154,10 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->derivedScope;
     }
     /**
-    * Scope the user will be created with (ANCHOR / PARTNER / CLIENT).
-    Derived from anchor domains + email_domain_mappings; unmapped domains
-    default to CLIENT.
-    *
-    * @param string|null $derivedScope
-    *
-    * @return self
-    */
+     * @param string|null $derivedScope
+     *
+     * @return self
+     */
     public function setDerivedScope(?string $derivedScope): self
     {
         $this->initialized['derivedScope'] = true;
@@ -155,8 +165,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this;
     }
     /**
-     * The domain that was checked
-     *
      * @return string|null
      */
     public function getDomain(): ?string
@@ -164,8 +172,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->domain;
     }
     /**
-     * The domain that was checked
-     *
      * @param string|null $domain
      *
      * @return self
@@ -177,8 +183,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Whether the email already exists
-     *
      * @return bool|null
      */
     public function getEmailExists(): ?bool
@@ -186,8 +190,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->emailExists;
     }
     /**
-     * Whether the email already exists
-     *
      * @param bool|null $emailExists
      *
      * @return self
@@ -199,30 +201,42 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Whether this domain has auth configuration
-     *
      * @return bool|null
      */
-    public function getHasAuthConfig(): ?bool
+    public function getHasIdpConfig(): ?bool
     {
-        return $this->hasAuthConfig;
+        return $this->hasIdpConfig;
     }
     /**
-     * Whether this domain has auth configuration
-     *
-     * @param bool|null $hasAuthConfig
+     * @param bool|null $hasIdpConfig
      *
      * @return self
      */
-    public function setHasAuthConfig(?bool $hasAuthConfig): self
+    public function setHasIdpConfig(?bool $hasIdpConfig): self
     {
-        $this->initialized['hasAuthConfig'] = true;
-        $this->hasAuthConfig = $hasAuthConfig;
+        $this->initialized['hasIdpConfig'] = true;
+        $this->hasIdpConfig = $hasIdpConfig;
         return $this;
     }
     /**
-     * Informational message
+     * @return string|null
+     */
+    public function getIdpIssuer(): ?string
+    {
+        return $this->idpIssuer;
+    }
+    /**
+     * @param string|null $idpIssuer
      *
+     * @return self
+     */
+    public function setIdpIssuer(?string $idpIssuer): self
+    {
+        $this->initialized['idpIssuer'] = true;
+        $this->idpIssuer = $idpIssuer;
+        return $this;
+    }
+    /**
      * @return string|null
      */
     public function getInfo(): ?string
@@ -230,8 +244,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->info;
     }
     /**
-     * Informational message
-     *
      * @param string|null $info
      *
      * @return self
@@ -243,8 +255,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Whether this is an anchor domain
-     *
      * @return bool|null
      */
     public function getIsAnchorDomain(): ?bool
@@ -252,8 +262,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->isAnchorDomain;
     }
     /**
-     * Whether this is an anchor domain
-     *
      * @param bool|null $isAnchorDomain
      *
      * @return self
@@ -265,9 +273,24 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this;
     }
     /**
-     * True when the create-user form must supply a `clientId`. False for
-     * anchor domains and for mappings that already pin a primary client.
+     * @return string|null
+     */
+    public function getLoginUrl(): ?string
+    {
+        return $this->loginUrl;
+    }
+    /**
+     * @param string|null $loginUrl
      *
+     * @return self
+     */
+    public function setLoginUrl(?string $loginUrl): self
+    {
+        $this->initialized['loginUrl'] = true;
+        $this->loginUrl = $loginUrl;
+        return $this;
+    }
+    /**
      * @return bool|null
      */
     public function getRequiresClientId(): ?bool
@@ -275,13 +298,10 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->requiresClientId;
     }
     /**
-    * True when the create-user form must supply a `clientId`. False for
-    anchor domains and for mappings that already pin a primary client.
-    *
-    * @param bool|null $requiresClientId
-    *
-    * @return self
-    */
+     * @param bool|null $requiresClientId
+     *
+     * @return self
+     */
     public function setRequiresClientId(?bool $requiresClientId): self
     {
         $this->initialized['requiresClientId'] = true;
@@ -289,8 +309,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Warning message
-     *
      * @return string|null
      */
     public function getWarning(): ?string
@@ -298,8 +316,6 @@ class CheckEmailDomainResponse extends \ArrayObject
         return $this->warning;
     }
     /**
-     * Warning message
-     *
      * @param string|null $warning
      *
      * @return self

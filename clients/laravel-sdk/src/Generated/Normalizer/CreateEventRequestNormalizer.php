@@ -37,6 +37,13 @@ class CreateEventRequestNormalizer implements DenormalizerInterface, NormalizerI
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('causationId', $data) && $data['causationId'] !== null) {
             $object->setCausationId($data['causationId']);
             unset($data['causationId']);
@@ -54,7 +61,7 @@ class CreateEventRequestNormalizer implements DenormalizerInterface, NormalizerI
         if (\array_key_exists('contextData', $data) && $data['contextData'] !== null) {
             $values = [];
             foreach ($data['contextData'] as $value) {
-                $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\ContextDataDto::class, 'json', $context);
+                $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\ContextEntryDTO::class, 'json', $context);
             }
             $object->setContextData($values);
             unset($data['contextData']);
@@ -121,10 +128,10 @@ class CreateEventRequestNormalizer implements DenormalizerInterface, NormalizerI
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('causationId')) {
+        if ($data->isInitialized('causationId') && null !== $data->getCausationId()) {
             $dataArray['causationId'] = $data->getCausationId();
         }
-        if ($data->isInitialized('clientId')) {
+        if ($data->isInitialized('clientId') && null !== $data->getClientId()) {
             $dataArray['clientId'] = $data->getClientId();
         }
         if ($data->isInitialized('contextData') && null !== $data->getContextData()) {
@@ -134,19 +141,19 @@ class CreateEventRequestNormalizer implements DenormalizerInterface, NormalizerI
             }
             $dataArray['contextData'] = $values;
         }
-        if ($data->isInitialized('correlationId')) {
+        if ($data->isInitialized('correlationId') && null !== $data->getCorrelationId()) {
             $dataArray['correlationId'] = $data->getCorrelationId();
         }
         $dataArray['data'] = $data->getData();
-        if ($data->isInitialized('deduplicationId')) {
+        if ($data->isInitialized('deduplicationId') && null !== $data->getDeduplicationId()) {
             $dataArray['deduplicationId'] = $data->getDeduplicationId();
         }
         $dataArray['eventType'] = $data->getEventType();
-        if ($data->isInitialized('messageGroup')) {
+        if ($data->isInitialized('messageGroup') && null !== $data->getMessageGroup()) {
             $dataArray['messageGroup'] = $data->getMessageGroup();
         }
         $dataArray['source'] = $data->getSource();
-        if ($data->isInitialized('subject')) {
+        if ($data->isInitialized('subject') && null !== $data->getSubject()) {
             $dataArray['subject'] = $data->getSubject();
         }
         foreach ($data as $key => $value_1) {

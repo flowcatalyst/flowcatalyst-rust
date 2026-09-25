@@ -13,43 +13,69 @@ class CreateRoleRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Application code this role belongs to
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
+     * Application code (e.g. platform, iam)
      *
      * @var string|null
      */
     protected $applicationCode;
     /**
-     * Whether clients can manage this role
+     * Whether the role is managed at client scope
      *
      * @var bool|null
      */
     protected $clientManaged;
     /**
-     * Description
-     *
      * @var string|null
      */
     protected $description;
     /**
-     * Display name
+     * Human-readable role name
      *
      * @var string|null
      */
     protected $displayName;
     /**
-     * Initial permissions
+     * Permission codes assigned to the role
      *
      * @var list<string>|null
      */
     protected $permissions;
     /**
-     * Role name (will be combined with app code to form code)
+     * Role name within the application
      *
      * @var string|null
      */
     protected $roleName;
     /**
-     * Application code this role belongs to
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * Application code (e.g. platform, iam)
      *
      * @return string|null
      */
@@ -58,7 +84,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this->applicationCode;
     }
     /**
-     * Application code this role belongs to
+     * Application code (e.g. platform, iam)
      *
      * @param string|null $applicationCode
      *
@@ -71,7 +97,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Whether clients can manage this role
+     * Whether the role is managed at client scope
      *
      * @return bool|null
      */
@@ -80,7 +106,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this->clientManaged;
     }
     /**
-     * Whether clients can manage this role
+     * Whether the role is managed at client scope
      *
      * @param bool|null $clientManaged
      *
@@ -93,8 +119,6 @@ class CreateRoleRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Description
-     *
      * @return string|null
      */
     public function getDescription(): ?string
@@ -102,8 +126,6 @@ class CreateRoleRequest extends \ArrayObject
         return $this->description;
     }
     /**
-     * Description
-     *
      * @param string|null $description
      *
      * @return self
@@ -115,7 +137,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Display name
+     * Human-readable role name
      *
      * @return string|null
      */
@@ -124,7 +146,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this->displayName;
     }
     /**
-     * Display name
+     * Human-readable role name
      *
      * @param string|null $displayName
      *
@@ -137,7 +159,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Initial permissions
+     * Permission codes assigned to the role
      *
      * @return list<string>|null
      */
@@ -146,7 +168,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this->permissions;
     }
     /**
-     * Initial permissions
+     * Permission codes assigned to the role
      *
      * @param list<string>|null $permissions
      *
@@ -159,7 +181,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Role name (will be combined with app code to form code)
+     * Role name within the application
      *
      * @return string|null
      */
@@ -168,7 +190,7 @@ class CreateRoleRequest extends \ArrayObject
         return $this->roleName;
     }
     /**
-     * Role name (will be combined with app code to form code)
+     * Role name within the application
      *
      * @param string|null $roleName
      *

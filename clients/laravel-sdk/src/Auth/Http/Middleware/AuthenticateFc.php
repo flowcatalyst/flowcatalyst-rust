@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace FlowCatalyst\Auth\Http\Middleware;
 
 use Closure;
+use FlowCatalyst\Auth\DefaultOidcUserHandler;
 use FlowCatalyst\Auth\DTOs\FlowCatalystUser;
 use FlowCatalyst\Auth\Rbac\RbacCatalogue;
 use FlowCatalyst\Auth\Support\AccessTokenValidator;
+use FlowCatalyst\Auth\Support\SessionFreshnessGuard;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -16,7 +18,8 @@ use Symfony\Component\HttpFoundation\Response;
  *
  *   1. `Authorization: Bearer <token>` → validates against JWKS (RS256).
  *   2. Otherwise reads the existing session-stored principal (set by the
- *      OIDC callback flow).
+ *      OIDC callback flow), capped to its OWN access token's real expiry —
+ *      see {@see SessionFreshnessGuard}.
  *   3. Applies the RBAC catalogue (if registered) to populate
  *      `principal->permissions`.
  *   4. Stashes the principal on the request via
@@ -35,6 +38,7 @@ final class AuthenticateFc
     public function __construct(
         private readonly AccessTokenValidator $validator,
         private readonly ?RbacCatalogue $rbac = null,
+        private readonly ?SessionFreshnessGuard $freshness = null,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
@@ -57,14 +61,30 @@ final class AuthenticateFc
         }
 
         // Session-stored principal (set by OidcAuthController on callback).
+        // Goes through DefaultOidcUserHandler::getCurrentUser() rather than a
+        // raw session()->get() + instanceof check: Laravel's session
+        // 'serialization' can be 'json' (a recommended hardening — no
+        // "gadget chain" risk — increasingly the default in new apps), under
+        // which a stored object always comes back as a plain array, never a
+        // reconstructed instance. getCurrentUser() is the one place that
+        // knows how to rehydrate it regardless of serialization mode.
         if (!$request->hasSession()) {
             return null;
         }
-        $stored = $request->session()->get('flowcatalyst_user');
-        if (!$stored instanceof FlowCatalystUser) {
+        $stored = DefaultOidcUserHandler::getCurrentUser();
+        if ($stored === null) {
             return null;
         }
-        return $stored->withMechanism('session');
+
+        // No freshness guard wired (e.g. a unit test constructing this
+        // middleware directly) — trust the stored principal as-is rather
+        // than silently dropping every session. Note: this is NOT the same
+        // as ensureFresh() returning null (a failed refresh), which must
+        // still clear the session — hence the explicit null check on
+        // $this->freshness itself, not a `??` on its result.
+        $fresh = $this->freshness === null ? $stored : $this->freshness->ensureFresh($stored);
+
+        return $fresh?->withMechanism('session');
     }
 
     private function readBearer(Request $request): ?string

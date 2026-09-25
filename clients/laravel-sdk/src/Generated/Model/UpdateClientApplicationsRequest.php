@@ -13,14 +13,38 @@ class UpdateClientApplicationsRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * List of application IDs to enable
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var list<string>|null
      */
     protected $enabledApplicationIds;
     /**
-     * List of application IDs to enable
+     * A URL to the JSON Schema for this object.
      *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return list<string>|null
      */
     public function getEnabledApplicationIds(): ?array
@@ -28,8 +52,6 @@ class UpdateClientApplicationsRequest extends \ArrayObject
         return $this->enabledApplicationIds;
     }
     /**
-     * List of application IDs to enable
-     *
      * @param list<string>|null $enabledApplicationIds
      *
      * @return self

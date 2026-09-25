@@ -33,11 +33,37 @@ final class JwksCache
      */
     public function keys(string $baseUrl): array
     {
+        return $this->fetch($baseUrl)['keys'];
+    }
+
+    /**
+     * The `issuer` claim value the platform's own discovery document
+     * advertises for `$baseUrl`, or null if the discovery doc did not carry
+     * one. This is what {@see AccessTokenValidator} and {@see IdTokenValidator}
+     * compare a token's `iss` claim against — never a value the caller
+     * supplies, so a token cannot claim its own way past the check.
+     */
+    public function issuer(string $baseUrl): ?string
+    {
+        $issuer = $this->fetch($baseUrl)['issuer'] ?? null;
+        return is_string($issuer) && $issuer !== '' ? $issuer : null;
+    }
+
+    public function invalidate(string $baseUrl): void
+    {
+        $this->cache->forget('fc.jwks.' . sha1($baseUrl));
+    }
+
+    /**
+     * @return array{keys: array<string, array<string, mixed>>, issuer: string|null}
+     */
+    private function fetch(string $baseUrl): array
+    {
         $cacheKey = 'fc.jwks.' . sha1($baseUrl);
         $cached = $this->cache->get($cacheKey);
         if (is_array($cached) && isset($cached['keys'])) {
-            /** @var array<string, array<string, mixed>> */
-            return $cached['keys'];
+            /** @var array{keys: array<string, array<string, mixed>>, issuer: string|null} */
+            return $cached;
         }
 
         $base = rtrim($baseUrl, '/');
@@ -72,12 +98,8 @@ final class JwksCache
             $byKid[$key['kid']] = $key;
         }
 
-        $this->cache->put($cacheKey, ['keys' => $byKid, 'issuer' => $doc['issuer'] ?? null], $this->ttlSeconds);
-        return $byKid;
-    }
-
-    public function invalidate(string $baseUrl): void
-    {
-        $this->cache->forget('fc.jwks.' . sha1($baseUrl));
+        $result = ['keys' => $byKid, 'issuer' => is_string($doc['issuer'] ?? null) ? $doc['issuer'] : null];
+        $this->cache->put($cacheKey, $result, $this->ttlSeconds);
+        return $result;
     }
 }

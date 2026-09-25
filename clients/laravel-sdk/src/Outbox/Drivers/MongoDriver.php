@@ -58,7 +58,7 @@ class MongoDriver implements OutboxDriver
 
     /**
      * Prepare a message for MongoDB insertion.
-     * Field names use camelCase to match the Java outbox-processor's MongoOutboxRepository.
+     * Field names use camelCase — the wire contract the outbox poller expects.
      */
     private function prepareMessage(array $message): array
     {

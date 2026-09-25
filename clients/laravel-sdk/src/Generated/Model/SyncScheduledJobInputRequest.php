@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class SyncScheduledJobInputRequest extends \ArrayObject
+class SyncScheduledJobInputRequest
 {
     /**
      * @var array
@@ -25,6 +25,8 @@ class SyncScheduledJobInputRequest extends \ArrayObject
      */
     protected $crons;
     /**
+     * Default 3 when omitted
+     *
      * @var int|null
      */
     protected $deliveryMaxAttempts;
@@ -49,6 +51,8 @@ class SyncScheduledJobInputRequest extends \ArrayObject
      */
     protected $timeoutSeconds;
     /**
+     * IANA timezone (default UTC)
+     *
      * @var string|null
      */
     protected $timezone;
@@ -111,6 +115,8 @@ class SyncScheduledJobInputRequest extends \ArrayObject
         return $this;
     }
     /**
+     * Default 3 when omitted
+     *
      * @return int|null
      */
     public function getDeliveryMaxAttempts(): ?int
@@ -118,6 +124,8 @@ class SyncScheduledJobInputRequest extends \ArrayObject
         return $this->deliveryMaxAttempts;
     }
     /**
+     * Default 3 when omitted
+     *
      * @param int|null $deliveryMaxAttempts
      *
      * @return self
@@ -219,6 +227,8 @@ class SyncScheduledJobInputRequest extends \ArrayObject
         return $this;
     }
     /**
+     * IANA timezone (default UTC)
+     *
      * @return string|null
      */
     public function getTimezone(): ?string
@@ -226,6 +236,8 @@ class SyncScheduledJobInputRequest extends \ArrayObject
         return $this->timezone;
     }
     /**
+     * IANA timezone (default UTC)
+     *
      * @param string|null $timezone
      *
      * @return self

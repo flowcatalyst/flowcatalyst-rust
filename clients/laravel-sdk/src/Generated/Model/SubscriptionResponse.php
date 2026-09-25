@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class SubscriptionResponse extends \ArrayObject
+class SubscriptionResponse
 {
     /**
      * @var array
@@ -12,6 +12,12 @@ class SubscriptionResponse extends \ArrayObject
     {
         return array_key_exists($property, $this->initialized);
     }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
     /**
      * @var string|null
      */
@@ -37,11 +43,15 @@ class SubscriptionResponse extends \ArrayObject
      */
     protected $connectionId;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $createdAt;
     /**
-     * @var list<ConfigEntryResponse>|null
+     * @var string|null
+     */
+    protected $createdBy;
+    /**
+     * @var list<ConfigEntryDTO>|null
      */
     protected $customConfig;
     /**
@@ -69,7 +79,7 @@ class SubscriptionResponse extends \ArrayObject
      */
     protected $endpoint;
     /**
-     * @var list<EventTypeBindingResponse>|null
+     * @var list<EventTypeBindingDTO>|null
      */
     protected $eventTypes;
     /**
@@ -117,9 +127,31 @@ class SubscriptionResponse extends \ArrayObject
      */
     protected $timeoutSeconds;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $updatedAt;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return string|null
      */
@@ -229,32 +261,50 @@ class SubscriptionResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getCreatedAt(): ?string
+    public function getCreatedAt(): ?\DateTime
     {
         return $this->createdAt;
     }
     /**
-     * @param string|null $createdAt
+     * @param \DateTime|null $createdAt
      *
      * @return self
      */
-    public function setCreatedAt(?string $createdAt): self
+    public function setCreatedAt(?\DateTime $createdAt): self
     {
         $this->initialized['createdAt'] = true;
         $this->createdAt = $createdAt;
         return $this;
     }
     /**
-     * @return list<ConfigEntryResponse>|null
+     * @return string|null
+     */
+    public function getCreatedBy(): ?string
+    {
+        return $this->createdBy;
+    }
+    /**
+     * @param string|null $createdBy
+     *
+     * @return self
+     */
+    public function setCreatedBy(?string $createdBy): self
+    {
+        $this->initialized['createdBy'] = true;
+        $this->createdBy = $createdBy;
+        return $this;
+    }
+    /**
+     * @return list<ConfigEntryDTO>|null
      */
     public function getCustomConfig(): ?array
     {
         return $this->customConfig;
     }
     /**
-     * @param list<ConfigEntryResponse>|null $customConfig
+     * @param list<ConfigEntryDTO>|null $customConfig
      *
      * @return self
      */
@@ -373,14 +423,14 @@ class SubscriptionResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return list<EventTypeBindingResponse>|null
+     * @return list<EventTypeBindingDTO>|null
      */
     public function getEventTypes(): ?array
     {
         return $this->eventTypes;
     }
     /**
-     * @param list<EventTypeBindingResponse>|null $eventTypes
+     * @param list<EventTypeBindingDTO>|null $eventTypes
      *
      * @return self
      */
@@ -589,18 +639,18 @@ class SubscriptionResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getUpdatedAt(): ?string
+    public function getUpdatedAt(): ?\DateTime
     {
         return $this->updatedAt;
     }
     /**
-     * @param string|null $updatedAt
+     * @param \DateTime|null $updatedAt
      *
      * @return self
      */
-    public function setUpdatedAt(?string $updatedAt): self
+    public function setUpdatedAt(?\DateTime $updatedAt): self
     {
         $this->initialized['updatedAt'] = true;
         $this->updatedAt = $updatedAt;

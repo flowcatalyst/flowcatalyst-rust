@@ -103,7 +103,7 @@ class DatabaseDriver implements OutboxDriver
 
     /**
      * Prepare a message for database insertion.
-     * Column layout matches the outbox-processor schema.
+     * Column layout matches the outbox poller's schema.
      */
     private function prepareMessage(array $message): array
     {

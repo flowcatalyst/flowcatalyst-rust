@@ -37,45 +37,49 @@ class ApplicationAccessListResponseNormalizer implements DenormalizerInterface, 
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('allApplications', $data) && \is_int($data['allApplications'])) {
+            $data['allApplications'] = (bool) $data['allApplications'];
+        }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
+        if (\array_key_exists('allApplications', $data) && $data['allApplications'] !== null) {
+            $object->setAllApplications($data['allApplications']);
+        }
+        elseif (\array_key_exists('allApplications', $data) && $data['allApplications'] === null) {
+            $object->setAllApplications(null);
+        }
         if (\array_key_exists('applications', $data) && $data['applications'] !== null) {
             $values = [];
             foreach ($data['applications'] as $value) {
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\ApplicationAccessResponse::class, 'json', $context);
             }
             $object->setApplications($values);
-            unset($data['applications']);
         }
         elseif (\array_key_exists('applications', $data) && $data['applications'] === null) {
             $object->setApplications(null);
         }
         if (\array_key_exists('total', $data) && $data['total'] !== null) {
             $object->setTotal($data['total']);
-            unset($data['total']);
         }
         elseif (\array_key_exists('total', $data) && $data['total'] === null) {
             $object->setTotal(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
+        $dataArray['allApplications'] = $data->getAllApplications();
         $values = [];
         foreach ($data->getApplications() as $value) {
             $values[] = $this->normalizer->normalize($value, 'json', $context);
         }
         $dataArray['applications'] = $values;
         $dataArray['total'] = $data->getTotal();
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

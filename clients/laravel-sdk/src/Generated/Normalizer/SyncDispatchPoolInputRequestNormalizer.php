@@ -39,43 +39,33 @@ class SyncDispatchPoolInputRequestNormalizer implements DenormalizerInterface, N
         }
         if (\array_key_exists('code', $data) && $data['code'] !== null) {
             $object->setCode($data['code']);
-            unset($data['code']);
         }
         elseif (\array_key_exists('code', $data) && $data['code'] === null) {
             $object->setCode(null);
         }
         if (\array_key_exists('concurrency', $data) && $data['concurrency'] !== null) {
             $object->setConcurrency($data['concurrency']);
-            unset($data['concurrency']);
         }
         elseif (\array_key_exists('concurrency', $data) && $data['concurrency'] === null) {
             $object->setConcurrency(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
         }
         if (\array_key_exists('rateLimit', $data) && $data['rateLimit'] !== null) {
             $object->setRateLimit($data['rateLimit']);
-            unset($data['rateLimit']);
         }
         elseif (\array_key_exists('rateLimit', $data) && $data['rateLimit'] === null) {
             $object->setRateLimit(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -86,17 +76,12 @@ class SyncDispatchPoolInputRequestNormalizer implements DenormalizerInterface, N
         if ($data->isInitialized('concurrency') && null !== $data->getConcurrency()) {
             $dataArray['concurrency'] = $data->getConcurrency();
         }
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
         $dataArray['name'] = $data->getName();
-        if ($data->isInitialized('rateLimit')) {
+        if ($data->isInitialized('rateLimit') && null !== $data->getRateLimit()) {
             $dataArray['rateLimit'] = $data->getRateLimit();
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
         }
         return $dataArray;
     }

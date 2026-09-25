@@ -37,6 +37,13 @@ class RegisterBeginRequestNormalizer implements DenormalizerInterface, Normalize
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('displayName', $data) && $data['displayName'] !== null) {
             $object->setDisplayName($data['displayName']);
             unset($data['displayName']);
@@ -54,7 +61,7 @@ class RegisterBeginRequestNormalizer implements DenormalizerInterface, Normalize
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('displayName')) {
+        if ($data->isInitialized('displayName') && null !== $data->getDisplayName()) {
             $dataArray['displayName'] = $data->getDisplayName();
         }
         foreach ($data as $key => $value) {

@@ -24,6 +24,7 @@ use Attribute;
  *
  * The application code is automatically added from your config when synced.
  * For example, if your app code is "myapp", the event type becomes "myapp:orders:order:created".
+ * Set `application:` to override it per definition (see the constructor).
  *
  * Code format: {application}:{subdomain}:{aggregate}:{event}
  */
@@ -37,6 +38,10 @@ final class AsEventType
      * @param string $name Human-friendly name
      * @param string|null $description Event type description
      * @param bool $clientScoped Whether events of this type are scoped to clients
+     * @param string|null $application Application code this event type belongs to.
+     *        Overrides the global `application_code` / `application_map` during
+     *        sync — set it when one codebase defines event types for more than
+     *        one application. Null = resolve from the namespace map / default.
      */
     public function __construct(
         public readonly string $subdomain,
@@ -45,6 +50,7 @@ final class AsEventType
         public readonly string $name,
         public readonly ?string $description = null,
         public readonly bool $clientScoped = false,
+        public readonly ?string $application = null,
     ) {}
 
     /**

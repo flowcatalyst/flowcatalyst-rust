@@ -40,6 +40,13 @@ class CreateRoleRequestNormalizer implements DenormalizerInterface, NormalizerIn
         if (\array_key_exists('clientManaged', $data) && \is_int($data['clientManaged'])) {
             $data['clientManaged'] = (bool) $data['clientManaged'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
             $object->setApplicationCode($data['applicationCode']);
             unset($data['applicationCode']);
@@ -97,10 +104,8 @@ class CreateRoleRequestNormalizer implements DenormalizerInterface, NormalizerIn
     {
         $dataArray = [];
         $dataArray['applicationCode'] = $data->getApplicationCode();
-        if ($data->isInitialized('clientManaged') && null !== $data->getClientManaged()) {
-            $dataArray['clientManaged'] = $data->getClientManaged();
-        }
-        if ($data->isInitialized('description')) {
+        $dataArray['clientManaged'] = $data->getClientManaged();
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
         $dataArray['displayName'] = $data->getDisplayName();

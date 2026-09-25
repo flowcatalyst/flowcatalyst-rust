@@ -89,8 +89,10 @@ class EventTypes
     }
 
     /**
-     * Add a new schema version to an event type. The platform
-     * auto-increments the version number.
+     * Add a new schema version to an event type. The platform requires an
+     * explicit version (the request defaults to AddSchemaVersionRequest::
+     * DEFAULT_VERSION) and rejects a duplicate (event-type, version) pair —
+     * it does not auto-increment.
      */
     public function addSchemaVersion(string $id, AddSchemaVersionRequest $request): EventType
     {

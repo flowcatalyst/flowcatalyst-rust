@@ -40,6 +40,13 @@ class UpdateRoleRequestNormalizer implements DenormalizerInterface, NormalizerIn
         if (\array_key_exists('clientManaged', $data) && \is_int($data['clientManaged'])) {
             $data['clientManaged'] = (bool) $data['clientManaged'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('clientManaged', $data) && $data['clientManaged'] !== null) {
             $object->setClientManaged($data['clientManaged']);
             unset($data['clientManaged']);
@@ -82,16 +89,16 @@ class UpdateRoleRequestNormalizer implements DenormalizerInterface, NormalizerIn
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('clientManaged')) {
+        if ($data->isInitialized('clientManaged') && null !== $data->getClientManaged()) {
             $dataArray['clientManaged'] = $data->getClientManaged();
         }
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
-        if ($data->isInitialized('displayName')) {
+        if ($data->isInitialized('displayName') && null !== $data->getDisplayName()) {
             $dataArray['displayName'] = $data->getDisplayName();
         }
-        if ($data->isInitialized('permissions')) {
+        if ($data->isInitialized('permissions') && null !== $data->getPermissions()) {
             $values = [];
             foreach ($data->getPermissions() as $value) {
                 $values[] = $value;

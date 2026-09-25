@@ -40,6 +40,19 @@ class CreateUserRequestNormalizer implements DenormalizerInterface, NormalizerIn
         if (\array_key_exists('enforcePasswordComplexity', $data) && \is_int($data['enforcePasswordComplexity'])) {
             $data['enforcePasswordComplexity'] = (bool) $data['enforcePasswordComplexity'];
         }
+        if (\array_key_exists('returnInviteLink', $data) && \is_int($data['returnInviteLink'])) {
+            $data['returnInviteLink'] = (bool) $data['returnInviteLink'];
+        }
+        if (\array_key_exists('sendInvitation', $data) && \is_int($data['sendInvitation'])) {
+            $data['sendInvitation'] = (bool) $data['sendInvitation'];
+        }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('clientId', $data) && $data['clientId'] !== null) {
             $object->setClientId($data['clientId']);
             unset($data['clientId']);
@@ -61,6 +74,13 @@ class CreateUserRequestNormalizer implements DenormalizerInterface, NormalizerIn
         elseif (\array_key_exists('enforcePasswordComplexity', $data) && $data['enforcePasswordComplexity'] === null) {
             $object->setEnforcePasswordComplexity(null);
         }
+        if (\array_key_exists('inviteRedirectUri', $data) && $data['inviteRedirectUri'] !== null) {
+            $object->setInviteRedirectUri($data['inviteRedirectUri']);
+            unset($data['inviteRedirectUri']);
+        }
+        elseif (\array_key_exists('inviteRedirectUri', $data) && $data['inviteRedirectUri'] === null) {
+            $object->setInviteRedirectUri(null);
+        }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
             unset($data['name']);
@@ -75,6 +95,27 @@ class CreateUserRequestNormalizer implements DenormalizerInterface, NormalizerIn
         elseif (\array_key_exists('password', $data) && $data['password'] === null) {
             $object->setPassword(null);
         }
+        if (\array_key_exists('returnInviteLink', $data) && $data['returnInviteLink'] !== null) {
+            $object->setReturnInviteLink($data['returnInviteLink']);
+            unset($data['returnInviteLink']);
+        }
+        elseif (\array_key_exists('returnInviteLink', $data) && $data['returnInviteLink'] === null) {
+            $object->setReturnInviteLink(null);
+        }
+        if (\array_key_exists('scope', $data) && $data['scope'] !== null) {
+            $object->setScope($data['scope']);
+            unset($data['scope']);
+        }
+        elseif (\array_key_exists('scope', $data) && $data['scope'] === null) {
+            $object->setScope(null);
+        }
+        if (\array_key_exists('sendInvitation', $data) && $data['sendInvitation'] !== null) {
+            $object->setSendInvitation($data['sendInvitation']);
+            unset($data['sendInvitation']);
+        }
+        elseif (\array_key_exists('sendInvitation', $data) && $data['sendInvitation'] === null) {
+            $object->setSendInvitation(null);
+        }
         foreach ($data as $key => $value) {
             if (preg_match('/.*/', (string) $key)) {
                 $object[$key] = $value;
@@ -85,16 +126,28 @@ class CreateUserRequestNormalizer implements DenormalizerInterface, NormalizerIn
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('clientId')) {
+        if ($data->isInitialized('clientId') && null !== $data->getClientId()) {
             $dataArray['clientId'] = $data->getClientId();
         }
         $dataArray['email'] = $data->getEmail();
-        if ($data->isInitialized('enforcePasswordComplexity')) {
+        if ($data->isInitialized('enforcePasswordComplexity') && null !== $data->getEnforcePasswordComplexity()) {
             $dataArray['enforcePasswordComplexity'] = $data->getEnforcePasswordComplexity();
         }
+        if ($data->isInitialized('inviteRedirectUri') && null !== $data->getInviteRedirectUri()) {
+            $dataArray['inviteRedirectUri'] = $data->getInviteRedirectUri();
+        }
         $dataArray['name'] = $data->getName();
-        if ($data->isInitialized('password')) {
+        if ($data->isInitialized('password') && null !== $data->getPassword()) {
             $dataArray['password'] = $data->getPassword();
+        }
+        if ($data->isInitialized('returnInviteLink') && null !== $data->getReturnInviteLink()) {
+            $dataArray['returnInviteLink'] = $data->getReturnInviteLink();
+        }
+        if ($data->isInitialized('scope') && null !== $data->getScope()) {
+            $dataArray['scope'] = $data->getScope();
+        }
+        if ($data->isInitialized('sendInvitation') && null !== $data->getSendInvitation()) {
+            $dataArray['sendInvitation'] = $data->getSendInvitation();
         }
         foreach ($data as $key => $value) {
             if (preg_match('/.*/', (string) $key)) {

@@ -56,6 +56,14 @@ final class SyncOptions
          * definition set (single-document; replaces prior version).
          */
         public readonly bool $syncOpenapi = true,
+
+        /**
+         * Whether to sync connections. Always applied BEFORE subscriptions —
+         * a subscription's `connectionCode` must resolve in the same run.
+         * Trailing (not grouped next to syncSubscriptions above) so this
+         * stays an additive, backward-compatible constructor change.
+         */
+        public readonly bool $syncConnections = true,
     ) {}
 
     /**
@@ -83,6 +91,7 @@ final class SyncOptions
             syncRoles: true,
             syncEventTypes: false,
             syncSubscriptions: false,
+            syncConnections: false,
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: false,
@@ -100,6 +109,7 @@ final class SyncOptions
             syncRoles: false,
             syncEventTypes: true,
             syncSubscriptions: false,
+            syncConnections: false,
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: false,
@@ -117,6 +127,25 @@ final class SyncOptions
             syncRoles: false,
             syncEventTypes: false,
             syncSubscriptions: true,
+            syncConnections: false,
+            syncDispatchPools: false,
+            syncPrincipals: false,
+            syncProcesses: false,
+            syncScheduledJobs: false,
+            syncOpenapi: false,
+        );
+    }
+
+    /**
+     * Create options that only sync connections.
+     */
+    public static function connectionsOnly(): self
+    {
+        return new self(
+            syncRoles: false,
+            syncEventTypes: false,
+            syncSubscriptions: false,
+            syncConnections: true,
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: false,
@@ -134,6 +163,7 @@ final class SyncOptions
             syncRoles: false,
             syncEventTypes: false,
             syncSubscriptions: false,
+            syncConnections: false,
             syncDispatchPools: true,
             syncPrincipals: false,
             syncProcesses: false,
@@ -151,6 +181,7 @@ final class SyncOptions
             syncRoles: false,
             syncEventTypes: false,
             syncSubscriptions: false,
+            syncConnections: false,
             syncDispatchPools: false,
             syncPrincipals: true,
             syncProcesses: false,
@@ -168,6 +199,7 @@ final class SyncOptions
             syncRoles: false,
             syncEventTypes: false,
             syncSubscriptions: false,
+            syncConnections: false,
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: true,
@@ -185,6 +217,7 @@ final class SyncOptions
             syncRoles: false,
             syncEventTypes: false,
             syncSubscriptions: false,
+            syncConnections: false,
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: false,
@@ -202,6 +235,7 @@ final class SyncOptions
             syncRoles: false,
             syncEventTypes: false,
             syncSubscriptions: false,
+            syncConnections: false,
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: false,
@@ -220,6 +254,7 @@ final class SyncOptions
             syncRoles: $this->syncRoles,
             syncEventTypes: $this->syncEventTypes,
             syncSubscriptions: $this->syncSubscriptions,
+            syncConnections: $this->syncConnections,
             syncDispatchPools: $this->syncDispatchPools,
             syncPrincipals: $this->syncPrincipals,
             syncProcesses: $this->syncProcesses,

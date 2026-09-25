@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class EventRead extends \ArrayObject
+class EventRead
 {
     /**
      * @var array
@@ -24,12 +24,6 @@ class EventRead extends \ArrayObject
      * @var string|null
      */
     protected $clientId;
-    /**
-     * Denormalized client name for display
-     *
-     * @var string|null
-     */
-    protected $clientName;
     /**
      * @var string|null
      */
@@ -118,28 +112,6 @@ class EventRead extends \ArrayObject
     {
         $this->initialized['clientId'] = true;
         $this->clientId = $clientId;
-        return $this;
-    }
-    /**
-     * Denormalized client name for display
-     *
-     * @return string|null
-     */
-    public function getClientName(): ?string
-    {
-        return $this->clientName;
-    }
-    /**
-     * Denormalized client name for display
-     *
-     * @param string|null $clientName
-     *
-     * @return self
-     */
-    public function setClientName(?string $clientName): self
-    {
-        $this->initialized['clientName'] = true;
-        $this->clientName = $clientName;
         return $this;
     }
     /**

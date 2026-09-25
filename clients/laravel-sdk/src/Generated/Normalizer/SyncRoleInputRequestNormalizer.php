@@ -42,28 +42,24 @@ class SyncRoleInputRequestNormalizer implements DenormalizerInterface, Normalize
         }
         if (\array_key_exists('clientManaged', $data) && $data['clientManaged'] !== null) {
             $object->setClientManaged($data['clientManaged']);
-            unset($data['clientManaged']);
         }
         elseif (\array_key_exists('clientManaged', $data) && $data['clientManaged'] === null) {
             $object->setClientManaged(null);
         }
         if (\array_key_exists('description', $data) && $data['description'] !== null) {
             $object->setDescription($data['description']);
-            unset($data['description']);
         }
         elseif (\array_key_exists('description', $data) && $data['description'] === null) {
             $object->setDescription(null);
         }
         if (\array_key_exists('displayName', $data) && $data['displayName'] !== null) {
             $object->setDisplayName($data['displayName']);
-            unset($data['displayName']);
         }
         elseif (\array_key_exists('displayName', $data) && $data['displayName'] === null) {
             $object->setDisplayName(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
@@ -74,15 +70,9 @@ class SyncRoleInputRequestNormalizer implements DenormalizerInterface, Normalize
                 $values[] = $value;
             }
             $object->setPermissions($values);
-            unset($data['permissions']);
         }
         elseif (\array_key_exists('permissions', $data) && $data['permissions'] === null) {
             $object->setPermissions(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -92,10 +82,10 @@ class SyncRoleInputRequestNormalizer implements DenormalizerInterface, Normalize
         if ($data->isInitialized('clientManaged') && null !== $data->getClientManaged()) {
             $dataArray['clientManaged'] = $data->getClientManaged();
         }
-        if ($data->isInitialized('description')) {
+        if ($data->isInitialized('description') && null !== $data->getDescription()) {
             $dataArray['description'] = $data->getDescription();
         }
-        if ($data->isInitialized('displayName')) {
+        if ($data->isInitialized('displayName') && null !== $data->getDisplayName()) {
             $dataArray['displayName'] = $data->getDisplayName();
         }
         $dataArray['name'] = $data->getName();
@@ -105,11 +95,6 @@ class SyncRoleInputRequestNormalizer implements DenormalizerInterface, Normalize
                 $values[] = $value;
             }
             $dataArray['permissions'] = $values;
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
         }
         return $dataArray;
     }

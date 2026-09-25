@@ -13,14 +13,38 @@ class GrantClientAccessRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Client ID to grant access to
+     * A URL to the JSON Schema for this object.
      *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var string|null
      */
     protected $clientId;
     /**
-     * Client ID to grant access to
+     * A URL to the JSON Schema for this object.
      *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
      * @return string|null
      */
     public function getClientId(): ?string
@@ -28,8 +52,6 @@ class GrantClientAccessRequest extends \ArrayObject
         return $this->clientId;
     }
     /**
-     * Client ID to grant access to
-     *
      * @param string|null $clientId
      *
      * @return self

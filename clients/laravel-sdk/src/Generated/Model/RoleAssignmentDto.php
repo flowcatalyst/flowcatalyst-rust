@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class RoleAssignmentDto extends \ArrayObject
+class RoleAssignmentDTO
 {
     /**
      * @var array
@@ -13,9 +13,13 @@ class RoleAssignmentDto extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $assignedAt;
+    /**
+     * @var string|null
+     */
+    protected $assignedBy;
     /**
      * @var string|null
      */
@@ -23,27 +27,45 @@ class RoleAssignmentDto extends \ArrayObject
     /**
      * @var string|null
      */
-    protected $id;
+    protected $clientId;
     /**
      * @var string|null
      */
     protected $roleName;
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getAssignedAt(): ?string
+    public function getAssignedAt(): ?\DateTime
     {
         return $this->assignedAt;
     }
     /**
-     * @param string|null $assignedAt
+     * @param \DateTime|null $assignedAt
      *
      * @return self
      */
-    public function setAssignedAt(?string $assignedAt): self
+    public function setAssignedAt(?\DateTime $assignedAt): self
     {
         $this->initialized['assignedAt'] = true;
         $this->assignedAt = $assignedAt;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getAssignedBy(): ?string
+    {
+        return $this->assignedBy;
+    }
+    /**
+     * @param string|null $assignedBy
+     *
+     * @return self
+     */
+    public function setAssignedBy(?string $assignedBy): self
+    {
+        $this->initialized['assignedBy'] = true;
+        $this->assignedBy = $assignedBy;
         return $this;
     }
     /**
@@ -67,19 +89,19 @@ class RoleAssignmentDto extends \ArrayObject
     /**
      * @return string|null
      */
-    public function getId(): ?string
+    public function getClientId(): ?string
     {
-        return $this->id;
+        return $this->clientId;
     }
     /**
-     * @param string|null $id
+     * @param string|null $clientId
      *
      * @return self
      */
-    public function setId(?string $id): self
+    public function setClientId(?string $clientId): self
     {
-        $this->initialized['id'] = true;
-        $this->id = $id;
+        $this->initialized['clientId'] = true;
+        $this->clientId = $clientId;
         return $this;
     }
     /**

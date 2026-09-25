@@ -15,10 +15,11 @@ use FlowCatalyst\Enums\DispatchMode;
  * #[AsSubscription(
  *     code: 'order-processor',
  *     name: 'Order Processor',
+ *     target: '/webhooks/orders',  // path → resolved against APP_URL at sync
  *     description: 'Processes new orders',
  *     clientScoped: true,  // Set to true for client-scoped subscriptions
  *     eventTypes: ['myapp:orders:order:created', 'myapp:orders:order:updated'],
- *     connectionId: 'conn_abc123',
+ *     connectionCode: 'orders-webhook',
  *     queue: 'orders',
  *     dispatchPoolCode: 'default',
  *     mode: DispatchMode::BLOCK_ON_ERROR
@@ -32,7 +33,20 @@ final class AsSubscription
     /**
      * @param string $code Unique subscription code
      * @param string $name Human-friendly name
-     * @param string $connectionId Connection ID for dispatch routing
+     * @param string $target Where the platform delivers this subscription's
+     *        events. Either an absolute URL, sent as-is, or a path
+     *        (`/webhooks/orders`), which the sync resolves against
+     *        `flowcatalyst.subscriptions.target_base_url`, falling back to
+     *        `app.url`. Prefer a path: the attribute is compiled into the
+     *        codebase while the host differs per environment, and resolving at
+     *        sync time (not scan time) means a definition cache built in CI
+     *        still gets the deploying environment's host.
+     * @param string $connectionCode Code of the connection that delivers this
+     *        subscription. The code, not the id: an id is minted per
+     *        environment, a code is the same everywhere. The platform resolves
+     *        it at sync time. A bare code names a connection owned by THIS
+     *        application; set `sharedConnection: true` when it names a
+     *        shared (application-less) connection instead.
      * @param string $queue Queue name for message routing
      * @param string $dispatchPoolCode Dispatch pool code for rate limiting
      * @param string|null $description Subscription description
@@ -46,11 +60,27 @@ final class AsSubscription
      * @param int|null $timeoutSeconds Timeout for target response
      * @param int|null $maxRetries Maximum retry attempts
      * @param bool|null $dataOnly If true, only send event data (no envelope)
+     * @param string|null $application Application code this subscription belongs
+     *        to. Overrides the global `application_code` / `application_map`
+     *        during sync — set it when one codebase defines subscriptions for
+     *        more than one application. Null = resolve from the namespace map /
+     *        default.
+     * @param bool $sharedConnection Whether `connectionCode` names a SHARED
+     *        (application-less) connection rather than one owned by this
+     *        application. Only meaningful together with `connectionCode`;
+     *        the payload only carries this field when true.
+     * @param string|null $client The FlowCatalyst client (by identifier
+     *        slug) this subscription is scoped to. Null = the config default
+     *        `flowcatalyst.client` (single-tenant apps), and null there too
+     *        means global (no client). For a multi-tenant application, don't
+     *        set this on the attribute — build one `SyncDefinitionSet` per
+     *        client instead (see `SyncDefinitionSet::forClient()`).
      */
     public function __construct(
         public readonly string $code,
         public readonly string $name,
-        public readonly string $connectionId,
+        public readonly string $target,
+        public readonly string $connectionCode,
         public readonly string $queue,
         public readonly string $dispatchPoolCode,
         public readonly ?string $description = null,
@@ -64,6 +94,9 @@ final class AsSubscription
         public readonly ?int $timeoutSeconds = null,
         public readonly ?int $maxRetries = null,
         public readonly ?bool $dataOnly = null,
+        public readonly ?string $application = null,
+        public readonly bool $sharedConnection = false,
+        public readonly ?string $client = null,
     ) {}
 
     /**
@@ -85,9 +118,10 @@ final class AsSubscription
         $data = [
             'code' => $this->code,
             'name' => $this->name,
+            'target' => $this->target,
             'clientScoped' => $this->clientScoped,
             'eventTypes' => $eventTypeBindings ?: null,
-            'connectionId' => $this->connectionId,
+            'connectionCode' => $this->connectionCode,
             'queue' => $this->queue,
             'dispatchPoolCode' => $this->dispatchPoolCode,
         ];
@@ -118,6 +152,9 @@ final class AsSubscription
         }
         if ($this->dataOnly !== null) {
             $data['dataOnly'] = $this->dataOnly;
+        }
+        if ($this->sharedConnection) {
+            $data['sharedConnection'] = true;
         }
 
         return $data;

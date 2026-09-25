@@ -37,28 +37,27 @@ class SubscriptionListResponseNormalizer implements DenormalizerInterface, Norma
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('subscriptions', $data) && $data['subscriptions'] !== null) {
             $values = [];
             foreach ($data['subscriptions'] as $value) {
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\SubscriptionResponse::class, 'json', $context);
             }
             $object->setSubscriptions($values);
-            unset($data['subscriptions']);
         }
         elseif (\array_key_exists('subscriptions', $data) && $data['subscriptions'] === null) {
             $object->setSubscriptions(null);
         }
         if (\array_key_exists('total', $data) && $data['total'] !== null) {
             $object->setTotal($data['total']);
-            unset($data['total']);
         }
         elseif (\array_key_exists('total', $data) && $data['total'] === null) {
             $object->setTotal(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -71,11 +70,6 @@ class SubscriptionListResponseNormalizer implements DenormalizerInterface, Norma
         }
         $dataArray['subscriptions'] = $values;
         $dataArray['total'] = $data->getTotal();
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

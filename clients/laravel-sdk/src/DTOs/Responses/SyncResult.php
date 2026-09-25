@@ -30,8 +30,11 @@ final class SyncResult
      */
     public static function fromArray(array $data): self
     {
+        // The application-less user sync (POST /api/principals/sync) returns the
+        // synced identifiers under `syncedEmails`; the app-scoped syncs use
+        // `syncedCodes`. Accept either so this one DTO covers both.
         /** @var string[] $syncedCodes */
-        $syncedCodes = $data['syncedCodes'] ?? [];
+        $syncedCodes = $data['syncedCodes'] ?? $data['syncedEmails'] ?? [];
         return new self(
             applicationCode: (string) ($data['applicationCode'] ?? ''),
             created: (int) ($data['created'] ?? 0),

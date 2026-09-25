@@ -26,6 +26,10 @@ class Principal
         public readonly array $grantedClientIds,
         public readonly ?string $createdAt,
         public readonly ?string $updatedAt,
+        // Populated ONLY on a createUser response, and only when the
+        // request asked for returnInviteLink:true (passwordless INTERNAL
+        // user). Live 72h bearer credential — never log it.
+        public readonly ?string $inviteLink = null,
     ) {}
 
     public static function fromGenerated(PrincipalDto $dto): self
@@ -44,6 +48,7 @@ class Principal
             grantedClientIds: $dto->getGrantedClientIds() ?? [],
             createdAt: $dto->getCreatedAt()?->format('c'),
             updatedAt: $dto->getUpdatedAt()?->format('c'),
+            inviteLink: $dto->getInviteLink(),
         );
     }
 
@@ -63,6 +68,7 @@ class Principal
             grantedClientIds: $data['grantedClientIds'] ?? [],
             createdAt: $data['createdAt'] ?? null,
             updatedAt: $data['updatedAt'] ?? null,
+            inviteLink: $data['inviteLink'] ?? null,
         );
     }
 
@@ -82,6 +88,7 @@ class Principal
             'grantedClientIds' => $this->grantedClientIds,
             'createdAt' => $this->createdAt,
             'updatedAt' => $this->updatedAt,
+            'inviteLink' => $this->inviteLink,
         ];
     }
 

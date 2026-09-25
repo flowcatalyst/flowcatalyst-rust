@@ -37,89 +37,92 @@ class ClientResponseNormalizer implements DenormalizerInterface, NormalizerInter
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('createdAt', $data) && $data['createdAt'] !== null) {
-            $object->setCreatedAt($data['createdAt']);
-            unset($data['createdAt']);
+            $object->setCreatedAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['createdAt']));
         }
         elseif (\array_key_exists('createdAt', $data) && $data['createdAt'] === null) {
             $object->setCreatedAt(null);
         }
         if (\array_key_exists('id', $data) && $data['id'] !== null) {
             $object->setId($data['id']);
-            unset($data['id']);
         }
         elseif (\array_key_exists('id', $data) && $data['id'] === null) {
             $object->setId(null);
         }
         if (\array_key_exists('identifier', $data) && $data['identifier'] !== null) {
             $object->setIdentifier($data['identifier']);
-            unset($data['identifier']);
         }
         elseif (\array_key_exists('identifier', $data) && $data['identifier'] === null) {
             $object->setIdentifier(null);
         }
         if (\array_key_exists('name', $data) && $data['name'] !== null) {
             $object->setName($data['name']);
-            unset($data['name']);
         }
         elseif (\array_key_exists('name', $data) && $data['name'] === null) {
             $object->setName(null);
         }
+        if (\array_key_exists('notes', $data) && $data['notes'] !== null) {
+            $values = [];
+            foreach ($data['notes'] as $value) {
+                $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\NoteResponse::class, 'json', $context);
+            }
+            $object->setNotes($values);
+        }
+        elseif (\array_key_exists('notes', $data) && $data['notes'] === null) {
+            $object->setNotes(null);
+        }
         if (\array_key_exists('status', $data) && $data['status'] !== null) {
             $object->setStatus($data['status']);
-            unset($data['status']);
         }
         elseif (\array_key_exists('status', $data) && $data['status'] === null) {
             $object->setStatus(null);
         }
         if (\array_key_exists('statusChangedAt', $data) && $data['statusChangedAt'] !== null) {
-            $object->setStatusChangedAt($data['statusChangedAt']);
-            unset($data['statusChangedAt']);
+            $object->setStatusChangedAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['statusChangedAt']));
         }
         elseif (\array_key_exists('statusChangedAt', $data) && $data['statusChangedAt'] === null) {
             $object->setStatusChangedAt(null);
         }
         if (\array_key_exists('statusReason', $data) && $data['statusReason'] !== null) {
             $object->setStatusReason($data['statusReason']);
-            unset($data['statusReason']);
         }
         elseif (\array_key_exists('statusReason', $data) && $data['statusReason'] === null) {
             $object->setStatusReason(null);
         }
         if (\array_key_exists('updatedAt', $data) && $data['updatedAt'] !== null) {
-            $object->setUpdatedAt($data['updatedAt']);
-            unset($data['updatedAt']);
+            $object->setUpdatedAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['updatedAt']));
         }
         elseif (\array_key_exists('updatedAt', $data) && $data['updatedAt'] === null) {
             $object->setUpdatedAt(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        $dataArray['createdAt'] = $data->getCreatedAt();
+        $dataArray['createdAt'] = $data->getCreatedAt()->format('Y-m-d\TH:i:sP');
         $dataArray['id'] = $data->getId();
         $dataArray['identifier'] = $data->getIdentifier();
         $dataArray['name'] = $data->getName();
-        $dataArray['status'] = $data->getStatus();
-        if ($data->isInitialized('statusChangedAt')) {
-            $dataArray['statusChangedAt'] = $data->getStatusChangedAt();
+        $values = [];
+        foreach ($data->getNotes() as $value) {
+            $values[] = $this->normalizer->normalize($value, 'json', $context);
         }
-        if ($data->isInitialized('statusReason')) {
+        $dataArray['notes'] = $values;
+        $dataArray['status'] = $data->getStatus();
+        if ($data->isInitialized('statusChangedAt') && null !== $data->getStatusChangedAt()) {
+            $dataArray['statusChangedAt'] = $data->getStatusChangedAt()->format('Y-m-d\TH:i:sP');
+        }
+        if ($data->isInitialized('statusReason') && null !== $data->getStatusReason()) {
             $dataArray['statusReason'] = $data->getStatusReason();
         }
-        $dataArray['updatedAt'] = $data->getUpdatedAt();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
+        $dataArray['updatedAt'] = $data->getUpdatedAt()->format('Y-m-d\TH:i:sP');
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

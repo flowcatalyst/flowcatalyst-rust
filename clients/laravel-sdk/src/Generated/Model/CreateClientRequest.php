@@ -13,19 +13,45 @@ class CreateClientRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Unique identifier/slug (URL-safe)
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
+     * URL-safe identifier (lowercase alphanumeric, hyphens)
      *
      * @var string|null
      */
     protected $identifier;
     /**
-     * Human-readable name
-     *
      * @var string|null
      */
     protected $name;
     /**
-     * Unique identifier/slug (URL-safe)
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * URL-safe identifier (lowercase alphanumeric, hyphens)
      *
      * @return string|null
      */
@@ -34,7 +60,7 @@ class CreateClientRequest extends \ArrayObject
         return $this->identifier;
     }
     /**
-     * Unique identifier/slug (URL-safe)
+     * URL-safe identifier (lowercase alphanumeric, hyphens)
      *
      * @param string|null $identifier
      *
@@ -47,8 +73,6 @@ class CreateClientRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Human-readable name
-     *
      * @return string|null
      */
     public function getName(): ?string
@@ -56,8 +80,6 @@ class CreateClientRequest extends \ArrayObject
         return $this->name;
     }
     /**
-     * Human-readable name
-     *
      * @param string|null $name
      *
      * @return self

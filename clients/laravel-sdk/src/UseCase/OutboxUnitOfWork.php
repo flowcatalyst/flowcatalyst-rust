@@ -7,6 +7,7 @@ namespace FlowCatalyst\UseCase;
 use FlowCatalyst\Outbox\DTOs\CreateAuditLogDto;
 use FlowCatalyst\Outbox\DTOs\CreateEventDto;
 use FlowCatalyst\Outbox\OutboxManager;
+use Illuminate\Support\Facades\DB;
 
 /**
  * UnitOfWork that dispatches events through the existing `OutboxManager`.
@@ -14,12 +15,15 @@ use FlowCatalyst\Outbox\OutboxManager;
  * On `commit()`, the `DomainEvent` is mapped into a `CreateEventDto`
  * (source / subject / correlationId / messageGroup / deduplicationId plus
  * principalId / executionId / aggregateType as contextData) and inserted
- * into the outbox table. The fc-outbox-processor forwards it to the
+ * into the outbox table. The outbox poller forwards it to the
  * platform.
  *
- * For atomic persistence of your entity + the outbox write, wrap the
- * whole `commit()` call in `DB::transaction(fn () => ...)` using a
- * `DatabaseDriver` on the same connection — both inserts end up in one tx.
+ * Authoring goes through the use-case envelope ({@link Operation} +
+ * {@link Runner::run()}): `run` calls {@link transaction()} to open one
+ * transaction on `$connection`, then applies the {@link Plan} (aggregate write
+ * via its Repo + the outbox event) inside it — so the unit of work owns
+ * atomicity. The raw `commit()` family below remains for the lower-level path
+ * and for back-compat.
  */
 final class OutboxUnitOfWork implements UnitOfWork
 {
@@ -27,7 +31,32 @@ final class OutboxUnitOfWork implements UnitOfWork
         private readonly OutboxManager $outboxManager,
         private readonly bool $auditEnabled = false,
         private readonly string $fallbackPrincipalId = 'system',
+        /**
+         * The connection the owned transaction runs on. Must match the outbox
+         * driver's connection so the event row joins the transaction; null uses
+         * the default connection (the common case).
+         */
+        private readonly ?string $connection = null,
+        /**
+         * The FlowCatalyst application + client codes these operations belong to.
+         * The platform is client-centric: audit logs carry both (resolved to
+         * application_id / client_id at ingest); events carry the client code
+         * (the application is derived from the event-type prefix). Null = omit.
+         */
+        private readonly ?string $applicationCode = null,
+        private readonly ?string $clientCode = null,
     ) {}
+
+    /**
+     * Open one transaction on the configured connection, commit on normal
+     * return, roll back (and rethrow) on throw — Laravel's `DB::transaction`
+     * contract. The outbox driver writes via `DB::connection($connection)`, so
+     * its insert joins this transaction.
+     */
+    public function transaction(callable $callback): mixed
+    {
+        return DB::connection($this->connection)->transaction($callback);
+    }
 
     public function commit(
         DomainEvent $event,
@@ -111,6 +140,12 @@ final class OutboxUnitOfWork implements UnitOfWork
             $dto = $dto->withCausationId($event->causationId());
         }
 
+        // Client linkage (platform resolves the code → client_id at ingest).
+        // The application is derived from the event-type prefix on the platform.
+        if ($this->clientCode !== null && $this->clientCode !== '') {
+            $dto = $dto->withClientCode($this->clientCode);
+        }
+
         return $dto;
     }
 
@@ -127,7 +162,7 @@ final class OutboxUnitOfWork implements UnitOfWork
             default             => ['command' => $command],
         };
 
-        return CreateAuditLogDto::create(
+        $dto = CreateAuditLogDto::create(
             entityType: $entityType,
             entityId:   $entityId,
             operation:  $operation,
@@ -140,6 +175,17 @@ final class OutboxUnitOfWork implements UnitOfWork
             ->withCorrelationId($event->correlationId())
             ->withSource($event->source())
             ->withPerformedAt($event->time());
+
+        // Application + client linkage (the platform is client-centric and
+        // resolves these codes → application_id / client_id at ingest).
+        if ($this->applicationCode !== null && $this->applicationCode !== '') {
+            $dto = $dto->withApplicationCode($this->applicationCode);
+        }
+        if ($this->clientCode !== null && $this->clientCode !== '') {
+            $dto = $dto->withClientCode($this->clientCode);
+        }
+
+        return $dto;
     }
 
     /**

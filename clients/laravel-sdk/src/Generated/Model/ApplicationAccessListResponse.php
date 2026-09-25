@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class ApplicationAccessListResponse extends \ArrayObject
+class ApplicationAccessListResponse
 {
     /**
      * @var array
@@ -13,6 +13,16 @@ class ApplicationAccessListResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
+     * @var bool|null
+     */
+    protected $allApplications;
+    /**
      * @var list<ApplicationAccessResponse>|null
      */
     protected $applications;
@@ -20,6 +30,46 @@ class ApplicationAccessListResponse extends \ArrayObject
      * @var int|null
      */
     protected $total;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * @return bool|null
+     */
+    public function getAllApplications(): ?bool
+    {
+        return $this->allApplications;
+    }
+    /**
+     * @param bool|null $allApplications
+     *
+     * @return self
+     */
+    public function setAllApplications(?bool $allApplications): self
+    {
+        $this->initialized['allApplications'] = true;
+        $this->allApplications = $allApplications;
+        return $this;
+    }
     /**
      * @return list<ApplicationAccessResponse>|null
      */

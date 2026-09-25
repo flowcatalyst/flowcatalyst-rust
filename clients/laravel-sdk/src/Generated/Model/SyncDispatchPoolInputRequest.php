@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class SyncDispatchPoolInputRequest extends \ArrayObject
+class SyncDispatchPoolInputRequest
 {
     /**
      * @var array
@@ -29,7 +29,7 @@ class SyncDispatchPoolInputRequest extends \ArrayObject
      */
     protected $name;
     /**
-     * Optional. `None` / omitted = concurrency-only (no rate limit).
+     * Messages per minute; omit for concurrency-only
      *
      * @var int|null
      */
@@ -107,7 +107,7 @@ class SyncDispatchPoolInputRequest extends \ArrayObject
         return $this;
     }
     /**
-     * Optional. `None` / omitted = concurrency-only (no rate limit).
+     * Messages per minute; omit for concurrency-only
      *
      * @return int|null
      */
@@ -116,7 +116,7 @@ class SyncDispatchPoolInputRequest extends \ArrayObject
         return $this->rateLimit;
     }
     /**
-     * Optional. `None` / omitted = concurrency-only (no rate limit).
+     * Messages per minute; omit for concurrency-only
      *
      * @param int|null $rateLimit
      *

@@ -37,38 +37,35 @@ class ClientAccessGrantResponseNormalizer implements DenormalizerInterface, Norm
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('clientId', $data) && $data['clientId'] !== null) {
             $object->setClientId($data['clientId']);
-            unset($data['clientId']);
         }
         elseif (\array_key_exists('clientId', $data) && $data['clientId'] === null) {
             $object->setClientId(null);
         }
         if (\array_key_exists('expiresAt', $data) && $data['expiresAt'] !== null) {
-            $object->setExpiresAt($data['expiresAt']);
-            unset($data['expiresAt']);
+            $object->setExpiresAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['expiresAt']));
         }
         elseif (\array_key_exists('expiresAt', $data) && $data['expiresAt'] === null) {
             $object->setExpiresAt(null);
         }
         if (\array_key_exists('grantedAt', $data) && $data['grantedAt'] !== null) {
-            $object->setGrantedAt($data['grantedAt']);
-            unset($data['grantedAt']);
+            $object->setGrantedAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['grantedAt']));
         }
         elseif (\array_key_exists('grantedAt', $data) && $data['grantedAt'] === null) {
             $object->setGrantedAt(null);
         }
         if (\array_key_exists('id', $data) && $data['id'] !== null) {
             $object->setId($data['id']);
-            unset($data['id']);
         }
         elseif (\array_key_exists('id', $data) && $data['id'] === null) {
             $object->setId(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -76,16 +73,11 @@ class ClientAccessGrantResponseNormalizer implements DenormalizerInterface, Norm
     {
         $dataArray = [];
         $dataArray['clientId'] = $data->getClientId();
-        if ($data->isInitialized('expiresAt')) {
-            $dataArray['expiresAt'] = $data->getExpiresAt();
+        if ($data->isInitialized('expiresAt') && null !== $data->getExpiresAt()) {
+            $dataArray['expiresAt'] = $data->getExpiresAt()->format('Y-m-d\TH:i:sP');
         }
-        $dataArray['grantedAt'] = $data->getGrantedAt();
+        $dataArray['grantedAt'] = $data->getGrantedAt()->format('Y-m-d\TH:i:sP');
         $dataArray['id'] = $data->getId();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

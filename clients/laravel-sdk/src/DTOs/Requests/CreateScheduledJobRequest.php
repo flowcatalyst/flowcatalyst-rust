@@ -15,6 +15,7 @@ final class CreateScheduledJobRequest
         public readonly array $crons,
         public readonly ?string $description = null,
         public readonly ?string $clientId = null,
+        public readonly ?string $applicationId = null,
         public readonly string $timezone = 'UTC',
         public readonly mixed $payload = null,
         public readonly bool $concurrent = false,
@@ -40,6 +41,7 @@ final class CreateScheduledJobRequest
         ];
         if ($this->description !== null) $out['description'] = $this->description;
         if ($this->clientId !== null) $out['clientId'] = $this->clientId;
+        if ($this->applicationId !== null) $out['applicationId'] = $this->applicationId;
         if ($this->payload !== null) $out['payload'] = $this->payload;
         if ($this->timeoutSeconds !== null) $out['timeoutSeconds'] = $this->timeoutSeconds;
         if ($this->targetUrl !== null) $out['targetUrl'] = $this->targetUrl;

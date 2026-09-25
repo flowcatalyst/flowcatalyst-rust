@@ -43,59 +43,53 @@ class SyncOpenApiSpecResponseNormalizer implements DenormalizerInterface, Normal
         if (\array_key_exists('unchanged', $data) && \is_int($data['unchanged'])) {
             $data['unchanged'] = (bool) $data['unchanged'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
             $object->setApplicationCode($data['applicationCode']);
-            unset($data['applicationCode']);
         }
         elseif (\array_key_exists('applicationCode', $data) && $data['applicationCode'] === null) {
             $object->setApplicationCode(null);
         }
         if (\array_key_exists('archivedPriorVersion', $data) && $data['archivedPriorVersion'] !== null) {
             $object->setArchivedPriorVersion($data['archivedPriorVersion']);
-            unset($data['archivedPriorVersion']);
         }
         elseif (\array_key_exists('archivedPriorVersion', $data) && $data['archivedPriorVersion'] === null) {
             $object->setArchivedPriorVersion(null);
         }
         if (\array_key_exists('hasBreaking', $data) && $data['hasBreaking'] !== null) {
             $object->setHasBreaking($data['hasBreaking']);
-            unset($data['hasBreaking']);
         }
         elseif (\array_key_exists('hasBreaking', $data) && $data['hasBreaking'] === null) {
             $object->setHasBreaking(null);
         }
         if (\array_key_exists('specId', $data) && $data['specId'] !== null) {
             $object->setSpecId($data['specId']);
-            unset($data['specId']);
         }
         elseif (\array_key_exists('specId', $data) && $data['specId'] === null) {
             $object->setSpecId(null);
         }
         if (\array_key_exists('status', $data) && $data['status'] !== null) {
             $object->setStatus($data['status']);
-            unset($data['status']);
         }
         elseif (\array_key_exists('status', $data) && $data['status'] === null) {
             $object->setStatus(null);
         }
         if (\array_key_exists('unchanged', $data) && $data['unchanged'] !== null) {
             $object->setUnchanged($data['unchanged']);
-            unset($data['unchanged']);
         }
         elseif (\array_key_exists('unchanged', $data) && $data['unchanged'] === null) {
             $object->setUnchanged(null);
         }
         if (\array_key_exists('version', $data) && $data['version'] !== null) {
             $object->setVersion($data['version']);
-            unset($data['version']);
         }
         elseif (\array_key_exists('version', $data) && $data['version'] === null) {
             $object->setVersion(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -103,7 +97,7 @@ class SyncOpenApiSpecResponseNormalizer implements DenormalizerInterface, Normal
     {
         $dataArray = [];
         $dataArray['applicationCode'] = $data->getApplicationCode();
-        if ($data->isInitialized('archivedPriorVersion')) {
+        if ($data->isInitialized('archivedPriorVersion') && null !== $data->getArchivedPriorVersion()) {
             $dataArray['archivedPriorVersion'] = $data->getArchivedPriorVersion();
         }
         $dataArray['hasBreaking'] = $data->getHasBreaking();
@@ -111,11 +105,6 @@ class SyncOpenApiSpecResponseNormalizer implements DenormalizerInterface, Normal
         $dataArray['status'] = $data->getStatus();
         $dataArray['unchanged'] = $data->getUnchanged();
         $dataArray['version'] = $data->getVersion();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

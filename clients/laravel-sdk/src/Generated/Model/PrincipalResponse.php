@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class PrincipalResponse extends \ArrayObject
+class PrincipalResponse
 {
     /**
      * @var array
@@ -13,6 +13,12 @@ class PrincipalResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var bool|null
      */
     protected $active;
@@ -21,19 +27,25 @@ class PrincipalResponse extends \ArrayObject
      */
     protected $clientId;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $createdAt;
+    /**
+     * @var \DateTime|null
+     */
+    protected $developerCredentialUpdatedAt;
     /**
      * @var string|null
      */
     protected $email;
     /**
-     * Granted client IDs (matches Java's Set<String>)
-     *
      * @var list<string>|null
      */
     protected $grantedClientIds;
+    /**
+     * @var bool|null
+     */
+    protected $hasDeveloperCredential;
     /**
      * @var string|null
      */
@@ -43,8 +55,10 @@ class PrincipalResponse extends \ArrayObject
      */
     protected $idpType;
     /**
-     * Whether user is an anchor domain user
-     *
+     * @var string|null
+     */
+    protected $inviteLink;
+    /**
      * @var bool|null
      */
     protected $isAnchorUser;
@@ -53,8 +67,6 @@ class PrincipalResponse extends \ArrayObject
      */
     protected $name;
     /**
-     * Role names (matches Java's Set<String>)
-     *
      * @var list<string>|null
      */
     protected $roles;
@@ -63,13 +75,39 @@ class PrincipalResponse extends \ArrayObject
      */
     protected $scope;
     /**
+     * @var list<string>|null
+     */
+    protected $twoFactorMethods;
+    /**
      * @var string|null
      */
     protected $type;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $updatedAt;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return bool|null
      */
@@ -107,21 +145,39 @@ class PrincipalResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getCreatedAt(): ?string
+    public function getCreatedAt(): ?\DateTime
     {
         return $this->createdAt;
     }
     /**
-     * @param string|null $createdAt
+     * @param \DateTime|null $createdAt
      *
      * @return self
      */
-    public function setCreatedAt(?string $createdAt): self
+    public function setCreatedAt(?\DateTime $createdAt): self
     {
         $this->initialized['createdAt'] = true;
         $this->createdAt = $createdAt;
+        return $this;
+    }
+    /**
+     * @return \DateTime|null
+     */
+    public function getDeveloperCredentialUpdatedAt(): ?\DateTime
+    {
+        return $this->developerCredentialUpdatedAt;
+    }
+    /**
+     * @param \DateTime|null $developerCredentialUpdatedAt
+     *
+     * @return self
+     */
+    public function setDeveloperCredentialUpdatedAt(?\DateTime $developerCredentialUpdatedAt): self
+    {
+        $this->initialized['developerCredentialUpdatedAt'] = true;
+        $this->developerCredentialUpdatedAt = $developerCredentialUpdatedAt;
         return $this;
     }
     /**
@@ -143,8 +199,6 @@ class PrincipalResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Granted client IDs (matches Java's Set<String>)
-     *
      * @return list<string>|null
      */
     public function getGrantedClientIds(): ?array
@@ -152,8 +206,6 @@ class PrincipalResponse extends \ArrayObject
         return $this->grantedClientIds;
     }
     /**
-     * Granted client IDs (matches Java's Set<String>)
-     *
      * @param list<string>|null $grantedClientIds
      *
      * @return self
@@ -162,6 +214,24 @@ class PrincipalResponse extends \ArrayObject
     {
         $this->initialized['grantedClientIds'] = true;
         $this->grantedClientIds = $grantedClientIds;
+        return $this;
+    }
+    /**
+     * @return bool|null
+     */
+    public function getHasDeveloperCredential(): ?bool
+    {
+        return $this->hasDeveloperCredential;
+    }
+    /**
+     * @param bool|null $hasDeveloperCredential
+     *
+     * @return self
+     */
+    public function setHasDeveloperCredential(?bool $hasDeveloperCredential): self
+    {
+        $this->initialized['hasDeveloperCredential'] = true;
+        $this->hasDeveloperCredential = $hasDeveloperCredential;
         return $this;
     }
     /**
@@ -201,8 +271,24 @@ class PrincipalResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Whether user is an anchor domain user
+     * @return string|null
+     */
+    public function getInviteLink(): ?string
+    {
+        return $this->inviteLink;
+    }
+    /**
+     * @param string|null $inviteLink
      *
+     * @return self
+     */
+    public function setInviteLink(?string $inviteLink): self
+    {
+        $this->initialized['inviteLink'] = true;
+        $this->inviteLink = $inviteLink;
+        return $this;
+    }
+    /**
      * @return bool|null
      */
     public function getIsAnchorUser(): ?bool
@@ -210,8 +296,6 @@ class PrincipalResponse extends \ArrayObject
         return $this->isAnchorUser;
     }
     /**
-     * Whether user is an anchor domain user
-     *
      * @param bool|null $isAnchorUser
      *
      * @return self
@@ -241,8 +325,6 @@ class PrincipalResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Role names (matches Java's Set<String>)
-     *
      * @return list<string>|null
      */
     public function getRoles(): ?array
@@ -250,8 +332,6 @@ class PrincipalResponse extends \ArrayObject
         return $this->roles;
     }
     /**
-     * Role names (matches Java's Set<String>)
-     *
      * @param list<string>|null $roles
      *
      * @return self
@@ -281,6 +361,24 @@ class PrincipalResponse extends \ArrayObject
         return $this;
     }
     /**
+     * @return list<string>|null
+     */
+    public function getTwoFactorMethods(): ?array
+    {
+        return $this->twoFactorMethods;
+    }
+    /**
+     * @param list<string>|null $twoFactorMethods
+     *
+     * @return self
+     */
+    public function setTwoFactorMethods(?array $twoFactorMethods): self
+    {
+        $this->initialized['twoFactorMethods'] = true;
+        $this->twoFactorMethods = $twoFactorMethods;
+        return $this;
+    }
+    /**
      * @return string|null
      */
     public function getType(): ?string
@@ -299,18 +397,18 @@ class PrincipalResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getUpdatedAt(): ?string
+    public function getUpdatedAt(): ?\DateTime
     {
         return $this->updatedAt;
     }
     /**
-     * @param string|null $updatedAt
+     * @param \DateTime|null $updatedAt
      *
      * @return self
      */
-    public function setUpdatedAt(?string $updatedAt): self
+    public function setUpdatedAt(?\DateTime $updatedAt): self
     {
         $this->initialized['updatedAt'] = true;
         $this->updatedAt = $updatedAt;

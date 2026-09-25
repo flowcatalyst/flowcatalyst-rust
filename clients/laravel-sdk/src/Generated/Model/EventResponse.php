@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class EventResponse extends \ArrayObject
+class EventResponse
 {
     /**
      * @var array
@@ -13,6 +13,20 @@ class EventResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
+     * @var string|null
+     */
+    protected $aggregate;
+    /**
+     * @var string|null
+     */
+    protected $application;
+    /**
      * @var string|null
      */
     protected $causationId;
@@ -21,7 +35,7 @@ class EventResponse extends \ArrayObject
      */
     protected $clientId;
     /**
-     * @var list<ContextDataDto>|null
+     * @var list<ContextEntryDTO>|null
      */
     protected $contextData;
     /**
@@ -29,7 +43,7 @@ class EventResponse extends \ArrayObject
      */
     protected $correlationId;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $createdAt;
     /**
@@ -43,15 +57,15 @@ class EventResponse extends \ArrayObject
     /**
      * @var string|null
      */
-    protected $eventType;
-    /**
-     * @var string|null
-     */
     protected $id;
     /**
      * @var string|null
      */
     protected $messageGroup;
+    /**
+     * @var \DateTime|null
+     */
+    protected $projectedAt;
     /**
      * @var string|null
      */
@@ -63,11 +77,77 @@ class EventResponse extends \ArrayObject
     /**
      * @var string|null
      */
-    protected $subject;
+    protected $subdomain;
     /**
      * @var string|null
      */
+    protected $subject;
+    /**
+     * @var \DateTime|null
+     */
     protected $time;
+    /**
+     * @var string|null
+     */
+    protected $type;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getAggregate(): ?string
+    {
+        return $this->aggregate;
+    }
+    /**
+     * @param string|null $aggregate
+     *
+     * @return self
+     */
+    public function setAggregate(?string $aggregate): self
+    {
+        $this->initialized['aggregate'] = true;
+        $this->aggregate = $aggregate;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getApplication(): ?string
+    {
+        return $this->application;
+    }
+    /**
+     * @param string|null $application
+     *
+     * @return self
+     */
+    public function setApplication(?string $application): self
+    {
+        $this->initialized['application'] = true;
+        $this->application = $application;
+        return $this;
+    }
     /**
      * @return string|null
      */
@@ -105,14 +185,14 @@ class EventResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return list<ContextDataDto>|null
+     * @return list<ContextEntryDTO>|null
      */
     public function getContextData(): ?array
     {
         return $this->contextData;
     }
     /**
-     * @param list<ContextDataDto>|null $contextData
+     * @param list<ContextEntryDTO>|null $contextData
      *
      * @return self
      */
@@ -141,18 +221,18 @@ class EventResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getCreatedAt(): ?string
+    public function getCreatedAt(): ?\DateTime
     {
         return $this->createdAt;
     }
     /**
-     * @param string|null $createdAt
+     * @param \DateTime|null $createdAt
      *
      * @return self
      */
-    public function setCreatedAt(?string $createdAt): self
+    public function setCreatedAt(?\DateTime $createdAt): self
     {
         $this->initialized['createdAt'] = true;
         $this->createdAt = $createdAt;
@@ -197,24 +277,6 @@ class EventResponse extends \ArrayObject
     /**
      * @return string|null
      */
-    public function getEventType(): ?string
-    {
-        return $this->eventType;
-    }
-    /**
-     * @param string|null $eventType
-     *
-     * @return self
-     */
-    public function setEventType(?string $eventType): self
-    {
-        $this->initialized['eventType'] = true;
-        $this->eventType = $eventType;
-        return $this;
-    }
-    /**
-     * @return string|null
-     */
     public function getId(): ?string
     {
         return $this->id;
@@ -246,6 +308,24 @@ class EventResponse extends \ArrayObject
     {
         $this->initialized['messageGroup'] = true;
         $this->messageGroup = $messageGroup;
+        return $this;
+    }
+    /**
+     * @return \DateTime|null
+     */
+    public function getProjectedAt(): ?\DateTime
+    {
+        return $this->projectedAt;
+    }
+    /**
+     * @param \DateTime|null $projectedAt
+     *
+     * @return self
+     */
+    public function setProjectedAt(?\DateTime $projectedAt): self
+    {
+        $this->initialized['projectedAt'] = true;
+        $this->projectedAt = $projectedAt;
         return $this;
     }
     /**
@@ -287,6 +367,24 @@ class EventResponse extends \ArrayObject
     /**
      * @return string|null
      */
+    public function getSubdomain(): ?string
+    {
+        return $this->subdomain;
+    }
+    /**
+     * @param string|null $subdomain
+     *
+     * @return self
+     */
+    public function setSubdomain(?string $subdomain): self
+    {
+        $this->initialized['subdomain'] = true;
+        $this->subdomain = $subdomain;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
     public function getSubject(): ?string
     {
         return $this->subject;
@@ -303,21 +401,39 @@ class EventResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getTime(): ?string
+    public function getTime(): ?\DateTime
     {
         return $this->time;
     }
     /**
-     * @param string|null $time
+     * @param \DateTime|null $time
      *
      * @return self
      */
-    public function setTime(?string $time): self
+    public function setTime(?\DateTime $time): self
     {
         $this->initialized['time'] = true;
         $this->time = $time;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getType(): ?string
+    {
+        return $this->type;
+    }
+    /**
+     * @param string|null $type
+     *
+     * @return self
+     */
+    public function setType(?string $type): self
+    {
+        $this->initialized['type'] = true;
+        $this->type = $type;
         return $this;
     }
 }

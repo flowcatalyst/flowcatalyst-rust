@@ -39,29 +39,21 @@ class ApplicationAccessResponseNormalizer implements DenormalizerInterface, Norm
         }
         if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
             $object->setApplicationCode($data['applicationCode']);
-            unset($data['applicationCode']);
         }
         elseif (\array_key_exists('applicationCode', $data) && $data['applicationCode'] === null) {
             $object->setApplicationCode(null);
         }
         if (\array_key_exists('applicationId', $data) && $data['applicationId'] !== null) {
             $object->setApplicationId($data['applicationId']);
-            unset($data['applicationId']);
         }
         elseif (\array_key_exists('applicationId', $data) && $data['applicationId'] === null) {
             $object->setApplicationId(null);
         }
         if (\array_key_exists('applicationName', $data) && $data['applicationName'] !== null) {
             $object->setApplicationName($data['applicationName']);
-            unset($data['applicationName']);
         }
         elseif (\array_key_exists('applicationName', $data) && $data['applicationName'] === null) {
             $object->setApplicationName(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -71,11 +63,6 @@ class ApplicationAccessResponseNormalizer implements DenormalizerInterface, Norm
         $dataArray['applicationCode'] = $data->getApplicationCode();
         $dataArray['applicationId'] = $data->getApplicationId();
         $dataArray['applicationName'] = $data->getApplicationName();
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

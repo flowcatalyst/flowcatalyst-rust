@@ -37,76 +37,71 @@ class DispatchJobFilterOptionsResponseNormalizer implements DenormalizerInterfac
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        if (\array_key_exists('aggregates', $data) && $data['aggregates'] !== null) {
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
+        if (\array_key_exists('clientIds', $data) && $data['clientIds'] !== null) {
             $values = [];
-            foreach ($data['aggregates'] as $value) {
-                $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\FilterOption::class, 'json', $context);
+            foreach ($data['clientIds'] as $value) {
+                $values[] = $value;
             }
-            $object->setAggregates($values);
-            unset($data['aggregates']);
+            $object->setClientIds($values);
         }
-        elseif (\array_key_exists('aggregates', $data) && $data['aggregates'] === null) {
-            $object->setAggregates(null);
-        }
-        if (\array_key_exists('applications', $data) && $data['applications'] !== null) {
-            $values_1 = [];
-            foreach ($data['applications'] as $value_1) {
-                $values_1[] = $this->denormalizer->denormalize($value_1, \FlowCatalyst\Generated\Model\FilterOption::class, 'json', $context);
-            }
-            $object->setApplications($values_1);
-            unset($data['applications']);
-        }
-        elseif (\array_key_exists('applications', $data) && $data['applications'] === null) {
-            $object->setApplications(null);
-        }
-        if (\array_key_exists('clients', $data) && $data['clients'] !== null) {
-            $values_2 = [];
-            foreach ($data['clients'] as $value_2) {
-                $values_2[] = $this->denormalizer->denormalize($value_2, \FlowCatalyst\Generated\Model\FilterOption::class, 'json', $context);
-            }
-            $object->setClients($values_2);
-            unset($data['clients']);
-        }
-        elseif (\array_key_exists('clients', $data) && $data['clients'] === null) {
-            $object->setClients(null);
+        elseif (\array_key_exists('clientIds', $data) && $data['clientIds'] === null) {
+            $object->setClientIds(null);
         }
         if (\array_key_exists('codes', $data) && $data['codes'] !== null) {
-            $values_3 = [];
-            foreach ($data['codes'] as $value_3) {
-                $values_3[] = $this->denormalizer->denormalize($value_3, \FlowCatalyst\Generated\Model\FilterOption::class, 'json', $context);
+            $values_1 = [];
+            foreach ($data['codes'] as $value_1) {
+                $values_1[] = $value_1;
             }
-            $object->setCodes($values_3);
-            unset($data['codes']);
+            $object->setCodes($values_1);
         }
         elseif (\array_key_exists('codes', $data) && $data['codes'] === null) {
             $object->setCodes(null);
         }
+        if (\array_key_exists('dispatchPoolIds', $data) && $data['dispatchPoolIds'] !== null) {
+            $values_2 = [];
+            foreach ($data['dispatchPoolIds'] as $value_2) {
+                $values_2[] = $value_2;
+            }
+            $object->setDispatchPoolIds($values_2);
+        }
+        elseif (\array_key_exists('dispatchPoolIds', $data) && $data['dispatchPoolIds'] === null) {
+            $object->setDispatchPoolIds(null);
+        }
+        if (\array_key_exists('kinds', $data) && $data['kinds'] !== null) {
+            $values_3 = [];
+            foreach ($data['kinds'] as $value_3) {
+                $values_3[] = $value_3;
+            }
+            $object->setKinds($values_3);
+        }
+        elseif (\array_key_exists('kinds', $data) && $data['kinds'] === null) {
+            $object->setKinds(null);
+        }
         if (\array_key_exists('statuses', $data) && $data['statuses'] !== null) {
             $values_4 = [];
             foreach ($data['statuses'] as $value_4) {
-                $values_4[] = $this->denormalizer->denormalize($value_4, \FlowCatalyst\Generated\Model\FilterOption::class, 'json', $context);
+                $values_4[] = $value_4;
             }
             $object->setStatuses($values_4);
-            unset($data['statuses']);
         }
         elseif (\array_key_exists('statuses', $data) && $data['statuses'] === null) {
             $object->setStatuses(null);
         }
-        if (\array_key_exists('subdomains', $data) && $data['subdomains'] !== null) {
+        if (\array_key_exists('subscriptionIds', $data) && $data['subscriptionIds'] !== null) {
             $values_5 = [];
-            foreach ($data['subdomains'] as $value_5) {
-                $values_5[] = $this->denormalizer->denormalize($value_5, \FlowCatalyst\Generated\Model\FilterOption::class, 'json', $context);
+            foreach ($data['subscriptionIds'] as $value_5) {
+                $values_5[] = $value_5;
             }
-            $object->setSubdomains($values_5);
-            unset($data['subdomains']);
+            $object->setSubscriptionIds($values_5);
         }
-        elseif (\array_key_exists('subdomains', $data) && $data['subdomains'] === null) {
-            $object->setSubdomains(null);
-        }
-        foreach ($data as $key => $value_6) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_6;
-            }
+        elseif (\array_key_exists('subscriptionIds', $data) && $data['subscriptionIds'] === null) {
+            $object->setSubscriptionIds(null);
         }
         return $object;
     }
@@ -114,40 +109,35 @@ class DispatchJobFilterOptionsResponseNormalizer implements DenormalizerInterfac
     {
         $dataArray = [];
         $values = [];
-        foreach ($data->getAggregates() as $value) {
-            $values[] = $this->normalizer->normalize($value, 'json', $context);
+        foreach ($data->getClientIds() as $value) {
+            $values[] = $value;
         }
-        $dataArray['aggregates'] = $values;
+        $dataArray['clientIds'] = $values;
         $values_1 = [];
-        foreach ($data->getApplications() as $value_1) {
-            $values_1[] = $this->normalizer->normalize($value_1, 'json', $context);
+        foreach ($data->getCodes() as $value_1) {
+            $values_1[] = $value_1;
         }
-        $dataArray['applications'] = $values_1;
+        $dataArray['codes'] = $values_1;
         $values_2 = [];
-        foreach ($data->getClients() as $value_2) {
-            $values_2[] = $this->normalizer->normalize($value_2, 'json', $context);
+        foreach ($data->getDispatchPoolIds() as $value_2) {
+            $values_2[] = $value_2;
         }
-        $dataArray['clients'] = $values_2;
+        $dataArray['dispatchPoolIds'] = $values_2;
         $values_3 = [];
-        foreach ($data->getCodes() as $value_3) {
-            $values_3[] = $this->normalizer->normalize($value_3, 'json', $context);
+        foreach ($data->getKinds() as $value_3) {
+            $values_3[] = $value_3;
         }
-        $dataArray['codes'] = $values_3;
+        $dataArray['kinds'] = $values_3;
         $values_4 = [];
         foreach ($data->getStatuses() as $value_4) {
-            $values_4[] = $this->normalizer->normalize($value_4, 'json', $context);
+            $values_4[] = $value_4;
         }
         $dataArray['statuses'] = $values_4;
         $values_5 = [];
-        foreach ($data->getSubdomains() as $value_5) {
-            $values_5[] = $this->normalizer->normalize($value_5, 'json', $context);
+        foreach ($data->getSubscriptionIds() as $value_5) {
+            $values_5[] = $value_5;
         }
-        $dataArray['subdomains'] = $values_5;
-        foreach ($data as $key => $value_6) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_6;
-            }
-        }
+        $dataArray['subscriptionIds'] = $values_5;
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

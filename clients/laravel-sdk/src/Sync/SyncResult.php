@@ -14,6 +14,7 @@ final class SyncResult
      * @param array{created: int, updated: int, deleted: int, error?: string} $roles Role sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $eventTypes Event type sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $subscriptions Subscription sync results
+     * @param array{created: int, updated: int, deleted: int, error?: string} $connections Connection sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $dispatchPools Dispatch pool sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $principals Principal sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $processes Process sync results
@@ -30,6 +31,7 @@ final class SyncResult
         public readonly array $processes = ['created' => 0, 'updated' => 0, 'deleted' => 0],
         public readonly array $scheduledJobs = ['created' => 0, 'updated' => 0, 'deleted' => 0],
         public readonly array $openapi = ['created' => 0, 'updated' => 0, 'deleted' => 0],
+        public readonly array $connections = ['created' => 0, 'updated' => 0, 'deleted' => 0],
     ) {}
 
     /**
@@ -60,6 +62,16 @@ final class SyncResult
         return ($this->subscriptions['created'] ?? 0) > 0
             || ($this->subscriptions['updated'] ?? 0) > 0
             || ($this->subscriptions['deleted'] ?? 0) > 0;
+    }
+
+    /**
+     * Check if any connections were synced.
+     */
+    public function hasConnectionChanges(): bool
+    {
+        return ($this->connections['created'] ?? 0) > 0
+            || ($this->connections['updated'] ?? 0) > 0
+            || ($this->connections['deleted'] ?? 0) > 0;
     }
 
     /**
@@ -120,6 +132,7 @@ final class SyncResult
         return $this->hasRoleChanges()
             || $this->hasEventTypeChanges()
             || $this->hasSubscriptionChanges()
+            || $this->hasConnectionChanges()
             || $this->hasDispatchPoolChanges()
             || $this->hasPrincipalChanges()
             || $this->hasProcessChanges()
@@ -135,6 +148,7 @@ final class SyncResult
         return isset($this->roles['error'])
             || isset($this->eventTypes['error'])
             || isset($this->subscriptions['error'])
+            || isset($this->connections['error'])
             || isset($this->dispatchPools['error'])
             || isset($this->principals['error'])
             || isset($this->processes['error'])
@@ -161,6 +175,10 @@ final class SyncResult
 
         if (isset($this->subscriptions['error'])) {
             $errors['subscriptions'] = $this->subscriptions['error'];
+        }
+
+        if (isset($this->connections['error'])) {
+            $errors['connections'] = $this->connections['error'];
         }
 
         if (isset($this->dispatchPools['error'])) {
@@ -197,6 +215,7 @@ final class SyncResult
             'created' => ($this->roles['created'] ?? 0)
                 + ($this->eventTypes['created'] ?? 0)
                 + ($this->subscriptions['created'] ?? 0)
+                + ($this->connections['created'] ?? 0)
                 + ($this->dispatchPools['created'] ?? 0)
                 + ($this->principals['created'] ?? 0)
                 + ($this->processes['created'] ?? 0)
@@ -205,6 +224,7 @@ final class SyncResult
             'updated' => ($this->roles['updated'] ?? 0)
                 + ($this->eventTypes['updated'] ?? 0)
                 + ($this->subscriptions['updated'] ?? 0)
+                + ($this->connections['updated'] ?? 0)
                 + ($this->dispatchPools['updated'] ?? 0)
                 + ($this->principals['updated'] ?? 0)
                 + ($this->processes['updated'] ?? 0)
@@ -213,6 +233,7 @@ final class SyncResult
             'deleted' => ($this->roles['deleted'] ?? 0)
                 + ($this->eventTypes['deleted'] ?? 0)
                 + ($this->subscriptions['deleted'] ?? 0)
+                + ($this->connections['deleted'] ?? 0)
                 + ($this->dispatchPools['deleted'] ?? 0)
                 + ($this->principals['deleted'] ?? 0)
                 + ($this->processes['deleted'] ?? 0)
@@ -227,5 +248,49 @@ final class SyncResult
     public static function empty(string $applicationCode): self
     {
         return new self($applicationCode);
+    }
+
+    /**
+     * Combine this result with another for the SAME application. Counts are
+     * summed per type; errors from both sides are concatenated (`; `-joined)
+     * rather than one overwriting the other.
+     *
+     * NOT how `DefinitionSynchronizer::syncGrouped()` reconciles more than
+     * one `SyncDefinitionSet` sharing an application code — the platform
+     * scopes `removeUnlisted` to one (application, client) PER CALL, so
+     * syncing each set separately and merging the RESULTS would still let
+     * the second call delete what the first just created.
+     * {@see SyncDefinitionSet::merge()} folds the SETS themselves into one
+     * before a single `sync()` call instead. This method remains a general
+     * purpose combinator for a caller that legitimately has two independent
+     * `SyncResult`s for the same application to report on together.
+     */
+    public function merge(self $other): self
+    {
+        $sum = static function (array $a, array $b): array {
+            $out = [
+                'created' => ($a['created'] ?? 0) + ($b['created'] ?? 0),
+                'updated' => ($a['updated'] ?? 0) + ($b['updated'] ?? 0),
+                'deleted' => ($a['deleted'] ?? 0) + ($b['deleted'] ?? 0),
+            ];
+            $errors = array_filter([$a['error'] ?? null, $b['error'] ?? null]);
+            if ($errors !== []) {
+                $out['error'] = implode('; ', $errors);
+            }
+            return $out;
+        };
+
+        return new self(
+            applicationCode: $this->applicationCode !== '' ? $this->applicationCode : $other->applicationCode,
+            roles: $sum($this->roles, $other->roles),
+            eventTypes: $sum($this->eventTypes, $other->eventTypes),
+            subscriptions: $sum($this->subscriptions, $other->subscriptions),
+            dispatchPools: $sum($this->dispatchPools, $other->dispatchPools),
+            principals: $sum($this->principals, $other->principals),
+            processes: $sum($this->processes, $other->processes),
+            scheduledJobs: $sum($this->scheduledJobs, $other->scheduledJobs),
+            openapi: $sum($this->openapi, $other->openapi),
+            connections: $sum($this->connections, $other->connections),
+        );
     }
 }

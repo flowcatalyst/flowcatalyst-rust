@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace FlowCatalyst\Outbox\DTOs;
 
+use FlowCatalyst\Outbox\QualifiedCode;
+
 /**
  * DTO for creating a dispatch job in the outbox.
  */
@@ -27,6 +29,7 @@ class CreateDispatchJobDto
         public readonly string $payloadContentType = 'application/json',
         public readonly bool $dataOnly = true,
         public readonly ?string $messageGroup = null,
+        public readonly ?string $mode = null,
         public readonly ?int $sequence = null,
         public readonly int $timeoutSeconds = 30,
         public readonly int $maxRetries = 5,
@@ -36,7 +39,10 @@ class CreateDispatchJobDto
         public readonly ?string $idempotencyKey = null,
         public readonly ?string $externalId = null,
         public readonly ?string $connectionId = null,
-    ) {}
+        public readonly ?string $queue = null,
+    ) {
+        QualifiedCode::assert($this->code, 'Dispatch job code');
+    }
 
     /**
      * Create a new dispatch job DTO.
@@ -78,6 +84,7 @@ class CreateDispatchJobDto
             payloadContentType: $this->payloadContentType,
             dataOnly: $this->dataOnly,
             messageGroup: $this->messageGroup,
+            mode: $this->mode,
             sequence: $this->sequence,
             timeoutSeconds: $this->timeoutSeconds,
             maxRetries: $this->maxRetries,
@@ -87,6 +94,7 @@ class CreateDispatchJobDto
             idempotencyKey: $this->idempotencyKey,
             externalId: $this->externalId,
             connectionId: $this->connectionId,
+            queue: $this->queue,
         );
     }
 
@@ -109,6 +117,7 @@ class CreateDispatchJobDto
             payloadContentType: $this->payloadContentType,
             dataOnly: $this->dataOnly,
             messageGroup: $this->messageGroup,
+            mode: $this->mode,
             sequence: $this->sequence,
             timeoutSeconds: $this->timeoutSeconds,
             maxRetries: $this->maxRetries,
@@ -118,6 +127,7 @@ class CreateDispatchJobDto
             idempotencyKey: $this->idempotencyKey,
             externalId: $this->externalId,
             connectionId: $this->connectionId,
+            queue: $this->queue,
         );
     }
 
@@ -140,6 +150,7 @@ class CreateDispatchJobDto
             payloadContentType: $this->payloadContentType,
             dataOnly: $this->dataOnly,
             messageGroup: $this->messageGroup,
+            mode: $this->mode,
             sequence: $this->sequence,
             timeoutSeconds: $this->timeoutSeconds,
             maxRetries: $this->maxRetries,
@@ -149,6 +160,7 @@ class CreateDispatchJobDto
             idempotencyKey: $this->idempotencyKey,
             externalId: $this->externalId,
             connectionId: $this->connectionId,
+            queue: $this->queue,
         );
     }
 
@@ -171,6 +183,7 @@ class CreateDispatchJobDto
             payloadContentType: $this->payloadContentType,
             dataOnly: $this->dataOnly,
             messageGroup: $this->messageGroup,
+            mode: $this->mode,
             sequence: $this->sequence,
             timeoutSeconds: $this->timeoutSeconds,
             maxRetries: $this->maxRetries,
@@ -180,6 +193,74 @@ class CreateDispatchJobDto
             idempotencyKey: $this->idempotencyKey,
             externalId: $this->externalId,
             connectionId: $this->connectionId,
+            queue: $this->queue,
+        );
+    }
+
+    /**
+     * Set the message group for ordered dispatch.
+     */
+    public function withMessageGroup(string $messageGroup): self
+    {
+        return new self(
+            source: $this->source,
+            code: $this->code,
+            targetUrl: $this->targetUrl,
+            payload: $this->payload,
+            dispatchPoolId: $this->dispatchPoolId,
+            subject: $this->subject,
+            correlationId: $this->correlationId,
+            eventId: $this->eventId,
+            metadata: $this->metadata,
+            headers: $this->headers,
+            payloadContentType: $this->payloadContentType,
+            dataOnly: $this->dataOnly,
+            messageGroup: $messageGroup,
+            mode: $this->mode,
+            sequence: $this->sequence,
+            timeoutSeconds: $this->timeoutSeconds,
+            maxRetries: $this->maxRetries,
+            retryStrategy: $this->retryStrategy,
+            scheduledFor: $this->scheduledFor,
+            expiresAt: $this->expiresAt,
+            idempotencyKey: $this->idempotencyKey,
+            externalId: $this->externalId,
+            connectionId: $this->connectionId,
+            queue: $this->queue,
+        );
+    }
+
+    /**
+     * Set the dispatch mode: IMMEDIATE, NEXT_ON_ERROR or BLOCK_ON_ERROR.
+     * Controls ordering within the message group; unset defaults to NEXT_ON_ERROR (in-sequence, moving on past a failure).
+     */
+    public function withMode(string $mode): self
+    {
+        return new self(
+            source: $this->source,
+            code: $this->code,
+            targetUrl: $this->targetUrl,
+            payload: $this->payload,
+            dispatchPoolId: $this->dispatchPoolId,
+            subject: $this->subject,
+            correlationId: $this->correlationId,
+            eventId: $this->eventId,
+            metadata: $this->metadata,
+            headers: $this->headers,
+            payloadContentType: $this->payloadContentType,
+            dataOnly: $this->dataOnly,
+            messageGroup: $this->messageGroup,
+            mode: $mode,
+            sequence: $this->sequence,
+            timeoutSeconds: $this->timeoutSeconds,
+            maxRetries: $this->maxRetries,
+            retryStrategy: $this->retryStrategy,
+            scheduledFor: $this->scheduledFor,
+            expiresAt: $this->expiresAt,
+            idempotencyKey: $this->idempotencyKey,
+            externalId: $this->externalId,
+            connectionId: $this->connectionId,
+            queue: $this->queue,
         );
     }
 
@@ -202,6 +283,7 @@ class CreateDispatchJobDto
             payloadContentType: $this->payloadContentType,
             dataOnly: $this->dataOnly,
             messageGroup: $this->messageGroup,
+            mode: $this->mode,
             sequence: $this->sequence,
             timeoutSeconds: $this->timeoutSeconds,
             maxRetries: $this->maxRetries,
@@ -211,6 +293,7 @@ class CreateDispatchJobDto
             idempotencyKey: $this->idempotencyKey,
             externalId: $this->externalId,
             connectionId: $this->connectionId,
+            queue: $this->queue,
         );
     }
 
@@ -233,6 +316,7 @@ class CreateDispatchJobDto
             payloadContentType: $this->payloadContentType,
             dataOnly: $this->dataOnly,
             messageGroup: $this->messageGroup,
+            mode: $this->mode,
             sequence: $this->sequence,
             timeoutSeconds: $this->timeoutSeconds,
             maxRetries: $this->maxRetries,
@@ -242,6 +326,7 @@ class CreateDispatchJobDto
             idempotencyKey: $this->idempotencyKey,
             externalId: $this->externalId,
             connectionId: $this->connectionId,
+            queue: $this->queue,
         );
     }
 
@@ -264,6 +349,7 @@ class CreateDispatchJobDto
             payloadContentType: $this->payloadContentType,
             dataOnly: $this->dataOnly,
             messageGroup: $this->messageGroup,
+            mode: $this->mode,
             sequence: $this->sequence,
             timeoutSeconds: $this->timeoutSeconds,
             maxRetries: $this->maxRetries,
@@ -273,6 +359,7 @@ class CreateDispatchJobDto
             idempotencyKey: $idempotencyKey,
             externalId: $this->externalId,
             connectionId: $this->connectionId,
+            queue: $this->queue,
         );
     }
 
@@ -295,6 +382,7 @@ class CreateDispatchJobDto
             payloadContentType: $this->payloadContentType,
             dataOnly: $this->dataOnly,
             messageGroup: $this->messageGroup,
+            mode: $this->mode,
             sequence: $this->sequence,
             timeoutSeconds: $this->timeoutSeconds,
             maxRetries: $this->maxRetries,
@@ -304,6 +392,46 @@ class CreateDispatchJobDto
             idempotencyKey: $this->idempotencyKey,
             externalId: $this->externalId,
             connectionId: $connectionId,
+            queue: $this->queue,
+        );
+    }
+
+    /**
+     * Set the job's own dispatch priority: DEFAULT or HIGH_PRIORITY, matched
+     * ignoring case. Unset stays absent — never silently defaulted — so "not
+     * asked for" stays distinguishable from an explicit DEFAULT. Wins over
+     * the target subscription's own priority at publish time when set.
+     *
+     * Not validated here: the platform rejects an invalid value, and
+     * duplicating that check client-side would just be another place to drift.
+     */
+    public function withQueue(string $queue): self
+    {
+        return new self(
+            source: $this->source,
+            code: $this->code,
+            targetUrl: $this->targetUrl,
+            payload: $this->payload,
+            dispatchPoolId: $this->dispatchPoolId,
+            subject: $this->subject,
+            correlationId: $this->correlationId,
+            eventId: $this->eventId,
+            metadata: $this->metadata,
+            headers: $this->headers,
+            payloadContentType: $this->payloadContentType,
+            dataOnly: $this->dataOnly,
+            messageGroup: $this->messageGroup,
+            mode: $this->mode,
+            sequence: $this->sequence,
+            timeoutSeconds: $this->timeoutSeconds,
+            maxRetries: $this->maxRetries,
+            retryStrategy: $this->retryStrategy,
+            scheduledFor: $this->scheduledFor,
+            expiresAt: $this->expiresAt,
+            idempotencyKey: $this->idempotencyKey,
+            externalId: $this->externalId,
+            connectionId: $this->connectionId,
+            queue: $queue,
         );
     }
 
@@ -326,6 +454,7 @@ class CreateDispatchJobDto
             'headers' => !empty($this->headers) ? $this->headers : null,
             'dataOnly' => $this->dataOnly,
             'messageGroup' => $this->messageGroup,
+            'mode' => $this->mode,
             'sequence' => $this->sequence,
             'timeoutSeconds' => $this->timeoutSeconds,
             'maxRetries' => $this->maxRetries,
@@ -335,6 +464,7 @@ class CreateDispatchJobDto
             'idempotencyKey' => $this->idempotencyKey,
             'externalId' => $this->externalId,
             'connectionId' => $this->connectionId,
+            'queue' => $this->queue,
         ], fn($v) => $v !== null);
     }
 }

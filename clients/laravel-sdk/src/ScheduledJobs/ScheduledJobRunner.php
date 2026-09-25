@@ -9,10 +9,20 @@ use Throwable;
 
 /**
  * ScheduledJobRunner — handler registry + envelope dispatch + lock + optional
- * completion callback. Mount `processWithResponse()` from a Laravel controller
- * route at the URL you set as `targetUrl` on the job definition.
+ * completion callback.
  *
- *   Route::post('/_fc/scheduled-jobs/process', function (Request $req) use ($runner) {
+ * Zero-config inside Laravel: the service provider binds a runner singleton
+ * (cache-lock overlap protection included), mounts it at
+ * DEFAULT_PROCESS_PATH, and the definition sync points each job's targetUrl
+ * there — apps only register handlers:
+ *
+ *   app(ScheduledJobRunner::class)->handler('nightly-report', fn ($env, $log) => ...);
+ *
+ * To mount manually instead (extra middleware, custom path), disable
+ * `flowcatalyst.scheduled_jobs.register_route` and route to
+ * `processWithResponse()` yourself:
+ *
+ *   Route::post('/my/path', function (Request $req) use ($runner) {
  *       [$status, $body] = $runner->processWithResponse($req->json()->all());
  *       return response()->json($body, $status);
  *   });
@@ -25,13 +35,22 @@ use Throwable;
  */
 final class ScheduledJobRunner
 {
+    /**
+     * Conventional process path. The service provider registers a POST route
+     * here (config `flowcatalyst.scheduled_jobs.register_route`), and the
+     * definition sync defaults each job's targetUrl to APP_URL + this path
+     * when the attribute doesn't set one.
+     */
+    public const DEFAULT_PROCESS_PATH = '/api/_fc/scheduled-jobs/process';
+
     /** @var array<string, callable> */
     private array $handlers = [];
 
     private LockProvider $lockProvider;
     /** @var (callable(array): string)|null */
     private $lockKeyResolver;
-    private bool $enforceLock;
+    /** null = follow the envelope's `concurrent` attribute (lock unless concurrent). */
+    private ?bool $enforceLock;
     private int $lockTtlSeconds;
     /** @var (callable(Throwable, array): void)|null */
     private $onError;
@@ -49,11 +68,54 @@ final class ScheduledJobRunner
         private readonly ScheduledJobs $resource,
         array $options = [],
     ) {
-        $this->lockProvider = $options['lockProvider'] ?? new NoOpLockProvider();
+        $this->lockProvider = $options['lockProvider'] ?? self::defaultLockProvider();
         $this->lockKeyResolver = $options['lockKey'] ?? null;
-        $this->enforceLock = $options['enforceLock'] ?? true;
+        // When the option is omitted, locking follows the job definition: the
+        // platform echoes the `concurrent` attribute in the envelope, so
+        // concurrent: false jobs (the AsScheduledJob default) get overlap
+        // protection with zero configuration. An explicit true/false overrides.
+        $this->enforceLock = $options['enforceLock'] ?? null;
         $this->lockTtlSeconds = $options['lockTtlSeconds'] ?? 600;
         $this->onError = $options['onError'] ?? null;
+    }
+
+    /**
+     * Zero-config overlap protection: inside a booted Laravel app, use the
+     * app's default cache store (Laravel's atomic cache locks survive
+     * multiple replicas as long as they share the backend). Outside Laravel
+     * — or before the container is available — fall back to no-op, same as
+     * the old default.
+     */
+    private static function defaultLockProvider(): LockProvider
+    {
+        if (class_exists(\Illuminate\Container\Container::class)) {
+            try {
+                $app = \Illuminate\Container\Container::getInstance();
+                if ($app !== null && $app->bound('cache.store')) {
+                    /** @var \Illuminate\Contracts\Cache\Repository $store */
+                    $store = $app->make('cache.store');
+                    return new CacheLockProvider($store);
+                }
+            } catch (Throwable) {
+                // fall through to no-op
+            }
+        }
+        return new NoOpLockProvider();
+    }
+
+    /**
+     * Whether this firing must hold the overlap lock: the explicit runner
+     * option wins; otherwise follow the envelope's `concurrent` attribute
+     * (absent on pre-echo platforms ⇒ treat as non-concurrent ⇒ lock).
+     *
+     * @param array<string, mixed> $envelope
+     */
+    private function shouldLock(array $envelope): bool
+    {
+        if ($this->enforceLock !== null) {
+            return $this->enforceLock;
+        }
+        return !(bool) ($envelope['concurrent'] ?? false);
     }
 
     /**
@@ -74,6 +136,43 @@ final class ScheduledJobRunner
     public function registeredCodes(): array
     {
         return array_keys($this->handlers);
+    }
+
+    public function hasHandler(string $code): bool
+    {
+        return isset($this->handlers[$code]);
+    }
+
+    /**
+     * Wire handlers from scanned #[AsScheduledJob] definition rows: every row
+     * whose `_class` has a public `handle(array $envelope, callable $log)`
+     * method (see {@see HandlesScheduledJob}) gets a handler that lazily
+     * resolves the class through $make and invokes it. Codes that already
+     * have a handler are left alone — manual registration always wins.
+     *
+     * @param array<array<string, mixed>> $rows Scanned definition rows
+     * @param callable(string): object $make Class-string → instance factory
+     * @return int Number of handlers registered
+     */
+    public static function registerScannedHandlers(self $runner, array $rows, callable $make): int
+    {
+        $registered = 0;
+        foreach ($rows as $row) {
+            $code = (string) ($row['code'] ?? '');
+            $class = (string) ($row['_class'] ?? '');
+            if ($code === '' || $class === '' || $runner->hasHandler($code)) {
+                continue;
+            }
+            if (!class_exists($class) || !method_exists($class, 'handle')) {
+                continue;
+            }
+            $runner->handler(
+                $code,
+                static fn (array $envelope, callable $log): mixed => $make($class)->handle($envelope, $log),
+            );
+            $registered++;
+        }
+        return $registered;
     }
 
     /**
@@ -105,7 +204,7 @@ final class ScheduledJobRunner
     {
         $release = null;
         try {
-            if ($this->enforceLock) {
+            if ($this->shouldLock($envelope)) {
                 $key = $this->lockKeyResolver !== null
                     ? ($this->lockKeyResolver)($envelope)
                     : 'scheduled-job:' . $envelope['jobCode'];

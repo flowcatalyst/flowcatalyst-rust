@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class ClientResponse extends \ArrayObject
+class ClientResponse
 {
     /**
      * @var array
@@ -13,7 +13,13 @@ class ClientResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
      * @var string|null
+     */
+    protected $dollarSchema;
+    /**
+     * @var \DateTime|null
      */
     protected $createdAt;
     /**
@@ -29,11 +35,15 @@ class ClientResponse extends \ArrayObject
      */
     protected $name;
     /**
+     * @var list<NoteResponse>|null
+     */
+    protected $notes;
+    /**
      * @var string|null
      */
     protected $status;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $statusChangedAt;
     /**
@@ -41,22 +51,44 @@ class ClientResponse extends \ArrayObject
      */
     protected $statusReason;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $updatedAt;
     /**
+     * A URL to the JSON Schema for this object.
+     *
      * @return string|null
      */
-    public function getCreatedAt(): ?string
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * @return \DateTime|null
+     */
+    public function getCreatedAt(): ?\DateTime
     {
         return $this->createdAt;
     }
     /**
-     * @param string|null $createdAt
+     * @param \DateTime|null $createdAt
      *
      * @return self
      */
-    public function setCreatedAt(?string $createdAt): self
+    public function setCreatedAt(?\DateTime $createdAt): self
     {
         $this->initialized['createdAt'] = true;
         $this->createdAt = $createdAt;
@@ -117,6 +149,24 @@ class ClientResponse extends \ArrayObject
         return $this;
     }
     /**
+     * @return list<NoteResponse>|null
+     */
+    public function getNotes(): ?array
+    {
+        return $this->notes;
+    }
+    /**
+     * @param list<NoteResponse>|null $notes
+     *
+     * @return self
+     */
+    public function setNotes(?array $notes): self
+    {
+        $this->initialized['notes'] = true;
+        $this->notes = $notes;
+        return $this;
+    }
+    /**
      * @return string|null
      */
     public function getStatus(): ?string
@@ -135,18 +185,18 @@ class ClientResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getStatusChangedAt(): ?string
+    public function getStatusChangedAt(): ?\DateTime
     {
         return $this->statusChangedAt;
     }
     /**
-     * @param string|null $statusChangedAt
+     * @param \DateTime|null $statusChangedAt
      *
      * @return self
      */
-    public function setStatusChangedAt(?string $statusChangedAt): self
+    public function setStatusChangedAt(?\DateTime $statusChangedAt): self
     {
         $this->initialized['statusChangedAt'] = true;
         $this->statusChangedAt = $statusChangedAt;
@@ -171,18 +221,18 @@ class ClientResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getUpdatedAt(): ?string
+    public function getUpdatedAt(): ?\DateTime
     {
         return $this->updatedAt;
     }
     /**
-     * @param string|null $updatedAt
+     * @param \DateTime|null $updatedAt
      *
      * @return self
      */
-    public function setUpdatedAt(?string $updatedAt): self
+    public function setUpdatedAt(?\DateTime $updatedAt): self
     {
         $this->initialized['updatedAt'] = true;
         $this->updatedAt = $updatedAt;

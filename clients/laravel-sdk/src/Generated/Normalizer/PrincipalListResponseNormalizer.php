@@ -37,28 +37,27 @@ class PrincipalListResponseNormalizer implements DenormalizerInterface, Normaliz
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('principals', $data) && $data['principals'] !== null) {
             $values = [];
             foreach ($data['principals'] as $value) {
                 $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\PrincipalResponse::class, 'json', $context);
             }
             $object->setPrincipals($values);
-            unset($data['principals']);
         }
         elseif (\array_key_exists('principals', $data) && $data['principals'] === null) {
             $object->setPrincipals(null);
         }
         if (\array_key_exists('total', $data) && $data['total'] !== null) {
             $object->setTotal($data['total']);
-            unset($data['total']);
         }
         elseif (\array_key_exists('total', $data) && $data['total'] === null) {
             $object->setTotal(null);
-        }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
         }
         return $object;
     }
@@ -71,11 +70,6 @@ class PrincipalListResponseNormalizer implements DenormalizerInterface, Normaliz
         }
         $dataArray['principals'] = $values;
         $dataArray['total'] = $data->getTotal();
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

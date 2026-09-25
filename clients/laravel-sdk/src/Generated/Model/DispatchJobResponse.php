@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class DispatchJobResponse extends \ArrayObject
+class DispatchJobResponse
 {
     /**
      * @var array
@@ -13,9 +13,19 @@ class DispatchJobResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var int|null
      */
     protected $attemptCount;
+    /**
+     * @var list<AttemptDTO>|null
+     */
+    protected $attempts;
     /**
      * @var string|null
      */
@@ -25,7 +35,7 @@ class DispatchJobResponse extends \ArrayObject
      */
     protected $code;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $completedAt;
     /**
@@ -33,9 +43,13 @@ class DispatchJobResponse extends \ArrayObject
      */
     protected $correlationId;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $createdAt;
+    /**
+     * @var bool|null
+     */
+    protected $dataOnly;
     /**
      * @var string|null
      */
@@ -49,7 +63,7 @@ class DispatchJobResponse extends \ArrayObject
      */
     protected $eventId;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $expiresAt;
     /**
@@ -65,19 +79,11 @@ class DispatchJobResponse extends \ArrayObject
      */
     protected $idempotencyKey;
     /**
-     * @var bool|null
-     */
-    protected $isCompleted;
-    /**
-     * @var bool|null
-     */
-    protected $isTerminal;
-    /**
      * @var string|null
      */
     protected $kind;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $lastAttemptAt;
     /**
@@ -93,9 +99,21 @@ class DispatchJobResponse extends \ArrayObject
      */
     protected $messageGroup;
     /**
+     * @var list<MetadataDTO>|null
+     */
+    protected $metadata;
+    /**
      * @var string|null
      */
     protected $mode;
+    /**
+     * @var string|null
+     */
+    protected $payload;
+    /**
+     * @var string|null
+     */
+    protected $payloadContentType;
     /**
      * @var string|null
      */
@@ -105,9 +123,13 @@ class DispatchJobResponse extends \ArrayObject
      */
     protected $retryStrategy;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $scheduledFor;
+    /**
+     * @var string|null
+     */
+    protected $schemaId;
     /**
      * @var int|null
      */
@@ -141,9 +163,31 @@ class DispatchJobResponse extends \ArrayObject
      */
     protected $timeoutSeconds;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $updatedAt;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return int|null
      */
@@ -160,6 +204,24 @@ class DispatchJobResponse extends \ArrayObject
     {
         $this->initialized['attemptCount'] = true;
         $this->attemptCount = $attemptCount;
+        return $this;
+    }
+    /**
+     * @return list<AttemptDTO>|null
+     */
+    public function getAttempts(): ?array
+    {
+        return $this->attempts;
+    }
+    /**
+     * @param list<AttemptDTO>|null $attempts
+     *
+     * @return self
+     */
+    public function setAttempts(?array $attempts): self
+    {
+        $this->initialized['attempts'] = true;
+        $this->attempts = $attempts;
         return $this;
     }
     /**
@@ -199,18 +261,18 @@ class DispatchJobResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getCompletedAt(): ?string
+    public function getCompletedAt(): ?\DateTime
     {
         return $this->completedAt;
     }
     /**
-     * @param string|null $completedAt
+     * @param \DateTime|null $completedAt
      *
      * @return self
      */
-    public function setCompletedAt(?string $completedAt): self
+    public function setCompletedAt(?\DateTime $completedAt): self
     {
         $this->initialized['completedAt'] = true;
         $this->completedAt = $completedAt;
@@ -235,21 +297,39 @@ class DispatchJobResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getCreatedAt(): ?string
+    public function getCreatedAt(): ?\DateTime
     {
         return $this->createdAt;
     }
     /**
-     * @param string|null $createdAt
+     * @param \DateTime|null $createdAt
      *
      * @return self
      */
-    public function setCreatedAt(?string $createdAt): self
+    public function setCreatedAt(?\DateTime $createdAt): self
     {
         $this->initialized['createdAt'] = true;
         $this->createdAt = $createdAt;
+        return $this;
+    }
+    /**
+     * @return bool|null
+     */
+    public function getDataOnly(): ?bool
+    {
+        return $this->dataOnly;
+    }
+    /**
+     * @param bool|null $dataOnly
+     *
+     * @return self
+     */
+    public function setDataOnly(?bool $dataOnly): self
+    {
+        $this->initialized['dataOnly'] = true;
+        $this->dataOnly = $dataOnly;
         return $this;
     }
     /**
@@ -307,18 +387,18 @@ class DispatchJobResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getExpiresAt(): ?string
+    public function getExpiresAt(): ?\DateTime
     {
         return $this->expiresAt;
     }
     /**
-     * @param string|null $expiresAt
+     * @param \DateTime|null $expiresAt
      *
      * @return self
      */
-    public function setExpiresAt(?string $expiresAt): self
+    public function setExpiresAt(?\DateTime $expiresAt): self
     {
         $this->initialized['expiresAt'] = true;
         $this->expiresAt = $expiresAt;
@@ -379,42 +459,6 @@ class DispatchJobResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return bool|null
-     */
-    public function getIsCompleted(): ?bool
-    {
-        return $this->isCompleted;
-    }
-    /**
-     * @param bool|null $isCompleted
-     *
-     * @return self
-     */
-    public function setIsCompleted(?bool $isCompleted): self
-    {
-        $this->initialized['isCompleted'] = true;
-        $this->isCompleted = $isCompleted;
-        return $this;
-    }
-    /**
-     * @return bool|null
-     */
-    public function getIsTerminal(): ?bool
-    {
-        return $this->isTerminal;
-    }
-    /**
-     * @param bool|null $isTerminal
-     *
-     * @return self
-     */
-    public function setIsTerminal(?bool $isTerminal): self
-    {
-        $this->initialized['isTerminal'] = true;
-        $this->isTerminal = $isTerminal;
-        return $this;
-    }
-    /**
      * @return string|null
      */
     public function getKind(): ?string
@@ -433,18 +477,18 @@ class DispatchJobResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getLastAttemptAt(): ?string
+    public function getLastAttemptAt(): ?\DateTime
     {
         return $this->lastAttemptAt;
     }
     /**
-     * @param string|null $lastAttemptAt
+     * @param \DateTime|null $lastAttemptAt
      *
      * @return self
      */
-    public function setLastAttemptAt(?string $lastAttemptAt): self
+    public function setLastAttemptAt(?\DateTime $lastAttemptAt): self
     {
         $this->initialized['lastAttemptAt'] = true;
         $this->lastAttemptAt = $lastAttemptAt;
@@ -505,6 +549,24 @@ class DispatchJobResponse extends \ArrayObject
         return $this;
     }
     /**
+     * @return list<MetadataDTO>|null
+     */
+    public function getMetadata(): ?array
+    {
+        return $this->metadata;
+    }
+    /**
+     * @param list<MetadataDTO>|null $metadata
+     *
+     * @return self
+     */
+    public function setMetadata(?array $metadata): self
+    {
+        $this->initialized['metadata'] = true;
+        $this->metadata = $metadata;
+        return $this;
+    }
+    /**
      * @return string|null
      */
     public function getMode(): ?string
@@ -520,6 +582,42 @@ class DispatchJobResponse extends \ArrayObject
     {
         $this->initialized['mode'] = true;
         $this->mode = $mode;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getPayload(): ?string
+    {
+        return $this->payload;
+    }
+    /**
+     * @param string|null $payload
+     *
+     * @return self
+     */
+    public function setPayload(?string $payload): self
+    {
+        $this->initialized['payload'] = true;
+        $this->payload = $payload;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getPayloadContentType(): ?string
+    {
+        return $this->payloadContentType;
+    }
+    /**
+     * @param string|null $payloadContentType
+     *
+     * @return self
+     */
+    public function setPayloadContentType(?string $payloadContentType): self
+    {
+        $this->initialized['payloadContentType'] = true;
+        $this->payloadContentType = $payloadContentType;
         return $this;
     }
     /**
@@ -559,21 +657,39 @@ class DispatchJobResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getScheduledFor(): ?string
+    public function getScheduledFor(): ?\DateTime
     {
         return $this->scheduledFor;
     }
     /**
-     * @param string|null $scheduledFor
+     * @param \DateTime|null $scheduledFor
      *
      * @return self
      */
-    public function setScheduledFor(?string $scheduledFor): self
+    public function setScheduledFor(?\DateTime $scheduledFor): self
     {
         $this->initialized['scheduledFor'] = true;
         $this->scheduledFor = $scheduledFor;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getSchemaId(): ?string
+    {
+        return $this->schemaId;
+    }
+    /**
+     * @param string|null $schemaId
+     *
+     * @return self
+     */
+    public function setSchemaId(?string $schemaId): self
+    {
+        $this->initialized['schemaId'] = true;
+        $this->schemaId = $schemaId;
         return $this;
     }
     /**
@@ -721,18 +837,18 @@ class DispatchJobResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getUpdatedAt(): ?string
+    public function getUpdatedAt(): ?\DateTime
     {
         return $this->updatedAt;
     }
     /**
-     * @param string|null $updatedAt
+     * @param \DateTime|null $updatedAt
      *
      * @return self
      */
-    public function setUpdatedAt(?string $updatedAt): self
+    public function setUpdatedAt(?\DateTime $updatedAt): self
     {
         $this->initialized['updatedAt'] = true;
         $this->updatedAt = $updatedAt;

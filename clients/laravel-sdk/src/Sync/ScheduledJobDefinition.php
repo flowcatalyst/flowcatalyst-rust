@@ -8,21 +8,25 @@ namespace FlowCatalyst\Sync;
  * Represents a scheduled-job definition for syncing to FlowCatalyst.
  *
  * `code` is the platform-side identifier; convention is
- * `{application}:{job-name}` but not enforced. `crons` accepts standard
- * 5-field expressions; the platform evaluates them in `timezone`
- * (defaults to UTC server-side when null).
+ * `{application}:{job-name}` but not enforced. `crons` requires 6-field,
+ * seconds-first expressions (`sec min hour dom month dow`) — a standard
+ * 5-field cron passes validation but never fires; the platform evaluates
+ * them in `timezone` (defaults to UTC server-side when null).
  *
  * `concurrent: true` lets the platform fire while a previous invocation
  * is still running. `tracksCompletion: true` enables per-instance
  * status tracking via the `POST /api/scheduled-jobs/instances/{id}/complete`
  * callback rather than treating webhook delivery as the success signal.
+ *
+ * `clientId` scopes the job to a client/tenant rather than the platform —
+ * leave it null only for platform-wide jobs (anchor-only).
  */
 final class ScheduledJobDefinition
 {
     /**
      * @param string $code Full platform code (e.g. "orders:nightly-report")
      * @param string $name Human-readable label
-     * @param string[] $crons Standard 5-field cron expressions
+     * @param string[] $crons 6-field, seconds-first cron expressions
      * @param string|null $description Optional summary
      * @param string|null $timezone IANA tz name; defaults to UTC server-side
      * @param array<string, mixed>|null $payload JSON payload sent to the consumer
@@ -31,6 +35,7 @@ final class ScheduledJobDefinition
      * @param int|null $timeoutSeconds Per-invocation timeout
      * @param int|null $deliveryMaxAttempts Webhook delivery retries (default 3)
      * @param string|null $targetUrl Override the application's default callback URL
+     * @param string|null $clientId Client/tenant that owns this job. Null = platform-scoped (anchor only).
      */
     public function __construct(
         public readonly string $code,
@@ -44,6 +49,7 @@ final class ScheduledJobDefinition
         public readonly ?int $timeoutSeconds = null,
         public readonly ?int $deliveryMaxAttempts = null,
         public readonly ?string $targetUrl = null,
+        public readonly ?string $clientId = null,
     ) {}
 
     public function getCode(): string
@@ -107,6 +113,11 @@ final class ScheduledJobDefinition
         return $this->copy(targetUrl: $targetUrl);
     }
 
+    public function withClientId(string $clientId): self
+    {
+        return $this->copy(clientId: $clientId);
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -137,6 +148,9 @@ final class ScheduledJobDefinition
         if ($this->targetUrl !== null) {
             $data['targetUrl'] = $this->targetUrl;
         }
+        if ($this->clientId !== null) {
+            $data['clientId'] = $this->clientId;
+        }
         return $data;
     }
 
@@ -157,6 +171,7 @@ final class ScheduledJobDefinition
             timeoutSeconds: $data['timeoutSeconds'] ?? null,
             deliveryMaxAttempts: $data['deliveryMaxAttempts'] ?? null,
             targetUrl: $data['targetUrl'] ?? null,
+            clientId: $data['clientId'] ?? null,
         );
     }
 
@@ -173,6 +188,7 @@ final class ScheduledJobDefinition
         ?int $timeoutSeconds = null,
         ?int $deliveryMaxAttempts = null,
         ?string $targetUrl = null,
+        ?string $clientId = null,
     ): self {
         return new self(
             code: $this->code,
@@ -186,6 +202,7 @@ final class ScheduledJobDefinition
             timeoutSeconds: $timeoutSeconds ?? $this->timeoutSeconds,
             deliveryMaxAttempts: $deliveryMaxAttempts ?? $this->deliveryMaxAttempts,
             targetUrl: $targetUrl ?? $this->targetUrl,
+            clientId: $clientId ?? $this->clientId,
         );
     }
 }

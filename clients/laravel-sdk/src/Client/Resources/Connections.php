@@ -7,8 +7,10 @@ namespace FlowCatalyst\Client\Resources;
 use FlowCatalyst\Client\FlowCatalystClient;
 use FlowCatalyst\DTOs\Connection;
 use FlowCatalyst\DTOs\Requests\CreateConnectionRequest;
+use FlowCatalyst\DTOs\Requests\SyncConnectionEntry;
 use FlowCatalyst\DTOs\Requests\UpdateConnectionRequest;
 use FlowCatalyst\DTOs\Responses\ConnectionList;
+use FlowCatalyst\DTOs\Responses\SyncResult;
 
 class Connections
 {
@@ -103,5 +105,43 @@ class Connections
         $response = $this->client->request('POST', "/api/connections/{$id}/activate");
 
         return Connection::fromArray($response);
+    }
+
+    /**
+     * Sync connections for an application. Creates/updates connections with
+     * source=`API` and, when `$removeUnlisted` is true, removes API/CODE
+     * -sourced connections not in the sync list. The platform assigns each
+     * new connection's service account itself (the application's
+     * provisioned one) — never the caller's.
+     *
+     * @param SyncConnectionEntry[] $connections
+     * @param string|null $clientId The client (id or identifier slug) these
+     *        connections are scoped to. Null = global (client-less).
+     */
+    public function sync(
+        string $applicationCode,
+        array $connections,
+        ?string $clientId = null,
+        bool $removeUnlisted = false,
+    ): SyncResult {
+        $query = $removeUnlisted ? '?removeUnlisted=true' : '';
+
+        $body = [
+            'connections' => array_map(
+                fn(SyncConnectionEntry $entry) => $entry->toArray(),
+                $connections,
+            ),
+        ];
+        if ($clientId !== null) {
+            $body['clientId'] = $clientId;
+        }
+
+        $response = $this->client->request(
+            'POST',
+            "/api/applications/{$applicationCode}/connections/sync{$query}",
+            ['json' => $body],
+        );
+
+        return SyncResult::fromArray($response);
     }
 }

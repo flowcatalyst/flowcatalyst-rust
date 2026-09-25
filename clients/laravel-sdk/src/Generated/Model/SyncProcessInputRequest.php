@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class SyncProcessInputRequest extends \ArrayObject
+class SyncProcessInputRequest
 {
     /**
      * @var array
@@ -13,7 +13,7 @@ class SyncProcessInputRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Diagram body (typically Mermaid source).
+     * Diagram body (typically Mermaid source)
      *
      * @var string|null
      */
@@ -41,7 +41,7 @@ class SyncProcessInputRequest extends \ArrayObject
      */
     protected $tags;
     /**
-     * Diagram body (typically Mermaid source).
+     * Diagram body (typically Mermaid source)
      *
      * @return string|null
      */
@@ -50,7 +50,7 @@ class SyncProcessInputRequest extends \ArrayObject
         return $this->body;
     }
     /**
-     * Diagram body (typically Mermaid source).
+     * Diagram body (typically Mermaid source)
      *
      * @param string|null $body
      *

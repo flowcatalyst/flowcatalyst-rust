@@ -58,14 +58,22 @@ class DefaultOidcUserHandler implements OidcUserHandler
      */
     public function handleAuthenticatedUser(FlowCatalystUser $user): mixed
     {
+        // A flat array, NOT the DTO itself: Laravel's session 'serialization'
+        // config can be 'json' (the framework's own recommended hardening
+        // against object-deserialization "gadget chain" attacks, and
+        // increasingly the default in new apps) — under that mode a stored
+        // object always comes back as a plain array
+        // (`json_decode($value, true)`), never a reconstructed object. Every
+        // field FlowCatalystUser needs to be rebuilt must round-trip through
+        // this array; getCurrentUser() is the only place that rehydrates it.
         session()->put(self::SESSION_KEY, [
             'sub' => $user->sub,
             'email' => $user->email,
             'name' => $user->name,
-            'clients' => $user->getClients(),
-            'roles' => $user->getRoles(),
+            'claims' => $user->claims,
             'access_token' => $user->accessToken,
             'refresh_token' => $user->refreshToken,
+            'access_token_claims' => $user->accessTokenClaims,
         ]);
 
         return $user;
@@ -112,24 +120,18 @@ class DefaultOidcUserHandler implements OidcUserHandler
     public static function getCurrentUser(): ?FlowCatalystUser
     {
         $data = session()->get(self::SESSION_KEY);
-
-        if ($data === null) {
+        if (!is_array($data) || !isset($data['sub'])) {
             return null;
         }
 
         return new FlowCatalystUser(
             sub: $data['sub'],
-            email: $data['email'],
-            name: $data['name'],
-            claims: [
-                'sub' => $data['sub'],
-                'email' => $data['email'],
-                'name' => $data['name'],
-                'clients' => $data['clients'],
-                'roles' => $data['roles'],
-            ],
+            email: $data['email'] ?? null,
+            name: $data['name'] ?? null,
+            claims: $data['claims'] ?? [],
             accessToken: $data['access_token'] ?? null,
             refreshToken: $data['refresh_token'] ?? null,
+            accessTokenClaims: $data['access_token_claims'] ?? [],
         );
     }
 

@@ -107,25 +107,31 @@ class Subscriptions
      * API-sourced subscriptions not in the sync list.
      *
      * @param SyncSubscriptionEntry[] $subscriptions
+     * @param string|null $clientId The client (id or identifier slug) these
+     *        subscriptions are scoped to. Null = global (client-less).
      */
     public function sync(
         string $applicationCode,
         array $subscriptions,
         bool $removeUnlisted = false,
+        ?string $clientId = null,
     ): SyncResult {
         $query = $removeUnlisted ? '?removeUnlisted=true' : '';
+
+        $body = [
+            'subscriptions' => array_map(
+                fn(SyncSubscriptionEntry $entry) => $entry->toArray(),
+                $subscriptions,
+            ),
+        ];
+        if ($clientId !== null) {
+            $body['clientId'] = $clientId;
+        }
 
         $response = $this->client->request(
             'POST',
             "/api/applications/{$applicationCode}/subscriptions/sync{$query}",
-            [
-                'json' => [
-                    'subscriptions' => array_map(
-                        fn(SyncSubscriptionEntry $entry) => $entry->toArray(),
-                        $subscriptions,
-                    ),
-                ],
-            ],
+            ['json' => $body],
         );
 
         return SyncResult::fromArray($response);

@@ -29,11 +29,13 @@ use FlowCatalyst\Sync\DefinitionSynchronizer;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
+use Psr\Http\Message\ResponseInterface;
 
 class FlowCatalystClient
 {
     private Client $httpClient;
     private TokenProviderInterface $tokenProvider;
+    private readonly string $baseUrl;
     private ?GeneratedClient $generatedClient = null;
     private ?EventTypes $eventTypes = null;
     private ?Subscriptions $subscriptions = null;
@@ -54,21 +56,31 @@ class FlowCatalystClient
     /**
      * Create a new FlowCatalyst client.
      *
-     * @param TokenProviderInterface|OidcTokenManager $tokenProvider Token provider for authentication
-     * @param string $baseUrl Base URL of the FlowCatalyst API
+     * Both $tokenProvider and $baseUrl fall back to config when omitted, so the
+     * container can autowire this class. The union type was dropped to a plain
+     * interface because Laravel's container cannot autowire a union-typed
+     * parameter (it can't pick which member to resolve), which silently broke
+     * resolution when this client was resolved without an explicit binding.
+     *
+     * @param TokenProviderInterface|null $tokenProvider Token provider for authentication (defaults to a config-driven OidcTokenManager)
+     * @param string|null $baseUrl Base URL of the FlowCatalyst API (defaults to config('flowcatalyst.base_url'))
      * @param int $timeout Request timeout in seconds
-     * @param int $retryAttempts Number of retry attempts for transient errors
+     * @param int $retryAttempts Number of retry attempts for transient failures: HTTP 408, 429,
+     *                            502, 503, 504, and network/transport failures (connect errors,
+     *                            timeouts). Any other status (403, 404, 422, other 4xx, 500, 501,
+     *                            505) is thrown on the first attempt and never retried.
      * @param int $retryDelay Base delay between retries in milliseconds
      */
     public function __construct(
-        TokenProviderInterface|OidcTokenManager $tokenProvider,
-        private readonly string $baseUrl,
+        ?TokenProviderInterface $tokenProvider = null,
+        ?string $baseUrl = null,
         private readonly int $timeout = 30,
         private readonly int $retryAttempts = 3,
         private readonly int $retryDelay = 100,
         private readonly ?string $routerBaseUrl = null
     ) {
-        $this->tokenProvider = $tokenProvider;
+        $this->tokenProvider = $tokenProvider ?? new OidcTokenManager();
+        $this->baseUrl = $baseUrl ?? (string) config('flowcatalyst.base_url', '');
         $this->httpClient = new Client([
             'base_uri' => rtrim($this->baseUrl, '/'),
             'timeout' => $this->timeout,
@@ -91,7 +103,10 @@ class FlowCatalystClient
      * @param string|\Closure(): string $token The access token or a callable that returns it
      * @param string $baseUrl Base URL of the FlowCatalyst API
      * @param int $timeout Request timeout in seconds
-     * @param int $retryAttempts Number of retry attempts for transient errors
+     * @param int $retryAttempts Number of retry attempts for transient failures: HTTP 408, 429,
+     *                            502, 503, 504, and network/transport failures (connect errors,
+     *                            timeouts). Any other status (403, 404, 422, other 4xx, 500, 501,
+     *                            505) is thrown on the first attempt and never retried.
      * @param int $retryDelay Base delay between retries in milliseconds
      */
     public static function withUserToken(
@@ -234,8 +249,8 @@ class FlowCatalystClient
     /**
      * Bulk synchronizer — push a `SyncDefinitionSet` (roles, event types,
      * subscriptions, dispatch pools, principals, processes) for a single
-     * application in one orchestrated call. Mirrors the Rust SDK's
-     * `DefinitionSynchronizer` and the TS SDK's `client.definitions()`.
+     * application in one orchestrated call. Mirrors the TypeScript SDK's
+     * `client.definitions()`.
      */
     public function definitions(): DefinitionSynchronizer
     {
@@ -263,7 +278,23 @@ class FlowCatalystClient
     }
 
     /**
+     * Statuses considered transient and eligible for backoff retry. Every
+     * other status (403, 404, 422, other 4xx, 500, 501, 505) is thrown on
+     * the first attempt. Mirrors the TypeScript and Java SDKs' retry sets.
+     */
+    private const RETRYABLE_STATUSES = [408, 429, 502, 503, 504];
+
+    /**
      * Make an authenticated API request.
+     *
+     * A normal attempt uses the token provider's cached access token. Only a
+     * 401 triggers a one-shot {@see TokenProviderInterface::refreshToken()}
+     * on the first attempt, and only when the provider is an
+     * {@see OidcTokenManager} (a plain user-token provider has nothing
+     * useful to refresh); a second 401 surfaces as an
+     * {@see AuthenticationException}. Independently, HTTP 408/429/502/503/504
+     * and network/transport failures are retried with backoff up to
+     * `retryAttempts`, without ever refreshing the token.
      *
      * @throws FlowCatalystException
      * @throws AuthenticationException
@@ -271,40 +302,39 @@ class FlowCatalystClient
      */
     public function request(string $method, string $endpoint, array $options = []): array
     {
+        $canRefreshToken = $this->tokenProvider instanceof OidcTokenManager;
+        $token = $this->tokenProvider->getAccessToken();
         $attempt = 0;
-        $lastException = null;
 
-        while ($attempt < $this->retryAttempts) {
+        while (true) {
             try {
-                return $this->doRequest($method, $endpoint, $options, $attempt > 0);
+                return $this->doRequest($method, $endpoint, $options, $token);
             } catch (AuthenticationException $e) {
-                // Don't retry auth failures
-                throw $e;
-            } catch (ValidationException $e) {
-                // Don't retry validation errors
-                throw $e;
-            } catch (FlowCatalystException $e) {
-                $lastException = $e;
-                $attempt++;
-
-                if ($attempt < $this->retryAttempts) {
-                    usleep($this->retryDelay * 1000 * $attempt); // Exponential backoff
+                if ($canRefreshToken && $attempt === 0) {
+                    $token = $this->tokenProvider->refreshToken();
+                    $attempt++;
+                    continue;
                 }
+
+                throw $e;
+            } catch (RetryableFailure $e) {
+                if ($attempt + 1 < $this->retryAttempts) {
+                    $attempt++;
+                    usleep($this->retryDelay * 1000 * $attempt); // Exponential backoff
+                    continue;
+                }
+
+                throw $e->exception;
             }
         }
-
-        throw $lastException ?? new FlowCatalystException('Request failed after retries');
     }
 
     /**
-     * Perform the actual HTTP request.
+     * Perform the actual HTTP request with the given (already resolved)
+     * bearer token.
      */
-    private function doRequest(string $method, string $endpoint, array $options, bool $isRetry): array
+    private function doRequest(string $method, string $endpoint, array $options, string $token): array
     {
-        $token = $isRetry
-            ? $this->tokenProvider->refreshToken()
-            : $this->tokenProvider->getAccessToken();
-
         $options['headers'] = array_merge($options['headers'] ?? [], [
             'Authorization' => "Bearer {$token}",
             'Accept' => 'application/json',
@@ -331,75 +361,101 @@ class FlowCatalystClient
 
         try {
             $response = $this->httpClient->request($method, $endpoint, $options);
-            $statusCode = $response->getStatusCode();
-            $body = (string) $response->getBody();
-            $data = json_decode($body, true) ?? [];
-
-            // Handle different status codes.
-            //
-            // Platform error responses look like:
-            //   { "error": "<machine code>", "message": "<human text>" }
-            // Surface the human message (falling back to the code) so callers
-            // get "Cannot reset password for OIDC-authenticated users" instead
-            // of "DUPLICATE".
-            if ($statusCode === 401) {
-                throw AuthenticationException::tokenExpired();
-            }
-
-            if ($statusCode === 403) {
-                throw new FlowCatalystException(
-                    $data['message'] ?? $data['error'] ?? 'Access forbidden',
-                    403,
-                    null,
-                    $data
-                );
-            }
-
-            if ($statusCode === 404) {
-                throw new FlowCatalystException(
-                    $data['message'] ?? $data['error'] ?? 'Resource not found',
-                    404,
-                    null,
-                    $data
-                );
-            }
-
-            if ($statusCode === 422) {
-                throw ValidationException::fromResponse($data);
-            }
-
-            if ($statusCode >= 400 && $statusCode < 500) {
-                throw new FlowCatalystException(
-                    $data['message'] ?? $data['error'] ?? "Client error: {$statusCode}",
-                    $statusCode,
-                    null,
-                    $data
-                );
-            }
-
-            if ($statusCode >= 500) {
-                throw new FlowCatalystException(
-                    $data['message'] ?? $data['error'] ?? "Server error: {$statusCode}",
-                    $statusCode,
-                    null,
-                    $data
-                );
-            }
-
-            return $data;
         } catch (RequestException $e) {
-            throw new FlowCatalystException(
+            // The client is built with http_errors=false, so this only fires
+            // for genuine transport failures (connect errors, timeouts).
+            // Defensively check for an attached response anyway: a wrapped
+            // 404 (or any status) must go through the normal status handling
+            // below, never be mistaken for a network failure and retried.
+            if ($e->hasResponse()) {
+                return $this->handleResponse($e->getResponse());
+            }
+
+            throw new RetryableFailure(new FlowCatalystException(
                 'Request failed: ' . $e->getMessage(),
                 $e->getCode(),
                 $e
-            );
+            ));
         } catch (GuzzleException $e) {
-            throw new FlowCatalystException(
+            throw new RetryableFailure(new FlowCatalystException(
                 'HTTP client error: ' . $e->getMessage(),
                 0,
                 $e
+            ));
+        }
+
+        return $this->handleResponse($response);
+    }
+
+    /**
+     * Translate an HTTP response into either the decoded payload or the
+     * appropriate typed exception.
+     *
+     * Platform error responses look like:
+     *   { "error": "<machine code>", "message": "<human text>" }
+     * Surface the human message (falling back to the code) so callers
+     * get "Cannot reset password for OIDC-authenticated users" instead
+     * of "DUPLICATE".
+     */
+    private function handleResponse(ResponseInterface $response): array
+    {
+        $statusCode = $response->getStatusCode();
+        $body = (string) $response->getBody();
+        $data = json_decode($body, true) ?? [];
+
+        if ($statusCode === 401) {
+            throw AuthenticationException::tokenExpired();
+        }
+
+        if ($statusCode === 403) {
+            throw new FlowCatalystException(
+                $data['message'] ?? $data['error'] ?? 'Access forbidden',
+                403,
+                null,
+                $data
             );
         }
+
+        if ($statusCode === 404) {
+            throw new FlowCatalystException(
+                $data['message'] ?? $data['error'] ?? 'Resource not found',
+                404,
+                null,
+                $data
+            );
+        }
+
+        if ($statusCode === 422) {
+            throw ValidationException::fromResponse($data);
+        }
+
+        if ($statusCode >= 400 && $statusCode < 500) {
+            $exception = new FlowCatalystException(
+                $data['message'] ?? $data['error'] ?? "Client error: {$statusCode}",
+                $statusCode,
+                null,
+                $data
+            );
+
+            throw in_array($statusCode, self::RETRYABLE_STATUSES, true)
+                ? new RetryableFailure($exception)
+                : $exception;
+        }
+
+        if ($statusCode >= 500) {
+            $exception = new FlowCatalystException(
+                $data['message'] ?? $data['error'] ?? "Server error: {$statusCode}",
+                $statusCode,
+                null,
+                $data
+            );
+
+            throw in_array($statusCode, self::RETRYABLE_STATUSES, true)
+                ? new RetryableFailure($exception)
+                : $exception;
+        }
+
+        return $data;
     }
 
     /**

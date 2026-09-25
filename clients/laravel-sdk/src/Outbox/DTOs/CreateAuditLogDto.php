@@ -32,6 +32,8 @@ class CreateAuditLogDto
         public readonly ?\DateTimeInterface $performedAt = null,
         public readonly ?string $source = null,
         public readonly ?string $correlationId = null,
+        public readonly ?string $applicationCode = null,
+        public readonly ?string $clientCode = null,
         public readonly array $metadata = [],
         public readonly array $headers = [],
         public readonly array $maskedFields = [],
@@ -70,6 +72,8 @@ class CreateAuditLogDto
             performedAt: $this->performedAt,
             source: $this->source,
             correlationId: $this->correlationId,
+            applicationCode: $this->applicationCode,
+            clientCode: $this->clientCode,
             metadata: $this->metadata,
             headers: $this->headers,
             maskedFields: $maskedFields,
@@ -90,6 +94,8 @@ class CreateAuditLogDto
             performedAt: $this->performedAt,
             source: $this->source,
             correlationId: $this->correlationId,
+            applicationCode: $this->applicationCode,
+            clientCode: $this->clientCode,
             metadata: $this->metadata,
             headers: $this->headers,
             maskedFields: $this->maskedFields,
@@ -110,6 +116,8 @@ class CreateAuditLogDto
             performedAt: $performedAt,
             source: $this->source,
             correlationId: $this->correlationId,
+            applicationCode: $this->applicationCode,
+            clientCode: $this->clientCode,
             metadata: $this->metadata,
             headers: $this->headers,
             maskedFields: $this->maskedFields,
@@ -130,6 +138,8 @@ class CreateAuditLogDto
             performedAt: $this->performedAt,
             source: $source,
             correlationId: $this->correlationId,
+            applicationCode: $this->applicationCode,
+            clientCode: $this->clientCode,
             metadata: $this->metadata,
             headers: $this->headers,
             maskedFields: $this->maskedFields,
@@ -150,6 +160,54 @@ class CreateAuditLogDto
             performedAt: $this->performedAt,
             source: $this->source,
             correlationId: $correlationId,
+            applicationCode: $this->applicationCode,
+            clientCode: $this->clientCode,
+            metadata: $this->metadata,
+            headers: $this->headers,
+            maskedFields: $this->maskedFields,
+        );
+    }
+
+    /**
+     * Set the FlowCatalyst application (by code) this audit log belongs to. The
+     * platform resolves the code to an application id at ingest.
+     */
+    public function withApplicationCode(string $applicationCode): self
+    {
+        return new self(
+            entityType: $this->entityType,
+            entityId: $this->entityId,
+            operation: $this->operation,
+            operationData: $this->operationData,
+            principalId: $this->principalId,
+            performedAt: $this->performedAt,
+            source: $this->source,
+            correlationId: $this->correlationId,
+            applicationCode: $applicationCode,
+            clientCode: $this->clientCode,
+            metadata: $this->metadata,
+            headers: $this->headers,
+            maskedFields: $this->maskedFields,
+        );
+    }
+
+    /**
+     * Set the FlowCatalyst client (by code) this audit log belongs to. The
+     * platform resolves the code to a client id at ingest.
+     */
+    public function withClientCode(string $clientCode): self
+    {
+        return new self(
+            entityType: $this->entityType,
+            entityId: $this->entityId,
+            operation: $this->operation,
+            operationData: $this->operationData,
+            principalId: $this->principalId,
+            performedAt: $this->performedAt,
+            source: $this->source,
+            correlationId: $this->correlationId,
+            applicationCode: $this->applicationCode,
+            clientCode: $clientCode,
             metadata: $this->metadata,
             headers: $this->headers,
             maskedFields: $this->maskedFields,
@@ -170,6 +228,8 @@ class CreateAuditLogDto
             performedAt: $this->performedAt,
             source: $this->source,
             correlationId: $this->correlationId,
+            applicationCode: $this->applicationCode,
+            clientCode: $this->clientCode,
             metadata: array_merge($this->metadata, $metadata),
             headers: $this->headers,
             maskedFields: $this->maskedFields,
@@ -190,6 +250,8 @@ class CreateAuditLogDto
             performedAt: $this->performedAt,
             source: $this->source,
             correlationId: $this->correlationId,
+            applicationCode: $this->applicationCode,
+            clientCode: $this->clientCode,
             metadata: $this->metadata,
             headers: array_merge($this->headers, $headers),
             maskedFields: $this->maskedFields,
@@ -212,6 +274,8 @@ class CreateAuditLogDto
             'performedAt' => ($this->performedAt ?? new \DateTimeImmutable())->format('c'),
             'source' => $this->source,
             'correlationId' => $this->correlationId,
+            'applicationCode' => $this->applicationCode,
+            'clientCode' => $this->clientCode,
             'metadata' => !empty($this->metadata) ? $this->metadata : null,
         ], fn($v) => $v !== null);
     }

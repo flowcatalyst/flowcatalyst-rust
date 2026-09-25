@@ -39,22 +39,15 @@ class SyncSubscriptionEventTypeRequestNormalizer implements DenormalizerInterfac
         }
         if (\array_key_exists('eventTypeCode', $data) && $data['eventTypeCode'] !== null) {
             $object->setEventTypeCode($data['eventTypeCode']);
-            unset($data['eventTypeCode']);
         }
         elseif (\array_key_exists('eventTypeCode', $data) && $data['eventTypeCode'] === null) {
             $object->setEventTypeCode(null);
         }
         if (\array_key_exists('filter', $data) && $data['filter'] !== null) {
             $object->setFilter($data['filter']);
-            unset($data['filter']);
         }
         elseif (\array_key_exists('filter', $data) && $data['filter'] === null) {
             $object->setFilter(null);
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value;
-            }
         }
         return $object;
     }
@@ -62,13 +55,8 @@ class SyncSubscriptionEventTypeRequestNormalizer implements DenormalizerInterfac
     {
         $dataArray = [];
         $dataArray['eventTypeCode'] = $data->getEventTypeCode();
-        if ($data->isInitialized('filter')) {
+        if ($data->isInitialized('filter') && null !== $data->getFilter()) {
             $dataArray['filter'] = $data->getFilter();
-        }
-        foreach ($data as $key => $value) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value;
-            }
         }
         return $dataArray;
     }

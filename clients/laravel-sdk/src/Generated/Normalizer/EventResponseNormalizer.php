@@ -37,16 +37,32 @@ class EventResponseNormalizer implements DenormalizerInterface, NormalizerInterf
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
+        if (\array_key_exists('aggregate', $data) && $data['aggregate'] !== null) {
+            $object->setAggregate($data['aggregate']);
+        }
+        elseif (\array_key_exists('aggregate', $data) && $data['aggregate'] === null) {
+            $object->setAggregate(null);
+        }
+        if (\array_key_exists('application', $data) && $data['application'] !== null) {
+            $object->setApplication($data['application']);
+        }
+        elseif (\array_key_exists('application', $data) && $data['application'] === null) {
+            $object->setApplication(null);
+        }
         if (\array_key_exists('causationId', $data) && $data['causationId'] !== null) {
             $object->setCausationId($data['causationId']);
-            unset($data['causationId']);
         }
         elseif (\array_key_exists('causationId', $data) && $data['causationId'] === null) {
             $object->setCausationId(null);
         }
         if (\array_key_exists('clientId', $data) && $data['clientId'] !== null) {
             $object->setClientId($data['clientId']);
-            unset($data['clientId']);
         }
         elseif (\array_key_exists('clientId', $data) && $data['clientId'] === null) {
             $object->setClientId(null);
@@ -54,105 +70,106 @@ class EventResponseNormalizer implements DenormalizerInterface, NormalizerInterf
         if (\array_key_exists('contextData', $data) && $data['contextData'] !== null) {
             $values = [];
             foreach ($data['contextData'] as $value) {
-                $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\ContextDataDto::class, 'json', $context);
+                $values[] = $this->denormalizer->denormalize($value, \FlowCatalyst\Generated\Model\ContextEntryDTO::class, 'json', $context);
             }
             $object->setContextData($values);
-            unset($data['contextData']);
         }
         elseif (\array_key_exists('contextData', $data) && $data['contextData'] === null) {
             $object->setContextData(null);
         }
         if (\array_key_exists('correlationId', $data) && $data['correlationId'] !== null) {
             $object->setCorrelationId($data['correlationId']);
-            unset($data['correlationId']);
         }
         elseif (\array_key_exists('correlationId', $data) && $data['correlationId'] === null) {
             $object->setCorrelationId(null);
         }
         if (\array_key_exists('createdAt', $data) && $data['createdAt'] !== null) {
-            $object->setCreatedAt($data['createdAt']);
-            unset($data['createdAt']);
+            $object->setCreatedAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['createdAt']));
         }
         elseif (\array_key_exists('createdAt', $data) && $data['createdAt'] === null) {
             $object->setCreatedAt(null);
         }
         if (\array_key_exists('data', $data) && $data['data'] !== null) {
             $object->setData($data['data']);
-            unset($data['data']);
         }
         elseif (\array_key_exists('data', $data) && $data['data'] === null) {
             $object->setData(null);
         }
         if (\array_key_exists('deduplicationId', $data) && $data['deduplicationId'] !== null) {
             $object->setDeduplicationId($data['deduplicationId']);
-            unset($data['deduplicationId']);
         }
         elseif (\array_key_exists('deduplicationId', $data) && $data['deduplicationId'] === null) {
             $object->setDeduplicationId(null);
         }
-        if (\array_key_exists('eventType', $data) && $data['eventType'] !== null) {
-            $object->setEventType($data['eventType']);
-            unset($data['eventType']);
-        }
-        elseif (\array_key_exists('eventType', $data) && $data['eventType'] === null) {
-            $object->setEventType(null);
-        }
         if (\array_key_exists('id', $data) && $data['id'] !== null) {
             $object->setId($data['id']);
-            unset($data['id']);
         }
         elseif (\array_key_exists('id', $data) && $data['id'] === null) {
             $object->setId(null);
         }
         if (\array_key_exists('messageGroup', $data) && $data['messageGroup'] !== null) {
             $object->setMessageGroup($data['messageGroup']);
-            unset($data['messageGroup']);
         }
         elseif (\array_key_exists('messageGroup', $data) && $data['messageGroup'] === null) {
             $object->setMessageGroup(null);
         }
+        if (\array_key_exists('projectedAt', $data) && $data['projectedAt'] !== null) {
+            $object->setProjectedAt(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['projectedAt']));
+        }
+        elseif (\array_key_exists('projectedAt', $data) && $data['projectedAt'] === null) {
+            $object->setProjectedAt(null);
+        }
         if (\array_key_exists('source', $data) && $data['source'] !== null) {
             $object->setSource($data['source']);
-            unset($data['source']);
         }
         elseif (\array_key_exists('source', $data) && $data['source'] === null) {
             $object->setSource(null);
         }
         if (\array_key_exists('specVersion', $data) && $data['specVersion'] !== null) {
             $object->setSpecVersion($data['specVersion']);
-            unset($data['specVersion']);
         }
         elseif (\array_key_exists('specVersion', $data) && $data['specVersion'] === null) {
             $object->setSpecVersion(null);
         }
+        if (\array_key_exists('subdomain', $data) && $data['subdomain'] !== null) {
+            $object->setSubdomain($data['subdomain']);
+        }
+        elseif (\array_key_exists('subdomain', $data) && $data['subdomain'] === null) {
+            $object->setSubdomain(null);
+        }
         if (\array_key_exists('subject', $data) && $data['subject'] !== null) {
             $object->setSubject($data['subject']);
-            unset($data['subject']);
         }
         elseif (\array_key_exists('subject', $data) && $data['subject'] === null) {
             $object->setSubject(null);
         }
         if (\array_key_exists('time', $data) && $data['time'] !== null) {
-            $object->setTime($data['time']);
-            unset($data['time']);
+            $object->setTime(\DateTime::createFromFormat('Y-m-d\TH:i:sP', $data['time']));
         }
         elseif (\array_key_exists('time', $data) && $data['time'] === null) {
             $object->setTime(null);
         }
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_1;
-            }
+        if (\array_key_exists('type', $data) && $data['type'] !== null) {
+            $object->setType($data['type']);
+        }
+        elseif (\array_key_exists('type', $data) && $data['type'] === null) {
+            $object->setType(null);
         }
         return $object;
     }
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        if ($data->isInitialized('causationId')) {
+        if ($data->isInitialized('aggregate') && null !== $data->getAggregate()) {
+            $dataArray['aggregate'] = $data->getAggregate();
+        }
+        if ($data->isInitialized('application') && null !== $data->getApplication()) {
+            $dataArray['application'] = $data->getApplication();
+        }
+        if ($data->isInitialized('causationId') && null !== $data->getCausationId()) {
             $dataArray['causationId'] = $data->getCausationId();
         }
-        if ($data->isInitialized('clientId')) {
+        if ($data->isInitialized('clientId') && null !== $data->getClientId()) {
             $dataArray['clientId'] = $data->getClientId();
         }
         if ($data->isInitialized('contextData') && null !== $data->getContextData()) {
@@ -162,30 +179,29 @@ class EventResponseNormalizer implements DenormalizerInterface, NormalizerInterf
             }
             $dataArray['contextData'] = $values;
         }
-        if ($data->isInitialized('correlationId')) {
+        if ($data->isInitialized('correlationId') && null !== $data->getCorrelationId()) {
             $dataArray['correlationId'] = $data->getCorrelationId();
         }
-        $dataArray['createdAt'] = $data->getCreatedAt();
-        $dataArray['data'] = $data->getData();
-        if ($data->isInitialized('deduplicationId')) {
-            $dataArray['deduplicationId'] = $data->getDeduplicationId();
+        $dataArray['createdAt'] = $data->getCreatedAt()->format('Y-m-d\TH:i:sP');
+        if ($data->isInitialized('data') && null !== $data->getData()) {
+            $dataArray['data'] = $data->getData();
         }
-        $dataArray['eventType'] = $data->getEventType();
+        $dataArray['deduplicationId'] = $data->getDeduplicationId();
         $dataArray['id'] = $data->getId();
-        if ($data->isInitialized('messageGroup')) {
+        if ($data->isInitialized('messageGroup') && null !== $data->getMessageGroup()) {
             $dataArray['messageGroup'] = $data->getMessageGroup();
+        }
+        if ($data->isInitialized('projectedAt') && null !== $data->getProjectedAt()) {
+            $dataArray['projectedAt'] = $data->getProjectedAt()->format('Y-m-d\TH:i:sP');
         }
         $dataArray['source'] = $data->getSource();
         $dataArray['specVersion'] = $data->getSpecVersion();
-        if ($data->isInitialized('subject')) {
-            $dataArray['subject'] = $data->getSubject();
+        if ($data->isInitialized('subdomain') && null !== $data->getSubdomain()) {
+            $dataArray['subdomain'] = $data->getSubdomain();
         }
-        $dataArray['time'] = $data->getTime();
-        foreach ($data as $key => $value_1) {
-            if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_1;
-            }
-        }
+        $dataArray['subject'] = $data->getSubject();
+        $dataArray['time'] = $data->getTime()->format('Y-m-d\TH:i:sP');
+        $dataArray['type'] = $data->getType();
         return $dataArray;
     }
     public function getSupportedTypes(?string $format = null): array

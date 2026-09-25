@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class CreateEventResponse extends \ArrayObject
+class CreateEventResponse
 {
     /**
      * @var array
@@ -13,15 +13,19 @@ class CreateEventResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * Number of dispatch jobs created for matching subscriptions
      *
      * @var int|null
      */
     protected $dispatchJobCount;
     /**
-     * Event response DTO
-     *
-     * @var EventResponse|null
+     * @var CreatedEvent|null
      */
     protected $event;
     /**
@@ -30,6 +34,28 @@ class CreateEventResponse extends \ArrayObject
      * @var bool|null
      */
     protected $isDuplicate;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * Number of dispatch jobs created for matching subscriptions
      *
@@ -53,22 +79,18 @@ class CreateEventResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Event response DTO
-     *
-     * @return EventResponse|null
+     * @return CreatedEvent|null
      */
-    public function getEvent(): ?EventResponse
+    public function getEvent(): ?CreatedEvent
     {
         return $this->event;
     }
     /**
-     * Event response DTO
-     *
-     * @param EventResponse|null $event
+     * @param CreatedEvent|null $event
      *
      * @return self
      */
-    public function setEvent(?EventResponse $event): self
+    public function setEvent(?CreatedEvent $event): self
     {
         $this->initialized['event'] = true;
         $this->event = $event;

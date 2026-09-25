@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class RoleResponse extends \ArrayObject
+class RoleResponse
 {
     /**
      * @var array
@@ -13,15 +13,25 @@ class RoleResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
      * @var string|null
      */
     protected $applicationCode;
+    /**
+     * @var string|null
+     */
+    protected $applicationId;
     /**
      * @var bool|null
      */
     protected $clientManaged;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $createdAt;
     /**
@@ -47,15 +57,33 @@ class RoleResponse extends \ArrayObject
     /**
      * @var string|null
      */
-    protected $shortName;
-    /**
-     * @var string|null
-     */
     protected $source;
     /**
-     * @var string|null
+     * @var \DateTime|null
      */
     protected $updatedAt;
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @return string|null
+     */
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
     /**
      * @return string|null
      */
@@ -72,6 +100,24 @@ class RoleResponse extends \ArrayObject
     {
         $this->initialized['applicationCode'] = true;
         $this->applicationCode = $applicationCode;
+        return $this;
+    }
+    /**
+     * @return string|null
+     */
+    public function getApplicationId(): ?string
+    {
+        return $this->applicationId;
+    }
+    /**
+     * @param string|null $applicationId
+     *
+     * @return self
+     */
+    public function setApplicationId(?string $applicationId): self
+    {
+        $this->initialized['applicationId'] = true;
+        $this->applicationId = $applicationId;
         return $this;
     }
     /**
@@ -93,18 +139,18 @@ class RoleResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getCreatedAt(): ?string
+    public function getCreatedAt(): ?\DateTime
     {
         return $this->createdAt;
     }
     /**
-     * @param string|null $createdAt
+     * @param \DateTime|null $createdAt
      *
      * @return self
      */
-    public function setCreatedAt(?string $createdAt): self
+    public function setCreatedAt(?\DateTime $createdAt): self
     {
         $this->initialized['createdAt'] = true;
         $this->createdAt = $createdAt;
@@ -203,24 +249,6 @@ class RoleResponse extends \ArrayObject
     /**
      * @return string|null
      */
-    public function getShortName(): ?string
-    {
-        return $this->shortName;
-    }
-    /**
-     * @param string|null $shortName
-     *
-     * @return self
-     */
-    public function setShortName(?string $shortName): self
-    {
-        $this->initialized['shortName'] = true;
-        $this->shortName = $shortName;
-        return $this;
-    }
-    /**
-     * @return string|null
-     */
     public function getSource(): ?string
     {
         return $this->source;
@@ -237,18 +265,18 @@ class RoleResponse extends \ArrayObject
         return $this;
     }
     /**
-     * @return string|null
+     * @return \DateTime|null
      */
-    public function getUpdatedAt(): ?string
+    public function getUpdatedAt(): ?\DateTime
     {
         return $this->updatedAt;
     }
     /**
-     * @param string|null $updatedAt
+     * @param \DateTime|null $updatedAt
      *
      * @return self
      */
-    public function setUpdatedAt(?string $updatedAt): self
+    public function setUpdatedAt(?\DateTime $updatedAt): self
     {
         $this->initialized['updatedAt'] = true;
         $this->updatedAt = $updatedAt;

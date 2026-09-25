@@ -40,6 +40,13 @@ class SyncScheduledJobsRequestNormalizer implements DenormalizerInterface, Norma
         if (\array_key_exists('archiveUnlisted', $data) && \is_int($data['archiveUnlisted'])) {
             $data['archiveUnlisted'] = (bool) $data['archiveUnlisted'];
         }
+        if (\array_key_exists('$schema', $data) && $data['$schema'] !== null) {
+            $object->setDollarSchema($data['$schema']);
+            unset($data['$schema']);
+        }
+        elseif (\array_key_exists('$schema', $data) && $data['$schema'] === null) {
+            $object->setDollarSchema(null);
+        }
         if (\array_key_exists('archiveUnlisted', $data) && $data['archiveUnlisted'] !== null) {
             $object->setArchiveUnlisted($data['archiveUnlisted']);
             unset($data['archiveUnlisted']);
@@ -78,7 +85,7 @@ class SyncScheduledJobsRequestNormalizer implements DenormalizerInterface, Norma
         if ($data->isInitialized('archiveUnlisted') && null !== $data->getArchiveUnlisted()) {
             $dataArray['archiveUnlisted'] = $data->getArchiveUnlisted();
         }
-        if ($data->isInitialized('clientId')) {
+        if ($data->isInitialized('clientId') && null !== $data->getClientId()) {
             $dataArray['clientId'] = $data->getClientId();
         }
         $values = [];

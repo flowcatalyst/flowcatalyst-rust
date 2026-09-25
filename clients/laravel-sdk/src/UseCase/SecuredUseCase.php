@@ -11,6 +11,10 @@ namespace FlowCatalyst\UseCase;
  * and return either `true` unconditionally (no per-resource scope) or a
  * decision based on the caller's scope.
  *
+ * @deprecated Use the envelope: an {@link Operation}'s `authorize` phase is the
+ * direct replacement for `authorizeResource` (return a {@link UseCaseError} to
+ * deny, `null` to allow). Run it with `Runner::run(...)`.
+ *
  * @template TCommand of Command
  * @template TEvent of DomainEvent
  * @implements UseCase<TCommand, TEvent>

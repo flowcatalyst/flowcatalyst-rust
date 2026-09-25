@@ -13,14 +13,16 @@ class RegisterCompleteRequest extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * The `PublicKeyCredential` returned by `navigator.credentials.create()`.
+     * A URL to the JSON Schema for this object.
      *
-     * @var array<string, mixed>|null
+     * @var string|null
+     */
+    protected $dollarSchema;
+    /**
+     * @var mixed|null
      */
     protected $credential;
     /**
-     * User-supplied label (e.g. "Andrew's iPhone").
-     *
      * @var string|null
      */
     protected $name;
@@ -29,30 +31,46 @@ class RegisterCompleteRequest extends \ArrayObject
      */
     protected $stateId;
     /**
-     * The `PublicKeyCredential` returned by `navigator.credentials.create()`.
+     * A URL to the JSON Schema for this object.
      *
-     * @return array<string, mixed>|null
+     * @return string|null
      */
-    public function getCredential(): ?iterable
+    public function getDollarSchema(): ?string
+    {
+        return $this->dollarSchema;
+    }
+    /**
+     * A URL to the JSON Schema for this object.
+     *
+     * @param string|null $dollarSchema
+     *
+     * @return self
+     */
+    public function setDollarSchema(?string $dollarSchema): self
+    {
+        $this->initialized['dollarSchema'] = true;
+        $this->dollarSchema = $dollarSchema;
+        return $this;
+    }
+    /**
+     * @return mixed
+     */
+    public function getCredential()
     {
         return $this->credential;
     }
     /**
-     * The `PublicKeyCredential` returned by `navigator.credentials.create()`.
-     *
-     * @param array<string, mixed>|null $credential
+     * @param mixed $credential
      *
      * @return self
      */
-    public function setCredential(?iterable $credential): self
+    public function setCredential($credential): self
     {
         $this->initialized['credential'] = true;
         $this->credential = $credential;
         return $this;
     }
     /**
-     * User-supplied label (e.g. "Andrew's iPhone").
-     *
      * @return string|null
      */
     public function getName(): ?string
@@ -60,8 +78,6 @@ class RegisterCompleteRequest extends \ArrayObject
         return $this->name;
     }
     /**
-     * User-supplied label (e.g. "Andrew's iPhone").
-     *
      * @param string|null $name
      *
      * @return self

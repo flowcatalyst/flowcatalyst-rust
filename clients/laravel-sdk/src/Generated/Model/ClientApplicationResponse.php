@@ -2,7 +2,7 @@
 
 namespace FlowCatalyst\Generated\Model;
 
-class ClientApplicationResponse extends \ArrayObject
+class ClientApplicationResponse
 {
     /**
      * @var array
@@ -13,50 +13,34 @@ class ClientApplicationResponse extends \ArrayObject
         return array_key_exists($property, $this->initialized);
     }
     /**
-     * Whether the application itself is active globally
-     *
      * @var bool|null
      */
     protected $active;
     /**
-     * Application code
-     *
      * @var string|null
      */
     protected $code;
     /**
-     * Application description
-     *
      * @var string|null
      */
     protected $description;
     /**
-     * Whether this application is enabled for this specific client
-     *
      * @var bool|null
      */
     protected $enabledForClient;
     /**
-     * Application icon URL
-     *
      * @var string|null
      */
     protected $iconUrl;
     /**
-     * Application ID
-     *
      * @var string|null
      */
     protected $id;
     /**
-     * Application display name
-     *
      * @var string|null
      */
     protected $name;
     /**
-     * Whether the application itself is active globally
-     *
      * @return bool|null
      */
     public function getActive(): ?bool
@@ -64,8 +48,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this->active;
     }
     /**
-     * Whether the application itself is active globally
-     *
      * @param bool|null $active
      *
      * @return self
@@ -77,8 +59,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Application code
-     *
      * @return string|null
      */
     public function getCode(): ?string
@@ -86,8 +66,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this->code;
     }
     /**
-     * Application code
-     *
      * @param string|null $code
      *
      * @return self
@@ -99,8 +77,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Application description
-     *
      * @return string|null
      */
     public function getDescription(): ?string
@@ -108,8 +84,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this->description;
     }
     /**
-     * Application description
-     *
      * @param string|null $description
      *
      * @return self
@@ -121,8 +95,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Whether this application is enabled for this specific client
-     *
      * @return bool|null
      */
     public function getEnabledForClient(): ?bool
@@ -130,8 +102,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this->enabledForClient;
     }
     /**
-     * Whether this application is enabled for this specific client
-     *
      * @param bool|null $enabledForClient
      *
      * @return self
@@ -143,8 +113,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Application icon URL
-     *
      * @return string|null
      */
     public function getIconUrl(): ?string
@@ -152,8 +120,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this->iconUrl;
     }
     /**
-     * Application icon URL
-     *
      * @param string|null $iconUrl
      *
      * @return self
@@ -165,8 +131,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Application ID
-     *
      * @return string|null
      */
     public function getId(): ?string
@@ -174,8 +138,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this->id;
     }
     /**
-     * Application ID
-     *
      * @param string|null $id
      *
      * @return self
@@ -187,8 +149,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this;
     }
     /**
-     * Application display name
-     *
      * @return string|null
      */
     public function getName(): ?string
@@ -196,8 +156,6 @@ class ClientApplicationResponse extends \ArrayObject
         return $this->name;
     }
     /**
-     * Application display name
-     *
      * @param string|null $name
      *
      * @return self
