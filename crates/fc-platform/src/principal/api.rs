@@ -813,17 +813,23 @@ pub async fn get_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
+    // Go `getByID` (principal/api/api.go:288-323): a principal reads itself
+    // with no permission; anyone else needs the user read permission, and a
+    // principal of a client the caller does not reach answers the same 404
+    // as a missing one.
+    let is_self = auth.0.principal_id == id;
+    if !is_self {
+        crate::checks::can_read_principals(&auth.0)?;
+    }
     let principal = state
         .principal_repo
         .find_by_id(&id)
         .await?
         .or_not_found("Principal", &id)?;
-
-    // Check access - anchor can see all, others only their client
-    if !auth.0.is_anchor() {
-        if let Some(ref cid) = principal.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden("No access to this principal"));
+    if !is_self {
+        if let Some(cid) = principal.client_id.as_deref() {
+            if !crate::shared::caller_reach::reaches_client(&auth.0, cid) {
+                return Err(PlatformError::not_found("Principal", &id));
             }
         }
     }
@@ -858,6 +864,8 @@ pub async fn list_principals(
     auth: Authenticated,
     Query(query): Query<PrincipalsQuery>,
 ) -> Result<Json<PrincipalListResponse>, PlatformError> {
+    crate::checks::can_read_principals(&auth.0)?;
+
     // Validate client_id access upfront
     if let Some(ref client_id) = query.client_id {
         if !auth.0.can_access_client(client_id) {
@@ -1042,6 +1050,8 @@ pub async fn get_roles(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RolesListResponse>, PlatformError> {
+    crate::checks::can_read_principals(&auth.0)?;
+
     let principal = state
         .principal_repo
         .find_by_id(&id)
@@ -1292,20 +1302,13 @@ pub async fn get_client_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientAccessListResponse>, PlatformError> {
+    // Go `listClientAccess`: anchor reach alone (principal/api/api.go:1251).
+    crate::checks::require_anchor_scope(&auth.0)?;
     let principal = state
         .principal_repo
         .find_by_id(&id)
         .await?
         .or_not_found("Principal", &id)?;
-
-    // Check access
-    if !auth.0.is_anchor() {
-        if let Some(ref cid) = principal.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden("No access to this principal"));
-            }
-        }
-    }
 
     // Convert assigned_clients to grants (synthesized since we don't store grant metadata)
     let grants: Vec<ClientAccessGrantResponse> = principal
@@ -1795,7 +1798,9 @@ pub async fn check_email_domain(
     auth: Authenticated,
     Query(query): Query<CheckEmailDomainQuery>,
 ) -> Result<Json<CheckEmailDomainResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    // Go `checkEmailDomain`: the user read permission, no anchor reach (a
+    // client administrator's create form calls it).
+    crate::checks::can_read_principals(&auth.0)?;
 
     // Extract domain from email
     let email = &query.email;
@@ -1939,6 +1944,8 @@ pub async fn get_application_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationAccessListResponse>, PlatformError> {
+    crate::checks::can_read_principals(&auth.0)?;
+
     let principal = state
         .principal_repo
         .find_by_id(&id)
@@ -2111,6 +2118,8 @@ pub async fn get_available_applications(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<AvailableApplicationsResponse>, PlatformError> {
+    crate::checks::can_read_principals(&auth.0)?;
+
     let principal = state
         .principal_repo
         .find_by_id(&id)

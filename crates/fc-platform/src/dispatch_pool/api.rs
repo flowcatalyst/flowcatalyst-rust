@@ -204,6 +204,8 @@ pub async fn get_dispatch_pool<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<DispatchPoolResponse>, PlatformError> {
+    crate::checks::can_read_dispatch_pools(&auth.0)?;
+
     let pool = state
         .dispatch_pool_repo
         .find_by_id(&id)
@@ -239,6 +241,8 @@ pub async fn list_dispatch_pools<U: UnitOfWork>(
     auth: Authenticated,
     Query(query): Query<DispatchPoolsQuery>,
 ) -> Result<Json<DispatchPoolListResponse>, PlatformError> {
+    crate::checks::can_read_dispatch_pools(&auth.0)?;
+
     let pools = if let Some(ref client_id) = query.client_id {
         // Check access
         if !auth.0.is_anchor() && !auth.0.can_access_client(client_id) {

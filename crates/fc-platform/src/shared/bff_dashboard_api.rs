@@ -79,7 +79,7 @@ pub async fn get_dashboard_stats(
     State(state): State<BffDashboardState>,
     auth: Authenticated,
 ) -> Result<Json<DashboardStatsResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::is_admin(&auth.0)?;
+    crate::checks::can_view_dashboard_stats(&auth.0)?;
 
     // Control plane: exact counts. These tables are bounded (thousands at
     // most) so COUNT(*) is sub-millisecond — keeping these in one place

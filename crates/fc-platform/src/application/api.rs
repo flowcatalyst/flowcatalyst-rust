@@ -353,9 +353,11 @@ pub async fn create_application<U: UnitOfWork>(
 )]
 pub async fn get_application<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
+    crate::checks::can_read_applications(&auth.0)?;
+
     let app = state
         .application_repo
         .find_by_id(&id)
@@ -393,9 +395,11 @@ pub struct ApplicationListResponse {
 )]
 pub async fn list_applications<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Query(query): Query<ApplicationsQuery>,
 ) -> Result<Json<ApplicationListResponse>, PlatformError> {
+    crate::checks::can_read_applications(&auth.0)?;
+
     // Go lists every application, filtered only when asked, ordered by code
     // and unpaginated (application/api/api.go:63-81).
     let want_type =
@@ -723,9 +727,11 @@ pub async fn deactivate_application<U: UnitOfWork>(
 )]
 pub async fn get_application_by_code<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
+    crate::checks::can_read_applications(&auth.0)?;
+
     let app = state
         .application_repo
         .find_by_code(&code)
@@ -1112,9 +1118,11 @@ fn generate_client_secret() -> Result<(String, String), PlatformError> {
 )]
 pub async fn get_application_service_account<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
+    crate::checks::can_read_applications(&auth.0)?;
+
     // Get the application
     let app = state
         .application_repo
@@ -1157,9 +1165,11 @@ pub async fn get_application_service_account<U: UnitOfWork>(
 )]
 pub async fn list_application_roles<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<ApplicationRoleResponse>>, PlatformError> {
+    crate::checks::can_read_applications(&auth.0)?;
+
     // Get the application
     let app = state
         .application_repo
@@ -1224,9 +1234,11 @@ pub struct ClientConfigRequest {
 )]
 pub async fn list_client_configs<U: UnitOfWork>(
     State(state): State<ApplicationsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientConfigsResponse>, PlatformError> {
+    crate::checks::can_read_applications(&auth.0)?;
+
     // Verify application exists
     let app = state
         .application_repo
