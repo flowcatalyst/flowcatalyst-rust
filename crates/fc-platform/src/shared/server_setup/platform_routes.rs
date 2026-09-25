@@ -1222,6 +1222,7 @@ pub fn build_platform_routes(
             auth,
             unit_of_work,
             password_reset_emailer,
+            app_access.clone(),
         ),
         static_dir: config.static_dir,
         rate_limit_store: config.rate_limit_store,

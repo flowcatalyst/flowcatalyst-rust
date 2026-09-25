@@ -1463,3 +1463,230 @@ async fn the_openapi_document_is_served_as_json_and_yaml_without_auth() {
         &text[..40.min(text.len())]
     );
 }
+
+// ── Connections and processes sync ───────────────────────────────────────
+
+/// A stored anchor admin who reaches every application (the app-scoped
+/// routes resolve the caller's application scope from the database).
+async fn stored_admin_token(app: &TestApp) -> String {
+    use fc_platform::service_account::entity::RoleAssignment;
+    app.anchor_admin_token().await; // seeds platform:test-admin
+    let mut p = Principal::new_user("stored-admin@flowcatalyst.test", UserScope::Anchor);
+    p.roles = vec![RoleAssignment::new("platform:test-admin")];
+    p.all_applications = true;
+    app.repos.principal_repo.insert(&p).await.unwrap();
+    app.auth_service.generate_access_token(&p).expect("token")
+}
+
+/// An application `code` whose service account is a fresh one.
+async fn app_with_service_account(app: &TestApp, admin: &str, code: &str) -> String {
+    use fc_platform::application::entity::Application;
+    let created = create_sa(app, admin, &format!("{code}-bot")).await;
+    let sa_id = created["serviceAccount"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let principal = app
+        .repos
+        .principal_repo
+        .find_by_service_account(&sa_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut application = Application::new(code, code);
+    application.service_account_id = Some(principal.id);
+    app.repos
+        .application_repo
+        .insert(&application)
+        .await
+        .unwrap();
+    application.id
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn connections_and_processes_sync_as_go() {
+    let app = setup().await;
+    let admin = stored_admin_token(&app).await;
+    app_with_service_account(&app, &admin, "syncapp").await;
+    let path = "/api/applications/syncapp/connections/sync";
+
+    let body = assert_status(
+        app.post(
+            path,
+            &admin,
+            json!({ "connections": [
+                { "code": "Orders-API", "name": "Orders" },
+                { "code": "billing", "name": "Billing", "description": "b" }
+            ]}),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({ "applicationCode": "syncapp", "created": 2, "updated": 0, "deleted": 0,
+                "syncedCodes": ["orders-api", "billing"] })
+    );
+    let rows: Vec<(String, Option<String>, String)> =
+        sqlx::query_as("SELECT code, application_code, source FROM msg_connections ORDER BY code")
+            .fetch_all(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("billing".into(), Some("syncapp".into()), "API".into()),
+            ("orders-api".into(), Some("syncapp".into()), "API".into())
+        ]
+    );
+
+    // A UI row of the app is listed but never touched.
+    sqlx::query(
+        "INSERT INTO msg_connections (id, code, name, status, service_account_id, application_code, source) \
+         VALUES ('con_ui', 'manual', 'Manual', 'ACTIVE', 'x', 'syncapp', 'UI')",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let body = assert_status(
+        app.post(
+            &format!("{path}?removeUnlisted=true"),
+            &admin,
+            json!({ "connections": [
+                { "code": "orders-api", "name": "Orders v2" },
+                { "code": "manual", "name": "Renamed" }
+            ]}),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(body["updated"], 1);
+    assert_eq!(body["deleted"], 1);
+    let names: Vec<(String, String)> =
+        sqlx::query_as("SELECT code, name FROM msg_connections ORDER BY code")
+            .fetch_all(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        names,
+        vec![
+            ("manual".into(), "Manual".into()),
+            ("orders-api".into(), "Orders v2".into())
+        ]
+    );
+    assert_eq!(
+        app.event_count_by_type("platform:admin:connection:synced")
+            .await,
+        2
+    );
+
+    // A connection a subscription uses is not removed; nothing is written.
+    let orders_id: (String,) =
+        sqlx::query_as("SELECT id FROM msg_connections WHERE code = 'orders-api'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO msg_subscriptions (id, code, name, target, connection_id, status) \
+         VALUES ('sub_x', 'uses-orders', 'Uses', 'x', $1, 'ACTIVE')",
+    )
+    .bind(&orders_id.0)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (s, b) = read_json(
+        app.post(
+            &format!("{path}?removeUnlisted=true"),
+            &admin,
+            json!({ "connections": [] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert_eq!(b["code"], "CONNECTION_REFERENCED");
+
+    for (body, code) in [
+        (
+            json!({ "connections": [{ "code": "1bad", "name": "x" }] }),
+            "INVALID_CODE_FORMAT",
+        ),
+        (
+            json!({ "connections": [{ "code": "a", "name": " " }] }),
+            "NAME_REQUIRED",
+        ),
+        (
+            json!({ "connections": [{ "code": "a", "name": "x" }, { "code": "A", "name": "y" }] }),
+            "DUPLICATE_CODE",
+        ),
+    ] {
+        let (s, b) = read_json(app.post(path, &admin, body).await).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+        assert_eq!(b["code"], code);
+    }
+    let (s, _) = read_json(
+        app.post(
+            path,
+            &admin,
+            json!({ "clientId": "nope", "connections": [] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = read_json(
+        app.post(path, &nobody_token(&app), json!({ "connections": [] }))
+            .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    // No service account: refused.
+    app.repos
+        .application_repo
+        .insert(&fc_platform::application::entity::Application::new(
+            "nosa", "No SA",
+        ))
+        .await
+        .unwrap();
+    let (s, b) = read_json(
+        app.post(
+            "/api/applications/nosa/connections/sync",
+            &admin,
+            json!({ "connections": [] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(b["code"], "APPLICATION_SERVICE_ACCOUNT_REQUIRED");
+
+    // Processes by body.
+    let body = assert_status(
+        app.post(
+            "/api/processes/sync",
+            &admin,
+            json!({ "applicationCode": "syncapp", "processes": [
+                { "code": "syncapp:orders:fulfil", "name": "Fulfil", "body": "graph TD; A-->B" }
+            ]}),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(body["created"], 1);
+    assert_eq!(body["syncedCodes"], json!(["syncapp:orders:fulfil"]));
+    let (s, _) = read_json(
+        app.post(
+            "/api/processes/sync",
+            &admin,
+            json!({ "applicationCode": "unknown", "processes": [] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

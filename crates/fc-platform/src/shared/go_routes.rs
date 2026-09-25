@@ -21,6 +21,7 @@ pub struct GoRoutesState {
     pub applications: crate::application::go_api::ApplicationGoState,
     pub event_types: crate::event_type::go_api::EventTypeGoState,
     pub read_aliases: crate::shared::go_read_aliases_api::ReadAliasesState,
+    pub sdk_sync: crate::shared::sdk_sync_go_api::SdkSyncGoState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
@@ -32,6 +33,7 @@ impl GoRoutesState {
         auth: &AuthServices,
         uow: &Arc<PgUnitOfWork>,
         emailer: Arc<crate::auth::password_reset_api::PasswordResetEmailer>,
+        app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
     ) -> Self {
         let encryption =
             crate::shared::encryption_service::EncryptionService::from_env().map(Arc::new);
@@ -53,6 +55,24 @@ impl GoRoutesState {
             repos.principal_repo.clone(),
         ));
         Self {
+            sdk_sync: crate::shared::sdk_sync_go_api::SdkSyncGoState {
+                app_access,
+                client_repo: repos.client_repo.clone(),
+                sync_connections_use_case: Arc::new(
+                    crate::connection::operations::sync::SyncConnectionsUseCase::new(
+                        repos.connection_repo.clone(),
+                        repos.application_repo.clone(),
+                        repos.subscription_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+                sync_processes_use_case: Arc::new(
+                    crate::process::operations::SyncProcessesUseCase::new(
+                        repos.process_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+            },
             event_types: crate::event_type::go_api::EventTypeGoState {
                 event_type_repo: repos.event_type_repo.clone(),
                 add_schema_use_case: Arc::new(
@@ -198,6 +218,9 @@ impl GoRoutesState {
 /// All Go-parity routes, at their full paths.
 pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
     OpenApiRouter::new()
+        .merge(crate::shared::sdk_sync_go_api::sdk_sync_go_router(
+            state.sdk_sync,
+        ))
         .merge(crate::event_type::go_api::event_type_go_router(
             state.event_types,
         ))

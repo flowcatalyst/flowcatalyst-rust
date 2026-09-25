@@ -39,6 +39,7 @@ pub mod router_config_api;
 pub mod sdk_audit_batch_api;
 pub mod sdk_dispatch_jobs_api;
 pub mod sdk_sync_api;
+pub mod sdk_sync_go_api;
 pub mod well_known_api;
 
 // Server setup helpers (shared across fc-server, fc-platform-server, fc-dev)

@@ -435,6 +435,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "038_aud_logs_entity_id_width",
             include_str!("../../../../migrations/038_aud_logs_entity_id_width.sql"),
         ),
+        // Go's 056: application-scoped connections (application_code,
+        // source) and the (application_code, client_id, code) uniqueness.
+        (
+            "050_connection_application_scope",
+            include_str!("../../../../migrations/050_connection_application_scope.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -588,6 +594,16 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' AND table_name = 'aud_logs' \
                AND column_name = 'entity_id' \
                AND character_maximum_length >= 100)",
+        ),
+        // A database Go migrated to 056 has the column and the new index.
+        (
+            "050_connection_application_scope",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_connections' \
+               AND column_name = 'source') \
+             AND EXISTS (SELECT 1 FROM pg_indexes \
+             WHERE schemaname = 'public' \
+               AND indexname = 'uq_msg_subscriptions_app_client_code')",
         ),
     ];
 
