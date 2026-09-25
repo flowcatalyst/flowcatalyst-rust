@@ -189,8 +189,10 @@ pub async fn create_email_domain_mapping(
 )]
 pub async fn list_email_domain_mappings(
     State(state): State<EmailDomainMappingsState>,
-    _auth: Authenticated,
+    auth: Authenticated,
 ) -> Result<Json<EmailDomainMappingsListResponse>, PlatformError> {
+    crate::checks::can_read_email_domain_mappings(&auth.0)?;
+
     let mappings = state.edm_repo.find_all().await?;
     let total = mappings.len();
 
@@ -239,9 +241,11 @@ pub async fn list_email_domain_mappings(
 )]
 pub async fn get_email_domain_mapping(
     State(state): State<EmailDomainMappingsState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<EmailDomainMappingResponse>, PlatformError> {
+    crate::checks::can_read_email_domain_mappings(&auth.0)?;
+
     let edm = state
         .edm_repo
         .find_by_id(&id)

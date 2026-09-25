@@ -1,4 +1,4 @@
-import { getRoutePermission, userCan } from "@/stores/permissions";
+import { canEnterRoute } from "@/stores/permissions";
 import type { User } from "@/stores/auth";
 
 export interface NavItem {
@@ -203,13 +203,14 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 
 /**
  * The navigation a user may see: an item whose route the user cannot enter
- * (the route guard's rule, `userCan` over `getRoutePermission`) is hidden, a
+ * (the route guard's rule, `canEnterRoute`: the page's permission, and anchor
+ * tier for an anchor-only page) is hidden, a
  * parent is hidden once none of its children is left, and so is a group left
  * empty.
  */
 export function visibleNavigation(
 	groups: readonly NavGroup[],
-	user: Pick<User, "roles" | "permissions"> | null | undefined,
+	user: Pick<User, "roles" | "permissions" | "scope"> | null | undefined,
 ): NavGroup[] {
 	const visible = (item: NavItem): NavItem | null => {
 		if (item.children) {
@@ -218,9 +219,7 @@ export function visibleNavigation(
 				.filter((c): c is NavItem => c !== null);
 			return children.length > 0 ? { ...item, children } : null;
 		}
-		return !item.route || userCan(user, getRoutePermission(item.route))
-			? item
-			: null;
+		return !item.route || canEnterRoute(user, item.route) ? item : null;
 	};
 	return groups
 		.map((group) => ({

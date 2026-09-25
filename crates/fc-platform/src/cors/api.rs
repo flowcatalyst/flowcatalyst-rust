@@ -123,8 +123,10 @@ pub async fn create_cors_origin(
 )]
 pub async fn list_cors_origins(
     State(state): State<CorsState>,
-    _auth: Authenticated,
+    auth: Authenticated,
 ) -> Result<Json<CorsOriginsListResponse>, PlatformError> {
+    crate::checks::can_read_cors_origins(&auth.0)?;
+
     let origins = state.cors_repo.find_all().await?;
     let total = origins.len();
     Ok(Json(CorsOriginsListResponse {
@@ -169,9 +171,11 @@ pub async fn get_allowed_origins(
 )]
 pub async fn get_cors_origin(
     State(state): State<CorsState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<CorsOriginResponse>, PlatformError> {
+    crate::checks::can_read_cors_origins(&auth.0)?;
+
     let origin = state
         .cors_repo
         .find_by_id(&id)

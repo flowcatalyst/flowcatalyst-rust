@@ -556,7 +556,8 @@ pub async fn create_user(
     use crate::principal::operations::{CreateUserCommand, GrantClientAccessCommand};
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    // Go `createUser`: the user-write permission first; the tier bound once
+    // the scope is derived below.
     crate::checks::can_write_principals(&auth.0)?;
 
     let domain = req
@@ -598,6 +599,16 @@ pub async fn create_user(
         mapping.as_ref(),
         req_client_id,
     )?;
+
+    // Anchors create any scope and client. A client administrator creates
+    // CLIENT-tier users only, in a client it reaches (Go `createUser` +
+    // `RequireUserAdmin`, principal/api/api.go:608-616).
+    if !auth.0.is_anchor() && scope != UserScope::Client {
+        return Err(PlatformError::forbidden(
+            "Client administrators can only create client-scope users",
+        ));
+    }
+    crate::checks::require_user_admin(&auth.0, primary_client_id.as_deref())?;
 
     // Partner-merge: if a user already exists for this email, emit a
     // ClientAccessGranted event via the grant use case rather than a fresh
@@ -694,6 +705,160 @@ pub async fn create_user(
     }
 
     Ok(Json(created.into()))
+}
+
+/// Go's per-resource user-admin gate (`requireUserResourceAccess` /
+/// `requireUserAdmin`, principal/operations/authz.go): a non-anchor
+/// administrator (a client administrator) acts only on CLIENT-tier users
+/// (403 otherwise, Go `blockNonClientTarget`) homed at a client it reaches;
+/// a user out of reach answers the same 404 as a missing one. Anchors pass.
+fn require_user_resource_access(
+    ctx: &crate::AuthContext,
+    target: &crate::Principal,
+) -> Result<(), PlatformError> {
+    if !ctx.is_anchor() && target.scope != UserScope::Client {
+        return Err(PlatformError::forbidden(
+            "Client administrators can only manage client-scope users",
+        ));
+    }
+    if !crate::shared::caller_reach::reaches_scope(ctx, target.client_id.as_deref()) {
+        return Err(PlatformError::not_found("Principal", &target.id));
+    }
+    Ok(())
+}
+
+/// Load a principal a user-administration write targets, gated by
+/// [`require_user_resource_access`].
+async fn load_administered_user(
+    state: &PrincipalsState,
+    ctx: &crate::AuthContext,
+    id: &str,
+) -> Result<crate::Principal, PlatformError> {
+    let target = state
+        .principal_repo
+        .find_by_id(id)
+        .await?
+        .or_not_found("Principal", id)?;
+    require_user_resource_access(ctx, &target)?;
+    Ok(target)
+}
+
+/// Go `clientAppIDs`: the applications a client is entitled to (an enabled
+/// client config), the bound a client administrator is held to.
+async fn client_application_ids(
+    state: &PrincipalsState,
+    client_id: Option<&str>,
+) -> Result<std::collections::HashSet<String>, PlatformError> {
+    let Some(client_id) = client_id.filter(|c| !c.is_empty()) else {
+        return Ok(Default::default());
+    };
+    Ok(state
+        .app_client_config_repo
+        .find_enabled_for_client(client_id)
+        .await?
+        .into_iter()
+        .map(|c| c.application_id)
+        .collect())
+}
+
+/// The role definitions for `names`, by name, in one query.
+async fn role_definitions(
+    state: &PrincipalsState,
+    names: &[String],
+) -> Result<std::collections::HashMap<String, crate::AuthRole>, PlatformError> {
+    if names.is_empty() {
+        return Ok(Default::default());
+    }
+    Ok(state
+        .role_repo
+        .find_by_codes(names)
+        .await?
+        .into_iter()
+        .map(|r| (r.name.clone(), r))
+        .collect())
+}
+
+/// Go `assertAssignableRoles`: a client administrator assigns (or removes)
+/// only application roles of applications the target's client is entitled
+/// to, never a platform role.
+async fn assert_assignable_roles(
+    state: &PrincipalsState,
+    names: &[String],
+    allowed: &std::collections::HashSet<String>,
+) -> Result<(), PlatformError> {
+    let definitions = role_definitions(state, names).await?;
+    for name in names {
+        let Some(role) = definitions.get(name) else {
+            return Err(PlatformError::Coded {
+                status: StatusCode::BAD_REQUEST,
+                code: "UNKNOWN_ROLE".to_string(),
+                message: format!("role not found: {name}"),
+                details: Default::default(),
+            });
+        };
+        match role.application_id.as_deref() {
+            None => {
+                return Err(PlatformError::forbidden_code(
+                    "PLATFORM_ROLE_FORBIDDEN",
+                    "client administrators cannot assign platform roles",
+                ))
+            }
+            Some(app) if !allowed.contains(app) => {
+                return Err(PlatformError::forbidden_code(
+                    "ROLE_APP_FORBIDDEN",
+                    "role belongs to an application the client cannot access",
+                ))
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Go `protectedRoleNames`: the target's roles a client administrator may
+/// not manage (platform roles, unknown roles, other applications' roles). A
+/// client administrator's role SET keeps them.
+async fn protected_role_names(
+    state: &PrincipalsState,
+    names: &[String],
+    allowed: &std::collections::HashSet<String>,
+) -> Result<Vec<String>, PlatformError> {
+    let definitions = role_definitions(state, names).await?;
+    Ok(names
+        .iter()
+        .filter(|name| {
+            definitions
+                .get(name.as_str())
+                .and_then(|r| r.application_id.as_deref())
+                .is_none_or(|app| !allowed.contains(app))
+        })
+        .cloned()
+        .collect())
+}
+
+/// The role set a SET writes: exactly `requested` for an anchor; for a
+/// client administrator, `requested` (bounded by
+/// [`assert_assignable_roles`]) plus the target's protected roles (Go
+/// `assignRoles`, principal/api/api.go:1116-1181).
+async fn bounded_role_set(
+    state: &PrincipalsState,
+    ctx: &crate::AuthContext,
+    target: &crate::Principal,
+    requested: Vec<String>,
+) -> Result<Vec<String>, PlatformError> {
+    if ctx.is_anchor() {
+        return Ok(requested);
+    }
+    let allowed = client_application_ids(state, target.client_id.as_deref()).await?;
+    assert_assignable_roles(state, &requested, &allowed).await?;
+    let current: Vec<String> = target.roles.iter().map(|r| r.role.clone()).collect();
+    let mut out = requested;
+    for kept in protected_role_names(state, &current, &allowed).await? {
+        if !out.contains(&kept) {
+            out.push(kept);
+        }
+    }
+    Ok(out)
 }
 
 /// A client reference — its `clt_` id or its identifier — as the client's
@@ -813,17 +978,23 @@ pub async fn get_principal(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<PrincipalResponse>, PlatformError> {
+    // Go `getByID` (principal/api/api.go:288-323): a principal reads itself
+    // with no permission; anyone else needs the user read permission, and a
+    // principal of a client the caller does not reach answers the same 404
+    // as a missing one.
+    let is_self = auth.0.principal_id == id;
+    if !is_self {
+        crate::checks::can_read_principals(&auth.0)?;
+    }
     let principal = state
         .principal_repo
         .find_by_id(&id)
         .await?
         .or_not_found("Principal", &id)?;
-
-    // Check access - anchor can see all, others only their client
-    if !auth.0.is_anchor() {
-        if let Some(ref cid) = principal.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden("No access to this principal"));
+    if !is_self {
+        if let Some(cid) = principal.client_id.as_deref() {
+            if !crate::shared::caller_reach::reaches_client(&auth.0, cid) {
+                return Err(PlatformError::not_found("Principal", &id));
             }
         }
     }
@@ -858,6 +1029,8 @@ pub async fn list_principals(
     auth: Authenticated,
     Query(query): Query<PrincipalsQuery>,
 ) -> Result<Json<PrincipalListResponse>, PlatformError> {
+    crate::checks::can_read_principals(&auth.0)?;
+
     // Validate client_id access upfront
     if let Some(ref client_id) = query.client_id {
         if !auth.0.can_access_client(client_id) {
@@ -971,30 +1144,7 @@ pub async fn update_principal(
     // Handler-level auth: target-resource access + high-trust gates on
     // scope/client_id changes. Field-level mutations happen inside the
     // use case so the write commits atomically with the UserUpdated event.
-    let existing = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
-
-    if !auth.0.is_anchor() {
-        // Go's `blockNonClientTarget`: a non-anchor administrator manages
-        // CLIENT-tier principals only, never a partner or an anchor.
-        if existing.scope != UserScope::Client {
-            return Err(PlatformError::forbidden(
-                "Client administrators can only manage client-scope users",
-            ));
-        }
-        if let Some(ref cid) = existing.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden("No access to this principal"));
-            }
-        } else {
-            return Err(PlatformError::forbidden(
-                "Only anchor users can modify anchor-level principals",
-            ));
-        }
-    }
+    load_administered_user(&state, &auth.0, &id).await?;
 
     if (req.scope.is_some() || req.client_id.is_some()) && !auth.0.is_anchor() {
         return Err(PlatformError::forbidden(
@@ -1042,6 +1192,8 @@ pub async fn get_roles(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RolesListResponse>, PlatformError> {
+    crate::checks::can_read_principals(&auth.0)?;
+
     let principal = state
         .principal_repo
         .find_by_id(&id)
@@ -1098,15 +1250,14 @@ pub async fn assign_role(
     use crate::principal::operations::AssignUserRolesCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_assign_principal_roles(&auth.0)?;
 
     // Additive assign: take existing roles + new role, run through UoW.
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
+    let principal = load_administered_user(&state, &auth.0, &id).await?;
+    if !auth.0.is_anchor() {
+        let allowed = client_application_ids(&state, principal.client_id.as_deref()).await?;
+        assert_assignable_roles(&state, std::slice::from_ref(&req.role), &allowed).await?;
+    }
     let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
     let mut roles = before.clone();
     if !roles.iter().any(|r| r == &req.role) {
@@ -1158,28 +1309,23 @@ pub async fn batch_assign_roles(
     use crate::principal::operations::AssignUserRolesCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_assign_principal_roles(&auth.0)?;
 
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
+    let principal = load_administered_user(&state, &auth.0, &id).await?;
+    let desired = bounded_role_set(&state, &auth.0, &principal, req.roles).await?;
 
     let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
-    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &req.roles)
-        .await?;
+    crate::role::ceiling::require_role_change(&auth.0, &state.role_repo, &before, &desired).await?;
 
     let old_roles: std::collections::HashSet<String> =
         principal.roles.iter().map(|r| r.role.clone()).collect();
-    let new_roles_set: std::collections::HashSet<String> = req.roles.iter().cloned().collect();
+    let new_roles_set: std::collections::HashSet<String> = desired.iter().cloned().collect();
     let added: Vec<String> = new_roles_set.difference(&old_roles).cloned().collect();
     let removed: Vec<String> = old_roles.difference(&new_roles_set).cloned().collect();
 
     let cmd = AssignUserRolesCommand {
         user_id: id.clone(),
-        roles: req.roles,
+        roles: desired,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state
@@ -1236,14 +1382,15 @@ pub async fn remove_role(
     use crate::principal::operations::AssignUserRolesCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_assign_principal_roles(&auth.0)?;
 
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
+    let principal = load_administered_user(&state, &auth.0, &id).await?;
+    // A client administrator removes only roles it could assign (Go
+    // `removeRole`).
+    if !auth.0.is_anchor() {
+        let allowed = client_application_ids(&state, principal.client_id.as_deref()).await?;
+        assert_assignable_roles(&state, std::slice::from_ref(&role), &allowed).await?;
+    }
     let before: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
     let roles: Vec<String> = principal
         .roles
@@ -1292,20 +1439,13 @@ pub async fn get_client_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientAccessListResponse>, PlatformError> {
+    // Go `listClientAccess`: anchor reach alone (principal/api/api.go:1251).
+    crate::checks::require_anchor_scope(&auth.0)?;
     let principal = state
         .principal_repo
         .find_by_id(&id)
         .await?
         .or_not_found("Principal", &id)?;
-
-    // Check access
-    if !auth.0.is_anchor() {
-        if let Some(ref cid) = principal.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden("No access to this principal"));
-            }
-        }
-    }
 
     // Convert assigned_clients to grants (synthesized since we don't store grant metadata)
     let grants: Vec<ClientAccessGrantResponse> = principal
@@ -1448,8 +1588,8 @@ pub async fn delete_principal(
     use crate::principal::operations::DeleteUserCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_delete_principals(&auth.0)?;
+    load_administered_user(&state, &auth.0, &id).await?;
 
     let cmd = DeleteUserCommand { principal_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -1578,8 +1718,8 @@ pub async fn activate_principal(
     use crate::principal::operations::ActivateUserCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_write_principals(&auth.0)?;
+    load_administered_user(&state, &auth.0, &id).await?;
 
     let cmd = ActivateUserCommand {
         principal_id: id.clone(),
@@ -1620,8 +1760,8 @@ pub async fn deactivate_principal(
     use crate::principal::operations::DeactivateUserCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_write_principals(&auth.0)?;
+    load_administered_user(&state, &auth.0, &id).await?;
 
     let cmd = DeactivateUserCommand {
         principal_id: id.clone(),
@@ -1670,8 +1810,8 @@ pub async fn reset_password(
     use crate::principal::operations::ResetPasswordCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_write_principals(&auth.0)?;
+    load_administered_user(&state, &auth.0, &id).await?;
 
     let cmd = ResetPasswordCommand {
         principal_id: id.clone(),
@@ -1721,16 +1861,11 @@ pub async fn send_password_reset(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_write_principals(&auth.0)?;
 
     let emailer = &state.password_reset_emailer;
 
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
+    let principal = load_administered_user(&state, &auth.0, &id).await?;
 
     if !principal.is_user() {
         return Err(PlatformError::validation(
@@ -1795,7 +1930,9 @@ pub async fn check_email_domain(
     auth: Authenticated,
     Query(query): Query<CheckEmailDomainQuery>,
 ) -> Result<Json<CheckEmailDomainResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    // Go `checkEmailDomain`: the user read permission, no anchor reach (a
+    // client administrator's create form calls it).
+    crate::checks::can_read_principals(&auth.0)?;
 
     // Extract domain from email
     let email = &query.email;
@@ -1939,6 +2076,8 @@ pub async fn get_application_access(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationAccessListResponse>, PlatformError> {
+    crate::checks::can_read_principals(&auth.0)?;
+
     let principal = state
         .principal_repo
         .find_by_id(&id)
@@ -2003,14 +2142,9 @@ pub async fn set_application_access(
     use crate::principal::operations::AssignApplicationAccessCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_write_principals(&auth.0)?;
 
-    let principal = state
-        .principal_repo
-        .find_by_id(&id)
-        .await?
-        .or_not_found("Principal", &id)?;
+    let principal = load_administered_user(&state, &auth.0, &id).await?;
 
     if req.all_applications == Some(true) {
         // Granting every application exceeds what the caller may itself
@@ -2021,6 +2155,29 @@ pub async fn set_application_access(
             return Err(PlatformError::forbidden(
                 "Only an all-applications administrator may grant all-applications access",
             ));
+        }
+    }
+
+    // A client administrator grants only applications the target's client is
+    // entitled to, and its SET keeps the grants outside that reach (Go
+    // `assignApplicationAccess`, principal/api/api.go:1183-1249).
+    let mut req = req;
+    if !auth.0.is_anchor() {
+        let allowed = client_application_ids(&state, principal.client_id.as_deref()).await?;
+        if let Some(app_id) = req.application_ids.iter().find(|a| !allowed.contains(*a)) {
+            return Err(PlatformError::forbidden_code(
+                "APP_FORBIDDEN",
+                format!("application the client cannot access: {app_id}"),
+            ));
+        }
+        for kept in principal
+            .accessible_application_ids
+            .iter()
+            .filter(|a| !allowed.contains(*a))
+        {
+            if !req.application_ids.contains(kept) {
+                req.application_ids.push(kept.clone());
+            }
         }
     }
 
@@ -2111,6 +2268,8 @@ pub async fn get_available_applications(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<AvailableApplicationsResponse>, PlatformError> {
+    crate::checks::can_read_principals(&auth.0)?;
+
     let principal = state
         .principal_repo
         .find_by_id(&id)

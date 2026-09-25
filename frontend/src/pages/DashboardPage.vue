@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useConfirm } from "primevue/useconfirm";
 import { useAuthStore } from "@/stores/auth";
 import { eventTypesApi } from "@/api/event-types";
@@ -8,8 +8,67 @@ import { developerApi } from "@/api/developer";
 import { redactExistingAuditLogs } from "@/api/audit-logs";
 import { dashboardApi, type DashboardStats } from "@/api/dashboard";
 import { toast } from "@/utils/errorBus";
+import { canEnterRoute, lacksAnchor, userCan } from "@/stores/permissions";
 
 const authStore = useAuthStore();
+
+// What this user may see here (decision #8): the server enforces each call;
+// the dashboard only hides what would be refused.
+const user = computed(() => authStore.user);
+/** Go's profile-only rule: a user with no role and no permission. */
+const hasNoPlatformRole = computed(
+	() =>
+		!!user.value &&
+		user.value.roles.length === 0 &&
+		Array.isArray(user.value.permissions) &&
+		user.value.permissions.length === 0,
+);
+const anchorOk = computed(() => !!user.value && !lacksAnchor(user.value));
+/** `GET /bff/dashboard/stats`: anchor, then client or application view. */
+const canViewStats = computed(
+	() =>
+		anchorOk.value &&
+		userCan(user.value, [
+			"platform:admin:client:view",
+			"platform:admin:application:view",
+		]),
+);
+const canSyncEvents = computed(
+	() =>
+		anchorOk.value &&
+		userCan(user.value, [
+			"platform:messaging:event-type:create",
+			"platform:messaging:event-type:update",
+			"platform:messaging:event-type:delete",
+		]),
+);
+const canSyncRoles = computed(
+	() =>
+		anchorOk.value &&
+		userCan(user.value, [
+			"platform:iam:role:create",
+			"platform:iam:role:update",
+			"platform:iam:role:delete",
+		]),
+);
+const canSyncOpenApi = computed(
+	() =>
+		anchorOk.value &&
+		userCan(user.value, [
+			"platform:developer:application-openapi:sync",
+			"platform:developer:application-openapi:manage",
+		]),
+);
+const canRedactAuditLogs = computed(
+	() => anchorOk.value && userCan(user.value, "platform:admin:audit-log:view"),
+);
+const showSync = computed(
+	() =>
+		canSyncEvents.value ||
+		canSyncRoles.value ||
+		canSyncOpenApi.value ||
+		canRedactAuditLogs.value,
+);
 const confirm = useConfirm();
 
 const syncingEvents = ref(false);
@@ -45,7 +104,9 @@ function fmtApprox(n: number | null | undefined): string {
 	return n === null || n === undefined ? "—" : `~${n.toLocaleString()}`;
 }
 
-onMounted(loadStats);
+onMounted(() => {
+	if (canViewStats.value) void loadStats();
+});
 
 async function syncPlatformEvents() {
 	syncingEvents.value = true;
@@ -116,9 +177,9 @@ async function syncPlatformOpenApi() {
 
 async function syncAllPlatform() {
 	await Promise.all([
-		syncPlatformEvents(),
-		syncPlatformRoles(),
-		syncPlatformOpenApi(),
+		canSyncEvents.value ? syncPlatformEvents() : undefined,
+		canSyncRoles.value ? syncPlatformRoles() : undefined,
+		canSyncOpenApi.value ? syncPlatformOpenApi() : undefined,
 	]);
 }
 
@@ -150,7 +211,7 @@ async function runRedactExistingAuditLogs() {
 	}
 }
 
-const dashboardCards = [
+const allDashboardCards = [
 	{
 		title: "Applications",
 		description: "Manage applications in the platform ecosystem",
@@ -178,7 +239,7 @@ const dashboardCards = [
 	{
 		title: "Roles",
 		description: "Configure roles and permissions",
-		route: "/roles",
+		route: "/authorization/roles",
 		icon: "pi pi-shield",
 		bgColor: "bg-purple",
 		iconColor: "text-purple",
@@ -200,6 +261,11 @@ const dashboardCards = [
 		iconColor: "text-teal",
 	},
 ];
+
+/** The quick links this user may open (the route guard's rule). */
+const dashboardCards = computed(() =>
+	allDashboardCards.filter((card) => canEnterRoute(user.value, card.route)),
+);
 </script>
 
 <template>
@@ -211,8 +277,21 @@ const dashboardCards = [
       </div>
     </div>
 
+    <!-- A user with no platform role reaches only its profile (Go
+         ProfileOnlyWithoutRole); say so instead of an empty dashboard. -->
+    <div v-if="hasNoPlatformRole" class="fc-card no-access-card">
+      <i class="pi pi-lock no-access-icon"></i>
+      <div>
+        <h2 class="section-title">No platform access</h2>
+        <p class="section-subtitle">
+          Your account has no platform access. Only your profile is available.
+        </p>
+        <RouterLink to="/profile" class="no-access-link">Go to your profile</RouterLink>
+      </div>
+    </div>
+
     <!-- Quick actions grid -->
-    <div class="cards-grid">
+    <div v-if="dashboardCards.length > 0" class="cards-grid">
       <RouterLink
         v-for="card in dashboardCards"
         :key="card.title"
@@ -232,7 +311,7 @@ const dashboardCards = [
     </div>
 
     <!-- Platform sync section -->
-    <div class="sync-section">
+    <div v-if="showSync" class="sync-section">
       <div class="section-header">
         <div>
           <h2 class="section-title">Platform Sync</h2>
@@ -248,7 +327,7 @@ const dashboardCards = [
         />
       </div>
       <div class="sync-grid">
-        <div class="sync-card">
+        <div v-if="canSyncEvents" class="sync-card">
           <div class="sync-icon bg-amber"><i class="pi pi-bolt text-amber"></i></div>
           <div class="sync-info">
             <h3 class="sync-title">Event Types</h3>
@@ -263,7 +342,7 @@ const dashboardCards = [
             @click="syncPlatformEvents"
           />
         </div>
-        <div class="sync-card">
+        <div v-if="canSyncRoles" class="sync-card">
           <div class="sync-icon bg-purple"><i class="pi pi-shield text-purple"></i></div>
           <div class="sync-info">
             <h3 class="sync-title">Roles</h3>
@@ -278,7 +357,7 @@ const dashboardCards = [
             @click="syncPlatformRoles"
           />
         </div>
-        <div class="sync-card">
+        <div v-if="canSyncOpenApi" class="sync-card">
           <div class="sync-icon bg-blue"><i class="pi pi-book text-blue"></i></div>
           <div class="sync-info">
             <h3 class="sync-title">OpenAPI</h3>
@@ -297,7 +376,7 @@ const dashboardCards = [
              redact existing rows from the dashboard"): not part of Sync All — a one-off cleanup
              of already-stored rows, remove this card once the sweep is no
              longer needed. -->
-        <div class="sync-card">
+        <div v-if="canRedactAuditLogs" class="sync-card">
           <div class="sync-icon bg-red"><i class="pi pi-lock text-red"></i></div>
           <div class="sync-info">
             <h3 class="sync-title">Audit logs</h3>
@@ -316,7 +395,7 @@ const dashboardCards = [
     </div>
 
     <!-- Stats section -->
-    <div class="stats-section">
+    <div v-if="canViewStats" class="stats-section">
       <h2 class="section-title">Platform Overview</h2>
       <div class="stats-grid">
         <div class="stat-card">
@@ -608,5 +687,23 @@ const dashboardCards = [
   font-weight: 600;
   color: #102a43;
   margin: 0;
+}
+
+.no-access-card {
+	display: flex;
+	gap: 1rem;
+	align-items: flex-start;
+	padding: 1.25rem;
+	margin-bottom: 1.5rem;
+}
+
+.no-access-icon {
+	font-size: 1.5rem;
+	color: var(--text-color-secondary);
+}
+
+.no-access-link {
+	display: inline-block;
+	margin-top: 0.5rem;
 }
 </style>

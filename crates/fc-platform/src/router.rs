@@ -714,6 +714,13 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             None => app,
         };
 
+        // A USER with no platform role reaches only its own profile (Go
+        // `ProfileOnlyWithoutRole`). Runs inside the binaries' `AuthLayer`,
+        // which installs the auth services it authenticates with.
+        let app = app.layer(axum::middleware::from_fn(
+            crate::shared::profile_only::profile_only_without_role,
+        ));
+
         (app, openapi)
     }
 }

@@ -181,6 +181,10 @@ async fn authenticate(
     app_state: &AppState,
     parts: &Parts,
 ) -> std::result::Result<Authentication, AuthError> {
+    // Resolved once already on this request (the profile-only gate).
+    if let Some(ResolvedAuthContext(context)) = parts.extensions.get::<ResolvedAuthContext>() {
+        return Ok(Authentication::Context(context.clone()));
+    }
     match presented_credential(parts) {
         Presented::Nothing => Ok(Authentication::Anonymous {
             stale_session: false,
@@ -225,6 +229,28 @@ async fn authenticate(
                 }
             }
         }
+    }
+}
+
+/// The caller's context, once a middleware has authenticated the request,
+/// so the extractors do not validate the token (or reload a session's
+/// principal) a second time.
+#[derive(Clone)]
+pub(crate) struct ResolvedAuthContext(pub(crate) AuthContext);
+
+/// The request's authenticated context, or `None` when it presents no
+/// credential or one that does not authenticate (the extractors answer
+/// those). Caches a success on the request.
+pub(crate) async fn resolve_context(parts: &mut Parts) -> Option<AuthContext> {
+    let app_state = parts.extensions.get::<AppState>().cloned()?;
+    match authenticate(&app_state, parts).await {
+        Ok(Authentication::Context(context)) => {
+            parts
+                .extensions
+                .insert(ResolvedAuthContext(context.clone()));
+            Some(context)
+        }
+        _ => None,
     }
 }
 

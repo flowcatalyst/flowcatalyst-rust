@@ -593,8 +593,11 @@ async fn auth_me_lists_the_effective_permissions() {
     let (status, body) = read_json(app.get_with_session("/auth/me", &token).await).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["principalId"], user.id.as_str());
-    assert_eq!(body["id"], user.id.as_str());
     assert_eq!(body["clientId"], client_id.as_str());
+    assert_eq!(body["status"], "");
+    assert_eq!(body["email"], "me@inhance.test");
+    assert_eq!(body["roles"], json!(["hr:editor", "hr:viewer"]));
+    assert_eq!(body["scope"], "CLIENT");
     assert_eq!(
         body["permissions"],
         json!([
@@ -617,6 +620,16 @@ async fn auth_me_lists_the_effective_permissions() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["permissions"], json!(["platform:*:*:*", "*"]));
     assert!(body["clientId"].is_null());
+    assert_eq!(body["scope"], "ANCHOR");
+
+    // No permission at all: Go's empty list serialises as null.
+    let bare = Principal::new_user("bare@flowcatalyst.test", UserScope::Anchor);
+    app.repos.principal_repo.insert(&bare).await.unwrap();
+    let bare_token = app.auth_service.generate_session_token(&bare).unwrap();
+    let (status, body) = read_json(app.get_with_session("/auth/me", &bare_token).await).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body["permissions"].is_null(), "{body}");
+    assert_eq!(body["roles"], json!([]));
 
     // A deactivated principal is no longer authenticated here.
     app.repos

@@ -13,6 +13,7 @@ import PrimeVue from "primevue/config";
 import ConfirmationService from "primevue/confirmationservice";
 import ConfirmDialog from "primevue/confirmdialog";
 import { onNotification, type Notification } from "@/utils/errorBus";
+import { useAuthStore } from "@/stores/auth";
 
 if (typeof window !== "undefined" && !window.matchMedia) {
 	window.matchMedia = ((query: string) => ({
@@ -47,11 +48,24 @@ vi.mock("@/api/developer", () => ({ developerApi: { syncPlatformOpenApi: vi.fn()
 
 async function mountDashboard() {
 	const { default: DashboardPage } = await import("@/pages/DashboardPage.vue");
+	// An anchor super admin: the dashboard shows the audit-log card only to a
+	// user who may run it (anchor and the audit-log read permission).
+	const pinia = createPinia();
+	setActivePinia(pinia);
+	useAuthStore().setUser({
+		id: "prn_admin",
+		email: "admin@example.com",
+		name: "Admin",
+		clientId: null,
+		roles: ["platform:super-admin"],
+		permissions: ["platform:*:*:*", "*"],
+		scope: "ANCHOR",
+	});
 	return mount(
 		{ components: { DashboardPage, ConfirmDialog }, template: "<div><DashboardPage /><ConfirmDialog /></div>" },
 		{
 			global: {
-				plugins: [createPinia(), PrimeVue, ConfirmationService],
+				plugins: [pinia, PrimeVue, ConfirmationService],
 				stubs: { RouterLink: true },
 			},
 		},

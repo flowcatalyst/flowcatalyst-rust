@@ -101,9 +101,11 @@ pub struct LoginAttemptsState {
 )]
 async fn list_login_attempts(
     State(state): State<LoginAttemptsState>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Query(query): Query<LoginAttemptsQuery>,
 ) -> Result<Json<LoginAttemptsListResponse>, PlatformError> {
+    crate::checks::can_read_login_attempts(&auth.0)?;
+
     use crate::shared::api_common::{decode_cursor, encode_cursor};
 
     let size = query.page_size.unwrap_or(50).clamp(1, 200) as usize;

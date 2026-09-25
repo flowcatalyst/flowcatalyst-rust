@@ -1,4 +1,4 @@
-import { useAuthStore, type User } from "@/stores/auth";
+import { useAuthStore, type User, type UserScope } from "@/stores/auth";
 import router from "@/router";
 import { getErrorMessage } from "@/utils/errors";
 
@@ -16,8 +16,27 @@ export interface LoginResponse {
 	email: string;
 	roles: string[];
 	clientId: string | null;
-	/** Effective permission codes; absent from a backend that predates them. */
-	permissions?: string[];
+	/**
+	 * Effective permission codes. Go's `/auth/me` sends `null` for none; a
+	 * backend that predates them omits the field.
+	 */
+	permissions?: string[] | null;
+	/** The tenancy tier (`/auth/me`); absent from an older backend. */
+	scope?: UserScope;
+	ssoManaged?: boolean;
+}
+
+/**
+ * The permission list a response carries: its codes; none when it is from a
+ * backend that sends them (`null` is Go's empty list; `scope`/`ssoManaged`
+ * mark a current `/auth/me`); `null` when the backend predates them.
+ */
+function permissionsOf(response: LoginResponse): string[] | null {
+	if (Array.isArray(response.permissions)) return response.permissions;
+	if (response.permissions === null || "scope" in response || "ssoManaged" in response) {
+		return [];
+	}
+	return null;
 }
 
 export interface DomainCheckResponse {
@@ -33,7 +52,8 @@ export function mapLoginResponseToUser(response: LoginResponse): User {
 		name: response.name,
 		clientId: response.clientId,
 		roles: response.roles,
-		permissions: Array.isArray(response.permissions) ? response.permissions : null,
+		permissions: permissionsOf(response),
+		scope: response.scope ?? null,
 	};
 }
 
@@ -78,9 +98,10 @@ export async function checkSession(): Promise<boolean> {
 }
 
 /**
- * Fill in the signed-in user's permissions from `/auth/me` when the response
- * that signed them in did not carry them. Best effort: on any failure the
- * user keeps `permissions: null` and the old admin-role rule applies.
+ * Fill in the signed-in user's permissions and tier from `/auth/me` when the
+ * response that signed them in did not carry them. Best effort: on any
+ * failure the user keeps what it has (`permissions: null` means the old
+ * admin-role rule applies).
  */
 export async function loadPermissions(): Promise<void> {
 	const authStore = useAuthStore();
@@ -88,8 +109,13 @@ export async function loadPermissions(): Promise<void> {
 		const response = await fetch(`${AUTH_URL}/me`, { credentials: "include" });
 		if (!response.ok) return;
 		const data: LoginResponse = await response.json();
-		if (authStore.user && Array.isArray(data.permissions)) {
-			authStore.user = { ...authStore.user, permissions: data.permissions };
+		if (authStore.user) {
+			const permissions = permissionsOf(data);
+			authStore.user = {
+				...authStore.user,
+				permissions: permissions ?? authStore.user.permissions,
+				scope: data.scope ?? authStore.user.scope ?? null,
+			};
 		}
 	} catch {
 		// Keep the fallback.
@@ -118,7 +144,7 @@ export async function login(credentials: LoginCredentials): Promise<void> {
 
 		const data: LoginResponse = await response.json();
 		authStore.setUser(mapLoginResponseToUser(data));
-		if (!Array.isArray(data.permissions)) {
+		if (!Array.isArray(data.permissions) || data.scope === undefined) {
 			await loadPermissions();
 		}
 

@@ -115,7 +115,8 @@ async fn ingest_skips_inaccessible_clients_and_honours_performed_at() {
 #[ignore = "requires Docker"]
 async fn ingest_takes_a_full_batch_and_rejects_bad_bodies_like_go() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    // A USER with no role at all is confined to its profile; the admin is not.
+    let token = app.anchor_admin_token().await;
 
     let items: Vec<_> = (0..100)
         .map(|i| {

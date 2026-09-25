@@ -599,6 +599,101 @@ pub mod checks {
         require_permission(context, permissions::admin::SERVICE_ACCOUNT_READ)
     }
 
+    // ── Read gates: Go's `CanRead*` (shared/auth/auth.go) ──────────────
+    //
+    // Each answers as Go does: 403 `PERMISSION_REQUIRED`, and for the
+    // `anchorWith` families 403 `ANCHOR_REQUIRED` first.
+
+    /// Applications, read (list, get, by code, client configs, roles):
+    /// `platform:admin:application:view` (Go `CanReadApplications`,
+    /// auth.go:575).
+    pub fn can_read_applications(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::APPLICATION_READ)
+    }
+
+    /// Clients, read (list, search, by identifier, get): anchor plus
+    /// `platform:admin:client:view` (Go `CanReadClients`, auth.go:713).
+    pub fn can_read_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CLIENT_READ)
+    }
+
+    /// Connections, read: `platform:messaging:connection:view` (Go
+    /// `CanReadConnections`, auth.go:515). Rows are then confined to the
+    /// caller's clients.
+    pub fn can_read_connections(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::CONNECTION_READ)
+    }
+
+    /// Connections, create: `platform:messaging:connection:create` (Go
+    /// `CanCreateConnections`, auth.go:517).
+    pub fn can_create_connections(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::CONNECTION_CREATE)
+    }
+
+    /// Connections, update, pause and activate:
+    /// `platform:messaging:connection:update` (Go `CanUpdateConnections`).
+    pub fn can_update_connections(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::CONNECTION_UPDATE)
+    }
+
+    /// Connections, delete: `platform:messaging:connection:delete` (Go
+    /// `CanDeleteConnections`).
+    pub fn can_delete_connections(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::CONNECTION_DELETE)
+    }
+
+    /// Dispatch pools, delete: `platform:messaging:dispatch-pool:delete` (Go
+    /// `CanDeleteDispatchPools`, auth.go:557).
+    pub fn can_delete_dispatch_pools(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_POOL_DELETE)
+    }
+
+    /// CORS origins, read: anchor plus `platform:admin:cors-origin:view` (Go
+    /// `CanReadCorsOrigins`, auth.go:788).
+    pub fn can_read_cors_origins(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CORS_ORIGIN_READ)
+    }
+
+    /// Dispatch pools, read: `platform:messaging:dispatch-pool:view` (Go
+    /// `CanReadDispatchPools`, auth.go:547). Rows are then confined to the
+    /// caller's clients.
+    pub fn can_read_dispatch_pools(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::DISPATCH_POOL_READ)
+    }
+
+    /// Email-domain mappings, read: anchor plus
+    /// `platform:iam:email-domain-mapping:view` (Go
+    /// `CanReadEmailDomainMappings`, auth.go:763).
+    pub fn can_read_email_domain_mappings(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::EMAIL_DOMAIN_MAPPING_READ)
+    }
+
+    /// Login attempts, read: anchor plus `platform:admin:login-attempt:view`
+    /// (Go `CanReadLoginAttempts`, auth.go:793).
+    pub fn can_read_login_attempts(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::LOGIN_ATTEMPT_READ)
+    }
+
+    /// Principals, read: `platform:iam:user:view` (Go `CanReadPrincipals`,
+    /// auth.go:800). Rows are then confined to the caller's clients.
+    pub fn can_read_principals(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::iam::USER_READ)
+    }
+
+    /// The dashboard's platform-wide counts: anchor, then the client or the
+    /// application view permission (Go's stats handler: `RequireAnchor` then
+    /// `CanViewDashboardStats`, auth.go:393).
+    pub fn can_view_dashboard_stats(context: &AuthContext) -> Result<()> {
+        require_anchor_scope(context)?;
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::CLIENT_READ,
+                permissions::admin::APPLICATION_READ,
+            ],
+        )
+    }
+
     /// Service accounts, create and update: any of the service-account
     /// create/update/delete permissions, as Go's `CanWriteServiceAccounts`
     /// (auth.go:691-693), and anchor scope on top. Go has no anchor check
@@ -829,6 +924,31 @@ pub mod checks {
         )
     }
 
+    /// Go `RequireUserAdmin` (shared/auth/auth.go:369-385) for a user in
+    /// client `target_client_id`: an anchor needs a user-write permission;
+    /// anyone else also reaches that client (403 `SCOPE_FORBIDDEN`), and a
+    /// client-less (platform) user is an anchor's alone (403
+    /// `ANCHOR_REQUIRED`). A client administrator is confined to its own
+    /// clients this way.
+    pub fn require_user_admin(context: &AuthContext, target_client_id: Option<&str>) -> Result<()> {
+        if context.is_anchor() {
+            return can_write_principals(context);
+        }
+        let Some(client_id) = target_client_id else {
+            return Err(PlatformError::forbidden_code(
+                "ANCHOR_REQUIRED",
+                "anchor scope required for platform users",
+            ));
+        };
+        if !context.can_access_client(client_id) {
+            return Err(PlatformError::forbidden_code(
+                "SCOPE_FORBIDDEN",
+                "no access to this user's client",
+            ));
+        }
+        can_write_principals(context)
+    }
+
     /// Principals, setting a user's roles (add, remove, replace):
     /// `platform:iam:user:assign-roles` itself (owner ruling 14; Java
     /// `Access.requireRoleAssigner`). Holding user create, update or delete
@@ -911,13 +1031,10 @@ pub mod checks {
         }
     }
 
-    /// Check read access to audit logs
+    /// Audit logs, read: `platform:admin:audit-log:view`, answering as Go's
+    /// `CanWritePermission(ac, viewPerm)` (audit/api/api.go:43).
     pub fn can_read_audit_logs(context: &AuthContext) -> Result<()> {
-        if context.has_permission(permissions::admin::AUDIT_LOG_READ) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot read audit logs"))
-        }
+        require_permission(context, permissions::admin::AUDIT_LOG_READ)
     }
 
     /// Check raw read access to events (includes payload)
@@ -1321,17 +1438,20 @@ pub mod checks {
         }
     }
 
-    /// Read roles through the application-scoped SDK surface.
+    /// Roles and the permission catalogue, read (`/api/roles/*`, and the
+    /// application-scoped SDK list): `platform:iam:role:view` as Go's
+    /// `CanReadRoles` (auth.go:588), or role manage, or the
+    /// application-service role view. Refused as Go: 403
+    /// `PERMISSION_REQUIRED`.
     pub fn can_read_roles(context: &AuthContext) -> Result<()> {
-        if context.has_any_permission(&[
-            permissions::iam::ROLE_MANAGE,
-            permissions::iam::ROLE_READ,
-            permissions::application_service::ROLE_READ,
-        ]) {
-            Ok(())
-        } else {
-            Err(PlatformError::forbidden("Cannot read roles"))
-        }
+        require_any_permission(
+            context,
+            &[
+                permissions::iam::ROLE_READ,
+                permissions::iam::ROLE_MANAGE,
+                permissions::application_service::ROLE_READ,
+            ],
+        )
     }
 
     /// Create a single role through the application-scoped SDK surface.
