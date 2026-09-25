@@ -168,6 +168,24 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - Serve `function-manifest.schema.json`, copied byte-identical.
 - Tests: port Java's manifest and value-type tests and `function-address-table.csv`.
 
+> **One model for the platform and the host (2026-09-25).** Java has one set of `platform/function` classes,
+> and its host links the server's. The P2 value types, `Manifest` (`check`, `parse_strict`, `read_stored`,
+> `to_json`) and `JsonNode` now live in `crates/fc-function-model`, with their unit tests, the golden test and
+> its fixtures and generator (`tests/data/manifest-{cases,golden}.json`). The crate is pure (no database,
+> tokio or axum) and builds for `wasm32-unknown-unknown` (a test keeps it that way).
+> - `fc-platform` re-exports it under the old `function::*` paths. The model returns its own
+>   `ValidationError`, and `From` maps it to `UseCaseError`/`PlatformError` with the same code and message,
+>   plus `details.pointer` for a manifest problem. `UnknownEnumValue` also lives in the model, so the
+>   stored-row decoders still take its enums.
+> - `fc-fnhost-core` no longer has its own `manifest.rs`/`route_pattern.rs`. A desired-state entry's
+>   manifest is read with `Manifest::read_stored`, as Java's `DesiredDocument` does, and the listeners route
+>   with the model's `RoutePattern`. The host's DNS-label and hostname checks and its JDK helpers are also the
+>   model's now.
+> - `Digest`/`SignerIdentity` (which were in both fc-platform and fc-function-signing) are the model's, and
+>   fc-function-signing re-exports them.
+> - The model cannot depend on `fc-common`, which pulls in tokio, so a manifest subscription's `mode` is the
+>   model's `SubscriptionMode`. `fc_platform::function::dispatch_mode` converts it.
+
 **P3: functions, config, secrets, policies, domains and routes** (about 2,000)
 - Aggregates and repositories, following CLAUDE.md layering, for: `Function`, `ClientPolicy`, `FunctionDomain`, `FunctionRoute`, `fn_config`, `fn_secrets`. Secrets use `EncryptionService` (`encrypted:`).
 - Use cases: CreateFunction, UpdateFunction (with `FUNCTION_IMMUTABLE_FIELD` checked against the raw body), DeleteFunction, SetFunctionConfig, SetFunctionSecret, DeleteFunctionSecret, PutFunctionPolicy, ClaimFunctionDomain, ReleaseFunctionDomain.
