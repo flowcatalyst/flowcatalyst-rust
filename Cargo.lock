@@ -2856,6 +2856,7 @@ dependencies = [
  "cron",
  "dashmap",
  "fc-common",
+ "fc-fnhost-core",
  "fc-function-abi",
  "fc-function-signing",
  "fc-queue",
