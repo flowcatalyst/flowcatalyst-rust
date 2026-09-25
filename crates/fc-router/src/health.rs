@@ -8,13 +8,26 @@
 
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
+use crate::manager::ConsumerStat;
 use crate::warning::WarningService;
 use fc_common::{ConsumerHealth, HealthReport, HealthStatus, PoolStats};
 use fc_queue::QueueConsumer;
+
+/// The source of consumer liveness (Go: `ConsumerStatsProvider`). The
+/// `QueueManager` implements it: membership of its consumer set is what
+/// "running" means, and its per-consumer heartbeat is the one the restart
+/// watchdog judges consumers by. Reading it here, rather than keeping a
+/// second copy pushed from the poll loop, means health and the watchdog can
+/// never disagree about the same consumer — and a replaced consumer's old
+/// poll task exiting can no longer erase its replacement's entry, nor can a
+/// sweep keyed on the wrong name blind the watchdog.
+pub trait ConsumerStatsProvider: Send + Sync {
+    fn consumer_stats(&self) -> Vec<ConsumerStat>;
+}
 
 /// Configuration for health service
 #[derive(Debug, Clone)]
@@ -134,6 +147,11 @@ pub struct HealthService {
     /// while a poll is in flight. Empty for a backend that never overrides
     /// the trait default — this adds nothing for those.
     consumer_broker: RwLock<HashMap<String, Arc<dyn QueueConsumer>>>,
+
+    /// When set (and still alive), the source of every consumer answer —
+    /// see [`ConsumerStatsProvider`]. The push-fed maps above are only
+    /// consulted when no provider is wired (standalone use and tests).
+    consumer_stats_provider: RwLock<Option<Weak<dyn ConsumerStatsProvider>>>,
 }
 
 impl HealthService {
@@ -145,7 +163,33 @@ impl HealthService {
             consumer_last_poll: RwLock::new(HashMap::new()),
             consumer_running: RwLock::new(HashMap::new()),
             consumer_broker: RwLock::new(HashMap::new()),
+            consumer_stats_provider: RwLock::new(None),
         }
+    }
+
+    /// Wire the source of consumer liveness (Go: `SetConsumerStats`). Held
+    /// weakly: the manager owns the health service, not the reverse.
+    pub fn set_consumer_stats_provider(&self, provider: Weak<dyn ConsumerStatsProvider>) {
+        *self.consumer_stats_provider.write() = Some(provider);
+    }
+
+    /// The provider's snapshot, or `None` when no live provider is wired.
+    fn provided_stats(&self) -> Option<Vec<ConsumerStat>> {
+        let provider = self.consumer_stats_provider.read().as_ref()?.upgrade()?;
+        Some(provider.consumer_stats())
+    }
+
+    fn stat_healthy(&self, stat: &ConsumerStat) -> bool {
+        stat.running
+            && stat.last_poll.elapsed()
+                < Duration::from_secs(self.config.consumer_stall_threshold_secs)
+    }
+
+    fn find_stat<'a>(stats: &'a [ConsumerStat], consumer_id: &str) -> Option<&'a ConsumerStat> {
+        stats
+            .iter()
+            .find(|s| s.queue_name == consumer_id)
+            .or_else(|| stats.iter().find(|s| s.identifier == consumer_id))
     }
 
     /// Record a pool processing result
@@ -249,6 +293,9 @@ impl HealthService {
     /// Check if a consumer is healthy (alive within the stall threshold —
     /// see `last_alive`)
     pub fn is_consumer_healthy(&self, consumer_id: &str) -> bool {
+        if let Some(stats) = self.provided_stats() {
+            return Self::find_stat(&stats, consumer_id).is_some_and(|s| self.stat_healthy(s));
+        }
         let threshold = Duration::from_secs(self.config.consumer_stall_threshold_secs);
 
         let is_running = self
@@ -270,6 +317,27 @@ impl HealthService {
 
     /// Get consumer health details
     pub fn get_consumer_health(&self, consumer_id: &str) -> ConsumerHealth {
+        if let Some(stats) = self.provided_stats() {
+            return match Self::find_stat(&stats, consumer_id) {
+                Some(stat) => {
+                    let since = stat.last_poll.elapsed().as_millis() as i64;
+                    ConsumerHealth {
+                        queue_identifier: consumer_id.to_string(),
+                        is_healthy: self.stat_healthy(stat),
+                        last_poll_time_ms: Some(since),
+                        time_since_last_poll_ms: Some(since),
+                        is_running: stat.running,
+                    }
+                }
+                None => ConsumerHealth {
+                    queue_identifier: consumer_id.to_string(),
+                    is_healthy: false,
+                    last_poll_time_ms: None,
+                    time_since_last_poll_ms: None,
+                    is_running: false,
+                },
+            };
+        }
         let last_poll = self.consumer_last_poll.read();
         let running = self.consumer_running.read();
 
@@ -311,6 +379,13 @@ impl HealthService {
     /// was never told is running in the first place — `is_running` already
     /// filters those out below regardless.
     pub fn get_stalled_consumers(&self) -> Vec<String> {
+        if let Some(stats) = self.provided_stats() {
+            return stats
+                .iter()
+                .filter(|s| s.running && !self.stat_healthy(s))
+                .map(|s| s.queue_name.clone())
+                .collect();
+        }
         let threshold = Duration::from_secs(self.config.consumer_stall_threshold_secs);
         let last_poll = self.consumer_last_poll.read();
         let running = self.consumer_running.read();
@@ -368,7 +443,10 @@ impl HealthService {
         // RwLock is not re-entrant, and a writer queued between the two
         // read acquisitions (any poll task starting or stopping) wedged the
         // report — and the worker thread it ran on — for good.
-        let consumers_total = self.consumer_running.read().len() as u32;
+        let consumers_total = match self.provided_stats() {
+            Some(stats) => stats.len() as u32,
+            None => self.consumer_running.read().len() as u32,
+        };
         let stalled = self.get_stalled_consumers();
         let consumers_unhealthy = stalled.len() as u32;
         let consumers_healthy = consumers_total.saturating_sub(consumers_unhealthy);

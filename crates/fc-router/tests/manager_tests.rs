@@ -1581,13 +1581,12 @@ async fn restart_consumer_without_factory_does_not_stop_consumer() {
     );
 }
 
-/// If the factory's replacement call fails, `restart_consumer` removes the
-/// now-dead entry from `consumers` (so it stops being reported as a live
-/// consumer) but leaves its `queue_configs` entry alone. The next
-/// `reload_config` with the same queue config should then recreate it via
-/// the ordinary hot-add path, self-healing a transient factory failure.
+/// If the factory's replacement call fails, `restart_consumer` leaves the
+/// existing consumer registered and running (Go: build before retire — "a
+/// rebuild that fails or hangs can never leave the queue with no consumer
+/// at all"). A later restart, once the factory works again, replaces it.
 #[tokio::test]
-async fn restart_consumer_factory_failure_removes_dead_consumer_and_keeps_config() {
+async fn restart_consumer_factory_failure_keeps_the_existing_consumer() {
     let mediator = Arc::new(MockMediator::new());
     let manager = Arc::new(
         QueueManager::builder_with_shared_mediator(mediator)
@@ -1610,14 +1609,15 @@ async fn restart_consumer_factory_failure_removes_dead_consumer_and_keeps_config
         !restarted,
         "restart should fail when the factory errors building the replacement"
     );
-    assert!(
-        manager.consumer_ids().await.is_empty(),
-        "dead consumer entry should be removed from `consumers`"
+    assert_eq!(
+        manager.consumer_ids().await,
+        vec!["flaky-queue".to_string()],
+        "the existing consumer must stay registered when its replacement can't be built"
     );
+    assert!(manager.is_consumer_healthy("flaky-queue").await);
 
-    // A second reload with the *same* queue config should recreate it: the
-    // config-sync path treats "in config, not in `consumers`" as new.
-    manager.reload_config(config).await.unwrap();
+    // The factory works again (call #3): the restart now replaces it.
+    assert!(manager.restart_consumer("flaky-queue").await);
     assert_eq!(
         manager.consumer_ids().await,
         vec!["flaky-queue".to_string()]
@@ -2035,4 +2035,223 @@ async fn displaced_draining_predecessor_stays_visible_and_gets_released_at_shutd
             .any(|h| h.as_str() == "receipt-m1"),
         "the orphaned predecessor's in-flight message must finish and be ACKed, not abandoned"
     );
+}
+
+// ============================================================================
+// Consumer reconcile / resolution (Go: Reconfigure, resolveConsumer)
+// ============================================================================
+
+/// `ConsumerFactory` that hands out pre-seeded consumers in order, or fails
+/// the build when a slot holds `None`.
+struct ScriptedConsumerFactory {
+    script: parking_lot::Mutex<std::collections::VecDeque<Option<Arc<MockQueueConsumer>>>>,
+    built: parking_lot::Mutex<Vec<Arc<MockQueueConsumer>>>,
+}
+
+impl ScriptedConsumerFactory {
+    fn new(script: Vec<Option<Arc<MockQueueConsumer>>>) -> Self {
+        Self {
+            script: parking_lot::Mutex::new(script.into()),
+            built: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
+    fn built(&self) -> Vec<Arc<MockQueueConsumer>> {
+        self.built.lock().clone()
+    }
+}
+
+#[async_trait]
+impl ConsumerFactory for ScriptedConsumerFactory {
+    async fn create_consumer(
+        &self,
+        config: &fc_common::QueueConfig,
+    ) -> fc_router::Result<Arc<dyn QueueConsumer>> {
+        let next = self
+            .script
+            .lock()
+            .pop_front()
+            .unwrap_or_else(|| Some(Arc::new(MockQueueConsumer::new(&config.name))));
+        match next {
+            Some(c) => {
+                self.built.lock().push(c.clone());
+                Ok(c as Arc<dyn QueueConsumer>)
+            }
+            None => Err(serde_json::from_str::<serde_json::Value>("broker down")
+                .unwrap_err()
+                .into()),
+        }
+    }
+}
+
+fn queue_config_with(name: &str, visibility_timeout: u32) -> fc_common::QueueConfig {
+    fc_common::QueueConfig {
+        visibility_timeout,
+        ..queue_config(name)
+    }
+}
+
+/// Go compares a queue's whole config: a change under the same name (here
+/// the visibility timeout; a URI change is the same path) rebuilds the
+/// consumer. It used to be keyed by name alone, so the change was ignored
+/// and the consumer kept its old settings for ever.
+#[tokio::test]
+async fn queue_config_change_under_the_same_name_rebuilds_the_consumer() {
+    let factory = Arc::new(ScriptedConsumerFactory::new(vec![]));
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(Arc::new(MockMediator::new()))
+            .consumer_factory(factory.clone())
+            .build(),
+    );
+    let cfg = |vt| RouterConfig {
+        processing_pools: vec![],
+        queues: vec![queue_config_with("q", vt)],
+    };
+
+    manager.reload_config(cfg(30)).await.unwrap();
+    assert_eq!(factory.built().len(), 1);
+
+    // Same config again: nothing rebuilt.
+    manager.reload_config(cfg(30)).await.unwrap();
+    assert_eq!(factory.built().len(), 1);
+
+    // Visibility timeout changed: rebuilt, old one detached (stopped
+    // polling) but still resolvable until retired.
+    manager.reload_config(cfg(90)).await.unwrap();
+    let built = factory.built();
+    assert_eq!(built.len(), 2);
+    assert!(built[0].was_stopped(), "the old consumer stops polling");
+    assert!(!built[1].was_stopped());
+    assert_eq!(manager.consumer_ids().await, vec!["q".to_string()]);
+    assert_eq!(manager.queue_configs()["q"].visibility_timeout, 90);
+    assert_eq!(manager.detaching_consumer_count(), 1);
+    assert_eq!(manager.retire_detached_consumers(), 1);
+    manager.shutdown().await;
+}
+
+/// H9 (Go: Reconfigure returns the build error and the watcher forgets the
+/// config): a consumer that cannot be built fails the reload — after the
+/// other queues are reconciled — and the next reload builds exactly the
+/// missing one. It used to log, report success, and never try again.
+#[tokio::test]
+async fn failed_consumer_build_fails_the_reload_and_is_retried() {
+    let factory = Arc::new(ScriptedConsumerFactory::new(vec![None]));
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(Arc::new(MockMediator::new()))
+            .consumer_factory(factory.clone())
+            .build(),
+    );
+    let config = RouterConfig {
+        processing_pools: vec![],
+        queues: vec![queue_config("q")],
+    };
+
+    let first = manager.reload_config(config.clone()).await;
+    assert!(
+        first.is_err(),
+        "a failed consumer build must fail the reload"
+    );
+    assert!(manager.consumer_ids().await.is_empty());
+
+    manager.reload_config(config).await.unwrap();
+    assert_eq!(manager.consumer_ids().await, vec!["q".to_string()]);
+    manager.shutdown().await;
+}
+
+/// Go's `resolveConsumer`: a callback acks through the consumer the
+/// registry holds for its queue when it runs — not an instance captured at
+/// route time. Here the message was routed by an instance the manager never
+/// registered, so the ack goes to the registered consumer for that queue.
+#[tokio::test]
+async fn ack_resolves_the_registered_consumer_for_its_queue() {
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(Arc::new(
+        MockMediator::new(),
+    )));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "P".to_string(),
+                concurrency: 2,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+
+    let registered = Arc::new(MockQueueConsumer::new("shared-q"));
+    manager.add_consumer(registered.clone()).await;
+
+    let unregistered = Arc::new(MockQueueConsumer::with_messages(
+        "shared-q",
+        vec![create_queued_message("m1", "P", "shared-q")],
+    ));
+    let polled = unregistered.poll(10).await.unwrap();
+    manager
+        .route_batch(polled, unregistered.clone())
+        .await
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while registered.acked.lock().is_empty() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(registered.acked.lock().len(), 1);
+    assert!(unregistered.acked.lock().is_empty());
+    manager.shutdown().await;
+}
+
+/// A consumer detached while its message is in flight stays the one that
+/// acks it (a NATS receipt can only be acked on the connection that
+/// received it), and is retired only once nothing it delivered is left.
+#[tokio::test]
+async fn detached_consumer_acks_its_in_flight_message_then_retires() {
+    let first = Arc::new(MockQueueConsumer::with_messages(
+        "q",
+        vec![create_queued_message("slow-1", "P", "q")],
+    ));
+    let factory = Arc::new(ScriptedConsumerFactory::new(vec![Some(first.clone())]));
+    let mediator = Arc::new(SlowMockMediator::new(Duration::from_millis(400)));
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(mediator.clone())
+            .consumer_factory(factory.clone())
+            .build(),
+    );
+    let cfg = |vt| RouterConfig {
+        processing_pools: vec![PoolConfig {
+            code: "P".to_string(),
+            concurrency: 2,
+            rate_limit_per_minute: None,
+        }],
+        queues: vec![queue_config_with("q", vt)],
+    };
+    manager.reload_config(cfg(30)).await.unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while mediator.call_count() == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(mediator.call_count(), 1, "the message is mid-delivery");
+
+    // Replace the consumer while its message is still being delivered.
+    manager.reload_config(cfg(60)).await.unwrap();
+    assert_eq!(manager.detaching_consumer_count(), 1);
+    assert_eq!(
+        manager.retire_detached_consumers(),
+        0,
+        "not retired while a message it delivered is in flight"
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while first.acked.lock().is_empty() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        first.acked.lock().len(),
+        1,
+        "acked through the instance that received it"
+    );
+    let second = factory.built()[1].clone();
+    assert!(second.acked.lock().is_empty());
+    assert_eq!(manager.retire_detached_consumers(), 1);
+    manager.shutdown().await;
 }

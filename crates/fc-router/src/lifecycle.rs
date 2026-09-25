@@ -65,8 +65,12 @@ pub struct LifecycleConfig {
     pub warning_cleanup_interval: Duration,
     /// Interval for health report generation
     pub health_report_interval: Duration,
-    /// Consumer restart delay after detecting a stall
+    /// Pause between consecutive consumer rebuilds in one watchdog sweep
+    /// (Go: `consumerRestartDelay`, 5s).
     pub consumer_restart_delay: Duration,
+    /// How long a consumer's poll loop may go without a heartbeat before the
+    /// watchdog rebuilds it (Go: `ConsumerStallThreshold`, 60s).
+    pub consumer_stall_threshold: Duration,
     /// Interval for reaping stale in-pipeline entries and idle circuit breakers
     pub reaper_interval: Duration,
     /// Max age for in-pipeline entries before they are reaped
@@ -93,6 +97,7 @@ impl Default for LifecycleConfig {
             warning_cleanup_interval: Duration::from_secs(300), // 5 minutes
             health_report_interval: Duration::from_secs(60),
             consumer_restart_delay: Duration::from_secs(5),
+            consumer_stall_threshold: Duration::from_secs(60),
             reaper_interval: Duration::from_secs(300), // 5 minutes
             in_pipeline_max_age: Duration::from_secs(900), // 15 minutes
             pending_delete_max_age: Duration::from_secs(60), // 1 minute — short so deliberate resends are reprocessed
@@ -180,74 +185,35 @@ impl LifecycleManager {
             }));
         }
 
-        // Consumer health monitor with auto-restart
+        // Consumer health monitor with auto-restart (Go:
+        // `consumerHealthLoop` → `Manager.RestartStalledConsumers`). The
+        // watchdog judges consumers by the manager's own heartbeat, builds a
+        // replacement before retiring a stalled consumer, leaves consumers
+        // paused for capacity or leadership alone, and escalates to CRITICAL
+        // after 10 failed attempts.
         {
             let manager = manager.clone();
             let health_service = health_service.clone();
-            let warning_service = warning_service.clone();
             let token = shutdown.child_token();
             let interval = config.consumer_health_interval;
             let restart_delay = config.consumer_restart_delay;
+            let threshold = config.consumer_stall_threshold;
 
             tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                let mut restart_attempts: std::collections::HashMap<String, u32> =
-                    std::collections::HashMap::new();
+                // The first tick fires immediately; nothing can be stalled yet.
+                ticker.tick().await;
 
                 loop {
                     tokio::select! {
                         _ = ticker.tick() => {
-                            let stalled = health_service.get_stalled_consumers();
-                            for consumer_id in stalled {
-                                let attempts = restart_attempts.entry(consumer_id.clone()).or_insert(0);
-
-                                // Java: retries indefinitely (no max attempts).
-                                // Escalate severity after many failed attempts.
-                                let severity = if *attempts >= 10 {
-                                    WarningSeverity::Critical
-                                } else {
-                                    WarningSeverity::Warn
-                                };
-
-                                warn!(
-                                    consumer_id = %consumer_id,
-                                    attempt = *attempts + 1,
-                                    "Stalled consumer detected, attempting restart"
-                                );
-
-                                warning_service.add_warning(
-                                    WarningCategory::ConsumerHealth,
-                                    severity,
-                                    format!("Consumer {} is stalled, restart attempt {}", consumer_id, *attempts + 1),
-                                    "LifecycleManager".to_string(),
-                                );
-
-                                // Wait before restart — cancel-aware so several stalled
-                                // consumers back-to-back can't stack up N × restart_delay
-                                // of unresponsiveness to shutdown.
-                                tokio::select! {
-                                    _ = tokio::time::sleep(restart_delay) => {}
-                                    _ = token.cancelled() => {
-                                        info!("Consumer health monitor shutting down");
-                                        return;
-                                    }
-                                }
-
-                                // Attempt restart
-                                if manager.restart_consumer(&consumer_id).await {
-                                    *attempts += 1;
-                                    info!(consumer_id = %consumer_id, "Consumer restart initiated");
-                                }
-                            }
-
-                            // Clear restart attempts for healthy consumers
-                            let healthy_consumers: Vec<String> = restart_attempts.keys()
-                                .filter(|id| !health_service.get_stalled_consumers().contains(id))
-                                .cloned()
-                                .collect();
-                            for id in healthy_consumers {
-                                restart_attempts.remove(&id);
+                            health_service.cleanup();
+                            let n = manager
+                                .restart_stalled_consumers(threshold, restart_delay, &token)
+                                .await;
+                            if n > 0 {
+                                warn!(count = n, "Restarted stalled consumers");
                             }
                         }
                         _ = token.cancelled() => {
@@ -348,6 +314,13 @@ impl LifecycleManager {
                             // Clean up draining pools that have finished
                             manager.cleanup_draining_pools().await;
 
+                            // X-11 / R-26/R-49: retire detached consumers
+                            // nothing in the pipeline references any more.
+                            let retired = manager.retire_detached_consumers();
+                            if retired > 0 {
+                                info!(retired, "Retired detached consumers");
+                            }
+
                             // R-59: evict synthesised per-client fallback pools
                             // idle past their TTL (drains via the same path as
                             // a config-removed pool; see
@@ -361,7 +334,12 @@ impl LifecycleManager {
                                 );
                             }
 
-                            // Remove stale health service entries for destroyed pools/consumers
+                            // Drop pool counters for pools that no longer
+                            // exist. Consumer liveness is read live from the
+                            // manager, so it needs no pruning (Go:
+                            // RemoveStaleEntries) — this used to prune it by
+                            // config name while it was keyed by identifier,
+                            // blinding the watchdog to NATS consumers.
                             let pool_codes = manager.pool_codes();
                             let consumer_ids = manager.consumer_ids().await;
                             health_service.remove_stale_entries(&pool_codes, &consumer_ids);
@@ -619,6 +597,7 @@ mod tests {
             warning_cleanup_interval: long,
             health_report_interval: long,
             consumer_restart_delay: long,
+            consumer_stall_threshold: long,
             reaper_interval: long,
             in_pipeline_max_age: long,
             pending_delete_max_age: long,

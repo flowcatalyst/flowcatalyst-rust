@@ -19,7 +19,7 @@ use fc_queue::QueueConsumer;
 use crate::error::RouterError;
 use crate::Result;
 
-use super::QueueManager;
+use super::{ConsumerRegistry, QueueManager, RunningConsumer};
 
 /// Scope a broker-native message id to the queue it came from (G11,
 /// `docs/go-mirror/2026-09-06-go-fix-list.md`).
@@ -65,7 +65,17 @@ struct QueueMessageCallback {
     /// `pipeline_key` itself is scoped, so an ACK-failed retry never
     /// collides with another queue's entry at the same broker id.
     queue_identifier: String,
-    consumer: Arc<dyn QueueConsumer>,
+    /// The consumer instance that received the message — the last-resort
+    /// target when nothing in the registry answers for its queue (a message
+    /// routed by a consumer the manager never registered).
+    origin: Arc<dyn QueueConsumer>,
+    /// Generation of the registered instance that received the message, or
+    /// 0 when it was not registered.
+    origin_generation: u64,
+    /// The manager's consumer registry: ack/nack resolve their consumer
+    /// through it when they run (Go: `resolveConsumer`), not through an
+    /// instance captured at route time that may since have been replaced.
+    registry: Arc<ConsumerRegistry>,
     in_pipeline: Arc<DashMap<String, InFlightMessage>>,
     app_message_to_pipeline_key: Arc<DashMap<String, String>>,
     pending_delete: Arc<DashMap<String, Instant>>,
@@ -77,6 +87,14 @@ struct QueueMessageCallback {
 }
 
 impl QueueMessageCallback {
+    /// The consumer to ack/nack through, resolved now — see
+    /// [`ConsumerRegistry::resolve`].
+    fn consumer(&self) -> Arc<dyn QueueConsumer> {
+        self.registry
+            .resolve(&self.queue_identifier, self.origin_generation)
+            .unwrap_or_else(|| self.origin.clone())
+    }
+
     /// Common cleanup: drop the in-memory tracking entries so future
     /// redeliveries of this `broker_message_id` flow through Phase 2 again
     /// instead of being silently swallowed as duplicates.
@@ -109,7 +127,7 @@ impl MessageCallback for QueueMessageCallback {
                 "ACK skipped — no receipt handle in in_pipeline (entry may have been reaped)"
             );
         } else {
-            if let Err(e) = self.consumer.ack(&handle).await {
+            if let Err(e) = self.consumer().ack(&handle).await {
                 // ACK failed — add to pending_delete BEFORE removing from in_pipeline
                 if let Some(ref bid) = broker_id {
                     warn!(
@@ -156,7 +174,7 @@ impl MessageCallback for QueueMessageCallback {
                 "NACK skipped — no receipt handle in in_pipeline (entry may have been reaped)"
             );
         } else {
-            let _ = self.consumer.nack(&handle, delay_seconds).await;
+            let _ = self.consumer().nack(&handle, delay_seconds).await;
         }
 
         // Clean up tracking AFTER SQS operation
@@ -204,7 +222,7 @@ impl Drop for QueueMessageCallback {
             // handle (e.g. shutting down), the SQS visibility timeout will
             // eventually redeliver and processing will retry.
             if let Ok(rt) = tokio::runtime::Handle::try_current() {
-                let consumer = self.consumer.clone();
+                let consumer = self.consumer();
                 rt.spawn(async move {
                     let _ = consumer.nack(&handle, Some(10)).await;
                 });
@@ -236,11 +254,32 @@ fn malformed_routing_reason(msg: &fc_common::Message) -> Option<&'static str> {
 }
 
 impl QueueManager {
-    /// Route a batch of messages from a consumer poll
+    /// Route a batch of messages polled by `consumer`. Callbacks resolve the
+    /// consumer through the registry when they ack/nack, falling back to
+    /// `consumer` itself when it isn't registered.
     pub async fn route_batch(
         &self,
         messages: Vec<QueuedMessage>,
         consumer: Arc<dyn QueueConsumer>,
+    ) -> Result<()> {
+        self.route_batch_inner(messages, consumer, 0).await
+    }
+
+    /// Route a batch polled by the registered consumer `rc`.
+    pub(super) async fn route_batch_from(
+        &self,
+        messages: Vec<QueuedMessage>,
+        rc: &RunningConsumer,
+    ) -> Result<()> {
+        self.route_batch_inner(messages, rc.consumer.clone(), rc.generation)
+            .await
+    }
+
+    async fn route_batch_inner(
+        &self,
+        messages: Vec<QueuedMessage>,
+        consumer: Arc<dyn QueueConsumer>,
+        origin_generation: u64,
     ) -> Result<()> {
         if !self.running.load(Ordering::SeqCst) {
             // NACK all messages concurrently on shutdown
@@ -552,7 +591,9 @@ impl QueueManager {
                         pipeline_key: pipeline_key.clone(),
                         app_message_id: app_message_id.clone(),
                         queue_identifier,
-                        consumer: consumer.clone(),
+                        origin: consumer.clone(),
+                        origin_generation,
+                        registry: self.consumers.clone(),
                         in_pipeline: self.in_pipeline.clone(),
                         app_message_to_pipeline_key: self.app_message_to_pipeline_key.clone(),
                         pending_delete: self.pending_delete_broker_ids.clone(),
@@ -916,7 +957,9 @@ mod callback_drop_tests {
             pipeline_key,
             app_message_id,
             queue_identifier: "queue-id".to_string(),
-            consumer: consumer as Arc<dyn QueueConsumer>,
+            origin: consumer as Arc<dyn QueueConsumer>,
+            origin_generation: 0,
+            registry: Arc::new(ConsumerRegistry::default()),
             in_pipeline: in_pipeline.clone(),
             app_message_to_pipeline_key: app_index.clone(),
             pending_delete,

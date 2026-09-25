@@ -45,13 +45,17 @@ use crate::Result;
 
 mod consumers;
 mod reconcile;
+mod registry;
 mod routing;
 mod shutdown;
 mod snapshots;
 mod stall;
 mod synth_pools;
 
+pub use registry::ConsumerStat;
 pub use snapshots::{ForceAckResult, GroupFlushSnapshot, InFlightMessageInfo};
+
+pub(crate) use registry::{ConsumerRegistry, RunningConsumer};
 
 /// Builds a mediator for each new pool, given the manager's current warning
 /// service (read at pool-creation time, *after* wiring — so the real service
@@ -75,15 +79,6 @@ type MediatorFactory = Arc<
         + Send
         + Sync,
 >;
-
-/// `(queue_id, consumer)` pair — used by `sync_queue_consumers` to shuttle
-/// consumers created/removed outside the `consumers` map's lock.
-type ConsumerEntry = (String, Arc<dyn QueueConsumer>);
-
-/// `(queue_id, consumer, queue_config)` triple — the "just created, not yet
-/// inserted" shape `sync_queue_consumers` collects before its brief insert
-/// write-lock.
-type NewConsumerEntry = (String, Arc<dyn QueueConsumer>, fc_common::QueueConfig);
 
 /// Factory trait for creating queue consumers
 /// Implementations can create SQS, ActiveMQ, or other consumer types
@@ -117,6 +112,13 @@ pub(super) enum PoolState {
 pub(super) struct PoolEntry {
     pub(super) pool: Arc<ProcessPool>,
     pub(super) state: PoolState,
+}
+
+/// One queue's restart history (Go: `restartRecord`).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct RestartRecord {
+    pub(super) attempts: u32,
+    pub(super) last: Instant,
 }
 
 /// Central orchestrator for message routing
@@ -213,30 +215,15 @@ pub struct QueueManager {
     /// `Manager.synthPools`.
     synth_pools: DashMap<String, synth_pools::SynthPoolState>,
 
-    /// Queue consumers (RwLock for async-safe access), keyed however the
-    /// caller identifies a queue for reconfigure-diffing purposes — the
-    /// config's queue name (`sync_queue_consumers`) or, for consumers added
-    /// directly via [`Self::add_consumer`], the consumer's own
-    /// `identifier()`. **Do not** resolve a consumer from a
-    /// `QueueIdentifier` read off a polled/tracked message through this
-    /// map — see `consumers_by_id` below (G10).
-    consumers: RwLock<HashMap<String, Arc<dyn QueueConsumer>>>,
-
-    /// `Consumer::identifier()`-keyed index mirroring `consumers`,
-    /// maintained on every insert/remove ([`Self::add_consumer`],
-    /// `sync_queue_consumers`, [`Self::restart_consumer`]) regardless of
-    /// what key `consumers` itself used for that same entry.
+    /// Every consumer, by config queue name and by `identifier()`, plus the
+    /// detaching ones (Go: `consumers` / `consumersByID` / `detaching`) —
+    /// see [`ConsumerRegistry`]. Shared (`Arc`) with every message callback
+    /// so ack/nack resolve the consumer through it (Go: `resolveConsumer`).
     ///
-    /// Every resolution that starts from a `QueueIdentifier` carried on a
-    /// polled/tracked message — the operator force-ack endpoint
-    /// (`force_ack_in_flight`), the stall detector's force-NACK path — MUST
-    /// go through this index, never through `consumers`. The two key
-    /// spaces genuinely differ: a queue's `identifier()` (NATS:
-    /// `<stream>/<consumer>`) is a broker-native identity, while the
-    /// config's queue name/key is an operator-chosen label; resolving the
-    /// wrong one silently drops the ack/nack — the message then redelivers
-    /// forever (G10, `docs/go-mirror/2026-09-06-go-fix-list.md`).
-    consumers_by_id: RwLock<HashMap<String, Arc<dyn QueueConsumer>>>,
+    /// Beyond the registry, [`Self::pool_configs`]' write lock still
+    /// serialises whole reconciles (`apply_config`/`reload_config`) and the
+    /// watchdog's rebuilds against each other.
+    consumers: Arc<ConsumerRegistry>,
 
     /// Current pool configurations (for detecting changes).
     ///
@@ -247,13 +234,30 @@ pub struct QueueManager {
     /// pool's concurrency is decreased. That single write-held-for-the-
     /// whole-call is what prevents two concurrent reloads from
     /// interleaving — no hot-path reader (routing, monitoring, health
-    /// checks) ever takes this lock, only the two config-mutation entry
-    /// points do, so a slow in-flight reload blocks only a second
-    /// concurrent reload, never message routing or stats reads.
+    /// checks) ever takes this lock, only the config-mutation entry points
+    /// and the consumer watchdog do, so a slow in-flight reload blocks only
+    /// a second concurrent reload, never message routing or stats reads.
     pool_configs: RwLock<HashMap<String, PoolConfig>>,
 
-    /// Current queue configurations (for detecting changes during sync)
-    queue_configs: RwLock<HashMap<String, fc_common::QueueConfig>>,
+    /// Generation stamped on every [`RunningConsumer`].
+    next_consumer_generation: std::sync::atomic::AtomicU64,
+
+    /// Latched by [`Self::stop_polling`] (Go: `pollingStopped`): the
+    /// watchdog must not respawn the poll loops a drain just stopped, and a
+    /// reload must not start new ones.
+    polling_stopped: AtomicBool,
+
+    /// Consecutive restart attempts per stalled consumer (by name), so a
+    /// consumer that keeps stalling escalates to CRITICAL and a recovered
+    /// one is forgotten (Go: `restartAttempts`).
+    restart_attempts: Mutex<HashMap<String, RestartRecord>>,
+
+    /// Bound on a single `poll()` (Go: `consumerPollTimeout`, 30s).
+    poll_timeout: std::time::Duration,
+
+    /// Bound on building a replacement consumer (Go:
+    /// `consumerRebuildTimeout`, 20s).
+    rebuild_timeout: std::time::Duration,
 
     /// Consumer factory for creating new queue consumers during config sync
     /// If None, new queues in config will be logged but not auto-created
@@ -377,60 +381,6 @@ pub struct QueueManager {
     /// cycle for no correctness reason; "a poll task is running for every
     /// configured consumer" is what "started consuming" means here.
     consumers_started: AtomicBool,
-
-    /// Item 1 (router bench rig, 2026-09-07): identifiers (`consumer.
-    /// identifier()`) that currently have a poll task running, guarding
-    /// [`Self::spawn_consumer_poll_task`] against being called twice for
-    /// the same queue. Found via a hand-rolled single-queue reproduction
-    /// after the bench rig's `ACK failed - message not found` warnings
-    /// turned out not to be a visibility-timeout race at all: production
-    /// mode (`FLOWCATALYST_CONFIG_URL` set) calls `initial_sync()` ->
-    /// `reload_config()` -> `sync_queue_consumers()` *before*
-    /// `QueueManager::start()` runs, and `sync_queue_consumers` already
-    /// spawns a poll task for every queue it creates (the "hot-add" path,
-    /// meant for a *later* config reload) — but `start()` then
-    /// unconditionally spawns a poll task for every consumer currently in
-    /// `self.consumers` too, with no way to know one is already running.
-    /// `bin/fc-router/src/main.rs` compounded this by ALSO manually
-    /// creating and `add_consumer`-ing a second, fully independent
-    /// `PostgresQueue` instance per queue in between those two calls
-    /// (`add_consumer` only overwrites the map entry — it neither stops
-    /// whatever poll task is already running for that id nor spawns one
-    /// for the new instance itself) — see that file's own fix. Two
-    /// concurrent pollers hammering the same `queue_name` doesn't produce
-    /// a literal double-claim of one row (`FOR UPDATE SKIP LOCKED` still
-    /// prevents that), but it does mean two independent, concurrently-
-    /// running dedup/redelivery cycles racing each other, which reproduced
-    /// as spurious ACK failures and a small number of genuine duplicate
-    /// deliveries (5,006 sink hits for 5,000 seeded messages in the
-    /// reproduction) within *milliseconds* of a message's very first
-    /// claim — nothing to do with the 120s visibility window at all. This
-    /// map makes a second `spawn_consumer_poll_task` call for an id that
-    /// already has a live task a no-op (logged) instead of a second
-    /// poller, regardless of which code path or which consumer instance
-    /// triggers it — defence in depth alongside the direct fix in
-    /// `main.rs`.
-    ///
-    /// Maps id -> the spawning generation that currently owns it, rather
-    /// than a bare `DashSet<String>`, to stay ABA-safe against
-    /// `restart_consumer`: that method deliberately preempts an id (its
-    /// replacement must be allowed to spawn even though the *old* task,
-    /// merely `stop()`-flagged, hasn't necessarily exited and
-    /// self-removed yet — `stop()` only flips a flag, the task notices on
-    /// its own next loop iteration, which for some backends can be
-    /// seconds away). Without the generation check, a bare set has a
-    /// real race: preempt id X for the replacement (remove + respawn) ->
-    /// the OLD task *finally* notices `Stopped` and removes id X on its
-    /// way out -> that removal now deletes the *replacement's* entry
-    /// instead of a stale one, silently un-guarding an id that is very
-    /// much still being polled. `remove_if` at exit only removes the
-    /// entry when its generation still matches the exiting task's own —
-    /// a later preemption (which always installs a fresh generation)
-    /// makes the original task's own cleanup a safe no-op.
-    polling_consumer_ids: Arc<DashMap<String, u64>>,
-    /// Monotonic counter handing out the generation each
-    /// `spawn_consumer_poll_task` call stamps into `polling_consumer_ids`.
-    next_poll_task_generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
@@ -452,6 +402,8 @@ pub struct QueueManagerBuilder {
     pool_warning_threshold: usize,
     stall_config: StallConfig,
     strict_routing: bool,
+    poll_timeout: std::time::Duration,
+    rebuild_timeout: std::time::Duration,
 }
 
 impl QueueManagerBuilder {
@@ -467,7 +419,25 @@ impl QueueManagerBuilder {
             pool_warning_threshold: 5000,
             stall_config: StallConfig::default(),
             strict_routing: false,
+            poll_timeout: QueueManager::DEFAULT_POLL_TIMEOUT,
+            rebuild_timeout: QueueManager::DEFAULT_REBUILD_TIMEOUT,
         }
+    }
+
+    /// Bound on a single consumer `poll()` (default 30s, Go's
+    /// `consumerPollTimeout`). A poll that hits it is an error for a
+    /// backend that returns promptly, and an empty poll for one that blocks
+    /// by contract while its broker link is healthy (NATS).
+    pub fn poll_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.poll_timeout = timeout;
+        self
+    }
+
+    /// Bound on building a replacement consumer (default 20s, Go's
+    /// `consumerRebuildTimeout`).
+    pub fn rebuild_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.rebuild_timeout = timeout;
+        self
     }
 
     /// Warning service shared by the manager, its pools, and the per-pool
@@ -535,10 +505,13 @@ impl QueueManagerBuilder {
             orphaned_draining: Mutex::new(Vec::new()),
             capacity_notify: Arc::new(tokio::sync::Notify::new()),
             synth_pools: DashMap::new(),
-            consumers: RwLock::new(HashMap::new()),
-            consumers_by_id: RwLock::new(HashMap::new()),
+            consumers: Arc::new(ConsumerRegistry::default()),
             pool_configs: RwLock::new(HashMap::new()),
-            queue_configs: RwLock::new(HashMap::new()),
+            next_consumer_generation: std::sync::atomic::AtomicU64::new(0),
+            polling_stopped: AtomicBool::new(false),
+            restart_attempts: Mutex::new(HashMap::new()),
+            poll_timeout: self.poll_timeout,
+            rebuild_timeout: self.rebuild_timeout,
             consumer_factory: self.consumer_factory,
             mediator_factory: self.mediator_factory,
             default_pool_code: "DEFAULT-POOL".to_string(), // Java: DEFAULT_POOL_CODE
@@ -556,13 +529,18 @@ impl QueueManagerBuilder {
             strict_routing: self.strict_routing,
             is_leader: AtomicBool::new(true),
             consumers_started: AtomicBool::new(false),
-            polling_consumer_ids: Arc::new(DashMap::new()),
-            next_poll_task_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
 
 impl QueueManager {
+    /// Go: `consumerPollTimeout`.
+    pub const DEFAULT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    /// Go: `consumerRebuildTimeout`.
+    pub const DEFAULT_REBUILD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+    /// Go: `consumerRestartCriticalAfter`.
+    const CONSUMER_RESTART_CRITICAL_AFTER: u32 = 10;
+
     /// R-59: suffix identifying a per-client fallback pool code
     /// (`{identifier}-DEFAULT-POOL`). See `is_default_pool_code`.
     const SYNTH_POOL_SUFFIX: &'static str = "-DEFAULT-POOL";
@@ -680,15 +658,38 @@ impl QueueManager {
         &self.capacity_notify
     }
 
-    /// Add a queue consumer
+    /// Register a consumer built outside the manager (dev/embedded paths),
+    /// keyed by its `identifier()`. Its poll loop starts with
+    /// [`Self::start`]. A consumer already registered under the same name
+    /// is detached — its poll loop stops, its in-flight messages can still
+    /// be acked — so two instances never poll one queue. Such a consumer
+    /// has no `QueueConfig`, so the watchdog cannot rebuild it.
     pub async fn add_consumer(&self, consumer: Arc<dyn QueueConsumer>) {
-        let id = consumer.identifier().to_string();
-        self.consumers
-            .write()
-            .await
-            .insert(id.clone(), consumer.clone());
-        // G10: keep the identifier-keyed resolution index in lockstep.
-        self.consumers_by_id.write().await.insert(id, consumer);
+        let name = consumer.identifier().to_string();
+        let rc = self.new_running_consumer(consumer, name, None);
+        if let Some(prev) = self.consumers.insert(rc) {
+            prev.stop_poll.cancel();
+            prev.consumer.stop().await;
+            self.consumers.detach(prev);
+        }
+    }
+
+    /// Wrap `consumer` for the registry with a fresh generation and a poll
+    /// token under the manager's shutdown token.
+    pub(super) fn new_running_consumer(
+        &self,
+        consumer: Arc<dyn QueueConsumer>,
+        name: String,
+        queue_config: Option<fc_common::QueueConfig>,
+    ) -> Arc<RunningConsumer> {
+        let generation = self.next_consumer_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        Arc::new(RunningConsumer::new(
+            consumer,
+            name,
+            queue_config,
+            generation,
+            self.shutdown.child_token(),
+        ))
     }
 
     /// The currently *active* pool for `code` — `None` if absent, or if

@@ -130,18 +130,16 @@ impl QueueManager {
             .app_message_to_pipeline_key
             .get(message_id)
             .map(|e| e.value().clone())?;
-        let entry = self.in_pipeline.get(&pipeline_key).map(|e| e.value().clone())?;
+        let entry = self
+            .in_pipeline
+            .get(&pipeline_key)
+            .map(|e| e.value().clone())?;
 
         // G10: resolve by the consumer's own identifier(), not the config
         // queue name `consumers` is keyed by — `entry.queue_identifier` is
         // `Consumer::identifier()` (see `InFlightMessage::new`), which for
         // NATS differs from the operator-chosen queue name.
-        let consumer = self
-            .consumers_by_id
-            .read()
-            .await
-            .get(&entry.queue_identifier)
-            .cloned();
+        let consumer = self.consumers.resolve(&entry.queue_identifier, 0);
         let (broker_acked, broker_ack_error) = match consumer {
             Some(c) => match c.ack(&entry.receipt_handle).await {
                 Ok(()) => (true, None),
@@ -149,7 +147,10 @@ impl QueueManager {
             },
             None => (
                 false,
-                Some(format!("no consumer for queue {:?}", entry.queue_identifier)),
+                Some(format!(
+                    "no consumer for queue {:?}",
+                    entry.queue_identifier
+                )),
             ),
         };
 

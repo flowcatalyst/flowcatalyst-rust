@@ -4,15 +4,12 @@
 //! periodic sweep that evicts stale `in_pipeline`/`pending_delete_broker_ids`
 //! entries.
 
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
 use tracing::{error, info, warn};
 
 use fc_common::{StallConfig, StalledMessageInfo, WarningCategory, WarningSeverity};
-use fc_queue::QueueConsumer;
 
 use super::QueueManager;
 
@@ -230,15 +227,6 @@ impl QueueManager {
         let force_threshold = self.stall_config.force_nack_after_seconds;
         let nack_delay = self.stall_config.nack_delay_seconds;
 
-        // Snapshot consumers before awaiting any nack — holding the read
-        // lock across `consumer.nack(...).await` for every stalled message
-        // would stall concurrent reloads/health reads for however long
-        // this whole loop takes. G10: keyed by identifier() (resolution),
-        // not the config queue name `self.consumers` uses.
-        let consumers: HashMap<String, Arc<dyn QueueConsumer>> = {
-            let guard = self.consumers_by_id.read().await;
-            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-        };
         let mut force_nacked = 0;
 
         for msg in &stalled {
@@ -261,7 +249,9 @@ impl QueueManager {
                     let queue_id = in_flight.queue_identifier.clone();
                     drop(in_flight); // Release the lock before async call
 
-                    if let Some(consumer) = consumers.get(&queue_id) {
+                    // G10: resolve by identifier() — the broker identity —
+                    // never the config queue name.
+                    if let Some(consumer) = self.consumers.resolve(&queue_id, 0) {
                         warn!(
                             message_id = %msg.message_id,
                             elapsed_seconds = msg.elapsed_seconds,
@@ -435,6 +425,7 @@ mod stall_warning_tests {
     use fc_common::QueuedMessage;
     use fc_queue::{QueueConsumer, Result as QueueResult};
     use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    use std::sync::Arc;
 
     /// Records nack() calls; a broker-native `identifier()` that deliberately
     /// differs from any config queue name a test might otherwise key things
@@ -487,10 +478,9 @@ mod stall_warning_tests {
     /// a broker-derived pipeline_key ("scoped-key-1") that is *not* the
     /// bare application message id ("msg-1").
     ///
-    /// Mutant check A (G10): resolving via `self.consumers` (config-name
-    /// keyed, empty in this test) instead of `self.consumers_by_id`
-    /// (identifier-keyed) — `consumers.get("STREAM1/router")` finds
-    /// nothing, `nacks` stays 0, this test fails.
+    /// Mutant check A (G10): resolving by config name instead of by
+    /// identifier — the consumer is registered under the name "STREAM1" —
+    /// finds nothing, `nacks` stays 0, this test fails.
     ///
     /// Mutant check B (adjacent pipeline_key defect): resolving
     /// `self.in_pipeline.get(&msg.message_id)` (bare app id "msg-1")
@@ -502,14 +492,10 @@ mod stall_warning_tests {
         let manager = manager_with_force_nack();
         let consumer = Arc::new(RecordingConsumer::default());
 
-        // Consumer registered ONLY under its identifier() — never under a
-        // config queue name — so any lookup through `self.consumers`
-        // (config-name keyed) must miss.
-        manager
-            .consumers_by_id
-            .write()
-            .await
-            .insert("STREAM1/router".to_string(), consumer.clone());
+        // Registered under a config name ("STREAM1") that differs from its
+        // identifier() — a lookup by name for "STREAM1/router" must miss.
+        let rc = manager.new_running_consumer(consumer.clone(), "STREAM1".to_string(), None);
+        manager.consumers.insert(rc);
 
         let mut in_flight = stalled_in_flight("msg-1");
         in_flight.queue_identifier = "STREAM1/router".to_string();
@@ -533,10 +519,7 @@ mod stall_warning_tests {
             "the in-pipeline entry must be cleared once force-NACKed"
         );
         assert!(
-            manager
-                .app_message_to_pipeline_key
-                .get("msg-1")
-                .is_none(),
+            manager.app_message_to_pipeline_key.get("msg-1").is_none(),
             "the app-id index entry must be cleared once force-NACKed"
         );
     }

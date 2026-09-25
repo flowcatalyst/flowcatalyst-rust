@@ -13,7 +13,17 @@ use fc_common::{PoolConfig, RouterConfig, WarningCategory, WarningSeverity};
 use crate::pool::ProcessPool;
 use crate::Result;
 
-use super::{ConsumerEntry, NewConsumerEntry, PoolState, QueueManager};
+use super::{PoolState, QueueManager};
+
+/// Every field of a queue's config matters: a changed URI points at a
+/// different queue, and connections / visibility timeout are fixed when the
+/// consumer is built (Go compares the whole `QueueConfig`).
+fn same_queue_config(a: &fc_common::QueueConfig, b: &fc_common::QueueConfig) -> bool {
+    a.name == b.name
+        && a.uri == b.uri
+        && a.connections == b.connections
+        && a.visibility_timeout == b.visibility_timeout
+}
 
 impl QueueManager {
     /// Apply router configuration (initial setup).
@@ -50,7 +60,11 @@ impl QueueManager {
     /// change. A pool is only ever torn down when its code drops out of the
     /// new config entirely (the "removed pools" branch).
     pub async fn reload_config(self: &Arc<Self>, config: RouterConfig) -> Result<bool> {
-        if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self.running.load(std::sync::atomic::Ordering::SeqCst)
+            || self
+                .polling_stopped
+                .load(std::sync::atomic::Ordering::SeqCst)
+        {
             warn!("Cannot reload config - QueueManager is shutting down");
             return Ok(false);
         }
@@ -236,11 +250,14 @@ impl QueueManager {
             }
         }
 
-        // Step 3: Sync queue consumers (Java: Step 4)
+        // Step 3: Sync queue consumers (Java: Step 4). A consumer that
+        // could not be built fails the reload (after every other queue has
+        // been reconciled), so the caller does not record this config as
+        // applied and retries it (Go: Reconfigure errors, the watcher
+        // forgets the config).
         let (queues_created, queues_removed) = self.sync_queue_consumers(&config).await?;
 
-        // Get counts before logging (avoid await in info! macro)
-        let total_active_consumers = self.consumers.read().await.len();
+        let total_active_consumers = self.consumers.len();
 
         info!(
             pools_updated = pools_updated,
@@ -257,159 +274,125 @@ impl QueueManager {
         Ok(true)
     }
 
-    /// Sync queue consumers based on configuration changes.
-    /// Mirrors Java's queue consumer sync logic in syncConfig().
+    /// Reconcile consumers against `config.queues` (Go: the consumer half of
+    /// `Reconfigure`), keyed by queue name (the URI when the name is empty):
     ///
-    /// `consumers`/`queue_configs` are only held write-locked for two brief,
-    /// synchronous sections (remove-stale, then insert-new) — never across
-    /// an `.await`. `consumer.stop().await` and `factory.create_consumer(..)
-    /// .await` both run with the locks released. `reload_config` holds
-    /// `pool_configs.write()` for its entire duration (see that field's doc
-    /// comment), which is what serialises concurrent reloads/syncs; releasing
-    /// `consumers`/`queue_configs` mid-sync here cannot let two syncs
-    /// interleave — it only stops this sync from stalling monitoring/health
-    /// readers (`get_queue_metrics`, `consumer_ids`, `is_consumer_healthy`)
-    /// or from blocking on a slow `stop()`/`create_consumer()` call while
-    /// holding a lock nobody else needs mid-sync.
+    /// - a queue that is gone, or whose config changed in any field (URI,
+    ///   connections, visibility timeout), has its consumer DETACHED: its
+    ///   poll loop stops at once, but it stays resolvable for the ack/nack
+    ///   of messages it already delivered until
+    ///   `retire_detached_consumers` finds none left (X-11 / R-26/R-49) —
+    ///   never stopped out from under in-flight work;
+    /// - a queue with no consumer (new, changed, or one whose earlier build
+    ///   failed) gets one built and started.
+    ///
+    /// Building talks to the broker, so no registry lock is held across it.
+    /// If any build fails the rest are still reconciled and an error naming
+    /// the failures is returned, so the config is not recorded as applied
+    /// and the next sync retries exactly the missing queues.
     async fn sync_queue_consumers(
         self: &Arc<Self>,
         config: &RouterConfig,
     ) -> Result<(usize, usize)> {
-        // Build map of new queue configs
-        let new_queue_configs: HashMap<String, fc_common::QueueConfig> = config
+        let wanted: HashMap<String, fc_common::QueueConfig> = config
             .queues
             .iter()
             .map(|q| {
-                // Use name as identifier, fall back to uri if name is empty
-                let identifier = if q.name.is_empty() {
+                let key = if q.name.is_empty() {
                     q.uri.clone()
                 } else {
                     q.name.clone()
                 };
-                (identifier, q.clone())
+                (key, q.clone())
             })
             .collect();
 
-        // Step (a): brief write lock — remove entries no longer in the new
-        // config, collecting the removed consumers so `stop()` can run
-        // after the lock is dropped. Also snapshot the resulting key set
-        // so step (c) below can tell "genuinely new" queues apart without
-        // holding the lock across `create_consumer().await`.
-        let (removed_consumers, existing_ids): (
-            Vec<ConsumerEntry>,
-            std::collections::HashSet<String>,
-        ) = {
-            let mut consumers = self.consumers.write().await;
-            let mut consumers_by_id = self.consumers_by_id.write().await;
-            let mut queue_configs = self.queue_configs.write().await;
-
-            let existing_queues: Vec<String> = consumers.keys().cloned().collect();
-            let mut removed = Vec::new();
-            for queue_id in &existing_queues {
-                if !new_queue_configs.contains_key(queue_id) {
-                    if let Some(consumer) = consumers.remove(queue_id) {
-                        queue_configs.remove(queue_id);
-                        // G10: keep the identifier-keyed index in lockstep.
-                        consumers_by_id.remove(consumer.identifier());
-                        removed.push((queue_id.clone(), consumer));
-                    }
-                }
-            }
-            let remaining_ids: std::collections::HashSet<String> =
-                consumers.keys().cloned().collect();
-            (removed, remaining_ids)
-        };
-
-        // Step (b): stop phased-out consumers — outside the lock.
-        //
-        // X-11 (verified, no `draining_consumers` map needed): removing a
-        // consumer from `self.consumers` here does not strand any buffered
-        // message's ability to ack/nack. Every `BatchMessage`'s callback
-        // (`QueueMessageCallback`, built in `route_batch`) captures its own
-        // `Arc<dyn QueueConsumer>` clone at route time, independent of this
-        // map — so a message already buffered in a pool when its queue is
-        // removed here still holds a live, working consumer handle. And
-        // `stop()` (every backend: sqs/postgres/sqlite/nats/activemq) only
-        // flips a `running` flag that gates *polling*; `ack`/`nack` never
-        // check it. So "stays addressable for ack/nack until buffers empty"
-        // already holds via ordinary `Arc` ownership; there is nothing left
-        // for the manager to track once this map entry is removed.
+        // Detach consumers whose queue is gone or changed. A consumer
+        // registered directly (`add_consumer`, no config) is left alone
+        // unless config now names its queue differently.
         let mut queues_removed = 0;
-        for (queue_id, consumer) in removed_consumers {
-            info!(queue_id = %queue_id, "Phasing out consumer for removed queue");
-            // Stop consumer: sets running=false and initiates graceful
-            // shutdown. The consumer's own poll task owns the Arc it needs
-            // to finish any in-flight poll, so once we drop our reference
-            // here there is nothing further for the manager to track — the
-            // task drains and exits on its own.
-            consumer.stop().await;
-            queues_removed += 1;
-            info!(queue_id = %queue_id, "Consumer stopped and removed");
+        for rc in self.consumers.active() {
+            let keep = match (&rc.queue_config, wanted.get(&rc.name)) {
+                (None, None) => true,
+                (Some(have), Some(want)) => same_queue_config(have, want),
+                (None, Some(_)) | (Some(_), None) => false,
+            };
+            if keep {
+                continue;
+            }
+            if let Some(removed) = self.consumers.remove(&rc.name) {
+                if removed.generation != rc.generation {
+                    // Replaced concurrently; put the newer one back.
+                    self.consumers.insert(removed);
+                    continue;
+                }
+                info!(
+                    queue = %rc.name,
+                    "Detaching consumer (queue removed or its config changed)"
+                );
+                self.detach_consumer(removed).await;
+                queues_removed += 1;
+            }
         }
 
-        // Step (c): create consumers for genuinely new queues (if a factory
-        // is available) — outside the lock.
         let mut queues_created = 0;
-        let mut new_consumers: Vec<NewConsumerEntry> = Vec::new();
-
-        if let Some(ref factory) = self.consumer_factory {
-            for (queue_id, queue_config) in &new_queue_configs {
-                if !existing_ids.contains(queue_id) {
-                    info!(queue_id = %queue_id, "Creating new queue consumer");
-
-                    match factory.create_consumer(queue_config).await {
-                        Ok(consumer) => {
-                            new_consumers.push((queue_id.clone(), consumer, queue_config.clone()));
-                            queues_created += 1;
-                            info!(queue_id = %queue_id, "Queue consumer created and ready");
-                        }
-                        Err(e) => {
-                            error!(queue_id = %queue_id, error = %e, "Failed to create queue consumer");
-                            self.warning_service.add_warning(
-                                WarningCategory::ConsumerHealth,
-                                WarningSeverity::Critical,
-                                format!(
-                                    "Failed to create consumer for queue [{}]: {}",
-                                    queue_id, e
-                                ),
-                                "QueueManager".to_string(),
-                            );
-                        }
-                    }
-                }
-            }
-        } else {
-            // No factory - just log new queues that couldn't be created
-            for queue_id in new_queue_configs.keys() {
-                if !existing_ids.contains(queue_id) {
+        let mut failures: Vec<String> = Vec::new();
+        let Some(factory) = self.consumer_factory.clone() else {
+            for name in wanted.keys() {
+                if self.consumers.get(name).is_none() {
                     warn!(
-                        queue_id = %queue_id,
+                        queue_id = %name,
                         "New queue in config but no consumer factory available - consumer will not be auto-created"
                     );
                 }
             }
-        }
+            return Ok((0, queues_removed));
+        };
 
-        // Step (d): brief write lock — insert the newly created consumers
-        // and their configs.
-        {
-            let mut consumers = self.consumers.write().await;
-            let mut consumers_by_id = self.consumers_by_id.write().await;
-            let mut queue_configs = self.queue_configs.write().await;
-            for (queue_id, consumer, queue_config) in &new_consumers {
-                consumers.insert(queue_id.clone(), consumer.clone());
-                // G10: keep the identifier-keyed index in lockstep.
-                consumers_by_id.insert(consumer.identifier().to_string(), consumer.clone());
-                queue_configs.insert(queue_id.clone(), queue_config.clone());
+        for (name, queue_config) in &wanted {
+            if self.consumers.get(name).is_some() {
+                continue;
+            }
+            info!(queue_id = %name, "Creating queue consumer");
+            match factory.create_consumer(queue_config).await {
+                Ok(consumer) => {
+                    let rc = self.new_running_consumer(
+                        consumer,
+                        name.clone(),
+                        Some(queue_config.clone()),
+                    );
+                    if let Some(prev) = self.consumers.insert(rc.clone()) {
+                        // The watchdog registered one while we were
+                        // building; keep ours (it matches this config) and
+                        // detach theirs.
+                        self.detach_consumer(prev).await;
+                    }
+                    self.spawn_consumer_poll_task(rc);
+                    queues_created += 1;
+                    info!(queue_id = %name, "Queue consumer created and polling");
+                }
+                Err(e) => {
+                    error!(queue_id = %name, error = %e, "Failed to create queue consumer");
+                    self.warning_service.add_warning(
+                        WarningCategory::ConsumerHealth,
+                        WarningSeverity::Critical,
+                        format!("Failed to create consumer for queue [{}]: {}", name, e),
+                        "QueueManager".to_string(),
+                    );
+                    failures.push(format!("{name}: {e}"));
+                }
             }
         }
 
-        // Step (e): spawn poll tasks for newly created consumers.
-        for (_, consumer, _) in new_consumers {
-            info!(consumer_id = %consumer.identifier(), "Spawning poll task for hot-added consumer");
-            self.spawn_consumer_poll_task(consumer);
-        }
+        // A reconfigure can add, remove or repoint what a parked consumer's
+        // capacity check depends on — wake every waiter.
+        self.capacity_notify().notify_waiters();
 
+        if !failures.is_empty() {
+            return Err(crate::error::RouterError::ConsumerBuild(
+                failures.join("; "),
+            ));
+        }
         Ok((queues_created, queues_removed))
     }
 
