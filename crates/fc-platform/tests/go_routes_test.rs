@@ -1004,3 +1004,230 @@ async fn email_domain_mappings_are_created_looked_up_and_moved_as_go() {
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
+
+// ── Principals ───────────────────────────────────────────────────────────
+
+async fn insert_client(app: &TestApp, identifier: &str) -> String {
+    let c = fc_platform::client::entity::Client::new(identifier.to_uppercase(), identifier);
+    app.repos.client_repo.insert(&c).await.unwrap();
+    c.id
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn principals_are_bulk_imported_versioned_and_reassociated() {
+    let app = setup().await;
+    let admin = app.anchor_admin_token().await;
+    let acme = insert_client(&app, "acme").await;
+    let other = insert_client(&app, "other").await;
+    create_role(&app, &admin, "importer").await;
+    // other.example.test belongs to another client.
+    assert_status(
+        app.post(
+            "/api/email-domain-mappings",
+            &admin,
+            json!({ "emailDomain": "other.example.test", "identityProviderId": "idp_x",
+                    "scopeType": "CLIENT", "primaryClientId": other }),
+        )
+        .await,
+        StatusCode::CREATED,
+    )
+    .await;
+
+    let body = assert_status(
+        app.post(
+            "/api/principals/bulk-import",
+            &admin,
+            json!({ "clientId": acme, "users": [
+                { "name": "Ann", "email": " Ann@Acme.Test ", "roles": ["parity:importer"] },
+                { "name": "Ann again", "email": "ann@acme.test" },
+                { "name": "No at", "email": "nope" },
+                { "name": "", "email": "blank@acme.test" },
+                { "name": "Olly", "email": "olly@other.example.test" },
+                { "name": "Bob", "email": "bob@acme.test", "roles": ["parity:missing"] }
+            ]}),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    let statuses: Vec<&str> = body["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        statuses,
+        ["created", "error", "error", "error", "dropped", "created"],
+        "{body}"
+    );
+    assert_eq!(body["results"][0]["email"], "ann@acme.test");
+    assert!(body["results"][0].get("message").is_none());
+    assert_eq!(body["results"][1]["message"], "duplicate email in file");
+    assert!(body["results"][5]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("created, but roles not applied"));
+    assert_eq!(body["created"], 2);
+    assert_eq!(body["skipped"], 1);
+    assert_eq!(body["failed"], 3);
+    let ann = app
+        .repos
+        .principal_repo
+        .find_by_email("ann@acme.test")
+        .await
+        .unwrap()
+        .expect("ann");
+    assert_eq!(ann.client_id.as_deref(), Some(acme.as_str()));
+    assert!(ann.roles.iter().any(|r| r.role == "parity:importer"));
+
+    // A second import skips the existing user.
+    let body = assert_status(
+        app.post(
+            "/api/principals/bulk-import",
+            &admin,
+            json!({ "clientId": acme, "users": [{ "name": "Ann", "email": "ann@acme.test" }] }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(body["results"][0]["status"], "exists");
+
+    for (body, code) in [
+        (json!({ "clientId": " ", "users": [] }), "CLIENT_REQUIRED"),
+        (json!({ "clientId": acme, "users": [] }), "NO_ROWS"),
+    ] {
+        let (s, b) = read_json(app.post("/api/principals/bulk-import", &admin, body).await).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert_eq!(b["code"], code);
+    }
+    let (s, b) = read_json(
+        app.post(
+            "/api/principals/bulk-import",
+            &nobody_token(&app),
+            json!({ "clientId": acme, "users": [{ "name": "x", "email": "x@acme.test" }] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    assert_eq!(b["code"], "SCOPE_FORBIDDEN");
+
+    // Version: the admin reads anyone's; a stranger's is a 404.
+    let v = assert_status(
+        app.get(&format!("/api/principals/{}/version", ann.id), &admin)
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert!(v["updatedAt"].as_str().unwrap().ends_with('Z'));
+    let (s, _) = read_json(app.get("/api/principals/prn_nope/version", &admin).await).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = read_json(
+        app.get(
+            &format!("/api/principals/{}/version", ann.id),
+            &nobody_token(&app),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    // Anyone may read their own.
+    let own = app.auth_service.generate_access_token(&ann).unwrap();
+    assert_status(
+        app.get(&format!("/api/principals/{}/version", ann.id), &own)
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+
+    // Client association: to partner keeps the old home as a grant.
+    let p = assert_status(
+        app.put(
+            &format!("/api/principals/{}/client-association", ann.id),
+            &admin,
+            json!({ "clientId": other, "mode": "to_partner" }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(p["scope"], "PARTNER");
+    let ann = app
+        .repos
+        .principal_repo
+        .find_by_id(&ann.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut grants = ann.assigned_clients.clone();
+    grants.sort();
+    let mut want = vec![acme.clone(), other.clone()];
+    want.sort();
+    assert_eq!(grants, want);
+    let p = assert_status(
+        app.put(
+            &format!("/api/principals/{}/client-association", ann.id),
+            &admin,
+            json!({ "clientId": acme, "mode": "CHANGE_CLIENT" }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(p["scope"], "CLIENT");
+    assert_eq!(p["clientId"], acme.as_str());
+    let p = assert_status(
+        app.put(
+            &format!("/api/principals/{}/client-association", ann.id),
+            &admin,
+            json!({ "clientId": "*" }),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(p["scope"], "ANCHOR");
+
+    for (body, status, code) in [
+        (
+            json!({ "clientId": acme }),
+            StatusCode::BAD_REQUEST,
+            "MODE_REQUIRED",
+        ),
+        (
+            json!({ "clientId": "" }),
+            StatusCode::BAD_REQUEST,
+            "CLIENT_ID_REQUIRED",
+        ),
+        (
+            json!({ "clientId": "clt_nope", "mode": "CHANGE_CLIENT" }),
+            StatusCode::NOT_FOUND,
+            "CLIENT_NOT_FOUND",
+        ),
+    ] {
+        let (s, b) = read_json(
+            app.put(
+                &format!("/api/principals/{}/client-association", ann.id),
+                &admin,
+                body,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(s, status, "{b}");
+        assert_eq!(b["code"], code);
+    }
+    let (s, _) = read_json(
+        app.put(
+            &format!("/api/principals/{}/client-association", ann.id),
+            &app.anchor_token(),
+            json!({ "clientId": "*" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}

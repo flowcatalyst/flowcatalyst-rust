@@ -17,13 +17,19 @@ pub struct GoRoutesState {
     pub role_permissions: crate::role::permission_api::RolePermissionsState,
     pub router_config: crate::shared::router_config_api::RouterConfigState,
     pub edm_lookup: crate::email_domain_mapping::lookup_api::EdmLookupState,
+    pub principals: crate::principal::go_api::PrincipalGoState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
 }
 
 impl GoRoutesState {
-    pub fn build(repos: &Repositories, auth: &AuthServices, uow: &Arc<PgUnitOfWork>) -> Self {
+    pub fn build(
+        repos: &Repositories,
+        auth: &AuthServices,
+        uow: &Arc<PgUnitOfWork>,
+        emailer: Arc<crate::auth::password_reset_api::PasswordResetEmailer>,
+    ) -> Self {
         let encryption =
             crate::shared::encryption_service::EncryptionService::from_env().map(Arc::new);
         // Go resolves the queue settings once at boot and refuses to start
@@ -37,6 +43,35 @@ impl GoRoutesState {
             ),
         );
         Self {
+            principals: crate::principal::go_api::PrincipalGoState {
+                principal_repo: repos.principal_repo.clone(),
+                role_repo: repos.role_repo.clone(),
+                edm_repo: repos.edm_repo.clone(),
+                idp_repo: repos.idp_repo.clone(),
+                client_config_repo: repos.application_client_config_repo.clone(),
+                emailer,
+                create_user_use_case: Arc::new(
+                    crate::principal::operations::CreateUserUseCase::new(
+                        repos.principal_repo.clone(),
+                        auth.password.clone(),
+                        uow.clone(),
+                    ),
+                ),
+                assign_roles_use_case: Arc::new(
+                    crate::principal::operations::AssignUserRolesUseCase::new(
+                        repos.principal_repo.clone(),
+                        repos.role_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+                set_client_association_use_case: Arc::new(
+                    crate::principal::operations::set_client_association::SetClientAssociationUseCase::new(
+                        repos.principal_repo.clone(),
+                        repos.client_repo.clone(),
+                        uow.clone(),
+                    ),
+                ),
+            },
             edm_lookup: crate::email_domain_mapping::lookup_api::EdmLookupState {
                 edm_repo: repos.edm_repo.clone(),
                 idp_repo: repos.idp_repo.clone(),
@@ -114,6 +149,9 @@ impl GoRoutesState {
 /// All Go-parity routes, at their full paths.
 pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
     OpenApiRouter::new()
+        .merge(crate::principal::go_api::principal_go_router(
+            state.principals,
+        ))
         .merge(crate::email_domain_mapping::lookup_api::edm_lookup_router(
             state.edm_lookup,
         ))

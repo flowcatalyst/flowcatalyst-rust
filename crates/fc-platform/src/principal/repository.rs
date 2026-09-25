@@ -1239,3 +1239,33 @@ impl PrincipalRepository {
         Ok(())
     }
 }
+
+impl PrincipalRepository {
+    /// Go `LookupVersion` (principal/repository.go:74): the later of the
+    /// principal's own `updated_at` and its roles' newest `updated_at`.
+    pub async fn lookup_version(&self, id: &str) -> Result<Option<DateTime<Utc>>> {
+        let row: Option<(Option<DateTime<Utc>>,)> = sqlx::query_as(
+            "SELECT GREATEST(p.updated_at, COALESCE((SELECT MAX(r.updated_at) \
+                 FROM iam_principal_roles pr JOIN iam_roles r ON r.name = pr.role_name \
+                 WHERE pr.principal_id = p.id), p.updated_at)) \
+             FROM iam_principals p WHERE p.id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
+    /// The emails of `emails` that already belong to a principal (lower-cased).
+    pub async fn existing_emails(&self, emails: &[String]) -> Result<Vec<String>> {
+        if emails.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT lower(email) FROM iam_principals WHERE lower(email) = ANY($1)")
+                .bind(emails)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(e,)| e).collect())
+    }
+}
