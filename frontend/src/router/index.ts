@@ -41,6 +41,15 @@ const router = createRouter({
 					beforeEnter: guestGuard,
 				},
 				{
+					// Invite links (`/auth/password-setup/request`, new users)
+					// land here: the same page as a reset.
+					path: "set-password",
+					name: "set-password",
+					component: () =>
+						import("@/pages/auth/ResetPasswordPage.vue"),
+					beforeEnter: guestGuard,
+				},
+				{
 					path: "",
 					redirect: "/auth/login",
 				},

@@ -63,6 +63,52 @@ pub struct OidcLoginApiState {
     pub session_cookie: SessionCookieConfig,
     /// Encryption service for decrypting stored secrets (OIDC client secrets, etc.)
     pub encryption_service: Option<Arc<EncryptionService>>,
+    /// Answers `passwordSetupRequired` on an internal check-domain (Go
+    /// `withPasswordSetupRequired`). None: never set.
+    pub password_setup_hint: Option<PasswordSetupHint>,
+}
+
+/// What `/auth/check-domain` needs to tell a passwordless internal user to
+/// create a password.
+#[derive(Clone)]
+pub struct PasswordSetupHint {
+    pub principal_repo: Arc<crate::PrincipalRepository>,
+    pub login_attempt_repo: Arc<crate::LoginAttemptRepository>,
+    pub backoff_policy: Arc<crate::auth::login_backoff::BackoffPolicy>,
+}
+
+/// Go `withPasswordSetupRequired` (auth/login/endpoint.go:230-254): true when
+/// `email` is an internal USER who has never set a password. A UX hint, not
+/// a security decision: a lookup error, or the address being throttled by
+/// the login backoff, reads as false (the ordinary password prompt).
+async fn password_setup_required(state: &OidcLoginApiState, email: &str, ip: Option<&str>) -> bool {
+    let Some(hint) = &state.password_setup_hint else {
+        return false;
+    };
+    if email.is_empty() {
+        return false;
+    }
+    match crate::auth::login_backoff::check(&hint.login_attempt_repo, &hint.backoff_policy, email, ip)
+        .await
+    {
+        Ok(crate::auth::login_backoff::BackoffDecision::Allow) => {}
+        _ => return false,
+    }
+    matches!(
+        hint.principal_repo.find_by_email(email).await,
+        Ok(Some(p)) if crate::auth::password_reset_api::password_setup_eligible(&p)
+    )
+}
+
+/// An `internal` check-domain answer, with the password-setup hint.
+async fn internal_domain_answer(state: &OidcLoginApiState, email: &str, ip: Option<&str>) -> Response {
+    Json(DomainCheckResponse {
+        auth_method: "internal".to_string(),
+        login_url: None,
+        idp_issuer: None,
+        password_setup_required: password_setup_required(state, email, ip).await,
+    })
+    .into_response()
 }
 
 // ==================== Request/Response Types ====================
@@ -86,6 +132,10 @@ pub struct DomainCheckResponse {
     /// External IDP issuer URL (informational)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idp_issuer: Option<String>,
+    /// An internal user who has never set a password: the SPA offers
+    /// "Create your password" (`POST /auth/password-setup/request`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub password_setup_required: bool,
 }
 
 /// OIDC login query parameters
@@ -168,8 +218,10 @@ fn tenant_not_pinned(
 )]
 pub async fn check_domain(
     State(state): State<OidcLoginApiState>,
+    crate::shared::middleware::ClientIp(ip): crate::shared::middleware::ClientIp,
     Json(body): Json<DomainCheckRequest>,
 ) -> Response {
+    let ip = ip.as_deref();
     let email = body.email.trim().to_lowercase();
 
     // Validate email format
@@ -193,12 +245,7 @@ pub async fn check_domain(
     match state.anchor_domain_repo.is_anchor_domain(domain).await {
         Ok(true) => {
             // Anchor domains can use internal auth
-            return Json(DomainCheckResponse {
-                auth_method: "internal".to_string(),
-                login_url: None,
-                idp_issuer: None,
-            })
-            .into_response();
+            return internal_domain_answer(&state, &email, ip).await;
         }
         Ok(false) => {}
         Err(e) => {
@@ -223,12 +270,7 @@ pub async fn check_domain(
         Ok(None) => {
             // Default to internal auth if no mapping
             debug!(domain = %domain, "No email domain mapping, defaulting to internal");
-            return Json(DomainCheckResponse {
-                auth_method: "internal".to_string(),
-                login_url: None,
-                idp_issuer: None,
-            })
-            .into_response();
+            return internal_domain_answer(&state, &email, ip).await;
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup email domain mapping");
@@ -251,12 +293,7 @@ pub async fn check_domain(
         Ok(Some(idp)) => idp,
         Ok(None) => {
             debug!(domain = %domain, "Identity provider not found, defaulting to internal");
-            return Json(DomainCheckResponse {
-                auth_method: "internal".to_string(),
-                login_url: None,
-                idp_issuer: None,
-            })
-            .into_response();
+            return internal_domain_answer(&state, &email, ip).await;
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup identity provider");
@@ -277,15 +314,11 @@ pub async fn check_domain(
             auth_method: "external".to_string(),
             login_url: Some(login_url),
             idp_issuer: idp.oidc_issuer_url,
+            password_setup_required: false,
         })
         .into_response()
     } else {
-        Json(DomainCheckResponse {
-            auth_method: "internal".to_string(),
-            login_url: None,
-            idp_issuer: None,
-        })
-        .into_response()
+        internal_domain_answer(&state, &email, ip).await
     }
 }
 

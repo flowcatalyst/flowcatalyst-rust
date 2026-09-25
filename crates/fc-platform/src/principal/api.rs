@@ -673,9 +673,10 @@ pub async fn create_user(
             .map(|i| !i.email.is_empty())
             .unwrap_or(false);
     if should_send_magic_link {
+        // Go `SendInvite`: a 72-hour "set your password" invite.
         if let Err(e) = state
             .password_reset_emailer
-            .send_reset_email(&created)
+            .send_invite(&created, None)
             .await
         {
             // Don't fail the create — the user is in the DB. Surface the
@@ -1692,6 +1693,14 @@ pub async fn reset_password(
     }))
 }
 
+/// Optional body of `send-password-reset` (Go `sendPasswordResetInput`).
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct SendPasswordResetRequest {
+    /// Also clear the user's 2FA when they complete the reset.
+    pub reset2fa: bool,
+}
+
 /// Trigger a password reset email for an internal-auth user.
 ///
 /// Sends the same single-use email as the user-initiated
@@ -1708,6 +1717,7 @@ pub async fn reset_password(
     params(
         ("id" = String, Path, description = "Principal ID")
     ),
+    request_body(content = Option<SendPasswordResetRequest>, description = "Optional: also reset the user's 2FA"),
     responses(
         (status = 200, description = "Reset email queued", body = StatusChangeResponse),
         (status = 400, description = "User is not eligible (OIDC, service account, or no email)"),
@@ -1720,7 +1730,18 @@ pub async fn send_password_reset(
     State(state): State<PrincipalsState>,
     auth: Authenticated,
     Path(id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
+    // An optional body `{"reset2fa": true}` also clears the user's 2FA when
+    // they complete the reset (Go sendPasswordResetInput, the lost-device
+    // path); no body is the plain reset email.
+    let reset_2fa = if body.iter().all(u8::is_ascii_whitespace) {
+        false
+    } else {
+        serde_json::from_slice::<SendPasswordResetRequest>(&body)
+            .map_err(|e| PlatformError::bad_request_code("INVALID_BODY", e.to_string()))?
+            .reset2fa
+    };
     crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_write_principals(&auth.0)?;
 
@@ -1753,7 +1774,15 @@ pub async fn send_password_reset(
         ));
     }
 
-    emailer.send_reset_email(&principal).await?;
+    emailer
+        .send_reset_email_with(
+            &principal,
+            crate::auth::password_reset_api::ResetOptions {
+                reset_2fa,
+                ..Default::default()
+            },
+        )
+        .await?;
 
     tracing::info!(
         principal_id = %id,

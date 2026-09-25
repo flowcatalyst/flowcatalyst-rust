@@ -586,6 +586,11 @@ pub fn build_platform_routes(
         external_base_url: config.oidc_login_external_base_url,
         session_cookie: session_cookie.clone(),
         encryption_service: encryption_service.clone(),
+        password_setup_hint: Some(crate::auth::oidc_login_api::PasswordSetupHint {
+            principal_repo: repos.principal_repo.clone(),
+            login_attempt_repo: repos.login_attempt_repo.clone(),
+            backoff_policy: Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env()),
+        }),
     };
 
     let backoff_policy = Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env());
@@ -928,6 +933,10 @@ pub fn build_platform_routes(
         emailer: password_reset_emailer,
         password_reset_repo: repos.password_reset_repo.clone(),
         reset_password_use_case: reset_password_use_case.clone(),
+        two_factor: Some(two_factor.clone()),
+        refresh_token_repo: repos.refresh_token_repo.clone(),
+        rate_limit_store: config.rate_limit_store.clone(),
+        rate_limit_policies: config.rate_limit_policies.clone(),
     };
 
     let applications_state = ApplicationsState {

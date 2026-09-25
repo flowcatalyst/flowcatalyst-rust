@@ -355,7 +355,9 @@ pub mod api {
     pub use crate::auth::oauth_api::{oauth_router, OAuthState};
     pub use crate::auth::oauth_clients_api::{oauth_clients_router, OAuthClientsState};
     pub use crate::auth::oidc_login_api::{oidc_login_router, OidcLoginApiState};
-    pub use crate::auth::password_reset_api::{password_reset_router, PasswordResetApiState};
+    pub use crate::auth::password_reset_api::{
+        password_reset_router, password_setup_router, PasswordResetApiState,
+    };
     pub use crate::auth::{
         anchor_domains_router, client_auth_configs_router, idp_role_mappings_router,
         AuthConfigState,

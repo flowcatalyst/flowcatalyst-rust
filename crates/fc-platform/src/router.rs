@@ -651,6 +651,13 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_AUTH_CLIENT,
                 client_selection_router(self.client_selection).layer(auth_layer.clone()),
             )
+            // `/auth/password-setup/request` spends the reset budgets in its
+            // own buckets inside the handler (silent over budget).
+            .nest(
+                "/auth/password-setup",
+                crate::api::password_setup_router(self.password_reset.clone())
+                    .layer(auth_layer.clone()),
+            )
             .nest(
                 PATH_AUTH_PASSWORD_RESET,
                 password_reset_router(self.password_reset)
@@ -788,7 +795,9 @@ pub fn serve_spa(app: Router, static_dir: &str) -> Router {
 
         app.route("/auth/login", spa_handler.clone())
             .route("/auth/forgot-password", spa_handler.clone())
-            .route("/auth/reset-password", spa_handler)
+            .route("/auth/reset-password", spa_handler.clone())
+            // Invites land on the set-password framing of the same page.
+            .route("/auth/set-password", spa_handler)
             .nest_service("/assets", assets_service)
             .fallback_service(fallback_service)
     } else {
