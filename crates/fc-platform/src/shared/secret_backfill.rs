@@ -17,6 +17,12 @@
 //! (not `updated_at`), and only where the value is still the plaintext it
 //! read, so a concurrent write is never overwritten.
 //!
+//! A secret-manager reference (`aws-sm://…`, `env://…`, `literal:…`, or a
+//! `<scheme>://` value of any scheme) is **never** encrypted: it is not a
+//! secret but a pointer to one, resolved when read (Go stores references
+//! verbatim; see [`crate::shared::secret_ref`]). Such values are counted as
+//! kept and left exactly as they are.
+//!
 //! It is idempotent: a second run finds nothing to do. The default is a dry
 //! run that only counts. Reports carry counts, never values.
 
@@ -24,6 +30,7 @@ use sqlx::PgPool;
 
 use crate::shared::encryption_service::{EncryptionService, ENCRYPTED_PREFIX};
 use crate::shared::error::Result;
+use crate::shared::secret_ref::looks_like_reference;
 
 /// A column that holds a stored secret.
 #[derive(Debug, Clone, Copy)]
@@ -67,8 +74,9 @@ impl SecretColumn {
         format!("{}.{}", self.table, self.column)
     }
 
-    /// Rows whose value is a non-empty plaintext secret. Table and column
-    /// names are compile-time constants, never input.
+    /// Rows whose value is non-empty and not `encrypted:`: plaintext
+    /// secrets and secret references, told apart by [`partition_rows`].
+    /// Table and column names are compile-time constants, never input.
     fn select_sql(&self) -> String {
         let filter = self
             .row_filter
@@ -102,8 +110,10 @@ impl SecretColumn {
 pub struct ColumnReport {
     /// `table.column`.
     pub column: String,
-    /// Non-empty values without the `encrypted:` prefix.
+    /// Plaintext values (non-empty, not `encrypted:`, not a reference).
     pub unencrypted: u64,
+    /// Secret-manager references, kept as they are.
+    pub references: u64,
     /// Values rewritten encrypted. Always 0 on a dry run.
     pub encrypted: u64,
 }
@@ -115,6 +125,15 @@ struct Rewrites {
     ids: Vec<String>,
     old_values: Vec<String>,
     new_values: Vec<String>,
+}
+
+/// Split selected rows into (plaintext secrets to encrypt, references
+/// count). A reference is never a rewrite candidate.
+fn partition_rows(rows: Vec<(String, String)>) -> (Vec<(String, String)>, u64) {
+    let (references, plaintext): (Vec<_>, Vec<_>) = rows
+        .into_iter()
+        .partition(|(_, value)| looks_like_reference(value));
+    (plaintext, references.len() as u64)
 }
 
 fn plan_rewrites(enc: &EncryptionService, rows: Vec<(String, String)>) -> Result<Rewrites> {
@@ -142,6 +161,7 @@ pub async fn backfill_secrets(
         let rows: Vec<(String, String)> = sqlx::query_as(&col.select_sql())
             .fetch_all(&mut *tx)
             .await?;
+        let (rows, references) = partition_rows(rows);
         let unencrypted = rows.len() as u64;
 
         let encrypted = if apply && !rows.is_empty() {
@@ -160,6 +180,7 @@ pub async fn backfill_secrets(
         reports.push(ColumnReport {
             column: col.name(),
             unencrypted,
+            references,
             encrypted,
         });
     }
@@ -180,14 +201,18 @@ pub fn format_report(reports: &[ColumnReport], apply: bool) -> Vec<String> {
         "Secret backfill (dry run, nothing written):".to_string()
     }];
     for r in reports {
-        lines.push(if apply {
+        let mut line = if apply {
             format!(
                 "  {}: {} unencrypted, {} encrypted",
                 r.column, r.unencrypted, r.encrypted
             )
         } else {
             format!("  {}: {} unencrypted", r.column, r.unencrypted)
-        });
+        };
+        if r.references > 0 {
+            line.push_str(&format!(", {} secret references kept", r.references));
+        }
+        lines.push(line);
     }
     let pending: u64 = reports.iter().map(|r| r.unencrypted).sum();
     if !apply && pending > 0 {
@@ -221,6 +246,27 @@ mod tests {
     }
 
     #[test]
+    fn references_are_never_rewrite_candidates() {
+        let (plain, references) = partition_rows(vec![
+            ("idp_1".to_string(), "aws-sm://prod/idp".to_string()),
+            ("idp_2".to_string(), "plain-secret".to_string()),
+            ("idp_3".to_string(), "env://IDP_SECRET".to_string()),
+            ("idp_4".to_string(), "literal:dev".to_string()),
+            ("idp_5".to_string(), "vault://kv/idp#secret".to_string()),
+            ("idp_6".to_string(), "aws-smm://typo".to_string()),
+            ("idp_7".to_string(), "p@ss://word".to_string()),
+        ]);
+        assert_eq!(references, 5);
+        assert_eq!(
+            plain,
+            vec![
+                ("idp_2".to_string(), "plain-secret".to_string()),
+                ("idp_7".to_string(), "p@ss://word".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn select_skips_empty_and_encrypted_values_and_filters_config_rows() {
         let idp = SECRET_COLUMNS[0].select_sql();
         assert!(idp.contains("FROM oauth_identity_providers"));
@@ -243,6 +289,7 @@ mod tests {
         let reports = vec![ColumnReport {
             column: "iam_service_accounts.wh_auth_token_ref".to_string(),
             unencrypted: 1,
+            references: 0,
             encrypted: 0,
         }];
         assert_eq!(
@@ -260,6 +307,15 @@ mod tests {
         assert_eq!(
             format_report(&applied, true)[1],
             "  iam_service_accounts.wh_auth_token_ref: 1 unencrypted, 1 encrypted"
+        );
+        let with_refs = vec![ColumnReport {
+            references: 2,
+            ..applied[0].clone()
+        }];
+        assert_eq!(
+            format_report(&with_refs, true)[1],
+            "  iam_service_accounts.wh_auth_token_ref: 1 unencrypted, 1 encrypted, \
+             2 secret references kept"
         );
     }
 }

@@ -1254,6 +1254,13 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
         .insert(&idp)
         .await
         .unwrap();
+    // A secret-manager reference is a pointer, not a secret: never encrypted.
+    let mut idp_ref = IdentityProvider::new("google", "Google", IdentityProviderType::Oidc);
+    idp_ref.oidc_client_secret_ref = Some("aws-sm://prod/fc/google-oidc".to_string());
+    IdentityProviderRepository::new(&pool)
+        .insert(&idp_ref)
+        .await
+        .unwrap();
     let mut idp_done = IdentityProvider::new("entra", "Entra", IdentityProviderType::Oidc);
     let already = enc.encrypt_ref("idp-done").unwrap();
     idp_done.oidc_client_secret_ref = Some(already.clone());
@@ -1338,6 +1345,22 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
     )
     .await;
     assert_eq!(idp_done_secret, already, "encrypted rows are untouched");
+    let idp_ref_secret = stored(
+        "SELECT oidc_client_secret_ref FROM oauth_identity_providers WHERE id = $1",
+        idp_ref.id.clone(),
+    )
+    .await;
+    assert_eq!(
+        idp_ref_secret, "aws-sm://prod/fc/google-oidc",
+        "a secret reference is never encrypted"
+    );
+    assert_eq!(
+        applied
+            .iter()
+            .map(|r| (r.column.as_str(), r.references))
+            .find(|(c, _)| *c == "oauth_identity_providers.oidc_client_secret_ref"),
+        Some(("oauth_identity_providers.oidc_client_secret_ref", 1))
+    );
     let token = stored(
         "SELECT wh_auth_token_ref FROM iam_service_accounts WHERE id = $1",
         sa.id.clone(),
