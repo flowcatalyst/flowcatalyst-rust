@@ -34,18 +34,18 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
       allowlisted (`feat/go-authz`: `tests/route_auth_convention_test.rs`)
 - [x] `/auth/me` returns effective permissions plus scope/tier; the SPA hides nav items the user can't use
       (decision #8) (`feat/go-authz`)
-- [ ] Missing Go routes: `connections/sync`, `docs/sync`, `POST /api/processes/sync`, `router-config`,
+- [x] Missing Go routes: `connections/sync`, `docs/sync`, `POST /api/processes/sync`, `router-config`,
       `/auth/password-setup/request`, 2FA/TOTP, reset-2fa, developer credentials
-- [ ] Behaviour behind the `client-admin` (`feat/go-authz`) and `portal-administrator` (`feat/go-routes-portal`)
+- [x] Behaviour behind the `client-admin` (`feat/go-authz`) and `portal-administrator` (`feat/go-routes-portal`)
       roles
 - [x] Go's roleless-user "profile-only" middleware (`feat/go-authz`)
 
 ## API convergence (from parity run 1)
-- [ ] Core (`feat/api-core`): `POST /api/principals`; Go's error envelope and codes; extractor rejections as
+- [x] Core (`feat/api-core`): `POST /api/principals`; Go's error envelope and codes; extractor rejections as
       400 VALIDATION; Go's 401/403 rules and headers; `$schema` omitted (#30, provisional); OAuth gaps
       (unknown client, `client_credentials` with no service account, discovery, login backoff, family
       revocation); token claims per #3/#20; `/auth/login` and `/api/me` shapes; passkey gate for INTERNAL IdPs
-- [ ] Missing routes (`feat/go-routes`): the run-1 list (2FA, change-password, login-history, portal, docs,
+- [x] Missing routes (`feat/go-routes`): the run-1 list (2FA, change-password, login-history, portal, docs,
       role-permission paths, service-account tokens, config properties, and more)
 - [ ] Per-area pass: write status codes (201/204), idempotent no-op repeats, Go's input validation, list
       envelopes, null vs absent members, login-attempt fields, audit facet names
@@ -71,14 +71,14 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
 - Listener timeouts (ruling 10)
 
 ## Deployment contract (the Rust images must run with the production task definitions unchanged)
-- [ ] Router: production runs **Go's `fc-server` in router-only role** (`inhance/iac/compute/fc-router.ts`).
+- [x] Router: production runs **Go's `fc-server` in router-only role** (`inhance/iac/compute/fc-router.ts`).
       Rust must honour the same env: role toggles, comma-separated `FLOWCATALYST_CONFIG_URL` (the
       platform's router-config plus integral's `/api/config`), `FC_ROUTER_PLATFORM_URL` with
       client-credentials, settle reporting, notifications (`feat/router-env`)
-- [ ] Platform and worker tasks (`flowcatalyst.ts`): DB secret provider and ARN, JWT current and
+- [x] Platform and worker tasks (`flowcatalyst.ts`): DB secret provider and ARN, JWT current and
       previous keys, app key, SMTP, WebAuthn, OIDC TTLs, Redis, subsystem toggles, health checks
       (`feat/platform-env`)
-- [ ] integral's create-user invite flags on `/api/principals/users` (`--invite-link`,
+- [x] integral's create-user invite flags on `/api/principals/users` (`--invite-link`,
       `--invite-redirect-uri`) (`feat/go-routes` follow-up)
 - [ ] IaC hygiene (owner): the router task definition holds the Teams webhook `sig=` in plain text;
       move it to SSM
@@ -87,6 +87,13 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
 - Go's SPA redirects an already-signed-in OIDC interaction to `/oidc/interaction/{uid}/login`, which no
   backend serves (Go or Rust): `frontend/src/api/auth.ts`, `router/guards.ts`. Fix in the SPA (point it at
   `/auth/oidc/interaction/{uid}/…`) once the interaction flow is exercised.
+
+## Also landed
+- Go's production SPA replaces the old Vue frontend (functions UI re-integrated in Go's idiom).
+- Topcoat UI trial (`crates/fc-web`) on main behind `fc-dev --features web`; excluded from default builds;
+  removal recipe in `docs/topcoat-trial.md`.
+- Delivery harness run 4: 16 PASS, 1 ACCEPTED (Go defect, #31).
+- Dispatch-pool writes gated by Go's `CanWriteDispatchPools` (was client reach only).
 
 ## Before deploy (owner)
 - [ ] Run `docs/fc-predeploy-checks.sql` (tenant pins, cross-app role permissions, OAuth clients on non-service
