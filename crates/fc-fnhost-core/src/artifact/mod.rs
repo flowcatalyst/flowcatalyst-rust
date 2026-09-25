@@ -10,6 +10,7 @@
 //! 256 MiB.
 
 mod cache;
+mod ecr;
 mod file;
 mod oci;
 mod platform;
@@ -21,6 +22,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 pub use cache::{ArtifactCache, BodyReader, SourceStream, DEFAULT_MAX_BYTES};
+#[cfg(feature = "ecr")]
+pub use ecr::AwsEcrAuthorizer;
+pub use ecr::{ecr_region, EcrAuthorizer, EcrTokenCache};
 pub use file::FileSource;
 pub use oci::{OciSource, RegistryCredentials};
 pub use platform::PlatformSource;

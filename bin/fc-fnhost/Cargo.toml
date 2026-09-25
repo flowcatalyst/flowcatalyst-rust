@@ -11,7 +11,9 @@ name = "fc-fnhost"
 path = "src/main.rs"
 
 [dependencies]
-fc-fnhost-core = { path = "../../crates/fc-fnhost-core" }
+# `ecr`: ECR registry auth for oci:// artifacts (owner decision #14), on by
+# default — it costs one extra AWS SDK crate, no extra runtime wiring.
+fc-fnhost-core = { path = "../../crates/fc-fnhost-core", features = ["ecr"] }
 tokio = { workspace = true }
 
 [dev-dependencies]

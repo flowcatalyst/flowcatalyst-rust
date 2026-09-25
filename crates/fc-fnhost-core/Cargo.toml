@@ -38,6 +38,10 @@ hmac = { workspace = true }
 subtle = { workspace = true }
 
 base64 = "0.22"
+# ECR registry auth (owner decision #14), behind the `ecr` feature: pulls in
+# the AWS SDK only when it is enabled (on by default in bin/fc-fnhost).
+aws-sdk-ecr = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true }
 # The listeners (H5): HTTP/1.1 + h2c with graceful shutdown.
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio", "http1", "http2", "service"] }
@@ -58,6 +62,13 @@ wasmtime-wasi-http = { version = "=49.0.1", default-features = false, features =
 # Load-time inspection of an artifact before compiling it (component or core
 # module, imports, exports, declared memory); the version wasmtime 49 uses.
 wasmparser = { version = "0.258", default-features = false, features = ["std", "component-model"] }
+
+[features]
+# `GetAuthorizationToken` against private ECR registries, on the default AWS
+# credential chain (the host's task or instance role). Off leaves ECR hosts
+# to the plain anonymous/Bearer/Basic flow, which fails Unauthorized unless
+# `RegistryCredentials` carries a fixed credential for that host.
+ecr = ["dep:aws-sdk-ecr", "dep:aws-config"]
 
 [dev-dependencies]
 # Test-only: hand-written components (WAT) for the load-refusal tests.

@@ -399,6 +399,22 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - Load new before unloading old, then unload. Close lazy functions after 1 h idle. Reload when the settings fingerprint changes.
 - JVM entries → FAILED `RUNTIME_UNSUPPORTED`.
 - Heartbeat (ACTIVE / DRAINING). A platform outage never unloads anything.
+- **ECR support for `oci://` (owner decision #14, done).** `oci://<account>.dkr.ecr.<region>.amazonaws.com/<repo>`
+  works with no extra configuration: an anonymous pull to an ECR registry gets back `401` with a `Basic`
+  challenge (the same branch every other registry's Basic challenge takes), and the `oci` store recognizes the
+  hostname shape (`*.dkr.ecr[-fips].*.amazonaws.com[.cn]`, so the China partition and FIPS endpoints work too)
+  and mints a token via `ecr:GetAuthorizationToken` on the host's own IAM role — the default AWS credential
+  chain, so the task or instance role, never a secret configured in this repo. The returned `user:password` is
+  decoded and cached as a `Basic` header per region until 5 minutes before it expires
+  (`crates/fc-fnhost-core/src/artifact/ecr.rs`). Every other property of the store is unchanged: the digest is
+  still verified after download, the 256 MiB cap still applies, and neither the token nor the password is ever
+  logged. Gated behind the `ecr` cargo feature on `fc-fnhost-core` (adds `aws-sdk-ecr` + `aws-config`), on by
+  default in the `fc-fnhost` binary; a build with the feature off falls back to the plain anonymous/Bearer/Basic
+  flow, which answers `Unauthorized` for an ECR host unless `RegistryCredentials::fixed` names one explicitly.
+  **IAM permissions needed** on the host's role: `ecr:GetAuthorizationToken` (account-wide, cannot be scoped to
+  a repository), plus `ecr:BatchGetImage` and `ecr:GetDownloadUrlForLayer` scoped to the repositories it pulls
+  from — the token dance only gets the credential; the blob `GET` itself, and the registry's own redirect to
+  its backing object storage, is what actually needs those two.
 
 **H4: WASM runtime** (done; engine and guest contract per F0, `docs/function-runner-density.md` §5-§8)
 

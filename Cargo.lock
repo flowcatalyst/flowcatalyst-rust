@@ -674,6 +674,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-ecr"
+version = "1.114.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bd79cc872923874e31b7bba0f5f0dab4880b82ca417c0c669e43ad6891f5d9e"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http 0.63.6",
+ "aws-smithy-json 0.62.5",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand 2.3.0",
+ "http 0.2.12",
+ "http 1.4.0",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-elasticloadbalancingv2"
 version = "1.110.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2702,6 +2726,8 @@ name = "fc-fnhost-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "aws-config",
+ "aws-sdk-ecr",
  "axum",
  "base64 0.22.1",
  "bytes",

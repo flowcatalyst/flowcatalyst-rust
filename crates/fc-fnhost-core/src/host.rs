@@ -26,6 +26,8 @@ use crate::artifact::{
     ArtifactCache, ArtifactStore, ArtifactStores, FileSource, OciSource, PlatformSource,
     RegistryCredentials, DEFAULT_MAX_BYTES,
 };
+#[cfg(feature = "ecr")]
+use crate::artifact::{AwsEcrAuthorizer, EcrAuthorizer, EcrTokenCache};
 use crate::clock::{SharedClock, SystemClock};
 use crate::control_plane::{ControlPlane, HttpControlPlane, CONNECT_TIMEOUT};
 use crate::env::{EnvReader, HostEnv};
@@ -113,7 +115,7 @@ impl FnHost {
         let cache = ArtifactCache::new(env.cache_dir.clone(), DEFAULT_MAX_BYTES)?;
         let artifacts = ArtifactStores::new(cache)
             .with_source("file", Arc::new(FileSource))
-            .with_source("oci", Arc::new(OciSource::new(RegistryCredentials::none())))
+            .with_source("oci", Arc::new(Self::oci_source(clock.clone())))
             .with_source(
                 "platform",
                 Arc::new(PlatformSource::new(
@@ -135,6 +137,23 @@ impl FnHost {
                 interval: crate::reconcile_loop::INTERVAL,
             },
         ))
+    }
+
+    /// The `oci` store's anonymous/Bearer/Basic credentials, plus ECR auth
+    /// (owner decision #14) when the `ecr` feature is compiled in: a `Basic`
+    /// challenge from a `*.dkr.ecr.*.amazonaws.com[.cn]` host mints a token
+    /// via `ecr:GetAuthorizationToken` on the host's own IAM role, instead
+    /// of the plain flow's `Unauthorized`.
+    #[cfg(feature = "ecr")]
+    fn oci_source(clock: SharedClock) -> OciSource {
+        let authorizer: Arc<dyn EcrAuthorizer> = Arc::new(AwsEcrAuthorizer::default());
+        let ecr = Arc::new(EcrTokenCache::new(authorizer, clock));
+        OciSource::new(RegistryCredentials::none()).with_ecr_auth(ecr)
+    }
+
+    #[cfg(not(feature = "ecr"))]
+    fn oci_source(_clock: SharedClock) -> OciSource {
+        OciSource::new(RegistryCredentials::none())
     }
 
     pub fn with_parts(env: HostEnv, parts: HostParts) -> Self {
