@@ -16,6 +16,7 @@ use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_LENGTH, LOCATION, WWW_AU
 use reqwest::{Client, StatusCode, Url};
 
 use super::cache::HttpBody;
+use super::ecr::EcrTokenCache;
 use super::{ArtifactError, Source, SourceStream};
 use crate::digest::Digest;
 
@@ -66,6 +67,10 @@ impl std::fmt::Debug for RegistryCredentials {
 pub struct OciSource {
     client: Client,
     credentials: Arc<RegistryCredentials>,
+    /// ECR auth (owner decision #14): consulted only for a `Basic`
+    /// challenge from a host shaped like a private ECR registry, and only
+    /// when `credentials` has no fixed entry for that exact host already.
+    ecr: Option<Arc<EcrTokenCache>>,
 }
 
 impl OciSource {
@@ -78,7 +83,16 @@ impl OciSource {
         Self {
             client,
             credentials: Arc::new(credentials),
+            ecr: None,
         }
+    }
+
+    /// Wires up ECR authorization (owner decision #14): a `Basic` challenge
+    /// from an ECR-shaped host mints and caches a token through `ecr`,
+    /// instead of falling through to `Unauthorized`.
+    pub fn with_ecr_auth(mut self, ecr: Arc<EcrTokenCache>) -> Self {
+        self.ecr = Some(ecr);
+        self
     }
 
     async fn get(
@@ -134,7 +148,15 @@ impl OciSource {
             return self.bearer_token(reference, challenge).await;
         }
         if lower.starts_with("basic") {
-            return Ok(self.credentials.basic_header(&reference.registry));
+            if let Some(fixed) = self.credentials.basic_header(&reference.registry) {
+                return Ok(Some(fixed));
+            }
+            if let Some(ecr) = &self.ecr {
+                if let Some(region) = super::ecr_region(&reference.host) {
+                    return Ok(Some(ecr.basic_header(&region).await?));
+                }
+            }
+            return Ok(None);
         }
         Ok(None)
     }
@@ -352,13 +374,16 @@ impl OciRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::{ArtifactCache, DEFAULT_MAX_BYTES};
+    use crate::artifact::{ArtifactCache, EcrAuthorizer, DEFAULT_MAX_BYTES};
+    use crate::clock::ManualClock;
     use axum::extract::{Query, State};
     use axum::http::{HeaderMap as AxumHeaders, StatusCode as AxumStatus};
     use axum::response::IntoResponse;
     use axum::routing::get;
     use axum::Router;
+    use chrono::Utc;
     use sha2::{Digest as _, Sha256};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn references_parse_like_java() {
@@ -465,5 +490,127 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, ArtifactError::NotFound);
+    }
+
+    struct CountingAuthorizer {
+        calls: AtomicUsize,
+        user: &'static str,
+        password: &'static str,
+    }
+
+    #[async_trait]
+    impl EcrAuthorizer for CountingAuthorizer {
+        async fn authorize(
+            &self,
+            _region: &str,
+        ) -> Result<(String, String, chrono::DateTime<Utc>), ArtifactError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok((
+                self.user.to_owned(),
+                self.password.to_owned(),
+                Utc::now() + chrono::Duration::hours(1),
+            ))
+        }
+    }
+
+    fn ecr_source(authorizer: Arc<CountingAuthorizer>) -> (OciSource, Arc<CountingAuthorizer>) {
+        let cache = Arc::new(super::EcrTokenCache::new(
+            authorizer.clone(),
+            Arc::new(ManualClock::new(Utc::now())),
+        ));
+        (
+            OciSource::new(RegistryCredentials::none()).with_ecr_auth(cache),
+            authorizer,
+        )
+    }
+
+    #[tokio::test]
+    async fn an_ecr_host_authenticates_with_the_decoded_basic_header() {
+        let authorizer = Arc::new(CountingAuthorizer {
+            calls: AtomicUsize::new(0),
+            user: "AWS",
+            password: "ecr-t0k3n",
+        });
+        let (source, authorizer) = ecr_source(authorizer);
+        let reference = OciRef {
+            host: "123456789012.dkr.ecr.us-east-1.amazonaws.com".into(),
+            registry: "123456789012.dkr.ecr.us-east-1.amazonaws.com".into(),
+            repository: "team/fn".into(),
+        };
+        let header = source
+            .authenticate(
+                &reference,
+                r#"Basic realm="123456789012.dkr.ecr.us-east-1.amazonaws.com""#,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            header,
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode("AWS:ecr-t0k3n")
+            )
+        );
+        assert_eq!(authorizer.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_non_ecr_host_never_calls_the_ecr_authorizer() {
+        let authorizer = Arc::new(CountingAuthorizer {
+            calls: AtomicUsize::new(0),
+            user: "AWS",
+            password: "unused",
+        });
+        let (source, authorizer) = ecr_source(authorizer);
+        let reference = OciRef {
+            host: "ghcr.io".into(),
+            registry: "ghcr.io".into(),
+            repository: "team/fn".into(),
+        };
+        let header = source
+            .authenticate(&reference, r#"Basic realm="ghcr.io""#)
+            .await
+            .unwrap();
+        assert_eq!(header, None);
+        assert_eq!(authorizer.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_fixed_credential_for_an_ecr_host_wins_over_ecr_auth() {
+        let authorizer = Arc::new(CountingAuthorizer {
+            calls: AtomicUsize::new(0),
+            user: "AWS",
+            password: "unused",
+        });
+        let cache = Arc::new(super::EcrTokenCache::new(
+            authorizer.clone(),
+            Arc::new(ManualClock::new(Utc::now())),
+        ));
+        let host = "123456789012.dkr.ecr.us-east-1.amazonaws.com";
+        let mut by_host = HashMap::new();
+        by_host.insert(
+            host.to_owned(),
+            ("fixed-user".to_owned(), "fixed-pass".to_owned()),
+        );
+        let source = OciSource::new(RegistryCredentials::fixed(by_host)).with_ecr_auth(cache);
+        let reference = OciRef {
+            host: host.into(),
+            registry: host.into(),
+            repository: "team/fn".into(),
+        };
+        let header = source
+            .authenticate(&reference, r#"Basic realm="ecr""#)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            header,
+            format!(
+                "Basic {}",
+                base64::engine::general_purpose::STANDARD.encode("fixed-user:fixed-pass")
+            )
+        );
+        assert_eq!(authorizer.calls.load(Ordering::SeqCst), 0);
     }
 }
