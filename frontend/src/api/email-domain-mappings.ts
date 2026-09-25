@@ -1,6 +1,19 @@
 import { apiFetch } from "./client";
+import type { TwoFactorMethod } from "./twofactor";
 
 export type ScopeType = "ANCHOR" | "PARTNER" | "CLIENT";
+
+/**
+ * The domain's second-factor policy (internal-auth domains only): whether
+ * password sign-in needs 2FA, which methods are allowed, and whether a
+ * browser may be remembered, for how many days.
+ */
+export interface TwoFactorPolicyFields {
+	require2fa?: boolean;
+	allowed2faMethods?: TwoFactorMethod[];
+	rememberDeviceEnabled?: boolean;
+	rememberDeviceDays?: number;
+}
 
 export interface EmailDomainMapping {
 	id: string;
@@ -16,6 +29,10 @@ export interface EmailDomainMapping {
 	requiredOidcTenantId?: string;
 	allowedRoleIds: string[];
 	syncRolesFromIdp: boolean;
+	require2fa?: boolean;
+	allowed2faMethods?: TwoFactorMethod[];
+	rememberDeviceEnabled?: boolean;
+	rememberDeviceDays?: number;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -25,7 +42,7 @@ export interface EmailDomainMappingListResponse {
 	total: number;
 }
 
-export interface CreateEmailDomainMappingRequest {
+export interface CreateEmailDomainMappingRequest extends TwoFactorPolicyFields {
 	emailDomain: string;
 	identityProviderId: string;
 	scopeType: ScopeType;
@@ -37,7 +54,7 @@ export interface CreateEmailDomainMappingRequest {
 	syncRolesFromIdp?: boolean;
 }
 
-export interface UpdateEmailDomainMappingRequest {
+export interface UpdateEmailDomainMappingRequest extends TwoFactorPolicyFields {
 	scopeType?: ScopeType;
 	primaryClientId?: string;
 	additionalClientIds?: string[];
@@ -87,10 +104,8 @@ export const emailDomainMappingsApi = {
 		});
 	},
 
-	update(
-		id: string,
-		data: UpdateEmailDomainMappingRequest,
-	): Promise<EmailDomainMapping> {
+	// 204 No Content: refetch with `get(id)` for the updated mapping.
+	update(id: string, data: UpdateEmailDomainMappingRequest): Promise<void> {
 		return apiFetch(`/email-domain-mappings/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),

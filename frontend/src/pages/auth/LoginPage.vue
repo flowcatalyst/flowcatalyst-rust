@@ -6,12 +6,31 @@ import { toTypedSchema } from "@vee-validate/zod";
 import { z } from "zod";
 import { useAuthStore } from "@/stores/auth";
 import { useLoginThemeStore } from "@/stores/loginTheme";
-import { checkEmailDomain, loadPermissions, login } from "@/api/auth";
+import {
+	checkEmailDomain,
+	loadPermissions,
+	login,
+	oauthAuthorizeUrl,
+	requestPasswordSetup,
+	type LoginResult,
+} from "@/api/auth";
 import { authenticateWithPasskey, isWebauthnSupported } from "@/api/webauthn";
+import TwoFactorChallenge from "@/components/TwoFactorChallenge.vue";
+import TwoFactorSetup from "@/components/TwoFactorSetup.vue";
 import router from "@/router";
 import { getErrorMessage } from "@/utils/errors";
 
-type LoginStep = "email" | "password" | "redirecting";
+type LoginStep =
+	| "email"
+	| "password"
+	| "setup"
+	| "setupSent"
+	| "redirecting"
+	| "2fa"
+	| "enroll";
+
+type MfaChallenge = Extract<LoginResult, { status: "mfa_required" }>;
+type MfaEnroll = Extract<LoginResult, { status: "enrollment_required" }>;
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -28,6 +47,28 @@ onMounted(async () => {
 
 const step = ref<LoginStep>("email");
 const isSubmitting = ref(false);
+// The pending second step of a password sign-in (no session yet).
+const mfaChallenge = ref<MfaChallenge | null>(null);
+const mfaEnroll = ref<MfaEnroll | null>(null);
+
+const stepTitle = computed(() => {
+	switch (step.value) {
+		case "email":
+			return "Sign in to your account";
+		case "password":
+			return "Enter your password";
+		case "setup":
+			return "Create your password";
+		case "setupSent":
+			return "Check your email";
+		case "2fa":
+			return "Verify it's you";
+		case "enroll":
+			return "Set up two-factor authentication";
+		default:
+			return "Redirecting...";
+	}
+});
 
 // Email step schema
 const emailSchema = toTypedSchema(
@@ -72,6 +113,8 @@ function onChangeEmail() {
 	step.value = "email";
 	passwordValue.value = "";
 	passwordTouched.value = false;
+	mfaChallenge.value = null;
+	mfaEnroll.value = null;
 	authStore.setError(null);
 }
 
@@ -118,10 +161,18 @@ const onCheckEmail = handleEmailSubmit(async (values) => {
 			}
 
 			window.location.href = redirectUrl;
+		} else if (result.authMethod === "internal" && result.passwordSetupRequired) {
+			// A password account that has never had a password (e.g. created
+			// by an application with its invite suppressed). A new password is
+			// never accepted inline — the emailed link proves the mailbox.
+			step.value = "setup";
 		} else {
 			step.value = "password";
 		}
 	} catch (e: unknown) {
+		authStore.setError(
+			getErrorMessage(e, "Could not check your email — please try again."),
+		);
 	} finally {
 		isSubmitting.value = false;
 	}
@@ -133,9 +184,48 @@ async function onSubmitPassword() {
 	isSubmitting.value = true;
 
 	try {
-		await login({ email: currentEmail.value, password: passwordValue.value });
+		const result = await login({
+			email: currentEmail.value,
+			password: passwordValue.value,
+		});
+		if (result.status === "mfa_required") {
+			mfaChallenge.value = result;
+			step.value = "2fa";
+		} else if (result.status === "enrollment_required") {
+			mfaEnroll.value = result;
+			step.value = "enroll";
+		}
+		// "ok": login() has set the session and navigated.
 	} catch {
 		// Error is handled by AuthStore
+	} finally {
+		isSubmitting.value = false;
+	}
+}
+
+async function onRequestPasswordSetup() {
+	if (isSubmitting.value) return;
+
+	isSubmitting.value = true;
+	authStore.setError(null);
+
+	try {
+		// Mid-OAuth (?oauth=true) the rebuilt /oauth/authorize URL rides along
+		// so the user returns to the calling application afterwards.
+		const redirectUri =
+			route.query["oauth"] === "true"
+				? oauthAuthorizeUrl((field) => {
+						const value = route.query[field];
+						return typeof value === "string" ? value : null;
+					})
+				: undefined;
+		await requestPasswordSetup(currentEmail.value, redirectUri);
+		step.value = "setupSent";
+	} catch (e: unknown) {
+		// A silent-success endpoint: an error is the request itself failing.
+		authStore.setError(
+			getErrorMessage(e, "Could not send the email — please try again."),
+		);
 	} finally {
 		isSubmitting.value = false;
 	}
@@ -237,15 +327,7 @@ async function onPasskeyLogin() {
 
       <!-- Login card -->
       <div class="login-card">
-        <h2 class="login-title">
-          {{
-            step === 'email'
-              ? 'Sign in to your account'
-              : step === 'password'
-                ? 'Enter your password'
-                : 'Redirecting...'
-          }}
-        </h2>
+        <h2 class="login-title">{{ stepTitle }}</h2>
 
         <!-- Password reset success banner -->
         <div v-if="showResetSuccess" class="success-banner">
@@ -350,6 +432,68 @@ async function onPasskeyLogin() {
             @click="onPasskeyLogin"
           />
         </form>
+
+        <!-- Create-your-password step: an internal user who has never set a
+             password. The emailed link proves mailbox ownership. -->
+        <div v-if="step === 'setup'" class="login-form">
+          <div class="email-display">
+            <div class="email-info">
+              <div class="email-avatar">
+                {{ currentEmail.charAt(0).toUpperCase() }}
+              </div>
+              <span class="email-text">{{ currentEmail }}</span>
+            </div>
+            <button type="button" class="change-email-btn" @click="onChangeEmail">Change</button>
+          </div>
+
+          <p class="form-description">
+            This is your first time signing in. We'll email you a link to
+            create your password — this confirms it's really you.
+          </p>
+
+          <Button
+            type="button"
+            label="Email me a link"
+            :loading="isSubmitting"
+            class="w-full"
+            @click="onRequestPasswordSetup"
+          />
+        </div>
+
+        <!-- Create-your-password link sent -->
+        <div v-if="step === 'setupSent'" class="login-form">
+          <div class="success-banner">
+            <p>
+              We sent a link to <strong>{{ currentEmail }}</strong>. Open it
+              on this device to create your password. The link expires in 72
+              hours.
+            </p>
+          </div>
+          <button type="button" class="change-email-btn" @click="onChangeEmail">
+            Back to sign in
+          </button>
+        </div>
+
+        <!-- Two-factor challenge -->
+        <div v-if="step === '2fa' && mfaChallenge" class="login-form">
+          <TwoFactorChallenge
+            :mfa-token="mfaChallenge.mfaToken"
+            :methods="mfaChallenge.methods"
+            :remember-device-allowed="mfaChallenge.rememberDeviceAllowed"
+          />
+          <button type="button" class="change-email-btn" @click="onChangeEmail">
+            Back to sign in
+          </button>
+        </div>
+
+        <!-- Two-factor enrolment the email domain requires. Confirming signs
+             the user in (then shows the recovery codes once), so there is no
+             way back to the email step from here. -->
+        <TwoFactorSetup
+          v-if="step === 'enroll' && mfaEnroll"
+          :enroll-token="mfaEnroll.enrollToken"
+          :allowed-methods="mfaEnroll.allowedMethods"
+        />
       </div>
 
       <!-- Footer -->
@@ -510,6 +654,13 @@ async function onPasskeyLogin() {
   font-size: 14px;
   font-weight: 500;
   color: #334e68;
+}
+
+.form-description {
+  color: #627d98;
+  font-size: 14px;
+  margin: 0;
+  line-height: 1.6;
 }
 
 .field-hint {
