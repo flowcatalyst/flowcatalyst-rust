@@ -718,3 +718,59 @@ async fn config_properties_are_set_read_and_deleted_as_go() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ── Router config ────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn the_router_config_lists_pools_and_tenant_queues() {
+    let app = setup().await;
+    let admin = app.anchor_admin_token().await;
+    sqlx::query(
+        "INSERT INTO msg_dispatch_pools (id, code, name, rate_limit, concurrency, client_identifier, status) \
+         VALUES ('dpl_a', 'fast', 'Fast', 60, 5, 'acme', 'ARCHIVED'), \
+                ('dpl_b', 'DEFAULT-POOL', 'Default', NULL, 10, NULL, 'ACTIVE')",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let body = assert_status(
+        app.get("/api/dispatch/router-config", &admin).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(
+        body["processingPools"],
+        json!([
+            { "code": "platform-DEFAULT-POOL", "concurrency": 10 },
+            { "code": "acme-fast", "concurrency": 5, "rateLimitPerMinute": 60 }
+        ])
+    );
+    let names: Vec<&str> = body["queues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|q| q["queueName"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["platform-DEFAULT", "acme-DEFAULT"]);
+    assert_eq!(body["queues"][0]["connections"], 0);
+    assert!(body["queues"][0]["queueUri"]
+        .as_str()
+        .unwrap()
+        .starts_with("postgres"));
+
+    // Anchor alone, or the permission alone, is not enough.
+    let (status, _) = read_json(
+        app.get("/api/dispatch/router-config", &app.anchor_token())
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = read_json(
+        app.get("/api/dispatch/router-config", &nobody_token(&app))
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}

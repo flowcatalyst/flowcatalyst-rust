@@ -15,6 +15,7 @@ use crate::usecase::PgUnitOfWork;
 #[derive(Clone)]
 pub struct GoRoutesState {
     pub role_permissions: crate::role::permission_api::RolePermissionsState,
+    pub router_config: crate::shared::router_config_api::RouterConfigState,
     pub service_account_admin: crate::service_account::admin_api::ServiceAccountAdminState,
     pub client_search: crate::client::search_api::ClientSearchState,
     pub platform_config: crate::platform_config::go_api::GoPlatformConfigState,
@@ -24,7 +25,19 @@ impl GoRoutesState {
     pub fn build(repos: &Repositories, auth: &AuthServices, uow: &Arc<PgUnitOfWork>) -> Self {
         let encryption =
             crate::shared::encryption_service::EncryptionService::from_env().map(Arc::new);
+        // Go resolves the queue settings once at boot and refuses to start
+        // on a bad SQS configuration (internal/server/run.go:69).
+        let queue_settings = crate::shared::dispatch_queue::QueueSettings::from_env()
+            .unwrap_or_else(|e| panic!("dispatch queue settings: {e}"));
         Self {
+            router_config: crate::shared::router_config_api::RouterConfigState {
+                repo: Arc::new(
+                    crate::dispatch_pool::router_config_repository::RouterConfigRepository::new(
+                        &repos.pool,
+                    ),
+                ),
+                settings: Arc::new(queue_settings),
+            },
             platform_config: crate::platform_config::go_api::GoPlatformConfigState {
                 config_repo: repos.platform_config_repo.clone(),
                 access_repo: repos.platform_config_access_repo.clone(),
@@ -81,6 +94,9 @@ impl GoRoutesState {
 /// All Go-parity routes, at their full paths.
 pub fn go_routes_router(state: GoRoutesState) -> OpenApiRouter {
     OpenApiRouter::new()
+        .merge(crate::shared::router_config_api::router_config_router(
+            state.router_config,
+        ))
         .merge(crate::role::permission_api::role_permissions_router(
             state.role_permissions,
         ))
