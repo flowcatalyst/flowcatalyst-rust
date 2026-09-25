@@ -92,6 +92,16 @@ fn transaction_required() -> UseCaseError {
     )
 }
 
+/// A write a repository refuses for a business reason of its own (a unique
+/// constraint it maps to a code, e.g. `fn_routes`' `PUBLIC_ROUTE_TAKEN`)
+/// keeps that code and its `409`; any other failure is a failed commit.
+fn write_failure(what: &str, e: crate::shared::error::PlatformError) -> UseCaseError {
+    match e {
+        e @ crate::shared::error::PlatformError::BusinessRule { .. } => UseCaseError::from(e),
+        e => UseCaseError::commit(format!("Failed to {what} aggregate: {e}")),
+    }
+}
+
 // ─── UnitOfWork trait ────────────────────────────────────────────────────────
 
 /// Unit of Work for atomic control plane operations.
@@ -433,10 +443,7 @@ impl UnitOfWork for PgUnitOfWork {
         if let Err(e) = persist_result {
             let _ = txn.rollback().await;
             error!("Failed to persist aggregate: {}", e);
-            return UseCaseResult::failure(UseCaseError::commit(format!(
-                "Failed to persist aggregate: {}",
-                e
-            )));
+            return UseCaseResult::failure(write_failure("persist", e));
         }
 
         if let Err(e) = Self::persist_event_and_audit(&mut txn, &event, command).await {
@@ -492,10 +499,7 @@ impl UnitOfWork for PgUnitOfWork {
         if let Err(e) = delete_result {
             let _ = txn.rollback().await;
             error!("Failed to delete aggregate: {}", e);
-            return UseCaseResult::failure(UseCaseError::commit(format!(
-                "Failed to delete aggregate: {}",
-                e
-            )));
+            return UseCaseResult::failure(write_failure("delete", e));
         }
 
         if let Err(e) = Self::persist_event_and_audit(&mut txn, &event, command).await {
@@ -552,10 +556,7 @@ impl UnitOfWork for PgUnitOfWork {
             if let Err(e) = persist_result {
                 let _ = txn.rollback().await;
                 error!("Failed to persist aggregate in batch: {}", e);
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to persist aggregate: {}",
-                    e
-                )));
+                return UseCaseResult::failure(write_failure("persist", e));
             }
         }
 
@@ -696,10 +697,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
         };
         if let Err(e) = persist_result {
             error!("Failed to persist aggregate in scoped tx: {}", e);
-            return UseCaseResult::failure(UseCaseError::commit(format!(
-                "Failed to persist aggregate: {}",
-                e
-            )));
+            return UseCaseResult::failure(write_failure("persist", e));
         }
 
         if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
@@ -738,10 +736,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
         };
         if let Err(e) = delete_result {
             error!("Failed to delete aggregate in scoped tx: {}", e);
-            return UseCaseResult::failure(UseCaseError::commit(format!(
-                "Failed to delete aggregate: {}",
-                e
-            )));
+            return UseCaseResult::failure(write_failure("delete", e));
         }
 
         if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
@@ -819,10 +814,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
             };
             if let Err(e) = persist_result {
                 error!("Failed to persist aggregate in scoped batch: {}", e);
-                return UseCaseResult::failure(UseCaseError::commit(format!(
-                    "Failed to persist aggregate: {}",
-                    e
-                )));
+                return UseCaseResult::failure(write_failure("persist", e));
             }
         }
 

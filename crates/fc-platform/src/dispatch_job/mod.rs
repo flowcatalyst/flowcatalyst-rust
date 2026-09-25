@@ -3,6 +3,7 @@
 //! Individual message dispatch job tracking.
 
 pub mod api;
+pub mod delivery_credentials;
 pub mod entity;
 pub mod repository;
 

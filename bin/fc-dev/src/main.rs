@@ -772,11 +772,21 @@ async fn main() -> Result<()> {
         use fc_platform::scheduled_job::scheduler::{
             ScheduledJobSchedulerConfig, ScheduledJobSchedulerService,
         };
+        // Firings are signed with each job's application's credentials
+        // (Java JobDispatcher).
+        let credentials = Arc::new(
+            fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver::new(
+                repos.service_account_repo.clone(),
+                fc_platform::shared::encryption_service::EncryptionService::from_env()
+                    .map(Arc::new),
+            ),
+        );
         let svc = ScheduledJobSchedulerService::new(
             ScheduledJobSchedulerConfig::from_env(),
             repos.scheduled_job_repo.clone(),
             repos.scheduled_job_instance_repo.clone(),
-        );
+        )
+        .with_credentials(credentials);
         let (poller_h, dispatcher_h) = svc.start();
         let mut shutdown_rx = shutdown_tx.subscribe();
         let svc_arc = Arc::new(svc);

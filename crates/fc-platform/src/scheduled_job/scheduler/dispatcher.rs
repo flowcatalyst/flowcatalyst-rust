@@ -2,10 +2,18 @@
 //!
 //! Drains QUEUED `ScheduledJobInstance` rows, POSTs the envelope to the
 //! owning job's `target_url`, and transitions each instance to DELIVERED
-//! or DELIVERY_FAILED. Retry on transient failure is implicit: a non-202
+//! or DELIVERY_FAILED. Any 2xx is delivered, as Java's `JobDispatcher`
+//! (`:150-161`) has it. Retry on transient failure is implicit: any other
 //! response sets the instance back to QUEUED so the next dispatcher tick
 //! picks it up again — until `delivery_max_attempts` is reached, at which
 //! point the instance is marked DELIVERY_FAILED (terminal).
+//!
+//! A job that names an application is delivered with that application's
+//! outbound credentials (Java `JobDispatcher.applyCredentials`, `:217-275`):
+//! `Authorization: Bearer` for its token and the `X-FlowCatalyst-Timestamp`
+//! / `X-FlowCatalyst-Signature` pair for its signing secret, signed over the
+//! exact body sent. A function's schedules name the function's application,
+//! so the function host's `webhook` endpoint can verify them.
 //!
 //! Per CLAUDE.md, all writes here bypass UoW (platform-infrastructure path).
 
@@ -21,6 +29,10 @@ use crate::scheduled_job::scheduler::config::ScheduledJobSchedulerConfig;
 use crate::scheduled_job::{
     InstanceListFilters, ScheduledJobInstanceRepository, ScheduledJobRepository,
 };
+use crate::service_account::outbound_credentials::{
+    OutboundCredentials, OutboundCredentialsResolver,
+};
+use crate::shared::webhook_signer;
 
 /// Webhook envelope sent to the SDK. Stable shape — the `payload` field
 /// passes through whatever the job stores.
@@ -49,6 +61,8 @@ pub struct ScheduledJobDispatcher {
     repo: Arc<ScheduledJobRepository>,
     instance_repo: Arc<ScheduledJobInstanceRepository>,
     http_client: reqwest::Client,
+    /// `None` delivers every job unsigned.
+    credentials: Option<Arc<OutboundCredentialsResolver>>,
     shutdown: broadcast::Receiver<()>,
 }
 
@@ -65,8 +79,15 @@ impl ScheduledJobDispatcher {
             repo,
             instance_repo,
             http_client,
+            credentials: None,
             shutdown,
         }
+    }
+
+    /// Sign deliveries with each job's application's credentials.
+    pub fn with_credentials(mut self, credentials: Arc<OutboundCredentialsResolver>) -> Self {
+        self.credentials = Some(credentials);
+        self
     }
 
     pub async fn run(mut self) {
@@ -190,16 +211,27 @@ impl ScheduledJobDispatcher {
             timeout_seconds: job.timeout_seconds,
         };
 
-        let result = self
-            .http_client
-            .post(target_url)
-            .json(&envelope)
-            .send()
-            .await;
+        let body = match serde_json::to_vec(&envelope) {
+            Ok(b) => b,
+            Err(e) => {
+                let err = format!("Envelope serialisation failed: {e}");
+                return self
+                    .handle_failure(job, inst, inst.delivery_attempts + 1, &err)
+                    .await;
+            }
+        };
+        let credentials = self.credentials_for(job).await;
+        let request = signed_request(
+            self.http_client.post(target_url),
+            credentials.as_ref(),
+            chrono::Utc::now(),
+            body,
+        );
+        let result = request.send().await;
 
         let attempts_after_inc = inst.delivery_attempts + 1;
         match result {
-            Ok(resp) if resp.status().as_u16() == 202 => {
+            Ok(resp) if resp.status().is_success() => {
                 if let Err(e) = self
                     .instance_repo
                     .mark_delivered(&inst.id, inst.created_at)
@@ -214,7 +246,7 @@ impl ScheduledJobDispatcher {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_else(|_| String::new());
                 let truncated: String = body.chars().take(500).collect();
-                let err = format!("HTTP {} (expected 202): {}", status, truncated);
+                let err = format!("HTTP {} (expected 2xx): {}", status, truncated);
                 self.handle_failure(job, inst, attempts_after_inc, &err)
                     .await
             }
@@ -222,6 +254,34 @@ impl ScheduledJobDispatcher {
                 let err = format!("Network/HTTP error: {}", e);
                 self.handle_failure(job, inst, attempts_after_inc, &err)
                     .await
+            }
+        }
+    }
+
+    /// The job's application's credentials; `None` (unsigned) when it names
+    /// no application, has no active account, or the lookup fails.
+    async fn credentials_for(&self, job: &ScheduledJob) -> Option<OutboundCredentials> {
+        let resolver = self.credentials.as_ref()?;
+        let Some(application_id) = job.application_id.as_deref() else {
+            debug!(job_id = %job.id, "Scheduled job has no application; delivering unsigned");
+            return None;
+        };
+        match resolver.for_application(application_id).await {
+            Ok(Some(creds)) if !creds.is_empty() => {
+                if creds.signing_secret.is_none() {
+                    warn!(job_id = %job.id, "Scheduled job's application has a bearer token but no signing secret; delivering unsigned");
+                } else if creds.token.is_none() {
+                    warn!(job_id = %job.id, "Scheduled job's application has a signing secret but no bearer token; delivering with the signature only");
+                }
+                Some(creds)
+            }
+            Ok(_) => {
+                warn!(job_id = %job.id, "Scheduled job's application has no active service account credentials; delivering unsigned");
+                None
+            }
+            Err(e) => {
+                warn!(job_id = %job.id, error = %e, "Outbound credentials lookup failed for scheduled job; delivering unsigned");
+                None
             }
         }
     }
@@ -262,6 +322,28 @@ impl ScheduledJobDispatcher {
             DispatchOutcome::Requeued
         }
     }
+}
+
+/// The delivery request: JSON `body`, the bearer token when there is one,
+/// and the signature headers over `body` at `at` when there is a secret.
+pub fn signed_request(
+    request: reqwest::RequestBuilder,
+    credentials: Option<&OutboundCredentials>,
+    at: chrono::DateTime<chrono::Utc>,
+    body: Vec<u8>,
+) -> reqwest::RequestBuilder {
+    let mut request = request.header(reqwest::header::CONTENT_TYPE, "application/json");
+    if let Some(creds) = credentials {
+        if let Some(token) = &creds.token {
+            request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        if let Some(secret) = &creds.signing_secret {
+            for (name, value) in webhook_signer::signature_headers(secret, at, &body) {
+                request = request.header(name, value);
+            }
+        }
+    }
+    request.body(body)
 }
 
 enum DispatchOutcome {

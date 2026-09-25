@@ -589,10 +589,14 @@ pub async fn update_function(
         status: req.status,
     };
     let caller = state.caller(&auth.0).await?;
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    // One transaction for the status flip and the wiring it pauses or
+    // resumes, as Java's TxOperation.
+    let ops = state.ops.clone();
     state
         .ops
-        .update(caller)
-        .run(command, ExecutionContext::from_auth(&auth.0))
+        .unit_of_work
+        .run(move |scoped| async move { ops.update_in(caller, scoped).run(command, ctx).await })
         .await
         .into_result()?;
     Ok(StatusCode::NO_CONTENT)
@@ -614,13 +618,18 @@ pub async fn delete_function(
     checks::require_permission(&auth.0, FUNCTION_MANAGE)?;
     let address = address_from_path(&address)?;
     let caller = state.caller(&auth.0).await?;
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    // One transaction for the wiring's deletes and the function's, as
+    // Java's TxOperation.
+    let ops = state.ops.clone();
     let event = state
         .ops
-        .delete(caller)
-        .run(
-            DeleteCommand { address },
-            ExecutionContext::from_auth(&auth.0),
-        )
+        .unit_of_work
+        .run(move |scoped| async move {
+            ops.delete_in(caller, scoped)
+                .run(DeleteCommand { address }, ctx)
+                .await
+        })
         .await
         .into_result()?;
     // After the commit, best-effort (Java FunctionApi.java:639-648): the
@@ -635,8 +644,8 @@ pub async fn delete_function(
 }
 
 /// What exists for one function now: its versions, the hosts reporting it
-/// and its wiring. Hosts and wiring stay empty until the host control plane
-/// (P6) and promote (P5) write them.
+/// and the wiring its last `live` promote created. Hosts stay empty until
+/// the host control plane (P6) writes them.
 #[utoipa::path(
     get, path = "/api/functions/{address}/status", tag = "functions",
     operation_id = "getApiFunctionsByAddressStatus",
@@ -1037,6 +1046,11 @@ pub fn function_routes() -> OpenApiRouter<FunctionsState> {
         .routes(routes!(super::version_api::get_version))
         .routes(routes!(super::version_api::retire_version))
         .routes(routes!(super::version_api::check_manifest))
+        .routes(routes!(
+            super::version_api::promote,
+            super::version_api::remove_alias
+        ))
+        .routes(routes!(super::version_api::list_aliases))
         .routes(routes!(super::version_api::upload_artifact))
         .routes(routes!(get_config, put_config))
         .routes(routes!(get_secrets))

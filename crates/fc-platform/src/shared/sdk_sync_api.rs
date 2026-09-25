@@ -260,6 +260,9 @@ pub struct SdkSyncState {
     pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<crate::usecase::PgUnitOfWork>>,
     /// Resolves `{appCode}` and confines the caller to its applications.
     pub app_access: Arc<ApplicationAccessService>,
+    /// A function's own pool and jobs, which the pool and job syncs leave
+    /// alone (`function-invocation.md` §4.2).
+    pub trigger_objects: Arc<crate::function::trigger_object_repository::TriggerObjectRepository>,
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +582,12 @@ async fn sync_dispatch_pools(
             })
             .collect(),
         remove_unlisted: query.remove_unlisted,
+        protected_ids: state
+            .trigger_objects
+            .object_ids(crate::function::entity::TriggerObjectKind::Pool)
+            .await?
+            .into_iter()
+            .collect(),
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -737,6 +746,12 @@ async fn sync_scheduled_jobs(
             })
             .collect(),
         archive_unlisted: req.archive_unlisted,
+        protected_ids: state
+            .trigger_objects
+            .object_ids(crate::function::entity::TriggerObjectKind::ScheduledJob)
+            .await?
+            .into_iter()
+            .collect(),
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());

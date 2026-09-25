@@ -12,6 +12,8 @@ pub mod create;
 pub mod delete;
 pub mod domains;
 pub mod events;
+pub mod promote;
+pub mod promote_plan;
 pub mod publish;
 pub mod publish_checks;
 pub mod put_policy;
@@ -33,6 +35,8 @@ pub use delete::{DeleteCommand, DeleteFunctionUseCase};
 pub use domains::{
     ClaimCommand, ClaimFunctionDomainUseCase, ReleaseCommand, ReleaseFunctionDomainUseCase,
 };
+pub use promote::{PromoteCommand, PromoteVersionUseCase, RemoveAliasCommand, RemoveAliasUseCase};
+pub use promote_plan::PromotePlan;
 pub use publish::{PublishCommand, PublishVersionUseCase};
 pub use publish_checks::PublishChecks;
 pub use put_policy::{PutFunctionPolicyUseCase, PutPolicyCommand, SignerInput};
@@ -96,7 +100,7 @@ impl<U: UnitOfWork> Clone for FunctionOperations<U> {
             policies: self.policies.clone(),
             domains: self.domains.clone(),
             routes: self.routes.clone(),
-            trigger_sync: self.trigger_sync,
+            trigger_sync: self.trigger_sync.clone(),
             limits: self.limits,
             signatures: self.signatures.clone(),
             artifacts: self.artifacts.clone(),
@@ -117,19 +121,59 @@ impl<U: UnitOfWork> FunctionOperations<U> {
         }
     }
 
-    pub fn update(&self, caller: Caller) -> UpdateFunctionUseCase<U> {
+    /// Update on a given unit of work: a transaction-scoped one
+    /// (`PgUnitOfWork::run`), since a status change pauses or resumes the
+    /// function's wiring in the same transaction.
+    pub fn update_in<V: UnitOfWork>(
+        &self,
+        caller: Caller,
+        unit_of_work: Arc<V>,
+    ) -> UpdateFunctionUseCase<V> {
         UpdateFunctionUseCase {
             functions: self.functions.clone(),
-            trigger_sync: self.trigger_sync,
-            unit_of_work: self.unit_of_work.clone(),
+            trigger_sync: self.trigger_sync.clone(),
+            unit_of_work,
             caller,
         }
     }
 
-    pub fn delete(&self, caller: Caller) -> DeleteFunctionUseCase<U> {
+    /// Delete on a given unit of work: a transaction-scoped one, since the
+    /// function's wiring is deleted in the same transaction.
+    pub fn delete_in<V: UnitOfWork>(
+        &self,
+        caller: Caller,
+        unit_of_work: Arc<V>,
+    ) -> DeleteFunctionUseCase<V> {
         DeleteFunctionUseCase {
             functions: self.functions.clone(),
-            trigger_sync: self.trigger_sync,
+            trigger_sync: self.trigger_sync.clone(),
+            unit_of_work,
+            caller,
+        }
+    }
+
+    /// Promote on a given unit of work: a transaction-scoped one, since the
+    /// wiring is reconciled in the promote's own transaction.
+    pub fn promote_in<V: UnitOfWork>(
+        &self,
+        caller: Caller,
+        unit_of_work: Arc<V>,
+    ) -> PromoteVersionUseCase<V> {
+        PromoteVersionUseCase {
+            functions: self.functions.clone(),
+            versions: self.versions.clone(),
+            settings: self.settings.clone(),
+            routes: self.routes.clone(),
+            trigger_sync: self.trigger_sync.clone(),
+            unit_of_work,
+            caller,
+        }
+    }
+
+    pub fn remove_alias(&self, caller: Caller) -> RemoveAliasUseCase<U> {
+        RemoveAliasUseCase {
+            functions: self.functions.clone(),
+            versions: self.versions.clone(),
             unit_of_work: self.unit_of_work.clone(),
             caller,
         }

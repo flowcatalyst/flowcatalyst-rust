@@ -130,6 +130,71 @@ impl FunctionDeleted {
     }
 }
 
+/// `{functionId, address, alias, versionId, version, previousVersionId?}`:
+/// `previousVersionId` is absent on a first promotion.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AliasChanged {
+    #[serde(skip)]
+    pub metadata: EventMetadata,
+    pub function_id: String,
+    pub address: String,
+    pub alias: String,
+    pub version_id: String,
+    pub version: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_version_id: Option<String>,
+}
+impl_domain_event!(AliasChanged);
+
+impl AliasChanged {
+    pub fn new(
+        ctx: &ExecutionContext,
+        f: &Function,
+        alias: &str,
+        v: &FunctionVersion,
+        previous_version_id: Option<String>,
+    ) -> Self {
+        Self {
+            metadata: function_metadata(ctx, ALIAS_CHANGED, f),
+            function_id: f.id.clone(),
+            address: f.address.render(),
+            alias: alias.to_string(),
+            version_id: v.id.clone(),
+            version: v.version,
+            previous_version_id,
+        }
+    }
+}
+
+/// `{functionId, address, alias, versionId, version}`: the version the
+/// removed pointer named.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AliasRemoved {
+    #[serde(skip)]
+    pub metadata: EventMetadata,
+    pub function_id: String,
+    pub address: String,
+    pub alias: String,
+    pub version_id: String,
+    pub version: i32,
+}
+impl_domain_event!(AliasRemoved);
+
+impl AliasRemoved {
+    pub fn new(ctx: &ExecutionContext, f: &Function, alias: &str, v: &FunctionVersion) -> Self {
+        Self {
+            metadata: function_metadata(ctx, ALIAS_REMOVED, f),
+            function_id: f.id.clone(),
+            address: f.address.render(),
+            alias: alias.to_string(),
+            version_id: v.id.clone(),
+            version: v.version,
+        }
+    }
+}
+
 /// `{functionId, address, versionId, version, digest, pool, signerIssuer?,
 /// signerSubject?}`: the signer is absent when signatures are off.
 #[derive(Debug, Clone, Serialize)]

@@ -2,6 +2,11 @@
 //! `status` (absent means untouched), one `function:updated` event. The
 //! immutable fields are not on the command at all: rejecting them in the raw
 //! body (`FUNCTION_IMMUTABLE_FIELD`) is the handler's job.
+//!
+//! A real status transition then pauses or resumes the function's linked
+//! subscriptions and jobs ([`TriggerSync::on_status_change`]) after the
+//! function's own commit, on the same unit of work: a transaction-scoped one
+//! (`PgUnitOfWork::run`), as Java's `TxOperation`, so the two land together.
 
 use std::sync::Arc;
 
@@ -64,23 +69,33 @@ impl<U: UnitOfWork> UseCase for UpdateFunctionUseCase<U> {
         command: UpdateCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<FunctionUpdated> {
-        let function = match self.prepare(&command, &ctx).await {
+        let function = match self.prepare(&command).await {
             Ok(f) => f,
             Err(e) => return UseCaseResult::failure(e),
         };
         let event = FunctionUpdated::new(&ctx, &function);
-        self.unit_of_work
+        let result = self
+            .unit_of_work
             .commit(&function, &*self.functions, event, &command)
+            .await;
+        // enable/disable refuse a no-op, so a status here is a real
+        // transition.
+        if result.as_result().is_err() || command.status.is_none() {
+            return result;
+        }
+        match self
+            .trigger_sync
+            .on_status_change(&*self.unit_of_work, &function, &ctx)
             .await
+        {
+            Ok(()) => result,
+            Err(e) => UseCaseResult::failure(e),
+        }
     }
 }
 
 impl<U: UnitOfWork> UpdateFunctionUseCase<U> {
-    async fn prepare(
-        &self,
-        command: &UpdateCommand,
-        ctx: &ExecutionContext,
-    ) -> Result<Function, UseCaseError> {
+    async fn prepare(&self, command: &UpdateCommand) -> Result<Function, UseCaseError> {
         let mut function =
             function_by_address(&self.functions, &command.address, &self.caller).await?;
         let now = Utc::now();
@@ -98,8 +113,6 @@ impl<U: UnitOfWork> UpdateFunctionUseCase<U> {
                     ))
                 }
             }
-            // enable/disable refuse a no-op, so this is a real transition.
-            self.trigger_sync.on_status_change(&function, ctx).await?;
         }
         Ok(function)
     }

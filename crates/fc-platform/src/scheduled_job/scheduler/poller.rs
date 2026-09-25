@@ -15,7 +15,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use chrono_tz::Tz;
 use cron::Schedule;
 use tokio::sync::broadcast;
@@ -152,6 +152,40 @@ impl ScheduledJobPoller {
     }
 }
 
+/// A job's zone: a tz database region, or one of Java's fixed-offset zone
+/// ids (`Z`, `+05:30`, `UTC+1`, `GMT-5`, ...), which a function manifest may
+/// name (Java `ZoneId.of`; `function::schedule_check`) and chrono-tz does
+/// not read. Region names are read by chrono-tz exactly as before.
+enum JobZone {
+    Region(Tz),
+    Fixed(FixedOffset),
+}
+
+fn resolve_zone(tz_name: &str) -> Result<JobZone, ScheduleError> {
+    match Tz::from_str(tz_name) {
+        Ok(tz) => Ok(JobZone::Region(tz)),
+        Err(source) => crate::function::schedule_check::java_fixed_offset_seconds(tz_name)
+            .and_then(FixedOffset::east_opt)
+            .map(JobZone::Fixed)
+            .ok_or(ScheduleError::InvalidTimezone {
+                tz: tz_name.to_string(),
+                source,
+            }),
+    }
+}
+
+fn parse_schedules(crons: &[String]) -> Result<Vec<Schedule>, ScheduleError> {
+    crons
+        .iter()
+        .map(|expr| {
+            Schedule::from_str(expr).map_err(|source| ScheduleError::InvalidCron {
+                expr: expr.clone(),
+                source,
+            })
+        })
+        .collect()
+}
+
 /// Compute the LATEST cron slot in the half-open window `(after, up_to]`
 /// across all `crons` evaluated in `tz`. Returns `None` if no slot fits.
 ///
@@ -167,24 +201,26 @@ pub fn latest_slot_in_window(
     if after >= up_to {
         return Ok(None);
     }
-    let tz: Tz = Tz::from_str(tz_name).map_err(|source| ScheduleError::InvalidTimezone {
-        tz: tz_name.to_string(),
-        source,
-    })?;
+    let schedules = parse_schedules(crons)?;
+    Ok(match resolve_zone(tz_name)? {
+        JobZone::Region(tz) => latest_in(&schedules, &tz, after, up_to),
+        JobZone::Fixed(tz) => latest_in(&schedules, &tz, after, up_to),
+    })
+}
 
+fn latest_in<Z: TimeZone>(
+    schedules: &[Schedule],
+    tz: &Z,
+    after: DateTime<Utc>,
+    up_to: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
     let after_tz = tz.from_utc_datetime(&after.naive_utc());
-    let up_to_tz = tz.from_utc_datetime(&up_to.naive_utc());
-
-    let mut best: Option<DateTime<Tz>> = None;
-
-    for expr in crons {
-        let schedule = Schedule::from_str(expr).map_err(|source| ScheduleError::InvalidCron {
-            expr: expr.clone(),
-            source,
-        })?;
+    let mut best: Option<DateTime<Utc>> = None;
+    for schedule in schedules {
         // Walk forward from `after` and pick the latest slot <= up_to.
         for slot in schedule.after(&after_tz) {
-            if slot > up_to_tz {
+            let slot = slot.with_timezone(&Utc);
+            if slot > up_to {
                 break;
             }
             best = Some(match best {
@@ -193,8 +229,32 @@ pub fn latest_slot_in_window(
             });
         }
     }
+    best
+}
 
-    Ok(best.map(|t| t.with_timezone(&Utc)))
+/// The first slot of any of `crons` strictly after `after`, evaluated in
+/// `tz`: the poller's own reading, one step at a time.
+pub fn next_slot_after(
+    crons: &[String],
+    tz_name: &str,
+    after: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, ScheduleError> {
+    let schedules = parse_schedules(crons)?;
+    fn first<Z: TimeZone>(
+        schedules: &[Schedule],
+        tz: &Z,
+        after: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        let after_tz = tz.from_utc_datetime(&after.naive_utc());
+        schedules
+            .iter()
+            .filter_map(|s| s.after(&after_tz).next().map(|t| t.with_timezone(&Utc)))
+            .min()
+    }
+    Ok(match resolve_zone(tz_name)? {
+        JobZone::Region(tz) => first(&schedules, &tz, after),
+        JobZone::Fixed(tz) => first(&schedules, &tz, after),
+    })
 }
 
 #[cfg(test)]

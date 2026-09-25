@@ -415,6 +415,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "034_functions",
             include_str!("../../../../migrations/034_functions.sql"),
         ),
+        // Java's msg_scheduled_jobs.application_id: a function's schedules
+        // are signed with its application's credentials.
+        (
+            "035_scheduled_jobs_application_id",
+            include_str!("../../../../migrations/035_scheduled_jobs_application_id.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -542,6 +548,14 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              AND EXISTS (SELECT 1 FROM pg_constraint \
              WHERE conname = 'chk_msg_subscriptions_source' \
                AND pg_get_constraintdef(oid) LIKE '%FUNCTION%')",
+        ),
+        // A database Java migrated has the column from its baseline.
+        (
+            "035_scheduled_jobs_application_id",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' \
+               AND table_name = 'msg_scheduled_jobs' \
+               AND column_name = 'application_id')",
         ),
     ];
 

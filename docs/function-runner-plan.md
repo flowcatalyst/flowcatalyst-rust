@@ -206,6 +206,25 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - The dry-run `plan` in `manifest/check`.
 - Needs the Rust dispatcher and scheduler to send the signed webhooks the host expects. Verify the header names and signing against `WebhookVerifier.java`.
 
+> **P5 outcome (2026-09-25).** Done on `feat/fn-p5-promote`.
+> - `PUT/DELETE/GET …/aliases` and the `manifest/check` plan are Java's, byte for byte (goldens from Java's
+>   own classes: `tests/data/function/promote-golden.json`). Promote, update and delete run on
+>   `PgUnitOfWork::run`, one transaction each, as Java's `TxOperation`s.
+> - `TriggerSync` commits each pool, subscription and job with that aggregate's own event and command.
+>   A link rides in the same commit (`LinkedRepository`); `fn_routes` rides in the alias change's commit
+>   (`PromotedFunctionRepository`). The unit of work now keeps a repository's own business refusal
+>   (`PUBLIC_ROUTE_TAKEN` from the unique constraint) as a 409.
+> - **Cron.** Java's code accepts exactly six fields, robfig style: `0` is Sunday, and when both day
+>   fields are restricted either one matches. The Rust scheduler's `cron` crate reads `1` as Sunday and
+>   always needs both. Promote stores the manifest's text when both dialects read it the same way, and
+>   otherwise an equivalent rendering (`function/cron_dialect.rs`). The poller also reads Java's
+>   fixed-offset zones now. The scheduled-job domain is otherwise unchanged.
+> - **Signing.** Neither Rust delivery signed anything. Both now sign as Java does, with the
+>   application's outbound credentials: dispatch jobs through `DeliveryCredentials`, and scheduled jobs
+>   through their new `application_id` column (migration 035, Java's). Scheduled-job delivery accepts any
+>   2xx, as Java does. A test signs with the platform code and verifies with `fc-fnhost-core`'s verifier.
+> - The SDK pool and job syncs skip a function's linked objects (§4.2 `protectedIds`).
+
 **P6: host control plane** (about 800)
 - `/control/functions/desired-state`: byte-deterministic serialisation (sorted, key order fixed), a sha256 ETag and 304.
 - `heartbeat`: host upsert, MarkVersionReady, and a purge of hosts stale for more than 1 day.

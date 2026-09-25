@@ -71,21 +71,16 @@ mod tests {
     }
 
     /// The routes Rust registers (in its own utoipa document) are exactly
-    /// the `/api/` operations of Java's document, but the aliases, which
-    /// are promote (P5).
+    /// the `/api/` operations of Java's document.
     #[test]
     fn rust_registers_javas_operations() {
         use std::collections::BTreeSet;
-        const LATER: &[&str] = &[
-            "/api/functions/{address}/aliases/{alias}",
-            "/api/functions/{address}/aliases",
-        ];
         let java: serde_json::Value = serde_json::from_slice(FUNCTIONS_OPENAPI).unwrap();
         let java: BTreeSet<(String, String)> = java["paths"]
             .as_object()
             .unwrap()
             .iter()
-            .filter(|(path, _)| path.starts_with("/api/") && !LATER.contains(&path.as_str()))
+            .filter(|(path, _)| path.starts_with("/api/"))
             .flat_map(|(path, ops)| {
                 ops.as_object()
                     .unwrap()

@@ -62,6 +62,11 @@ pub struct SyncScheduledJobsCommand {
     pub jobs: Vec<ScheduledJobSyncEntry>,
     #[serde(default)]
     pub archive_unlisted: bool,
+    /// Jobs this sync must leave alone: a function's own schedules (Java
+    /// `protectedIds`, `function-invocation.md` §4.2). Neither updated when
+    /// listed nor archived when unlisted.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub protected_ids: std::collections::BTreeSet<String>,
 }
 
 impl crate::usecase::AuditMasked for SyncScheduledJobsCommand {}
@@ -156,6 +161,7 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
 
         for entry in &cmd.jobs {
             match existing_by_code.remove(&entry.code) {
+                Some(job) if cmd.protected_ids.contains(&job.id) => {}
                 Some(mut job) => {
                     let mut changed = false;
                     if job.name != entry.name {
@@ -241,7 +247,8 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
         let mut archived: Vec<String> = Vec::new();
         if cmd.archive_unlisted {
             for (_, mut job) in existing_by_code.into_iter() {
-                if job.status == ScheduledJobStatus::Active {
+                if job.status == ScheduledJobStatus::Active && !cmd.protected_ids.contains(&job.id)
+                {
                     job.archive();
                     archived.push(job.id.clone());
                     to_persist.push(job);

@@ -123,14 +123,123 @@ impl Function {
 
     /// The version `live` points at, if any.
     pub fn live_version_id(&self) -> Option<&str> {
+        self.version_id_of(LIVE_ALIAS)
+    }
+
+    /// The version `alias` points at, if the function has that pointer.
+    pub fn version_id_of(&self, alias: &str) -> Option<&str> {
         self.aliases
             .iter()
-            .find(|a| a.alias == LIVE_ALIAS)
+            .find(|a| a.alias == alias)
             .map(|a| a.version_id.as_str())
+    }
+
+    /// Points `alias` at `version` (Java `Function.promote`); returns the
+    /// version it pointed at before, `None` on a first promotion. Readiness
+    /// (`VERSION_NOT_READY`) is the promote use case's own guard, not this
+    /// one's. `ALIAS_UNCHANGED` compares against what this alias points at,
+    /// never `live`'s.
+    ///
+    /// `400 ALIAS_INVALID`, `400 VERSION_NOT_OF_FUNCTION`, `409
+    /// VERSION_RETIRED`, `409 FUNCTION_DISABLED`, `409 ALIAS_UNCHANGED`, in
+    /// that order.
+    pub fn promote(
+        &mut self,
+        alias: &str,
+        version: &FunctionVersion,
+        principal_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<String>, UseCaseError> {
+        require_valid_alias_name(alias)?;
+        if version.function_id != self.id {
+            return Err(UseCaseError::validation(
+                "VERSION_NOT_OF_FUNCTION",
+                "version does not belong to this function",
+            ));
+        }
+        if let VersionState::Retired(_) = version.state {
+            return Err(UseCaseError::business_rule(
+                "VERSION_RETIRED",
+                "version is retired",
+            ));
+        }
+        if self.status == FunctionStatus::Disabled {
+            return Err(UseCaseError::business_rule(
+                "FUNCTION_DISABLED",
+                "function is disabled",
+            ));
+        }
+        let previous = self.version_id_of(alias).map(str::to_string);
+        if previous.as_deref() == Some(version.id.as_str()) {
+            return Err(UseCaseError::business_rule(
+                "ALIAS_UNCHANGED",
+                "alias already points at this version",
+            ));
+        }
+        let pointer = FunctionAlias {
+            alias: alias.to_string(),
+            version_id: version.id.clone(),
+            updated_by: principal_id.to_string(),
+            updated_at: now,
+        };
+        match self.aliases.iter_mut().find(|a| a.alias == alias) {
+            Some(existing) => *existing = pointer,
+            None => self.aliases.push(pointer),
+        }
+        self.updated_at = now;
+        Ok(previous)
+    }
+
+    /// Deletes a named pointer (Java `Function.removeAlias`); returns the
+    /// version it pointed at. `live` is never removable: promote another
+    /// version instead (`409 ALIAS_PROTECTED`); an alias the function does
+    /// not have is `404 Alias_NOT_FOUND`, never a no-op.
+    pub fn remove_alias(
+        &mut self,
+        alias: &str,
+        now: DateTime<Utc>,
+    ) -> Result<String, UseCaseError> {
+        if alias == LIVE_ALIAS {
+            return Err(UseCaseError::business_rule(
+                "ALIAS_PROTECTED",
+                "promote another version; live cannot be removed",
+            ));
+        }
+        let Some(at) = self.aliases.iter().position(|a| a.alias == alias) else {
+            return Err(super::operations::access::resource_not_found(
+                "Alias", alias,
+            ));
+        };
+        let removed = self.aliases.remove(at);
+        self.updated_at = now;
+        Ok(removed.version_id)
     }
 
     pub fn is_live(&self, version_id: &str) -> bool {
         self.live_version_id() == Some(version_id)
+    }
+}
+
+/// Every alias name, `live` included, is 1-63 characters of `a-z`, `0-9`
+/// and `-`, not starting or ending with `-`: `fn_aliases`' own check
+/// constraint (Java `Function.requireValidAliasName`, the rule's one home).
+/// `400 ALIAS_INVALID` otherwise.
+pub fn require_valid_alias_name(alias: &str) -> Result<(), UseCaseError> {
+    let b = alias.as_bytes();
+    let inner = |c: &u8| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-';
+    let edge = |c: &u8| c.is_ascii_lowercase() || c.is_ascii_digit();
+    let valid = !b.is_empty()
+        && b.len() <= 63
+        && b.iter().all(inner)
+        && edge(&b[0])
+        && edge(&b[b.len() - 1]);
+    if valid {
+        Ok(())
+    } else {
+        Err(UseCaseError::validation(
+            "ALIAS_INVALID",
+            "alias must be 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'",
+        ))
     }
 }
 
@@ -467,7 +576,27 @@ pub struct FunctionRoute {
     pub created_at: DateTime<Utc>,
 }
 
-// ── Trigger objects (written at promote in P5) ──────────────────────────────
+impl FunctionRoute {
+    /// A fresh route row (Java `FunctionRoute.of`), materialised at promote.
+    pub fn of(
+        function_id: &str,
+        hostname: Hostname,
+        path_prefix: RoutePattern,
+        alias_prefixes: Vec<String>,
+        now: DateTime<Utc>,
+    ) -> FunctionRoute {
+        FunctionRoute {
+            id: tsid::generate(EntityType::FunctionRoute),
+            function_id: function_id.to_string(),
+            hostname,
+            path_prefix,
+            alias_prefixes,
+            created_at: now,
+        }
+    }
+}
+
+// ── Trigger objects (written at promote) ──────────────────────────────
 
 /// What a `fn_trigger_objects` row links a function to (Java
 /// `TriggerObjectKind`).
@@ -483,6 +612,18 @@ crate::shared::enum_str::str_enum!(TriggerObjectKind, "trigger object kind", {
     Subscription => "SUBSCRIPTION",
     ScheduledJob => "SCHEDULED_JOB",
 });
+
+/// One `fn_trigger_objects` row (Java `TriggerObject`): an object a
+/// function's live manifest created at promote, keyed by
+/// `(function, kind, trigger key)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriggerObject {
+    pub function_id: String,
+    pub kind: TriggerObjectKind,
+    pub object_id: String,
+    pub trigger_key: String,
+    pub created_at: DateTime<Utc>,
+}
 
 /// One `fn_trigger_objects` row, with whether the object it names still
 /// exists in its own table.
@@ -721,6 +862,128 @@ mod tests {
         ready.state = VersionState::Ready(now);
         ready.retire(now).unwrap();
         assert_eq!(ready.retired_at(), Some(now));
+    }
+
+    /// Java `FunctionTest`'s promote and remove-alias rules, each code.
+    #[test]
+    fn promote_points_an_alias_and_refuses_in_javas_order() {
+        let mut f = function();
+        let mut v = version();
+        v.function_id = f.id.clone();
+        v.state = VersionState::Ready(Utc::now());
+        let now = Utc::now();
+
+        let err = f.promote("Live", &v, "prn_1", now).unwrap_err();
+        assert_eq!((err.http_status_code(), err.code()), (400, "ALIAS_INVALID"));
+
+        let mut foreign = v.clone();
+        foreign.function_id = "fnc_other".into();
+        let err = f.promote("live", &foreign, "prn_1", now).unwrap_err();
+        assert_eq!(
+            (err.http_status_code(), err.code(), err.message()),
+            (
+                400,
+                "VERSION_NOT_OF_FUNCTION",
+                "version does not belong to this function"
+            )
+        );
+
+        assert_eq!(f.promote("live", &v, "prn_1", now).unwrap(), None);
+        assert_eq!(f.live_version_id(), Some(v.id.as_str()));
+        assert_eq!(f.aliases[0].updated_by, "prn_1");
+
+        let err = f.promote("live", &v, "prn_2", now).unwrap_err();
+        assert_eq!(
+            (err.http_status_code(), err.code(), err.message()),
+            (
+                409,
+                "ALIAS_UNCHANGED",
+                "alias already points at this version"
+            )
+        );
+        // Another alias may name the same version as live.
+        assert_eq!(f.promote("qa", &v, "prn_1", now).unwrap(), None);
+
+        let mut v2 = v.clone();
+        v2.id = "fnv_2".into();
+        assert_eq!(
+            f.promote("live", &v2, "prn_2", now).unwrap(),
+            Some(v.id.clone())
+        );
+        assert_eq!(f.aliases.len(), 2);
+        assert_eq!(f.version_id_of("qa"), Some(v.id.as_str()));
+
+        let mut retired = v2.clone();
+        retired.id = "fnv_3".into();
+        retired.state = VersionState::Retired(now);
+        let err = f.promote("live", &retired, "prn_1", now).unwrap_err();
+        assert_eq!(
+            (err.http_status_code(), err.code(), err.message()),
+            (409, "VERSION_RETIRED", "version is retired")
+        );
+
+        let mut v3 = v2.clone();
+        v3.id = "fnv_4".into();
+        f.disable(now).unwrap();
+        let err = f.promote("live", &v3, "prn_1", now).unwrap_err();
+        assert_eq!(
+            (err.http_status_code(), err.code(), err.message()),
+            (409, "FUNCTION_DISABLED", "function is disabled")
+        );
+    }
+
+    #[test]
+    fn remove_alias_protects_live_and_refuses_an_unknown_alias() {
+        let mut f = function();
+        let mut v = version();
+        v.function_id = f.id.clone();
+        v.state = VersionState::Ready(Utc::now());
+        f.promote("live", &v, "prn_1", Utc::now()).unwrap();
+        f.promote("qa", &v, "prn_1", Utc::now()).unwrap();
+
+        let err = f.remove_alias("live", Utc::now()).unwrap_err();
+        assert_eq!(
+            (err.http_status_code(), err.code(), err.message()),
+            (
+                409,
+                "ALIAS_PROTECTED",
+                "promote another version; live cannot be removed"
+            )
+        );
+        let err = f.remove_alias("nope", Utc::now()).unwrap_err();
+        assert_eq!(
+            (err.http_status_code(), err.code(), err.message()),
+            (404, "Alias_NOT_FOUND", "Alias not found: nope")
+        );
+        assert_eq!(f.remove_alias("qa", Utc::now()).unwrap(), v.id);
+        assert_eq!(f.version_id_of("qa"), None);
+        assert_eq!(f.live_version_id(), Some(v.id.as_str()));
+    }
+
+    /// `fn_aliases`' check constraint: 1-63 of `a-z0-9-`, no `-` at an end.
+    #[test]
+    fn alias_names_follow_the_check_constraint() {
+        for ok in ["live", "qa", "a", "0", "a-b", "v2", &"a".repeat(63)] {
+            assert!(require_valid_alias_name(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "-a",
+            "a-",
+            "A",
+            "a_b",
+            "a.b",
+            "é",
+            &"a".repeat(64),
+            " live",
+        ] {
+            let err = require_valid_alias_name(bad).unwrap_err();
+            assert_eq!(err.code(), "ALIAS_INVALID", "{bad:?}");
+            assert_eq!(
+                err.message(),
+                "alias must be 1-63 characters of a-z, 0-9 and '-', not starting or ending with '-'"
+            );
+        }
     }
 
     #[test]

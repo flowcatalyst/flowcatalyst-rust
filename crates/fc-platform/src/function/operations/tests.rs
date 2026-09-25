@@ -46,7 +46,23 @@ fn ops() -> FunctionOperations<InMemoryUnitOfWork> {
         policies: Arc::new(crate::function::policy_repository::ClientPolicyRepository::new(&pool)),
         domains: domains.clone(),
         routes: routes.clone(),
-        trigger_sync: TriggerSync,
+        trigger_sync: TriggerSync::new(
+            Arc::new(crate::SubscriptionRepository::new(&pool)),
+            Arc::new(crate::DispatchPoolRepository::new(&pool)),
+            Arc::new(crate::scheduled_job::ScheduledJobRepository::new(&pool)),
+            Arc::new(
+                crate::function::trigger_object_repository::TriggerObjectRepository::new(&pool),
+            ),
+            Arc::new(crate::ApplicationRepository::new(&pool)),
+            versions.clone(),
+            functions.clone(),
+            routes.clone(),
+            Arc::new(
+                crate::function::settings_repository::FunctionSettingsRepository::new(&pool, None),
+            ),
+            crate::function::PoolUrlTemplate::parse(crate::function::PoolUrlTemplate::DEFAULT)
+                .unwrap(),
+        ),
         limits,
         signatures: fc_function_signing::Signatures::Off,
         artifacts: None,
@@ -664,4 +680,87 @@ async fn publish_and_retire_write_one_event_and_one_audit_row() {
         audit.operation_json.unwrap(),
         json!({"address": "billing.invoices.create", "version": 3})
     );
+}
+
+/// Java `PublishPromoteRetireTest.anInvalidAliasNameOnAnUnreadyVersionIsAliasInvalidNotVersionNotReady`:
+/// the alias name is checked before anything is read.
+#[tokio::test]
+async fn promote_checks_the_alias_name_before_loading_anything() {
+    let ops = ops();
+    let uow = Arc::new(InMemoryUnitOfWork::new());
+    let err = run_err(
+        ops.promote_in(anchor(), uow),
+        PromoteCommand {
+            address: address(),
+            alias: "BAD".into(),
+            version: 1,
+        },
+    )
+    .await;
+    assert_eq!((err.http_status_code(), err.code()), (400, "ALIAS_INVALID"));
+}
+
+/// The alias events carry Java's `data()` and the commands audit as they are.
+#[test]
+fn alias_events_and_commands() {
+    use super::events::{AliasChanged, AliasRemoved};
+    let mut f = Function::create(
+        "app_1",
+        address(),
+        FunctionOwner::Platform,
+        Runtime::Wasm,
+        None,
+    );
+    f.id = "fnc_1".into();
+    let v = published_version(&f, None);
+    let changed = AliasChanged::new(&ctx(), &f, "live", &v, Some("fnv_2".into()));
+    assert_eq!(
+        changed.metadata.event_type,
+        "platform:function:alias:changed"
+    );
+    assert_eq!(changed.metadata.subject, "platform.function.fnc_1");
+    assert_eq!(
+        serde_json::to_value(&changed).unwrap(),
+        json!({"functionId": "fnc_1", "address": "billing.invoices.create", "alias": "live",
+               "versionId": "fnv_3", "version": 3, "previousVersionId": "fnv_2"})
+    );
+    let first = AliasChanged::new(&ctx(), &f, "qa", &v, None);
+    assert!(serde_json::to_value(&first)
+        .unwrap()
+        .get("previousVersionId")
+        .is_none());
+    let removed = AliasRemoved::new(&ctx(), &f, "qa", &v);
+    assert_eq!(
+        removed.metadata.event_type,
+        "platform:function:alias:removed"
+    );
+    assert_eq!(
+        serde_json::to_value(&removed).unwrap(),
+        json!({"functionId": "fnc_1", "address": "billing.invoices.create", "alias": "qa",
+               "versionId": "fnv_3", "version": 3})
+    );
+    let audit = AuditRow::from_event(
+        &changed,
+        &PromoteCommand {
+            address: address(),
+            alias: "live".into(),
+            version: 3,
+        },
+    );
+    assert_eq!(
+        (audit.entity_type.as_str(), audit.operation.as_str()),
+        ("Function", "PromoteCommand")
+    );
+    assert_eq!(
+        audit.operation_json.unwrap(),
+        json!({"address": "billing.invoices.create", "alias": "live", "version": 3})
+    );
+    let audit = AuditRow::from_event(
+        &removed,
+        &RemoveAliasCommand {
+            address: address(),
+            alias: "qa".into(),
+        },
+    );
+    assert_eq!(audit.operation, "RemoveAliasCommand");
 }

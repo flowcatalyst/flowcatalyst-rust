@@ -5,6 +5,7 @@
 pub mod api;
 pub mod entity;
 pub mod operations;
+pub mod outbound_credentials;
 pub mod repository;
 
 // Re-export main types

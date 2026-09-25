@@ -944,6 +944,7 @@ pub fn build_platform_routes(
         sync_scheduled_jobs_use_case,
         sync_openapi_use_case: sync_openapi_use_case.clone(),
         app_access: app_access.clone(),
+        trigger_objects: repos.function_trigger_object_repo.clone(),
     };
 
     let sdk_audit_batch_state = SdkAuditBatchState {
@@ -980,6 +981,14 @@ pub fn build_platform_routes(
             ),
         ),
     };
+    // One outbound-credentials resolver for every delivery the platform
+    // signs (Java OutboundCredentials, one-minute cache per application).
+    let outbound_credentials = Arc::new(
+        crate::service_account::outbound_credentials::OutboundCredentialsResolver::new(
+            repos.service_account_repo.clone(),
+            encryption_service.clone(),
+        ),
+    );
     // ── Function registry ─────────────────────────────────────────────────
     // Java reads the FC_FN_DEFAULT_* limits once at startup and refuses to
     // start on a non-positive one (Env.java:600-605).
@@ -998,6 +1007,15 @@ pub fn build_platform_routes(
         .unwrap_or_else(|e| panic!("invalid function artifact store: {e}"));
     let function_signatures = crate::function::artifact::signatures_from_env()
         .unwrap_or_else(|e| panic!("invalid function signature settings: {e}"));
+    // FC_FN_POOL_URL is resolved once; a bad template refuses to start, as
+    // in Java (Env.java, PoolUrlTemplate).
+    let function_pool_url = crate::function::PoolUrlTemplate::from_env()
+        .unwrap_or_else(|e| panic!("invalid function pool URL: {e}"));
+    let trigger_sync = crate::function::operations::TriggerSync::from_repositories(
+        repos,
+        function_settings.clone(),
+        function_pool_url,
+    );
     let functions_state = crate::function::api::FunctionsState {
         functions: repos.function_repo.clone(),
         versions: repos.function_version_repo.clone(),
@@ -1018,7 +1036,7 @@ pub fn build_platform_routes(
             policies: repos.function_policy_repo.clone(),
             domains: repos.function_domain_repo.clone(),
             routes: repos.function_route_repo.clone(),
-            trigger_sync: crate::function::operations::TriggerSync,
+            trigger_sync,
             limits: function_limits,
             signatures: function_signatures,
             artifacts: function_artifacts,
@@ -1134,6 +1152,14 @@ pub fn build_platform_routes(
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("Failed to build HTTP client"),
+            credentials: Some(Arc::new(
+                crate::dispatch_job::delivery_credentials::DeliveryCredentials::new(
+                    repos.subscription_repo.clone(),
+                    repos.connection_repo.clone(),
+                    repos.application_repo.clone(),
+                    outbound_credentials.clone(),
+                ),
+            )),
         }),
         bff_developer: crate::router::BffDeveloperDeps {
             application_repo: repos.application_repo.clone(),

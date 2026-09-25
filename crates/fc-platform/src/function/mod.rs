@@ -8,6 +8,7 @@
 
 pub mod api;
 pub mod artifact;
+pub mod cron_dialect;
 pub mod digest;
 pub mod dns_label;
 pub mod domain_api;

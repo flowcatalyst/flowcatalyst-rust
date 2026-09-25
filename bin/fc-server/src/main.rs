@@ -975,11 +975,22 @@ async fn spawn_scheduled_job_scheduler(
         ScheduledJobSchedulerConfig, ScheduledJobSchedulerService,
     };
 
-    let svc = Arc::new(ScheduledJobSchedulerService::new(
-        ScheduledJobSchedulerConfig::from_env(),
-        repos.scheduled_job_repo.clone(),
-        repos.scheduled_job_instance_repo.clone(),
-    ));
+    // Firings are signed with each job's application's credentials (Java
+    // JobDispatcher).
+    let credentials = Arc::new(
+        fc_platform::service_account::outbound_credentials::OutboundCredentialsResolver::new(
+            repos.service_account_repo.clone(),
+            fc_platform::shared::encryption_service::EncryptionService::from_env().map(Arc::new),
+        ),
+    );
+    let svc = Arc::new(
+        ScheduledJobSchedulerService::new(
+            ScheduledJobSchedulerConfig::from_env(),
+            repos.scheduled_job_repo.clone(),
+            repos.scheduled_job_instance_repo.clone(),
+        )
+        .with_credentials(credentials),
+    );
 
     tokio::spawn(async move {
         let mut handles: Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)>;

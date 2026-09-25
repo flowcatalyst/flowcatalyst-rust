@@ -24,6 +24,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::scheduled_job::{ScheduledJobInstanceRepository, ScheduledJobRepository};
+use crate::service_account::outbound_credentials::OutboundCredentialsResolver;
 
 /// Composes Poller + Dispatcher behind a single start/stop handle.
 pub struct ScheduledJobSchedulerService {
@@ -31,6 +32,7 @@ pub struct ScheduledJobSchedulerService {
     repo: Arc<ScheduledJobRepository>,
     instance_repo: Arc<ScheduledJobInstanceRepository>,
     http_client: reqwest::Client,
+    credentials: Option<Arc<OutboundCredentialsResolver>>,
     shutdown: broadcast::Sender<()>,
 }
 
@@ -50,8 +52,16 @@ impl ScheduledJobSchedulerService {
             repo,
             instance_repo,
             http_client,
+            credentials: None,
             shutdown,
         }
+    }
+
+    /// Sign each firing with its job's application's credentials (Java
+    /// `JobDispatcher`); without this every firing goes out unsigned.
+    pub fn with_credentials(mut self, credentials: Arc<OutboundCredentialsResolver>) -> Self {
+        self.credentials = Some(credentials);
+        self
     }
 
     /// Spawn poller + dispatcher tasks. Returns join handles caller can `.abort()`
@@ -63,13 +73,16 @@ impl ScheduledJobSchedulerService {
             self.instance_repo.clone(),
             self.shutdown.subscribe(),
         );
-        let dispatcher = ScheduledJobDispatcher::new(
+        let mut dispatcher = ScheduledJobDispatcher::new(
             self.config.clone(),
             self.repo.clone(),
             self.instance_repo.clone(),
             self.http_client.clone(),
             self.shutdown.subscribe(),
         );
+        if let Some(credentials) = &self.credentials {
+            dispatcher = dispatcher.with_credentials(credentials.clone());
+        }
         (
             tokio::spawn(async move { poller.run().await }),
             tokio::spawn(async move { dispatcher.run().await }),

@@ -22,6 +22,7 @@ use crate::usecase::unit_of_work::HasId;
 struct ScheduledJobRow {
     id: String,
     client_id: Option<String>,
+    application_id: Option<String>,
     code: String,
     name: String,
     description: Option<String>,
@@ -49,6 +50,7 @@ impl TryFrom<ScheduledJobRow> for ScheduledJob {
         Ok(Self {
             id: r.id,
             client_id: r.client_id,
+            application_id: r.application_id,
             code: r.code,
             name: r.name,
             description: r.description,
@@ -71,7 +73,8 @@ impl TryFrom<ScheduledJobRow> for ScheduledJob {
     }
 }
 
-const SELECT_COLS: &str = "id, client_id, code, name, description, status, crons, timezone, \
+const SELECT_COLS: &str =
+    "id, client_id, application_id, code, name, description, status, crons, timezone, \
                             payload, concurrent, tracks_completion, timeout_seconds, \
                             delivery_max_attempts, target_url, last_fired_at, created_at, \
                             updated_at, created_by, updated_by, version";
@@ -95,6 +98,20 @@ impl ScheduledJobRepository {
         .fetch_optional(&self.pool)
         .await?;
         row.map(ScheduledJob::try_from).transpose()
+    }
+
+    /// Every job named by `ids`; an id with no row is simply absent.
+    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<ScheduledJob>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_as::<_, ScheduledJobRow>(&format!(
+            "SELECT {SELECT_COLS} FROM msg_scheduled_jobs WHERE id = ANY($1)"
+        ))
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(ScheduledJob::try_from).collect()
     }
 
     /// Look up by `(client_id, code)`. Pass `client_id = None` for platform-scoped jobs.
@@ -300,11 +317,12 @@ impl crate::usecase::Persist<ScheduledJob> for ScheduledJobRepository {
                 (id, client_id, code, name, description, status, crons, timezone, \
                  payload, concurrent, tracks_completion, timeout_seconds, \
                  delivery_max_attempts, target_url, last_fired_at, created_at, \
-                 updated_at, created_by, updated_by, version) \
+                 updated_at, created_by, updated_by, version, application_id) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, \
-                     $14, $15, $16, $17, $18, $19, $20) \
+                     $14, $15, $16, $17, $18, $19, $20, $21) \
              ON CONFLICT (id) DO UPDATE SET \
                 code = EXCLUDED.code, \
+                application_id = EXCLUDED.application_id, \
                 name = EXCLUDED.name, \
                 description = EXCLUDED.description, \
                 status = EXCLUDED.status, \
@@ -340,6 +358,7 @@ impl crate::usecase::Persist<ScheduledJob> for ScheduledJobRepository {
         .bind(&sj.created_by)
         .bind(&sj.updated_by)
         .bind(sj.version)
+        .bind(&sj.application_id)
         .execute(&mut **tx.inner)
         .await?;
         Ok(())
