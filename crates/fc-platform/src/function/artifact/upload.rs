@@ -105,7 +105,7 @@ where
     if count == 0 {
         return Err(empty().into());
     }
-    let actual = Digest::from_sha256(&sha256.finalize());
+    let actual = Digest::from_sha256(&sha256.finalize().into());
     if &actual != digest {
         return Err(digest_mismatch(digest, &actual).into());
     }
@@ -168,7 +168,7 @@ mod tests {
     }
 
     fn digest_of(bytes: &[u8]) -> Digest {
-        Digest::from_sha256(&Sha256::digest(bytes))
+        Digest::from_sha256(&Sha256::digest(bytes).into())
     }
 
     fn status(e: &PlatformError) -> (u16, String) {

@@ -244,7 +244,7 @@ async fn upload(
 }
 
 fn digest_of(bytes: &[u8]) -> String {
-    Digest::from_sha256(&Sha256::digest(bytes))
+    Digest::from_sha256(&Sha256::digest(bytes).into())
         .value()
         .to_string()
 }

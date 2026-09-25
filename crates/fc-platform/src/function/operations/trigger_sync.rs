@@ -49,6 +49,7 @@ use crate::dispatch_pool::operations::{
     DispatchPoolUpdated, UpdateDispatchPoolCommand,
 };
 use crate::function::cron_dialect::scheduler_crons;
+use crate::function::dispatch_mode;
 use crate::function::entity::{
     Function, FunctionRoute, FunctionStatus, FunctionVersion, TriggerObject, TriggerObjectKind,
 };
@@ -415,7 +416,7 @@ impl TriggerSync {
             && pool.id.is_some()
             && current.dispatch_pool_id == pool.id
             && current.dispatch_pool_code.as_deref() == Some(pool.code.as_str())
-            && current.mode == spec.mode
+            && current.mode == dispatch_mode(spec.mode)
             && current.max_retries == spec.max_retries
             && current.timeout_seconds == spec.timeout_seconds
             && current.data_only == spec.data_only
@@ -788,7 +789,7 @@ impl TriggerSync {
                 sub.dispatch_pool_id = Some(pool.id.clone());
                 sub.dispatch_pool_code = Some(pool.code.clone());
                 sub.event_types = vec![binding];
-                sub.mode = spec.mode;
+                sub.mode = dispatch_mode(spec.mode);
                 sub.timeout_seconds = spec.timeout_seconds;
                 sub.max_retries = spec.max_retries;
                 sub.data_only = spec.data_only;
@@ -812,7 +813,7 @@ impl TriggerSync {
                     event_types: Some(binding_input),
                     dispatch_pool_id: Some(pool.id.clone()),
                     service_account_id: None,
-                    mode: Some(spec.mode),
+                    mode: Some(dispatch_mode(spec.mode)),
                     max_retries: Some(spec.max_retries as u32),
                     timeout_seconds: Some(spec.timeout_seconds as u32),
                     data_only: Some(spec.data_only),
@@ -838,7 +839,7 @@ impl TriggerSync {
                 sub.source = SubscriptionSource::Function;
                 sub.dispatch_pool_id = Some(pool.id.clone());
                 sub.dispatch_pool_code = Some(pool.code.clone());
-                sub.mode = spec.mode;
+                sub.mode = dispatch_mode(spec.mode);
                 sub.max_retries = spec.max_retries;
                 sub.timeout_seconds = spec.timeout_seconds;
                 sub.data_only = spec.data_only;
@@ -861,7 +862,7 @@ impl TriggerSync {
                     event_types: binding_input,
                     dispatch_pool_id: Some(pool.id.clone()),
                     service_account_id: None,
-                    mode: Some(spec.mode),
+                    mode: Some(dispatch_mode(spec.mode)),
                     max_retries: Some(spec.max_retries as u32),
                     timeout_seconds: Some(spec.timeout_seconds as u32),
                     data_only: spec.data_only,

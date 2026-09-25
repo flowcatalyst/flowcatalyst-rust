@@ -2752,12 +2752,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "fc-function-model"
+version = "0.1.0"
+dependencies = [
+ "fc-function-abi",
+ "hex",
+ "indexmap 2.14.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "fc-function-signing"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
  "der",
+ "fc-function-model",
  "hex",
  "p256",
  "p384",
@@ -2858,6 +2871,7 @@ dependencies = [
  "fc-common",
  "fc-fnhost-core",
  "fc-function-abi",
+ "fc-function-model",
  "fc-function-signing",
  "fc-queue",
  "futures",

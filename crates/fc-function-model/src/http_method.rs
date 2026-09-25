@@ -1,7 +1,7 @@
 //! Java `function/HttpMethod.java`.
 
-use crate::shared::enum_str::str_enum;
-use crate::usecase::UseCaseError;
+use crate::enum_str::str_enum;
+use crate::ValidationError;
 
 /// An HTTP method an endpoint may accept. Upper-case on the wire and when
 /// stored.
@@ -34,9 +34,9 @@ impl HttpMethod {
     }
 
     /// `ENDPOINT_INVALID` for an unknown method.
-    pub fn parse_strict(raw: &str) -> Result<HttpMethod, UseCaseError> {
+    pub fn parse_strict(raw: &str) -> Result<HttpMethod, ValidationError> {
         Self::try_parse_strict(raw).ok_or_else(|| {
-            UseCaseError::validation("ENDPOINT_INVALID", format!("unknown HTTP method: {raw}"))
+            ValidationError::new("ENDPOINT_INVALID", format!("unknown HTTP method: {raw}"))
         })
     }
 }

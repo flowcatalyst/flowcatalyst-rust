@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use super::dns_label::DnsLabel;
+use crate::dns_label::DnsLabel;
 
 /// One URL template with an optional `{pool}` placeholder, resolved per
 /// manifest pool at promote. A single-pool environment (or dev) names the

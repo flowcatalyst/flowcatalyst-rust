@@ -6,7 +6,7 @@ use std::fmt;
 
 use indexmap::IndexMap;
 
-use crate::usecase::UseCaseError;
+use crate::ValidationError;
 
 /// A path pattern segment.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -38,11 +38,14 @@ pub struct RoutePattern {
     segments: Vec<Segment>,
 }
 
-/// One match: the pattern and the params it captured, in declaration order.
+/// The `{param}` values a match captured, in declaration order.
+pub type PathParams = IndexMap<String, String>;
+
+/// One match: the pattern and the params it captured.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteMatch<'a> {
     pub pattern: &'a RoutePattern,
-    pub params: IndexMap<String, String>,
+    pub params: PathParams,
 }
 
 const MAX_LENGTH: usize = 1024;
@@ -52,9 +55,9 @@ impl RoutePattern {
         "route path must start with '/' and contain only literal, {param} or trailing '*' segments";
 
     /// `ROUTE_PATTERN_INVALID` for anything that is not a pattern.
-    pub fn parse(raw: &str) -> Result<RoutePattern, UseCaseError> {
+    pub fn parse(raw: &str) -> Result<RoutePattern, ValidationError> {
         Self::try_parse(raw)
-            .ok_or_else(|| UseCaseError::validation("ROUTE_PATTERN_INVALID", Self::INVALID_MESSAGE))
+            .ok_or_else(|| ValidationError::new("ROUTE_PATTERN_INVALID", Self::INVALID_MESSAGE))
     }
 
     /// [`RoutePattern::parse`] without the error.
@@ -110,7 +113,7 @@ impl RoutePattern {
     /// bad UTF-8 is no match); `Rest` takes zero or more segments; without
     /// `Rest` the segment counts must be equal, so a trailing slash matches
     /// only `Rest`.
-    pub fn matches(&self, path: &str) -> Option<IndexMap<String, String>> {
+    pub fn matches(&self, path: &str) -> Option<PathParams> {
         if !path.starts_with('/') {
             return None;
         }
@@ -119,7 +122,7 @@ impl RoutePattern {
         } else {
             path[1..].split('/').collect()
         };
-        let mut params = IndexMap::new();
+        let mut params = PathParams::new();
         let mut i = 0;
         while i < self.segments.len() {
             let segment = &self.segments[i];
@@ -164,9 +167,13 @@ impl RoutePattern {
     }
 
     /// Sorts `patterns` most specific first and returns the first that
-    /// matches `path`.
-    pub fn first_match<'a>(patterns: &'a [RoutePattern], path: &str) -> Option<RouteMatch<'a>> {
-        let mut sorted: Vec<&RoutePattern> = patterns.iter().collect();
+    /// matches `path`. The sort is stable, so of identical patterns the
+    /// first given wins.
+    pub fn first_match<'a>(
+        patterns: impl IntoIterator<Item = &'a RoutePattern>,
+        path: &str,
+    ) -> Option<RouteMatch<'a>> {
+        let mut sorted: Vec<&RoutePattern> = patterns.into_iter().collect();
         sorted.sort();
         sorted.into_iter().find_map(|pattern| {
             pattern
@@ -438,5 +445,49 @@ mod tests {
         assert_eq!(on_param.pattern, &param_p);
         assert_eq!(on_param.params, params(&[("x", "c")]));
         assert!(RoutePattern::first_match(&[p("/a/b")], "/x/y").is_none());
+    }
+
+    // ── the function host's cases (formerly fc-fnhost-core's copy) ─────
+
+    #[test]
+    fn host_parse_rules() {
+        for ok in ["/", "/a", "/a/{id}", "/a/*", "/{x}/{y}/*", "/a.b_c~d-e"] {
+            assert!(RoutePattern::try_parse(ok).is_some(), "{ok}");
+        }
+        for bad in [
+            "", "a", "/a/*/b", "/{1x}", "/{x}/{x}", "/a b", "/a//b", "/{}", "/%20",
+        ] {
+            assert!(RoutePattern::try_parse(bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn host_matching_rules() {
+        assert_eq!(p("/echo/{id}").matches("/echo/42").unwrap()["id"], "42");
+        assert_eq!(p("/echo/{id}").matches("/echo/a%20b").unwrap()["id"], "a b");
+        assert!(p("/echo/{id}").matches("/echo/%C3").is_none());
+        assert!(p("/echo/{id}").matches("/echo/").is_none());
+        assert!(p("/echo/{id}").matches("/echo/1/2").is_none());
+        assert!(p("/").matches("/").is_some());
+        assert!(p("/").matches("/x").is_none());
+        assert!(p("/*").matches("/").is_some());
+    }
+
+    #[test]
+    fn first_match_is_the_most_specific_and_the_first_of_identical_patterns() {
+        let patterns = [p("/*"), p("/a/{id}"), p("/a/b"), p("/a/*")];
+        let winner = |path: &str| RoutePattern::first_match(&patterns, path).map(|m| m.pattern);
+        assert_eq!(winner("/a/b"), Some(&patterns[2]));
+        assert_eq!(winner("/a/c"), Some(&patterns[1]));
+        assert_eq!(winner("/a/c/d"), Some(&patterns[3]));
+        assert_eq!(winner("/z"), Some(&patterns[0]));
+        // Identical patterns compare equal; the stable sort keeps the first.
+        let twins = [p("/x"), p("/x")];
+        let m = RoutePattern::first_match(&twins, "/x").unwrap();
+        assert!(std::ptr::eq(m.pattern, &twins[0]));
+        // Any iterator of patterns, e.g. an endpoint list's paths.
+        let owned = [p("/a/{id}"), p("/a/b")];
+        let m = RoutePattern::first_match(owned.iter(), "/a/b").unwrap();
+        assert!(std::ptr::eq(m.pattern, &owned[1]));
     }
 }

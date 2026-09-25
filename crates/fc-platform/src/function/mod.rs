@@ -1,98 +1,137 @@
 //! The function registry (Java `server/.../platform/function/`, pinned at
-//! `0118cdca`): the value types and the manifest. The management interface
-//! for functions mirrors Java as closely as possible; each file names the
-//! Java class it ports.
+//! `0118cdca`). The management interface for functions mirrors Java as
+//! closely as possible; each file names the Java class it ports.
 //!
-//! `FunctionAddress` itself lives in `fc-function-abi`, shared with the host
-//! and the guest PDK; [`function_address`] adds the platform's error for it.
+//! The value types and the manifest live in `fc-function-model`, shared with
+//! the function host as Java's host links the server's classes; they are
+//! re-exported here under their old paths (`function::manifest::Manifest`,
+//! `function::DnsLabel`, …), and their [`ValidationError`] becomes a
+//! [`UseCaseError`] with the same code and message. `FunctionAddress` itself
+//! lives in `fc-function-abi`, shared with the guest PDK too.
 
 pub mod api;
 pub mod artifact;
 pub mod control_api;
 pub mod cron_dialect;
 pub mod desired_state;
-pub mod digest;
-pub mod dns_label;
 pub mod domain_api;
 pub mod domain_repository;
-pub mod endpoint_auth;
 pub mod entity;
-pub mod function_address;
-pub mod function_address_pattern;
-pub mod function_limits;
-pub mod function_owner;
 pub mod host_repository;
-pub mod hostname;
-pub mod http_method;
-pub mod json;
-pub mod manifest;
 pub mod openapi;
 pub mod operations;
 pub mod policy_api;
 pub mod policy_repository;
-pub mod pool_url_template;
 pub mod repository;
-pub mod route_pattern;
 pub mod route_repository;
-pub mod runtime;
 pub mod schedule_check;
 pub mod schema;
-pub mod setting_key;
 pub mod settings_repository;
 pub mod trigger_object_repository;
 pub mod version_api;
 pub mod version_repository;
 pub mod wire;
 
-pub use digest::Digest;
-pub use dns_label::DnsLabel;
-pub use endpoint_auth::EndpointAuth;
-pub use function_address::{parse_address, FunctionAddress};
-pub use function_address_pattern::FunctionAddressPattern;
-pub use function_limits::{ClientCeilings, FunctionLimits, NonPositiveLimit};
-pub use function_owner::{BlankClientId, FunctionOwner};
-pub use hostname::Hostname;
-pub use http_method::HttpMethod;
-pub use json::{JsonNode, JsonNumber, JsonParseError};
-pub use manifest::{
-    Cors, DbRef, Endpoint, Limits, Manifest, ManifestProblem, ManifestRejected, PublicRoute,
-    ScheduleSpec, SubscriptionSpec, UnreadableManifest,
+pub use fc_function_model::{
+    digest, dns_label, endpoint_auth, function_address, function_address_pattern, function_limits,
+    function_owner, hostname, http_method, json, manifest, pool_url_template, route_pattern,
+    runtime, setting_key, subscription_mode,
 };
-pub use pool_url_template::{InvalidPoolUrl, PoolUrlTemplate};
-pub use route_pattern::{RouteMatch, RoutePattern, Segment};
-pub use runtime::{EntrypointRule, Runtime};
-pub use setting_key::SettingKey;
 
-/// The alias every function's promoted version answers under (Java
-/// `Function.LIVE`); reserved, so never an alias prefix.
-pub const LIVE_ALIAS: &str = "live";
+pub use fc_function_model::{
+    parse_address, BlankClientId, ClientCeilings, Cors, DbRef, Digest, DnsLabel, Endpoint,
+    EndpointAuth, EntrypointRule, FunctionAddress, FunctionAddressPattern, FunctionLimits,
+    FunctionOwner, Hostname, HttpMethod, InvalidPoolUrl, JsonNode, JsonNumber, JsonParseError,
+    Limits, Manifest, ManifestProblem, ManifestRejected, NonPositiveLimit, PathParams,
+    PoolUrlTemplate, PublicRoute, RouteMatch, RoutePattern, Runtime, ScheduleSpec, Segment,
+    SettingKey, SubscriptionMode, SubscriptionSpec, UnreadableManifest, ValidationError,
+    LIVE_ALIAS,
+};
 
-/// Java's `String.isBlank`: empty, or only characters `Character.isWhitespace`
-/// accepts (which excludes the no-break spaces U+00A0, U+2007 and U+202F,
-/// and U+0085).
-pub(crate) fn java_is_blank(s: &str) -> bool {
-    s.chars().all(|c| {
-        matches!(
-            c,
-            '\t' | '\n' | '\u{0B}' | '\u{0C}' | '\r' | '\u{1C}'..='\u{1F}' | ' ' | '\u{1680}'
-                | '\u{2000}'..='\u{2006}' | '\u{2008}'..='\u{200A}' | '\u{2028}' | '\u{2029}'
-                | '\u{205F}' | '\u{3000}'
-        )
-    })
+use crate::usecase::UseCaseError;
+
+/// A model validation error is a use case's validation error (a 400), with
+/// the same code and message; a manifest problem's pointer becomes
+/// `details.pointer`, as the check route returns it.
+impl From<ValidationError> for UseCaseError {
+    fn from(e: ValidationError) -> Self {
+        match e.pointer() {
+            None => UseCaseError::validation(e.code(), e.message()),
+            Some(pointer) => {
+                let mut details = std::collections::HashMap::new();
+                details.insert(
+                    "pointer".to_string(),
+                    serde_json::Value::String(pointer.to_string()),
+                );
+                UseCaseError::validation_with_details(e.code(), e.message(), details)
+            }
+        }
+    }
 }
+
+/// At the HTTP layer, the same 400 a use case's validation error becomes.
+impl From<ValidationError> for crate::shared::error::PlatformError {
+    fn from(e: ValidationError) -> Self {
+        UseCaseError::from(e).into()
+    }
+}
+
+/// The router's dispatch mode for a manifest subscription's `mode`: the
+/// model keeps its own enum so it need not depend on `fc-common`.
+pub fn dispatch_mode(mode: SubscriptionMode) -> fc_common::DispatchMode {
+    match mode {
+        SubscriptionMode::Immediate => fc_common::DispatchMode::Immediate,
+        SubscriptionMode::NextOnError => fc_common::DispatchMode::NextOnError,
+        SubscriptionMode::BlockOnError => fc_common::DispatchMode::BlockOnError,
+    }
+}
+
+/// Java's `String.isBlank`.
+pub(crate) use fc_function_model::java::is_blank as java_is_blank;
 
 #[cfg(test)]
 mod tests {
-    use super::java_is_blank;
+    use super::*;
 
     #[test]
-    fn blank_follows_character_is_whitespace() {
-        assert!(java_is_blank(""));
-        assert!(java_is_blank(" \t\u{0B}\u{1C}\u{2003}\u{3000}"));
-        assert!(!java_is_blank("\u{00A0}"));
-        assert!(!java_is_blank("\u{0085}"));
-        assert!(!java_is_blank("\u{2007}"));
-        assert!(!java_is_blank("\u{202F}"));
-        assert!(!java_is_blank(" x "));
+    fn validation_error_keeps_code_and_message() {
+        let err = UseCaseError::from(DnsLabel::parse("pool", "Bad").unwrap_err());
+        assert_eq!(err.code(), "LABEL_INVALID");
+        assert_eq!(
+            err.message(),
+            "pool must be a DNS label: 1-63 characters of a-z, 0-9 and '-', \
+             not starting or ending with '-'"
+        );
+        assert!(err.details().is_empty());
+        assert_eq!(err.http_status_code(), 400);
+    }
+
+    /// The check route's entry: the problem's pointer in `details`.
+    #[test]
+    fn a_manifest_problem_carries_its_pointer_in_details() {
+        let root = JsonNode::parse(r#"{"runtime":"jvm","entrypoint":"a.B","pool":"Bad"}"#).unwrap();
+        let defaults = FunctionLimits::defaults();
+        let rejected = Manifest::check(
+            Some(&root),
+            Runtime::Jvm,
+            &defaults,
+            &ClientCeilings::of(&defaults),
+        )
+        .unwrap_err();
+        let entry = UseCaseError::from(rejected.problems()[0].to_validation_error());
+        assert_eq!(entry.code(), "POOL_INVALID");
+        assert_eq!(entry.message(), "pool must be a DNS label");
+        assert_eq!(entry.details()["pointer"], "/pool");
+        // Publish rejects with the first problem and no details.
+        let first = UseCaseError::from(rejected.first_error());
+        assert_eq!(first.code(), "POOL_INVALID");
+        assert!(first.details().is_empty());
+    }
+
+    #[test]
+    fn dispatch_mode_is_the_same_constant() {
+        for mode in SubscriptionMode::ALL {
+            assert_eq!(dispatch_mode(*mode).as_str(), mode.as_str());
+        }
     }
 }

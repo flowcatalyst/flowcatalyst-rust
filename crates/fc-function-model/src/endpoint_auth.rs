@@ -1,7 +1,7 @@
 //! Java `function/EndpointAuth.java`.
 
-use crate::shared::enum_str::str_enum;
-use crate::usecase::UseCaseError;
+use crate::enum_str::str_enum;
+use crate::ValidationError;
 
 /// How the host authenticates a call before it reaches the function:
 ///
@@ -49,9 +49,9 @@ impl EndpointAuth {
     }
 
     /// `ENDPOINT_INVALID` for an unrecognised value.
-    pub fn parse_strict(raw: &str) -> Result<EndpointAuth, UseCaseError> {
+    pub fn parse_strict(raw: &str) -> Result<EndpointAuth, ValidationError> {
         Self::try_parse_strict(raw)
-            .ok_or_else(|| UseCaseError::validation("ENDPOINT_INVALID", Self::INVALID_MESSAGE))
+            .ok_or_else(|| ValidationError::new("ENDPOINT_INVALID", Self::INVALID_MESSAGE))
     }
 }
 

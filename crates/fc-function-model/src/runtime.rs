@@ -8,8 +8,8 @@
 //! `runtime` enum of `function-manifest.schema.json` (which Java owns, so
 //! that is a change made in Java first).
 
-use crate::shared::enum_str::str_enum;
-use crate::usecase::UseCaseError;
+use crate::enum_str::str_enum;
+use crate::ValidationError;
 
 /// What a runtime's `entrypoint` must look like.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,9 +118,9 @@ impl Runtime {
     }
 
     /// `RUNTIME_INVALID` unless `raw` names a runtime, in any case.
-    pub fn parse_strict(raw: &str) -> Result<Runtime, UseCaseError> {
+    pub fn parse_strict(raw: &str) -> Result<Runtime, ValidationError> {
         Self::try_parse_strict(raw)
-            .ok_or_else(|| UseCaseError::validation("RUNTIME_INVALID", Self::invalid_message()))
+            .ok_or_else(|| ValidationError::new("RUNTIME_INVALID", Self::invalid_message()))
     }
 }
 

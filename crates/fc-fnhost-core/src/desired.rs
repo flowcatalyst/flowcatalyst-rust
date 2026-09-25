@@ -289,7 +289,7 @@ fn parse_entry(node: &Value) -> Result<Entry, String> {
         "lazy" => Mode::Lazy,
         other => return Err(format!("unrecognised mode: {other}")),
     };
-    let digest = Digest::parse(&require_text(node, "digest")?).map_err(str::to_owned)?;
+    let digest = Digest::parse(&require_text(node, "digest")?).map_err(|e| e.to_string())?;
     let artifact_ref = require_text(node, "artifactRef")?;
     let signature_bundle = optional_text(node, "signatureBundle");
     let signer = match node.get("signer") {

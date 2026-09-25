@@ -2,9 +2,9 @@
 
 use std::fmt;
 
-use super::dns_label::DnsLabel;
-use super::function_address::FunctionAddress;
-use crate::usecase::UseCaseError;
+use crate::dns_label::DnsLabel;
+use crate::function_address::FunctionAddress;
+use crate::ValidationError;
 
 /// What a permission grant, list filter or status view names: an exact
 /// address, `app.service.*` or `app.*`. "Everything" is the absence of a
@@ -22,9 +22,9 @@ pub enum FunctionAddressPattern {
 impl FunctionAddressPattern {
     /// `ADDRESS_PATTERN_INVALID` for a bare `*`, a wildcard anywhere but
     /// last, a partial-segment wildcard, or a four-segment pattern.
-    pub fn parse(raw: &str) -> Result<FunctionAddressPattern, UseCaseError> {
+    pub fn parse(raw: &str) -> Result<FunctionAddressPattern, ValidationError> {
         let invalid = || {
-            UseCaseError::validation(
+            ValidationError::new(
                 "ADDRESS_PATTERN_INVALID",
                 "address pattern must be app.service.function, app.service.*, or app.*",
             )

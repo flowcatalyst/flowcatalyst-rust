@@ -12,31 +12,10 @@
 
 use crate::shared::error::PlatformError;
 
-/// A string that names no variant of the enum it was parsed as.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("unknown {kind} {value:?} (expected one of: {})", expected.join(", "))]
-pub struct UnknownEnumValue {
-    /// What was being parsed, e.g. "client status".
-    pub kind: &'static str,
-    /// The rejected input.
-    pub value: String,
-    /// The canonical spellings that would have been accepted.
-    pub expected: &'static [&'static str],
-}
-
-impl UnknownEnumValue {
-    pub fn new(
-        kind: &'static str,
-        value: impl Into<String>,
-        expected: &'static [&'static str],
-    ) -> Self {
-        Self {
-            kind,
-            value: value.into(),
-            expected,
-        }
-    }
-}
+/// A string that names no variant of the enum it was parsed as. Defined in
+/// `fc-function-model`, whose enums (`Runtime`, `HttpMethod`, …) the stored-row
+/// decoders below take as they take this crate's own.
+pub use fc_function_model::UnknownEnumValue;
 
 /// Request input: an unknown enum value is the caller's mistake, so it maps to
 /// the standard 400 validation response.

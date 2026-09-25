@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::usecase::UseCaseError;
+use crate::ValidationError;
 
 /// A DNS label: 1-63 characters of lower-case letters, digits and `-`, not
 /// starting or ending with `-`. No normalisation: the input is neither
@@ -31,9 +31,9 @@ impl DnsLabel {
     }
 
     /// `LABEL_INVALID`, naming `field`, when `raw` is not a label.
-    pub fn parse(field: &str, raw: &str) -> Result<DnsLabel, UseCaseError> {
+    pub fn parse(field: &str, raw: &str) -> Result<DnsLabel, ValidationError> {
         if !Self::is_valid(raw) {
-            return Err(UseCaseError::validation(
+            return Err(ValidationError::new(
                 "LABEL_INVALID",
                 format!(
                     "{field} must be a DNS label: 1-63 characters of a-z, 0-9 and '-', \
@@ -71,7 +71,6 @@ mod tests {
     fn assert_rejected(raw: &str) {
         let err = DnsLabel::parse("field", raw).unwrap_err();
         assert_eq!(err.code(), "LABEL_INVALID", "{raw:?}");
-        assert_eq!(err.http_status_code(), 400);
     }
 
     #[test]

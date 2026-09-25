@@ -7,6 +7,9 @@ license.workspace = true
 description = "FlowCatalyst function artifact signatures: a port of Java's JDK-only Sigstore bundle verifier, shared by the platform (publish) and the function host (load)"
 
 [dependencies]
+# `Digest` / `SignerIdentity` and the JDK helpers, shared with the platform
+# and the host.
+fc-function-model = { path = "../fc-function-model" }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 sha2 = { workspace = true, features = ["oid"] }

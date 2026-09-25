@@ -11,10 +11,10 @@
 //!
 //! | Module | Java |
 //! |---|---|
-//! | [`digest`] | `platform/function/{Digest,SignerIdentity}.java` |
+//! | [`digest`] | `platform/function/{Digest,SignerIdentity}.java` — `fc-function-model`'s, re-exported here |
 //! | [`signature`] | `platform/function/artifact/{Signatures,SignaturesMode,Verification,SignatureVerifier,TrustRoot}.java` |
 
-pub mod digest;
+pub use fc_function_model::digest;
 mod java;
 pub mod signature;
 

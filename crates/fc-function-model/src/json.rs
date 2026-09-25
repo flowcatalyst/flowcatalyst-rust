@@ -220,6 +220,33 @@ impl<'de> serde::Deserialize<'de> for JsonNode {
     }
 }
 
+/// A `serde_json` tree (the function host reads the desired-state document
+/// with `serde_json`), node for node. An integral number keeps its exact
+/// text and anything else becomes a float, as [`JsonNode::parse`] splits
+/// them; object keys keep the order the `Value` holds them in (document
+/// order under `serde_json`'s `preserve_order`).
+impl From<&serde_json::Value> for JsonNode {
+    fn from(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Null => JsonNode::Null,
+            serde_json::Value::Bool(b) => JsonNode::Bool(*b),
+            serde_json::Value::Number(n) if n.is_f64() => {
+                JsonNode::Number(JsonNumber::Float(n.as_f64().unwrap_or(f64::NAN)))
+            }
+            serde_json::Value::Number(n) => JsonNode::Number(JsonNumber::Integer(n.to_string())),
+            serde_json::Value::String(s) => JsonNode::String(s.clone()),
+            serde_json::Value::Array(items) => {
+                JsonNode::Array(items.iter().map(JsonNode::from).collect())
+            }
+            serde_json::Value::Object(map) => JsonNode::Object(
+                map.iter()
+                    .map(|(k, v)| (k.clone(), JsonNode::from(v)))
+                    .collect(),
+            ),
+        }
+    }
+}
+
 fn write_number(n: &JsonNumber, out: &mut String) {
     match n {
         JsonNumber::Integer(text) => out.push_str(text),
@@ -633,5 +660,25 @@ mod tests {
             serde_json::to_string(&dto).unwrap(),
             r#"{"manifest":{"z":1,"a":123456789012345678901234}}"#
         );
+    }
+
+    #[test]
+    fn from_serde_value_splits_numbers_as_parse_does() {
+        let text = r#"{"b":1,"a":[true,null,-7,1.5,1e3,"x"],"o":{}}"#;
+        let value: serde_json::Value = serde_json::from_str(text).unwrap();
+        let node = JsonNode::from(&value);
+        let a = node.get("a").unwrap().as_array().unwrap();
+        assert_eq!(a[2].fits_int(), Some(-7));
+        assert_eq!(a[3], JsonNode::Number(JsonNumber::Float(1.5)));
+        assert_eq!(a[4], JsonNode::Number(JsonNumber::Float(1000.0)));
+        assert_eq!(node.get("b").unwrap().fits_int(), Some(1));
+        assert!(node.get("o").unwrap().is_object());
+        // Key order is whatever the Value holds; the content is the same.
+        let parsed = JsonNode::parse(text).unwrap();
+        let (ours, theirs) = (node.as_object().unwrap(), parsed.as_object().unwrap());
+        assert_eq!(ours.len(), theirs.len());
+        for (k, v) in theirs {
+            assert_eq!(ours.get(k), Some(v), "{k}");
+        }
     }
 }

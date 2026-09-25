@@ -1,11 +1,10 @@
 //! Java `ManifestTest` and the `$schema` part of `FunctionManifestSchemaTest`,
 //! ported. Every single-mistake case of Java's table, and many more, also
-//! runs against Java's own answers in `function_manifest_golden_test.rs`.
+//! runs against Java's own answers in `manifest_golden.rs`.
 
-use fc_common::DispatchMode;
-use fc_platform::function::{
+use fc_function_model::{
     ClientCeilings, Cors, DbRef, DnsLabel, EndpointAuth, FunctionLimits, Hostname, HttpMethod,
-    JsonNode, Manifest, RoutePattern, Runtime,
+    JsonNode, Manifest, RoutePattern, Runtime, SubscriptionMode,
 };
 
 fn defaults() -> FunctionLimits {
@@ -119,7 +118,7 @@ fn full_manifest_every_component() {
     let sub = &m.subscriptions[0];
     assert_eq!(sub.event_type, "billing:invoices:invoice:created");
     assert_eq!(sub.path.value(), "/events/invoice-created");
-    assert_eq!(sub.mode, DispatchMode::BlockOnError);
+    assert_eq!(sub.mode, SubscriptionMode::BlockOnError);
     assert_eq!(
         (sub.max_retries, sub.timeout_seconds, sub.data_only),
         (3, 30, false)
@@ -280,7 +279,7 @@ fn subscription_defaults_when_absent() {
     ));
     let sub = &m.subscriptions[0];
     // IMMEDIATE, not the router's NEXT_ON_ERROR default.
-    assert_eq!(sub.mode, DispatchMode::Immediate);
+    assert_eq!(sub.mode, SubscriptionMode::Immediate);
     assert_eq!((sub.max_retries, sub.timeout_seconds), (3, 30));
     // false, unlike the subscription aggregate's own true default.
     assert!(!sub.data_only);
@@ -442,10 +441,10 @@ fn six_independent_mistakes_are_all_reported_in_order_with_pointers() {
     );
     // Publish rejects with only the first.
     assert_eq!(reject_jvm(SIX_MISTAKES).0, "MANIFEST_UNKNOWN_FIELD");
-    // The check route's entry carries the pointer in its details.
-    let entry = rejected.problems()[3].to_use_case_error();
+    // The check route's entry carries the pointer (the platform's details).
+    let entry = rejected.problems()[3].to_validation_error();
     assert_eq!(entry.code(), "ENDPOINT_INVALID");
-    assert_eq!(entry.details()["pointer"], "/endpoints/2/cors/origins/0");
+    assert_eq!(entry.pointer(), Some("/endpoints/2/cors/origins/0"));
 }
 
 /// A subscription whose path matches only an endpoint that failed for its
@@ -497,4 +496,71 @@ fn schema_field_is_accepted_type_checked_and_never_written_back() {
         r#"{"$schema": 42, "runtime": "jvm", "entrypoint": "com.acme.billing.CreateInvoice"}"#,
     );
     assert_eq!(code, "MANIFEST_INVALID");
+}
+
+// ── the function host's reading (formerly fc-fnhost-core's own reader) ──
+
+fn stored(json: &str) -> Manifest {
+    Manifest::read_stored(&tree(json)).unwrap()
+}
+
+#[test]
+fn read_stored_endpoints_as_the_host_reads_them() {
+    let m = stored(
+        r#"{"runtime":"wasm","entrypoint":"handle","endpoints":[
+            {"path":"/events/*","auth":"WEBHOOK","methods":["GET"]},
+            {"path":"/api/{id}","auth":"platform","methods":["get","bogus",3],
+             "cors":{"origins":["https://a.test"," "],"allowCredentials":true},
+             "maxBodyBytes":10,"timeoutMs":200},
+            {"path":"no-slash","auth":"none"},
+            {"path":"/x","auth":"sometimes"},
+            {"path":"/y"},
+            "not an object",
+            {"path":"/z","auth":"none","maxBodyBytes":0,"timeoutMs":1.5}
+        ]}"#,
+    );
+    let endpoints = &m.endpoints;
+    assert_eq!(endpoints.len(), 3);
+    assert_eq!(endpoints[0].auth, EndpointAuth::Webhook);
+    // A webhook endpoint is POST whatever is stored.
+    assert_eq!(endpoints[0].methods, [HttpMethod::Get]);
+    assert_eq!(endpoints[0].effective_methods(), [HttpMethod::Post]);
+    assert_eq!(endpoints[1].methods, [HttpMethod::Get]);
+    assert_eq!(endpoints[1].effective_methods(), [HttpMethod::Get]);
+    let cors = endpoints[1].cors.as_ref().unwrap();
+    assert_eq!(cors.origins, ["https://a.test"]);
+    assert!(cors.allow_credentials);
+    assert_eq!(endpoints[1].max_body_bytes, 10);
+    assert_eq!(endpoints[1].timeout_ms, 200);
+    assert_eq!(endpoints[2].path.value(), "/z");
+    assert!(endpoints[2].effective_methods().is_empty());
+    assert_eq!(
+        endpoints[2].max_body_bytes,
+        fc_function_model::Endpoint::DEFAULT_MAX_BODY_BYTES
+    );
+    assert_eq!(
+        endpoints[2].timeout_ms,
+        FunctionLimits::DEFAULT_MAX_DURATION_MS
+    );
+    assert!(m.has_webhook_endpoint());
+    assert!(!stored(r#"{"runtime":"wasm","entrypoint":"handle"}"#).has_webhook_endpoint());
+}
+
+#[test]
+fn read_stored_limits_default_per_field() {
+    let m = stored(
+        r#"{"runtime":"wasm","entrypoint":"handle",
+            "limits":{"maxConcurrency":3,"maxDurationMs":-1}}"#,
+    );
+    assert_eq!(m.limits.max_concurrency, 3);
+    assert_eq!(
+        m.limits.max_duration_ms,
+        FunctionLimits::DEFAULT_MAX_DURATION_MS
+    );
+    assert_eq!(
+        m.limits.wasm_memory_mb,
+        Some(FunctionLimits::DEFAULT_WASM_MEMORY_MB)
+    );
+    let jvm = stored(r#"{"runtime":"jvm","entrypoint":"a.B"}"#);
+    assert_eq!(jvm.limits.wasm_memory_mb, None);
 }

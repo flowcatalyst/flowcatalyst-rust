@@ -10,6 +10,7 @@ members = [
     "crates/fc-sdk",
     "crates/fc-mcp",
     "crates/fc-function-abi",
+    "crates/fc-function-model",
     "crates/fc-fnhost-core",
     "crates/fc-function-signing",
     "bin/fc-dev",
