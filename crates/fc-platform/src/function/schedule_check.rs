@@ -249,7 +249,8 @@ fn non_negative_int(token: &str) -> Result<i64, String> {
 
 /// Java `ZoneId.of`: `Z`, an offset (`+h`, `+hh`, `+hh:mm`, `+hhmm`,
 /// `+hh:mm:ss`, `+hhmmss`, at most ±18:00), `UTC`/`GMT`/`UT` alone or
-/// followed by an offset, or a tz database region id.
+/// followed by an offset, or a tz database region id the scheduler can
+/// evaluate ([`region_valid`]).
 pub fn zone_id_valid(id: &str) -> bool {
     if id == "Z" || id.starts_with(['+', '-']) {
         return offset_valid(id);
@@ -333,33 +334,18 @@ fn offset_parts(body: &str) -> Option<(u32, u32, u32)> {
 /// three that clash with its legacy short ids, and `ROC`.
 const NOT_IN_JDK: [&str; 4] = ["EST", "HST", "MST", "ROC"];
 
-/// Region ids the JDK's tz database keeps that chrono-tz's does not.
-const ONLY_IN_JDK: [&str; 13] = [
-    "SystemV/AST4",
-    "SystemV/AST4ADT",
-    "SystemV/CST6",
-    "SystemV/CST6CDT",
-    "SystemV/EST5",
-    "SystemV/EST5EDT",
-    "SystemV/HST10",
-    "SystemV/MST7",
-    "SystemV/MST7MDT",
-    "SystemV/PST8",
-    "SystemV/PST8PDT",
-    "SystemV/YST9",
-    "SystemV/YST9YDT",
-];
-
 /// Java `ZoneRegion.ofId(id, true)`: the id's shape, then a tz database
-/// lookup. chrono-tz's database, adjusted to the JDK's (25) region set.
+/// lookup, in chrono-tz's database without the ids the JDK's (25) leaves
+/// out. The JDK also keeps the legacy `SystemV/*` ids, which chrono-tz's
+/// database lacks: the scheduler could never evaluate them, so they are
+/// refused (owner decision 2 of 2026-09-25) rather than accepted and never
+/// fired.
 fn region_valid(id: &str) -> bool {
     let mut chars = id.chars();
     let shaped = id.len() >= 2
         && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || "~/._+-".contains(c));
-    shaped
-        && (ONLY_IN_JDK.contains(&id)
-            || (chrono_tz::Tz::from_str(id).is_ok() && !NOT_IN_JDK.contains(&id)))
+    shaped && chrono_tz::Tz::from_str(id).is_ok() && !NOT_IN_JDK.contains(&id)
 }
 
 #[cfg(test)]
@@ -463,6 +449,8 @@ mod tests {
             "UTC+",
             "E",
             "Europe/Amsterdam ",
+            "SystemV/EST5",
+            "SystemV/PST8PDT",
         ] {
             assert!(!zone_id_valid(bad), "{bad:?}");
         }
