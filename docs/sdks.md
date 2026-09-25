@@ -168,11 +168,11 @@ tokens (`is_identity_token()`), but the session flow has not been changed.
 
 | SDK | Command | Result |
 |---|---|---|
-| Laravel | `XDEBUG_MODE=off vendor/bin/phpunit` | 228 tests, 0 failures |
-| TypeScript | `pnpm run lint && pnpm test` | tsc clean; 142 tests, 0 failures |
+| Laravel | `XDEBUG_MODE=off vendor/bin/phpunit` | 236 tests, 0 failures |
+| TypeScript | `pnpm run lint && pnpm test` | tsc clean; 148 tests, 0 failures |
 | Java | `mvn -o clean verify` (Maven offline; deps cached) | 80 tests, 0 failures, 1 skipped (real-PG, needs `FC_JAVA_SDK_TEST_PG_URL`) |
-| Go | `go vet ./... && go test ./...` | all packages pass (10 new cases) |
-| Rust | `cargo test -p fc-sdk` (and `--all-features`) | all pass (291 unit tests with all features) |
+| Go | `go vet ./... && go test ./...` | all packages pass (127 top-level tests) |
+| Rust | `cargo test -p fc-sdk` (and `--all-features`) | all pass (299 unit tests with all features) |
 
 ## Publishing from here
 
