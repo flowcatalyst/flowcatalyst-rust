@@ -315,3 +315,134 @@ async fn a_non_anchor_ingests_only_under_a_client_it_can_access() {
             .unwrap();
     assert_eq!(client_id, None);
 }
+
+// ── Decision #24: supplied ids ──────────────────────────────────────────────
+
+/// A dispatch-job id the SDK supplies is the job's. One that already names a
+/// job, or repeats within the batch, refuses the whole batch 409
+/// `DUPLICATE_ID` and writes nothing; one that cannot fit the column is 400.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn supplied_dispatch_job_ids_are_honoured_and_never_reused() {
+    let app = TestApp::setup().await;
+    let token = token_for(&app, &anchor_user(), &[JOBS_WRITE]);
+    let with_id = |id: &str, code: &str| {
+        let mut j = job_item(code);
+        j["id"] = json!(id);
+        j
+    };
+
+    let (status, body) = post(
+        &app,
+        "/api/dispatch-jobs/batch",
+        &token,
+        json!({"items": [with_id("0SUPPLIED0001", "t:j:a:first"), job_item("t:j:a:minted")]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["results"][0]["id"], "0SUPPLIED0001");
+    assert_ne!(body["results"][1]["id"], "0SUPPLIED0001");
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM msg_dispatch_jobs WHERE id = '0SUPPLIED0001' AND code = 't:j:a:first'"
+        )
+        .await,
+        1
+    );
+
+    // Re-sent: the id is taken, so nothing in the batch is written.
+    let (status, body) = post(
+        &app,
+        "/api/dispatch-jobs/batch",
+        &token,
+        json!({"items": [job_item("t:j:a:second"), with_id("0SUPPLIED0001", "t:j:a:again")]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "DUPLICATE_ID");
+    assert_eq!(
+        body["message"],
+        "dispatch job id already exists: 0SUPPLIED0001"
+    );
+
+    // Repeated within one batch.
+    let (status, body) = post(
+        &app,
+        "/api/dispatch-jobs/batch",
+        &token,
+        json!({"items": [with_id("0SUPPLIED0002", "t:j:a:second"), with_id("0SUPPLIED0002", "t:j:a:again")]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "DUPLICATE_ID");
+
+    // Too long for VARCHAR(13): a 400, not a 500.
+    let (status, body) = post(
+        &app,
+        "/api/dispatch-jobs/batch",
+        &token,
+        json!({"items": [with_id("0SUPPLIED00030", "t:j:a:second")]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "INVALID_ID");
+
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM msg_dispatch_jobs WHERE code IN ('t:j:a:second', 't:j:a:again')"
+        )
+        .await,
+        0
+    );
+}
+
+/// An event id the SDK supplies is the event's; the same event re-sent (an
+/// outbox retry, with no deduplication id of its own) is acknowledged and
+/// stored once.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn supplied_event_ids_are_honoured_and_idempotent() {
+    let app = TestApp::setup().await;
+    let token = token_for(&app, &anchor_user(), &[EVENTS_WRITE]);
+    let mut item = event_item("t:e:a:supplied");
+    item["id"] = json!("0EVENTSUPP001");
+
+    for attempt in 0..2 {
+        let (status, body) = post(
+            &app,
+            "/api/events/batch",
+            &token,
+            json!({"items": [item.clone()]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "attempt {attempt}: {body}");
+        assert_eq!(body["results"][0]["id"], "0EVENTSUPP001", "{body}");
+        assert_eq!(body["results"][0]["status"], "SUCCESS", "{body}");
+    }
+    // Even with a different deduplication id, a stored id is not written twice.
+    item["deduplicationId"] = json!("another");
+    let (status, body) = post(&app, "/api/events/batch", &token, json!({"items": [item]})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM msg_events WHERE id = '0EVENTSUPP001'"
+        )
+        .await,
+        1
+    );
+    let (dedup,): (Option<String>,) =
+        sqlx::query_as("SELECT deduplication_id FROM msg_events WHERE id = '0EVENTSUPP001'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(dedup.as_deref(), Some("t:e:a:supplied-0EVENTSUPP001"));
+
+    let mut bad = event_item("t:e:a:bad");
+    bad["id"] = json!("not an id");
+    let (status, body) = post(&app, "/api/events/batch", &token, json!({"items": [bad]})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "INVALID_ID");
+}

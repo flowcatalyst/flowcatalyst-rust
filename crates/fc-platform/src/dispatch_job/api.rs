@@ -257,6 +257,13 @@ pub struct DispatchJobsState {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateDispatchJobRequest {
+    /// Caller-supplied job id, honoured on the batch routes only (Go's
+    /// `BatchItem.ID`; its single create has no id). 1 to 13 letters,
+    /// digits, `_` or `-`; an id already taken, or repeated in the batch,
+    /// refuses the batch 409 `DUPLICATE_ID`. Minted when absent.
+    #[serde(default)]
+    pub id: Option<String>,
+
     /// Source system/application
     pub source: Option<String>,
 
@@ -707,6 +714,7 @@ pub async fn batch_create_dispatch_jobs(
     }
 
     let mut created_jobs: Vec<DispatchJob> = Vec::new();
+    let mut supplied = crate::shared::batch_api::SuppliedJobIds::default();
 
     for job_req in req.jobs {
         // The client the job is written under (owner decision #24).
@@ -770,13 +778,22 @@ pub async fn batch_create_dispatch_jobs(
         job.service_account_id = Some(job_req.service_account_id);
         job.mode = mode;
         job.data_only = job_req.data_only;
+        if let Some(id) = supplied.claim(job_req.id.as_deref())? {
+            job.id = id;
+        }
         job.mark_queued();
 
         created_jobs.push(job);
     }
 
-    // Bulk insert
-    state.dispatch_job_repo.insert_many(&created_jobs).await?;
+    // Bulk insert; a supplied id that already names a job refuses it all.
+    let taken = state
+        .dispatch_job_repo
+        .insert_new(&created_jobs, supplied.ids())
+        .await?;
+    if !taken.is_empty() {
+        return Err(crate::shared::batch_api::job_ids_taken(&taken));
+    }
 
     let count = created_jobs.len();
     let job_responses: Vec<DispatchJobResponse> =

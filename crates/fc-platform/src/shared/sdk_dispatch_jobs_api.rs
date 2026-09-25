@@ -15,7 +15,7 @@ use crate::dispatch_job::api::CreateDispatchJobRequest;
 use crate::dispatch_job::entity::parse_dispatch_mode;
 use crate::permissions;
 use crate::shared::authorization_service::checks;
-use crate::shared::batch_api::{BatchResponse, BatchResultItem};
+use crate::shared::batch_api::{job_ids_taken, BatchResponse, BatchResultItem, SuppliedJobIds};
 use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -57,6 +57,8 @@ async fn sdk_batch_create_dispatch_jobs(
     }
 
     let mut created_jobs: Vec<DispatchJob> = Vec::new();
+    // Supplied ids (Go honours them): each valid and named once in the batch.
+    let mut supplied = SuppliedJobIds::default();
 
     for job_req in req.items {
         // The client the job is written under (owner decision #24): a
@@ -137,12 +139,24 @@ async fn sdk_batch_create_dispatch_jobs(
             job.metadata.push(DispatchMetadata { key, value });
         }
 
+        if let Some(id) = supplied.claim(job_req.id.as_deref())? {
+            job.id = id;
+        }
+
         job.mark_queued();
         created_jobs.push(job);
     }
 
-    // Bulk insert
-    state.dispatch_job_repo.insert_many(&created_jobs).await?;
+    // Bulk insert. A supplied id that already names a job refuses the whole
+    // batch 409 DUPLICATE_ID (Java ruling 17c), checked against the live
+    // table under an advisory lock.
+    let taken = state
+        .dispatch_job_repo
+        .insert_new(&created_jobs, supplied.ids())
+        .await?;
+    if !taken.is_empty() {
+        return Err(job_ids_taken(&taken));
+    }
 
     // Per-item result list — 1:1 with the outbox/SDK contract
     // {results:[{id,status,error?}]}. Insert is all-or-nothing, so every

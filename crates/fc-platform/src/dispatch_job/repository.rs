@@ -557,6 +557,65 @@ impl DispatchJobRepository {
         Self::insert_many_inner(&self.pool, jobs).await
     }
 
+    /// The advisory-lock class [`Self::insert_new`] serialises caller-supplied
+    /// ids under (`pg_advisory_xact_lock(int, int)`'s first key, the second
+    /// being the id's `hashtext`): "djid", as Java's
+    /// `DispatchJobRepository.SUPPLIED_ID_LOCK_CLASS`.
+    const SUPPLIED_ID_LOCK_CLASS: i32 = 0x646A_6964;
+
+    /// Insert a batch in which some jobs carry caller-supplied ids (owner
+    /// decision #24; Java `insertNew`, security-fixes-2026-09-24 S3.3).
+    /// Refuses the whole batch when any of `supplied_ids` already names a
+    /// job: the primary key is `(id, created_at)` on a partitioned table, so
+    /// the database would happily store a second row with the same id and a
+    /// later `created_at`, and every read by id would then see either. In
+    /// one transaction each supplied id's advisory lock is taken (in hash
+    /// order, so two batches sharing ids cannot deadlock, and two requests
+    /// supplying the same new id serialise instead of both inserting), the
+    /// ids are looked up across every partition, and only then is the batch
+    /// inserted. `supplied_ids` must already be free of repeats.
+    ///
+    /// Returns the ids already taken, sorted; empty when the batch was
+    /// inserted.
+    pub async fn insert_new(
+        &self,
+        jobs: &[DispatchJob],
+        supplied_ids: &[String],
+    ) -> Result<Vec<String>> {
+        if jobs.is_empty() {
+            return Ok(Vec::new());
+        }
+        if supplied_ids.is_empty() {
+            self.insert_many(jobs).await?;
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock($1, k) \
+             FROM (SELECT DISTINCT hashtext(x) AS k FROM unnest($2::text[]) AS x) s ORDER BY k",
+        )
+        .bind(Self::SUPPLIED_ID_LOCK_CLASS)
+        .bind(supplied_ids)
+        .execute(&mut *tx)
+        .await?;
+        let taken: Vec<String> = sqlx::query_as::<_, (String,)>(
+            "SELECT DISTINCT id FROM msg_dispatch_jobs WHERE id = ANY($1) ORDER BY id",
+        )
+        .bind(supplied_ids)
+        .fetch_all(&mut *tx)
+        .await?
+        .into_iter()
+        .map(|(id,)| id)
+        .collect();
+        if !taken.is_empty() {
+            tx.rollback().await?;
+            return Ok(taken);
+        }
+        Self::insert_many_inner(&mut *tx, jobs).await?;
+        tx.commit().await?;
+        Ok(Vec::new())
+    }
+
     /// Bulk insert as part of an existing transaction. Used by services that
     /// need atomicity across the insert and another write (e.g. fan-out: claim
     /// events + create dispatch jobs in one txn).
