@@ -9,6 +9,8 @@ import (
 // ─── Request DTOs ────────────────────────────────────────────────────
 
 // CreateScheduledJobRequest — POST /api/scheduled-jobs.
+// Concurrent and TracksCompletion are required by the platform, so they are
+// always sent (false included).
 type CreateScheduledJobRequest struct {
 	Code        string `json:"code"`
 	Name        string `json:"name"`
@@ -18,8 +20,8 @@ type CreateScheduledJobRequest struct {
 	Crons               []string        `json:"crons"`
 	Timezone            string          `json:"timezone,omitempty"`
 	Payload             json.RawMessage `json:"payload,omitempty"`
-	Concurrent          bool            `json:"concurrent,omitempty"`
-	TracksCompletion    bool            `json:"tracksCompletion,omitempty"`
+	Concurrent          bool            `json:"concurrent"`
+	TracksCompletion    bool            `json:"tracksCompletion"`
 	TimeoutSeconds      *int32          `json:"timeoutSeconds,omitempty"`
 	DeliveryMaxAttempts *int32          `json:"deliveryMaxAttempts,omitempty"`
 	TargetURL           string          `json:"targetUrl,omitempty"`
@@ -357,18 +359,27 @@ func (r *ScheduledJobsResource) GetInstance(ctx context.Context, instanceID stri
 	return &out, nil
 }
 
-// ListInstanceLogs — GET /api/scheduled-jobs/instances/{id}/logs.
+// ListInstanceLogs — GET /api/scheduled-jobs/instances/{id}/logs. The
+// platform answers a bare array of log entries; it is returned wrapped in
+// an InstanceLogListResponse (Total = number of entries).
 func (r *ScheduledJobsResource) ListInstanceLogs(ctx context.Context, instanceID string) (*InstanceLogListResponse, error) {
-	var out InstanceLogListResponse
-	if err := r.c.Get(ctx, "/api/scheduled-jobs/instances/"+instanceID+"/logs", &out); err != nil {
+	var logs []InstanceLogResponse
+	if err := r.c.Get(ctx, "/api/scheduled-jobs/instances/"+instanceID+"/logs", &logs); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return &InstanceLogListResponse{Logs: logs, Total: uint64(len(logs))}, nil
 }
 
 // LogForInstance — SDK callback to append a log entry to a running instance.
 // POST /api/scheduled-jobs/instances/{id}/log.
+//
+// The platform requires a level; an empty Level is sent as INFO.
 func (r *ScheduledJobsResource) LogForInstance(ctx context.Context, instanceID string, req *InstanceLogRequest) (*InstanceLogResponse, error) {
+	if req != nil && req.Level == "" {
+		withLevel := *req
+		withLevel.Level = LogLevelInfo
+		req = &withLevel
+	}
 	var out InstanceLogResponse
 	if err := r.c.Post(ctx, "/api/scheduled-jobs/instances/"+instanceID+"/log", req, &out); err != nil {
 		return nil, err
