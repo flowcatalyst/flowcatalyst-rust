@@ -59,6 +59,12 @@ export interface DomainCheckResponse {
 	authMethod: "internal" | "external";
 	loginUrl?: string;
 	idpIssuer?: string;
+	/**
+	 * Only alongside `authMethod: "internal"`: the account is a password
+	 * account that has never had a password set. The login page offers
+	 * "Create your password" (an emailed link) instead of a password prompt.
+	 */
+	passwordSetupRequired?: boolean;
 }
 
 export function mapLoginResponseToUser(response: LoginResponse): User {
@@ -289,54 +295,83 @@ export async function logout(): Promise<void> {
 	await router.replace("/auth/login");
 }
 
-export async function requestPasswordReset(email: string): Promise<void> {
-	const response = await fetch(`${AUTH_URL}/password-reset/request`, {
+/**
+ * Email a reset link. `redirectUri`, when present, is the rebuilt
+ * `/oauth/authorize?…` URL of the sign-in the user was in; the server keeps
+ * it with the token (accepting only that shape) and returns it from confirm.
+ */
+export async function requestPasswordReset(
+	email: string,
+	redirectUri?: string,
+): Promise<void> {
+	await authFetch<unknown>("/password-reset/request", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ email }),
-		credentials: "include",
+		body: JSON.stringify(redirectUri ? { email, redirectUri } : { email }),
 	});
+}
 
-	if (!response.ok) {
-		const errorData = await response.json().catch(() => ({}));
-		throw new Error(
-			errorData.error || "Failed to request password reset.",
-		);
-	}
+/**
+ * Email a "create your password" link to a user who has never had one (see
+ * `DomainCheckResponse.passwordSetupRequired`). A new password is never
+ * accepted inline — the emailed link proves mailbox ownership. Always a
+ * silent success. `redirectUri` must be a same-site relative URL (the
+ * rebuilt `/oauth/authorize?…`), so the user returns to the application.
+ */
+export async function requestPasswordSetup(
+	email: string,
+	redirectUri?: string,
+): Promise<{ message: string }> {
+	return authFetch<{ message: string }>("/password-setup/request", {
+		method: "POST",
+		body: JSON.stringify(redirectUri ? { email, redirectUri } : { email }),
+	});
+}
+
+export interface ValidateResetTokenResult {
+	valid: boolean;
+	reason?: string | null;
+	/** The reset also needs a current authenticator (TOTP) code. */
+	requiresFactor?: boolean;
 }
 
 export async function validateResetToken(
 	token: string,
-): Promise<{ valid: boolean; reason?: string }> {
-	const response = await fetch(
-		`${AUTH_URL}/password-reset/validate?token=${encodeURIComponent(token)}`,
-		{ credentials: "include" },
-	);
-
-	if (!response.ok) {
+): Promise<ValidateResetTokenResult> {
+	try {
+		return await authFetch<ValidateResetTokenResult>(
+			`/password-reset/validate?token=${encodeURIComponent(token)}`,
+		);
+	} catch {
 		return { valid: false, reason: "not_found" };
 	}
+}
 
-	return response.json();
+export interface ConfirmPasswordResetResult {
+	status: "ok" | "enrollment_required";
+	message: string;
+	/** With `enrollment_required`: the domain requires 2FA, set it up now. */
+	enrollToken?: string;
+	allowedMethods?: TwoFactorMethod[];
+	/** Server-validated post-set-password destination. Never from the URL. */
+	redirectUri?: string | null;
+	/**
+	 * The server already set the session cookie (a completed invite with no
+	 * 2FA required): go straight in rather than back to the login page.
+	 */
+	sessionEstablished?: boolean;
 }
 
 export async function confirmPasswordReset(
 	token: string,
 	password: string,
-): Promise<void> {
-	const response = await fetch(`${AUTH_URL}/password-reset/confirm`, {
+	factorCode?: string,
+): Promise<ConfirmPasswordResetResult> {
+	return authFetch<ConfirmPasswordResetResult>("/password-reset/confirm", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ token, password }),
-		credentials: "include",
+		body: JSON.stringify(
+			factorCode ? { token, password, factorCode } : { token, password },
+		),
 	});
-
-	if (!response.ok) {
-		const errorData = await response.json().catch(() => ({}));
-		throw new Error(
-			errorData.error || "Failed to reset password.",
-		);
-	}
 }
 
 export async function switchClient(clientId: string): Promise<void> {

@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useForm, useField } from "vee-validate";
 import { toTypedSchema } from "@vee-validate/zod";
 import { z } from "zod";
 import { useLoginThemeStore } from "@/stores/loginTheme";
-import { validateResetToken, confirmPasswordReset } from "@/api/auth";
+import {
+	validateResetToken,
+	confirmPasswordReset,
+	setPostAuthRedirect,
+	checkSession,
+} from "@/api/auth";
+import type { TwoFactorMethod } from "@/api/twofactor";
+import TwoFactorSetup from "@/components/TwoFactorSetup.vue";
 import { getErrorMessage } from "@/utils/errors";
 
 const route = useRoute();
@@ -18,9 +25,25 @@ onMounted(async () => {
 	await checkToken();
 });
 
-type PageState = "loading" | "invalid" | "form" | "submitting";
+type PageState =
+	| "loading"
+	| "invalid"
+	| "form"
+	| "submitting"
+	| "enroll"
+	| "redirecting";
 
 const pageState = ref<PageState>("loading");
+// The same page serves first-time invites (route "set-password") and
+// self-service resets; only the framing differs.
+const isInvite = computed(() => route.name === "set-password");
+// A self-service reset for a user with an authenticator app also needs a
+// current code from it (email alone can't authorise the reset).
+const requiresFactor = ref(false);
+const factorCode = ref("");
+// The email domain requires 2FA and the user has none: enrol before finishing.
+const enrollToken = ref("");
+const enrollMethods = ref<TwoFactorMethod[]>([]);
 const invalidReason = ref<"expired" | "not_found" | "unknown">("not_found");
 const submitError = ref<string | null>(null);
 
@@ -36,6 +59,7 @@ async function checkToken() {
 	try {
 		const result = await validateResetToken(token);
 		if (result.valid) {
+			requiresFactor.value = result.requiresFactor ?? false;
 			pageState.value = "form";
 		} else {
 			invalidReason.value =
@@ -83,11 +107,43 @@ const { value: confirmPasswordValue, errorMessage: confirmPasswordError } =
 	useField<string>("confirmPassword");
 
 const onSubmit = handleSubmit(async (values) => {
+	if (requiresFactor.value && !factorCode.value.trim()) {
+		submitError.value = "Enter the code from your authenticator app.";
+		return;
+	}
 	pageState.value = "submitting";
 	submitError.value = null;
 
 	try {
-		await confirmPasswordReset(token, values.password);
+		const result = await confirmPasswordReset(
+			token,
+			values.password,
+			requiresFactor.value ? factorCode.value.trim() : undefined,
+		);
+		if (result.status === "enrollment_required" && result.enrollToken) {
+			// The domain requires 2FA: set it up before finishing. The setup
+			// completes the session and navigates on its own; a
+			// server-validated redirect is stashed for it to follow.
+			if (result.redirectUri) setPostAuthRedirect(result.redirectUri);
+			enrollToken.value = result.enrollToken;
+			enrollMethods.value = result.allowedMethods ?? [];
+			pageState.value = "enroll";
+			return;
+		}
+		if (result.redirectUri) {
+			// Validated server-side when the link was issued (the OAuth
+			// sign-in the user was in, or the inviting application).
+			window.location.assign(result.redirectUri);
+			return;
+		}
+		if (result.sessionEstablished) {
+			// A completed invite with no 2FA required: the server has set the
+			// session cookie, so go straight in.
+			pageState.value = "redirecting";
+			await checkSession();
+			await router.replace("/dashboard");
+			return;
+		}
 		await router.replace({ name: "login", query: { reset: "success" } });
 	} catch (e: unknown) {
 		submitError.value = getErrorMessage(
@@ -134,21 +190,28 @@ const onSubmit = handleSubmit(async (values) => {
         <!-- Loading state -->
         <div v-if="pageState === 'loading'" class="loading-state">
           <div class="spinner"></div>
-          <p>Validating your reset link...</p>
+          <p>{{ isInvite ? "Validating your invite link..." : "Validating your reset link..." }}</p>
         </div>
 
         <!-- Invalid / expired token -->
         <template v-else-if="pageState === 'invalid'">
           <h2 class="login-title">Link invalid or expired</h2>
           <div class="error-message">
-            <p v-if="invalidReason === 'expired'">
+            <p v-if="invalidReason === 'expired' && isInvite">
+              This invite link has expired. Ask your administrator to send a new invite.
+            </p>
+            <p v-else-if="invalidReason === 'expired'">
               This password reset link has expired. Reset links are valid for 15 minutes.
+            </p>
+            <p v-else-if="isInvite">
+              This invite link is invalid or has already been used.
             </p>
             <p v-else>
               This password reset link is invalid or has already been used.
             </p>
           </div>
           <RouterLink
+            v-if="!isInvite"
             :to="{ name: 'forgot-password' }"
             class="action-link"
           >
@@ -156,9 +219,29 @@ const onSubmit = handleSubmit(async (values) => {
           </RouterLink>
         </template>
 
-        <!-- Reset form -->
+        <!-- Two-factor enrolment the email domain requires, after the
+             password is set -->
+        <template v-else-if="pageState === 'enroll'">
+          <h2 class="login-title">Set up two-factor authentication</h2>
+          <p class="enroll-intro">
+            Your password is set. Your organisation requires two-factor
+            authentication — set it up to finish signing in.
+          </p>
+          <TwoFactorSetup :enroll-token="enrollToken" :allowed-methods="enrollMethods" />
+        </template>
+
+        <!-- Signed in server-side (an invite with no 2FA required) -->
+        <template v-else-if="pageState === 'redirecting'">
+          <h2 class="login-title">Password set</h2>
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Your password is set. Taking you to your account...</p>
+          </div>
+        </template>
+
+        <!-- Set / reset form -->
         <template v-else>
-          <h2 class="login-title">Set a new password</h2>
+          <h2 class="login-title">{{ isInvite ? "Set your password" : "Set a new password" }}</h2>
 
           <div v-if="submitError" class="error-message">
             <p>{{ submitError }}</p>
@@ -166,15 +249,16 @@ const onSubmit = handleSubmit(async (values) => {
 
           <form class="login-form" @submit.prevent="onSubmit">
             <div class="form-field">
-              <label for="password">New password</label>
+              <label for="password">{{ isInvite ? "Password" : "New password" }}</label>
               <Password
                 id="password"
                 v-model="passwordValue"
-                placeholder="At least 12 characters"
+                placeholder="At least 8 characters"
                 :disabled="pageState === 'submitting'"
                 :invalid="!!passwordError"
                 :feedback="true"
                 toggleMask
+                :inputProps="{ autocomplete: 'new-password' }"
                 inputClass="w-full"
                 class="w-full"
               />
@@ -182,15 +266,16 @@ const onSubmit = handleSubmit(async (values) => {
             </div>
 
             <div class="form-field">
-              <label for="confirmPassword">Confirm new password</label>
+              <label for="confirmPassword">{{ isInvite ? "Confirm password" : "Confirm new password" }}</label>
               <Password
                 id="confirmPassword"
                 v-model="confirmPasswordValue"
-                placeholder="Repeat your new password"
+:placeholder="isInvite ? 'Repeat your password' : 'Repeat your new password'"
                 :disabled="pageState === 'submitting'"
                 :invalid="!!confirmPasswordError"
                 :feedback="false"
                 toggleMask
+                :inputProps="{ autocomplete: 'new-password' }"
                 inputClass="w-full"
                 class="w-full"
               />
@@ -199,9 +284,27 @@ const onSubmit = handleSubmit(async (values) => {
               </small>
             </div>
 
+            <!-- A self-service reset for an authenticator-app user also needs a
+                 current code from it. -->
+            <div v-if="requiresFactor" class="form-field">
+              <label for="factorCode">Authenticator code</label>
+              <InputText
+                id="factorCode"
+                v-model="factorCode"
+                placeholder="123456"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                :disabled="pageState === 'submitting'"
+                class="w-full"
+              />
+              <small class="field-hint">
+                Enter the 6-digit code from your authenticator app to confirm.
+              </small>
+            </div>
+
             <Button
               type="submit"
-              label="Reset password"
+              :label="isInvite ? 'Set password' : 'Reset password'"
               :loading="pageState === 'submitting'"
               class="w-full"
             />
@@ -351,6 +454,18 @@ const onSubmit = handleSubmit(async (values) => {
   font-size: 14px;
   font-weight: 500;
   color: #334e68;
+}
+
+.field-hint {
+  color: #627d98;
+  font-size: 12px;
+}
+
+.enroll-intro {
+  color: #627d98;
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 20px;
 }
 
 .field-error {
