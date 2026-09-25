@@ -2704,6 +2704,7 @@ dependencies = [
  "chrono",
  "der",
  "fc-function-abi",
+ "fc-function-model",
  "fc-function-signing",
  "futures",
  "gethostname",

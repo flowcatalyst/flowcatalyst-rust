@@ -14,13 +14,14 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 
 use fc_function_abi::FunctionAddress;
+use fc_function_model::{Hostname, LIVE_ALIAS};
 use http::HeaderMap;
 
 use crate::desired::PublicRouteRef;
-use crate::env::{is_dns_label, TrustedProxies};
+use crate::env::TrustedProxies;
 
 /// The alias an exact hostname match resolves to.
-pub const LIVE: &str = "live";
+pub const LIVE: &str = LIVE_ALIAS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
@@ -115,9 +116,10 @@ fn split_segments(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// `Host` (HTTP/1.1) or `:authority` (HTTP/2): lower-cased, port stripped,
-/// and a valid `Hostname`, else `None` (404). `X-Forwarded-Host` is never
-/// consulted.
+/// `Host` (HTTP/1.1) or `:authority` (HTTP/2): port stripped, then a valid
+/// [`Hostname`] (lower-cased; at most 253 characters, at least two DNS
+/// labels, not an IP literal), else `None` (404). `X-Forwarded-Host` is
+/// never consulted.
 pub(crate) fn public_hostname(authority: Option<&str>) -> Option<String> {
     let authority = authority?;
     if authority.starts_with('[') {
@@ -127,18 +129,7 @@ pub(crate) fn public_hostname(authority: Option<&str>) -> Option<String> {
         Some((host, port)) if port.bytes().all(|b| b.is_ascii_digit()) => host,
         _ => authority,
     };
-    let host = host.to_lowercase();
-    is_hostname(&host).then_some(host)
-}
-
-/// Java `Hostname.parse`: at most 253 characters, at least two DNS labels,
-/// and not an IP literal (an all-digit last label).
-fn is_hostname(host: &str) -> bool {
-    let labels: Vec<&str> = host.split('.').collect();
-    host.len() <= 253
-        && labels.len() >= 2
-        && labels.iter().all(|l| is_dns_label(l))
-        && !labels[labels.len() - 1].bytes().all(|b| b.is_ascii_digit())
+    Hostname::try_parse(host).map(|h| h.value().to_owned())
 }
 
 /// The right-most `X-Forwarded-For` entry, only when the TCP peer is a

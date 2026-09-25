@@ -8,6 +8,9 @@ description = "FlowCatalyst function host: environment, logging, observability, 
 
 [dependencies]
 fc-function-abi = { path = "../fc-function-abi" }
+# The manifest, RoutePattern and the JDK helpers: the platform's own model,
+# as Java's host links the server's classes.
+fc-function-model = { path = "../fc-function-model" }
 fc-function-signing = { path = "../fc-function-signing" }
 
 tokio = { workspace = true }

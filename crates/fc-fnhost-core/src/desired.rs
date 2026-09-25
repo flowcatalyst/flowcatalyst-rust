@@ -9,16 +9,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use fc_function_abi::FunctionAddress;
+use fc_function_model::{JsonNode, Manifest};
 use serde_json::Value;
 
 use crate::digest::{Digest, SignerIdentity};
 use crate::java;
-use crate::manifest::{self, Endpoint, EndpointAuth, Limits};
-
-/// Java `FunctionAddress.parse`'s `UseCaseException` message, as
-/// `getMessage()` renders it.
-const ADDRESS_INVALID: &str =
-    "validation: ADDRESS_INVALID: address must be app.service.function: three DNS labels separated by '.'";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -33,54 +28,14 @@ pub enum Mode {
     Lazy,
 }
 
-/// The stored manifest, read the way Java's `Manifest.readStored` reads it
-/// as far as the reconciler needs: it fails only when `runtime` or
-/// `entrypoint` is unreadable. The whole JSON object is kept for the
-/// runtime loaders (limits, endpoints, allow-lists).
-#[derive(Debug, Clone, PartialEq)]
-pub struct StoredManifest {
-    /// `jvm` or `wasm`, lower-cased (the manifest's runtime is read
-    /// case-insensitively, as Java's `Runtime.parseStrict`).
-    pub runtime: String,
-    pub entrypoint: String,
-    /// The endpoints Java's `readStored` keeps (a malformed one is dropped).
-    pub endpoints: Vec<Endpoint>,
-    pub limits: Limits,
-    pub raw: Value,
-}
-
-impl StoredManifest {
-    pub fn read(node: Option<&Value>) -> Result<Self, String> {
-        let Some(root @ Value::Object(_)) = node else {
-            return Err("manifest is unreadable: not an object".into());
-        };
-        let runtime = java::as_string(root.get("runtime"), Some(""))
-            .unwrap_or_default()
-            .to_lowercase();
-        if runtime != "jvm" && runtime != "wasm" {
-            return Err("manifest runtime is unreadable".into());
-        }
-        let entrypoint = java::as_string(root.get("entrypoint"), Some("")).unwrap_or_default();
-        if java::is_blank(&entrypoint) {
-            return Err("manifest entrypoint is unreadable".into());
-        }
-        Ok(Self {
-            endpoints: manifest::read_endpoints(root),
-            limits: manifest::read_limits(root, &runtime),
-            runtime,
-            entrypoint,
-            raw: root.clone(),
-        })
-    }
-
-    /// Whether any endpoint authenticates with `webhook` (Java
-    /// `Reconciler.hasWebhookEndpoint`), over the endpoints Java's reader
-    /// keeps.
-    pub fn has_webhook_endpoint(&self) -> bool {
-        self.endpoints
-            .iter()
-            .any(|endpoint| endpoint.auth == EndpointAuth::Webhook)
-    }
+/// An entry's stored manifest, read as Java's `DesiredDocument` reads it:
+/// with [`Manifest::read_stored`], the platform's own reader (tolerant of
+/// unknown keys and malformed entries, failing only when `runtime` or
+/// `entrypoint` is unreadable). A missing `manifest` reads as Jackson's
+/// missing node: not an object.
+fn read_manifest(node: Option<&Value>) -> Result<Manifest, String> {
+    let root = node.map_or(JsonNode::Null, JsonNode::from);
+    Manifest::read_stored(&root).map_err(|e| e.to_string())
 }
 
 /// One readable entry of `functions`.
@@ -97,7 +52,7 @@ pub struct Entry {
     pub signature_bundle: Option<String>,
     /// `None` when the version was published with signatures off.
     pub signer: Option<SignerIdentity>,
-    pub manifest: StoredManifest,
+    pub manifest: Manifest,
     pub webhook_signing_secret: Option<String>,
     pub application_id: Option<String>,
     pub client_id: Option<String>,
@@ -127,7 +82,7 @@ impl fmt::Debug for Entry {
                     .map(|b| format!("{} chars", b.len())),
             )
             .field("signer", &self.signer)
-            .field("runtime", &self.manifest.runtime)
+            .field("runtime", &self.manifest.runtime.wire_value())
             .field(
                 "webhook_signing_secret",
                 &self.webhook_signing_secret.as_ref().map(|_| "<redacted>"),
@@ -269,8 +224,10 @@ fn require_int(node: &Value, field: &str) -> Result<i32, String> {
         .ok_or_else(|| format!("{field} is required and must be an integer"))
 }
 
+/// Java `FunctionAddress.parse`'s `UseCaseException`, as `getMessage()`
+/// renders it.
 fn parse_address(raw: &str) -> Result<FunctionAddress, String> {
-    FunctionAddress::parse(raw).map_err(|_| ADDRESS_INVALID.to_owned())
+    fc_function_model::parse_address(raw).map_err(|e| e.to_string())
 }
 
 fn parse_entry(node: &Value) -> Result<Entry, String> {
@@ -299,7 +256,7 @@ fn parse_entry(node: &Value) -> Result<Entry, String> {
             require_text(signer, "subject")?,
         )),
     };
-    let manifest = StoredManifest::read(node.get("manifest"))?;
+    let manifest = read_manifest(node.get("manifest"))?;
     Ok(Entry {
         address,
         function_id,
@@ -415,7 +372,7 @@ pub(crate) mod tests {
         );
         assert_eq!(entry.config.len(), 2);
         assert_eq!(entry.missing_settings, ["X"]);
-        assert_eq!(entry.manifest.runtime, "wasm");
+        assert_eq!(entry.manifest.runtime, fc_function_model::Runtime::Wasm);
         assert!(entry.manifest.has_webhook_endpoint());
         assert_eq!(doc.unload[0].version, 1);
         assert_eq!(doc.public_routes[0].alias_prefixes, ["qa"]);

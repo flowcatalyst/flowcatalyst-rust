@@ -20,11 +20,11 @@
 //! | [`desired`], [`heartbeat`] | `fnhost/reconcile/{DesiredDocument,HeartbeatReport}.java` |
 //! | [`reconciler`], [`reconcile_loop`] | `fnhost/reconcile/{Reconciler,ReconcileLoop}.java` |
 //! | [`artifact`] | `platform/function/artifact/*Store*.java`, `fnhost/reconcile/PlatformArtifactStore.java` |
-//! | [`signature`], [`digest`] | `platform/function/artifact/{Signatures,SignatureVerifier,TrustRoot}.java`, `platform/function/{Digest,SignerIdentity}.java` — re-exported from `fc-function-signing`, which the platform also depends on |
+//! | [`signature`], [`digest`] | `platform/function/artifact/{Signatures,SignatureVerifier,TrustRoot}.java`, `platform/function/{Digest,SignerIdentity}.java` — re-exported from `fc-function-signing` (the digest types being `fc-function-model`'s), which the platform also depends on |
 //! | [`loader`], [`registry`] | `fnhost/load/{FunctionLoader,LoadedFunction,FunctionRegistry}.java` |
 //! | [`invoke`] | `LoadedFunction.invoke`, `fnhost/http/InvocationRunner.java` (the runtime-agnostic seam) |
 //! | [`listener`] | `fnhost/http/*`, `fnhost/route/PublicRouteTable.java` |
-//! | [`manifest`], [`route_pattern`] | `platform/function/{Manifest,EndpointAuth,HttpMethod,RoutePattern}.java` (the stored reader) |
+//! | `fc_function_model` | `platform/function/{Manifest,EndpointAuth,HttpMethod,RoutePattern}.java`: the platform's own model, not a copy |
 //! | [`tsid`] | `sdk/tsid/Tsid.java` |
 //! | [`wasm`] | `fnhost/wasm/*`, `fnhost/load/WasmFunctionLoader.java`, `fnhost/context/*` (redesigned for WASI 0.2 components) |
 
@@ -42,13 +42,11 @@ pub mod invoke;
 pub mod listener;
 pub mod loader;
 pub mod logging;
-pub mod manifest;
 pub mod metrics;
 pub mod observability;
 pub mod reconcile_loop;
 pub mod reconciler;
 pub mod registry;
-pub mod route_pattern;
 pub mod token;
 pub mod tsid;
 pub mod wasm;

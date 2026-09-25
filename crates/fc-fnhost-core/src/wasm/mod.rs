@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::Value;
+use fc_function_model::FunctionLimits;
 use wasmtime::component::Linker;
 use wasmtime::Engine;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
@@ -56,7 +56,6 @@ pub use inspect::{
 };
 
 use crate::loader::{FunctionLoader, LoadOutcome, LoadRequest};
-use crate::manifest::DEFAULT_WASM_MEMORY_MB;
 use guest::{Emitter, FunctionShared, GuestState};
 use inspect::Refusal;
 use output::GuestLogger;
@@ -232,7 +231,7 @@ impl FunctionLoader for WasmLoader {
             .manifest
             .limits
             .wasm_memory_mb
-            .unwrap_or(DEFAULT_WASM_MEMORY_MB)
+            .unwrap_or(FunctionLimits::DEFAULT_WASM_MEMORY_MB)
             .max(1) as u64;
         let cap_bytes = (memory_mb << 20).min(engine::MAX_MEMORY_BYTES as u64);
         let prepared = {
@@ -261,31 +260,23 @@ impl FunctionLoader for WasmLoader {
             }
         };
         tracing::debug!(address = %entry.address, version = entry.version, source = ?source, "wasm function prepared");
-        let raw = &entry.manifest.raw;
-        let declared = |key: &str| -> Vec<String> {
-            match raw.get(key) {
-                Some(Value::Array(items)) => items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .filter(|s| !crate::java::is_blank(s))
-                    .map(str::to_owned)
-                    .collect(),
-                _ => Vec::new(),
-            }
-        };
-        let pick = |values: &std::collections::BTreeMap<String, String>, keys: Vec<String>| {
-            keys.into_iter()
-                .filter_map(|k| values.get(&k).map(|v| (k, v.clone())))
+        // The keys the manifest declares, as the platform's reader keeps them
+        // (`config` / `secrets` entries that are setting keys, `httpAllow`
+        // entries that are non-blank).
+        let manifest = &entry.manifest;
+        let pick = |values: &std::collections::BTreeMap<String, String>, keys: &[String]| {
+            keys.iter()
+                .filter_map(|k| values.get(k).map(|v| (k.clone(), v.clone())))
                 .collect::<HashMap<_, _>>()
         };
-        let mut secrets = pick(&entry.secrets, declared("secrets"));
+        let mut secrets = pick(&entry.secrets, &manifest.secrets);
         secrets.retain(|_, v| !v.is_empty());
-        let http_allow = declared("httpAllow");
+        let http_allow = &manifest.http_allow;
         let shared = Arc::new(FunctionShared {
             address: entry.address.clone(),
             version: entry.version,
             logger: GuestLogger::for_address(&entry.address.render()),
-            config: pick(&entry.config, declared("config")),
+            config: pick(&entry.config, &manifest.config),
             secrets,
             allow: Arc::new(egress::HttpAllowlist::new(
                 http_allow.iter().map(String::as_str),

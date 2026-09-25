@@ -6,10 +6,10 @@
 //! function set.
 
 use fc_function_abi::MultiMap;
+use fc_function_model::{Cors, Endpoint};
 use http::HeaderMap;
 
 use super::answer::HttpAnswer;
-use crate::manifest::{Cors, Endpoint};
 
 const MANAGED: [&str; 3] = [
     "access-control-allow-origin",
@@ -172,7 +172,7 @@ fn effective_methods(endpoint: &Endpoint, cors: &Cors, requested: Option<&str>) 
         }
     } else {
         for m in declared {
-            add(m.name().to_owned());
+            add(m.as_str().to_owned());
         }
     }
     methods
@@ -198,8 +198,7 @@ fn allowed_headers(cors: &Cors, requested: Option<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{EndpointAuth, HttpMethod};
-    use crate::route_pattern::RoutePattern;
+    use fc_function_model::{EndpointAuth, HttpMethod, RoutePattern};
 
     fn endpoint(cors: Cors, methods: Vec<HttpMethod>) -> Endpoint {
         Endpoint {
