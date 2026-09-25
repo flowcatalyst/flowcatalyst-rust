@@ -45,6 +45,8 @@ The binding record for the work that follows. It supersedes anything in older do
 | 15 | PDK publishing | Make `fc-function-pdk` self-contained (vendor its WIT) so it *can* go to crates.io, and prove it with `cargo publish --dry-run`. The git dependency must always keep working. The owner does the actual publish. |
 | 16 | CLAUDE.md | Add three infrastructure exceptions: the function-host heartbeat (host upsert and purge), artifact blob uploads, and the lazy OAuth secret rehash on login. |
 | 17 | Flaky tests | Fix the fc-router end-to-end tests that fail under parallel load, and the function example test that hits 429. |
+| 19 | Service-account writes | Keep requiring **anchor** scope for service-account create, update and delete, on top of Go's permission check. This is a deliberate deviation from Go, which lets a non-anchor admin mint an ANCHOR-tier account (an escalation path worth fixing in Go too). |
+| 20 | JWT (revisited) | Rust issues **Go's** token shape (see #3). This supersedes the earlier "keep Rust's shape". |
 | 18 | Housekeeping | Keep the fc-router dev-only `hyper` 1.9.0 pin. Make Rust's event ingest idempotent (`ON CONFLICT DO NOTHING`), as Go and Java do. |
 
 ## Re-check needed
@@ -61,3 +63,19 @@ ruling applies:
 
 This includes anything in `docs/parity/l9-idiom-inventory.md`'s "Remaining deviations from Java" table that
 concerns existing, non-function behaviour.
+
+## Follow-ups found during wave 1 (to do)
+
+- **Cutover blocker:** about 40 domain event type names differ from Go's (e.g. `platform:iam:client:*` vs Go's
+  `platform:admin:client:*`), and Rust's event `data` carries extra metadata. Subscribers match on these, so align
+  them to Go.
+- **Cutover blocker:** Go can store IDP secrets as secret-manager references (`aws-sm://…`). Rust must resolve them as
+  Go does, and the `backfill-secrets` tool must **skip** references and never encrypt a ref string. Production
+  currently holds only `encrypted:` values (audit 2026-09-24).
+- **Read permissions:** many Rust list and read endpoints only require login where Go checks a permission. Enforce
+  Go's read permissions.
+- **Guardrail:** add a convention test requiring every `/api` and `/bff` route to authenticate unless explicitly
+  allowlisted. `/bff/debug/*` had no auth at all; fixed in `4845d960`, and still open on `main`.
+- `/auth/me` should include the caller's scope/tier, so the SPA can gate anchor-only pages.
+- Missing Go routes: `connections/sync`, `docs/sync`, `POST /api/processes/sync`, `router-config`.
+- `client-admin` and `portal-administrator` exist as roles, but Go's enforcement behind them isn't built.
