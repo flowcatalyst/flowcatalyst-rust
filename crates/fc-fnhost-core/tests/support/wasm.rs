@@ -31,8 +31,12 @@ use super::listener::Reply;
 pub const ADDR: &str = "app.orders.ship";
 pub const ENTRYPOINT: &str = "wasi:http/incoming-handler";
 
-pub const GUESTS: [&str; 10] = [
-    "echo", "spin", "alloc", "fail", "config", "secret", "http", "emit", "log", "pure",
+/// Every committed guest, in `SHA256SUMS` (and `tests/guests/build.sh`)
+/// order. `pdk` and `pdk-pure` are written with the guest SDK
+/// (`crates/fc-function-pdk`).
+pub const GUESTS: [&str; 12] = [
+    "echo", "spin", "alloc", "fail", "config", "secret", "http", "emit", "log", "pure", "pdk",
+    "pdk-pure",
 ];
 
 pub fn fixtures_dir() -> PathBuf {

@@ -205,6 +205,10 @@ pub mod emit_error {
     pub const INVALID_EVENT_TYPE_REQUIRED: &str = "INVALID_EVENT: type is required";
     /// `dedupId` was missing, not a string, or blank.
     pub const DEDUP_ID_REQUIRED: &str = "DEDUP_ID_REQUIRED";
+    /// The event's `data` was not JSON. The component host's own code (its
+    /// `events.emit` takes `data` as JSON text); Java's host reads the whole
+    /// event as JSON, so its nearest code is [`INVALID_EVENT_NOT_JSON`].
+    pub const INVALID_EVENT_DATA_NOT_JSON: &str = "INVALID_EVENT: data is not JSON";
     /// The host's emit failed for a reason that is not a platform refusal.
     pub const EMIT_FAILED: &str = "EMIT_FAILED";
     /// The platform could not be reached (status 503).

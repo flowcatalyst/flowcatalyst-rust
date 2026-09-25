@@ -124,7 +124,7 @@ impl FunctionShared {
 
 /// The host's own code for event data that is not JSON (Java's host reads
 /// the whole event as JSON, so its nearest code is `INVALID_EVENT: not JSON`).
-pub const INVALID_EVENT_DATA_NOT_JSON: &str = "INVALID_EVENT: data is not JSON";
+pub const INVALID_EVENT_DATA_NOT_JSON: &str = emit_error::INVALID_EVENT_DATA_NOT_JSON;
 
 /// What the guest can learn about its invocation, and the emit defaults.
 pub struct InvocationData {
