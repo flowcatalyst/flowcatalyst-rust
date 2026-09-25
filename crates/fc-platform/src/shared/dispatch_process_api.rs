@@ -17,9 +17,11 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
+use crate::dispatch_job::delivery_credentials::{DeliveryCredentials, Resolved};
 use crate::dispatch_job::entity::{DispatchAttemptStatus, DispatchStatus, ErrorType};
 use crate::dispatch_job::repository::{DispatchJobRepository, NewDispatchAttempt};
 use crate::shared::error::PlatformError;
+use crate::shared::webhook_signer;
 
 // ── Request / Response ───────────────────────────────────────────────────
 
@@ -43,6 +45,9 @@ pub struct ProcessResponse {
 pub struct DispatchProcessState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
     pub http_client: reqwest::Client,
+    /// Whose credentials a delivery carries (Java `DeliveryCredentials`);
+    /// `None` delivers bare, as Java's `DeliveryCredentials.none()`.
+    pub credentials: Option<Arc<DeliveryCredentials>>,
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────
@@ -94,12 +99,6 @@ async fn process_dispatch(
         .header("X-Dispatch-Job-Id", job_id)
         .header("X-Event-Type", &job.code);
 
-    // Add auth token if service account is configured
-    // TODO: resolve service account → token when auth is wired
-    if let Some(ref sa_id) = job.service_account_id {
-        debug!(job_id = %job_id, service_account = %sa_id, "Service account configured (token resolution not yet implemented)");
-    }
-
     // Build payload
     let body = if job.data_only {
         // Send just the data payload
@@ -118,6 +117,17 @@ async fn process_dispatch(
             "attemptNumber": attempt_number,
         })).unwrap_or_default()
     };
+
+    // The credentials, then the signature over the exact bytes sent (Java
+    // SubscriberDelivery.buildRequest).
+    let credentials = match &state.credentials {
+        Some(c) => c.resolve_or_bare(&job).await,
+        None => Resolved::default(),
+    };
+    request = apply_credentials(request, &credentials, chrono::Utc::now(), body.as_bytes());
+    if credentials.is_bare() {
+        debug!(job_id = %job_id, reason = %credentials.reason, "Delivering unsigned");
+    }
 
     request = request.body(body);
 
@@ -288,6 +298,27 @@ async fn process_dispatch(
         ack: outcome.ack,
         message: outcome.error_message,
     }))
+}
+
+/// `Authorization: Bearer` when there is a token, and the
+/// `X-FlowCatalyst-Timestamp` / `X-FlowCatalyst-Signature` pair when there is
+/// a signing secret, signed over `body` at `at`.
+pub fn apply_credentials(
+    request: reqwest::RequestBuilder,
+    credentials: &Resolved,
+    at: chrono::DateTime<chrono::Utc>,
+    body: &[u8],
+) -> reqwest::RequestBuilder {
+    let mut request = request;
+    if let Some(token) = &credentials.bearer_token {
+        request = request.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    if let Some(secret) = &credentials.signing_secret {
+        for (name, value) in webhook_signer::signature_headers(secret, at, body) {
+            request = request.header(name, value);
+        }
+    }
+    request
 }
 
 // ── Router ───────────────────────────────────────────────────────────────

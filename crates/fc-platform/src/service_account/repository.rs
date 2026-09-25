@@ -111,6 +111,26 @@ impl TryFrom<PrincipalRoleRow> for RoleAssignment {
     }
 }
 
+/// A service account's webhook credentials as stored: `encrypted:` refs,
+/// opened only by [`crate::service_account::outbound_credentials`].
+#[derive(sqlx::FromRow)]
+pub struct StoredWebhookCredentials {
+    pub code: String,
+    pub active: bool,
+    pub token_ref: Option<String>,
+    pub signing_secret_ref: Option<String>,
+}
+
+/// The refs are sealed, but still never printed.
+impl std::fmt::Debug for StoredWebhookCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredWebhookCredentials")
+            .field("code", &self.code)
+            .field("active", &self.active)
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct ServiceAccountRepository {
     pool: PgPool,
 }
@@ -244,6 +264,43 @@ impl ServiceAccountRepository {
         .fetch_optional(&self.pool)
         .await?;
         Ok(matches!(row, Some((Some(secret),)) if !secret.is_empty()))
+    }
+
+    /// The stored webhook credentials of the application's oldest active
+    /// service account (Java `ServiceAccountRepository.findFirstActiveByApplicationId`,
+    /// read shallow): the account an application's deliveries are signed
+    /// with. The values are the stored refs, still sealed.
+    pub async fn oldest_active_webhook_credentials(
+        &self,
+        application_id: &str,
+    ) -> Result<Option<StoredWebhookCredentials>> {
+        let row = sqlx::query_as::<_, StoredWebhookCredentials>(
+            "SELECT code, active, wh_auth_token_ref AS token_ref, \
+             wh_signing_secret_ref AS signing_secret_ref FROM iam_service_accounts \
+             WHERE application_id = $1 AND active = true ORDER BY created_at ASC LIMIT 1",
+        )
+        .bind(application_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// The stored webhook credentials of one named account, active or not:
+    /// `id` is the account's own id or its principal's.
+    pub async fn webhook_credentials_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<StoredWebhookCredentials>> {
+        let row = sqlx::query_as::<_, StoredWebhookCredentials>(
+            "SELECT code, active, wh_auth_token_ref AS token_ref, \
+             wh_signing_secret_ref AS signing_secret_ref FROM iam_service_accounts \
+             WHERE id = $1 OR id = (SELECT service_account_id FROM iam_principals WHERE id = $1) \
+             LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     /// Find service accounts by client ID.

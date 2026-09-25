@@ -980,6 +980,14 @@ pub fn build_platform_routes(
             ),
         ),
     };
+    // One outbound-credentials resolver for every delivery the platform
+    // signs (Java OutboundCredentials, one-minute cache per application).
+    let outbound_credentials = Arc::new(
+        crate::service_account::outbound_credentials::OutboundCredentialsResolver::new(
+            repos.service_account_repo.clone(),
+            encryption_service.clone(),
+        ),
+    );
     // ── Function registry ─────────────────────────────────────────────────
     // Java reads the FC_FN_DEFAULT_* limits once at startup and refuses to
     // start on a non-positive one (Env.java:600-605).
@@ -1134,6 +1142,14 @@ pub fn build_platform_routes(
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .expect("Failed to build HTTP client"),
+            credentials: Some(Arc::new(
+                crate::dispatch_job::delivery_credentials::DeliveryCredentials::new(
+                    repos.subscription_repo.clone(),
+                    repos.connection_repo.clone(),
+                    repos.application_repo.clone(),
+                    outbound_credentials.clone(),
+                ),
+            )),
         }),
         bff_developer: crate::router::BffDeveloperDeps {
             application_repo: repos.application_repo.clone(),
