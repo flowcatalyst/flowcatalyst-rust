@@ -8,9 +8,9 @@
 //!
 //! The property routes follow Go's gate: an anchor passes, anyone else needs
 //! a platform-config access grant (read or write) on one of its roles for
-//! the application. The application need not be registered, as in Go, so
-//! these routes do not resolve `{appCode}` against the caller's application
-//! scope. Scope is derived as Go's: `CLIENT` when `clientId` is given,
+//! the application. The application need not be registered, as in Go; a
+//! registered one must be in the caller's application scope (Rust's rule,
+//! 404 otherwise). Scope is derived as Go's: `CLIENT` when `clientId` is given,
 //! otherwise `GLOBAL`. A `SECRET` value reads as `***` to a non-anchor.
 //! Rust keeps encrypting secrets at rest; an anchor read decrypts them (a
 //! Go-written plaintext row reads as stored).
@@ -53,6 +53,8 @@ pub struct GoPlatformConfigState {
     pub set_property_use_case: Arc<SetPlatformConfigPropertyUseCase<PgUnitOfWork>>,
     pub grant_access_use_case: Arc<GrantPlatformConfigAccessUseCase<PgUnitOfWork>>,
     pub revoke_access_use_case: Arc<RevokePlatformConfigAccessUseCase<PgUnitOfWork>>,
+    pub application_repo: Arc<crate::ApplicationRepository>,
+    pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
 }
 
 /// Go `ConfigResponse`.
@@ -139,6 +141,25 @@ async fn require_property_access(
     )))
 }
 
+/// Rust's application confinement on top of Go's gate: a code naming a
+/// registered application must be one the caller reaches (404 otherwise,
+/// the owner's rule for an out-of-scope application), so an anchor service
+/// account of one application cannot rewrite another's configuration. A
+/// code no application has is not confined, as in Go.
+async fn require_application_access_if_registered(
+    state: &GoPlatformConfigState,
+    ctx: &AuthContext,
+    app: &str,
+) -> Result<(), PlatformError> {
+    if state.application_repo.find_by_code(app).await?.is_some() {
+        state
+            .app_access
+            .require_application_access(ctx, app)
+            .await?;
+    }
+    Ok(())
+}
+
 async fn can_read_config_property(
     state: &GoPlatformConfigState,
     ctx: &AuthContext,
@@ -205,6 +226,7 @@ pub async fn list_platform_config(
     Path(app): Path<String>,
 ) -> Result<Json<GoConfigListResponse>, PlatformError> {
     can_read_config_property(&state, &auth.0, &app).await?;
+    require_application_access_if_registered(&state, &auth.0, &app).await?;
     let rows = state
         .config_repo
         .find_by_application(&app, None, None)
@@ -242,6 +264,7 @@ pub async fn get_config_property(
     Query(q): Query<ClientIdQuery>,
 ) -> Result<Json<GoConfigResponse>, PlatformError> {
     can_read_config_property(&state, &auth.0, &app).await?;
+    require_application_access_if_registered(&state, &auth.0, &app).await?;
     let (scope, client_id) = coordinate(q.client_id.as_deref());
     let config = state
         .config_repo
@@ -280,6 +303,7 @@ pub async fn set_config_property(
     Json(req): Json<GoSetPropertyRequest>,
 ) -> Result<Json<GoConfigResponse>, PlatformError> {
     can_write_config_property(&state, &auth.0, &app).await?;
+    require_application_access_if_registered(&state, &auth.0, &app).await?;
     // The query's clientId wins over the body's (Go).
     let client_id = q.client_id.or(req.client_id);
     let (scope, client_id) = coordinate(client_id.as_deref());
@@ -334,6 +358,7 @@ pub async fn delete_config_property(
     Query(q): Query<ClientIdQuery>,
 ) -> Result<StatusCode, PlatformError> {
     can_write_config_property(&state, &auth.0, &app).await?;
+    require_application_access_if_registered(&state, &auth.0, &app).await?;
     let (scope, client_id) = coordinate(q.client_id.as_deref());
     state
         .config_repo
@@ -358,6 +383,7 @@ pub async fn list_platform_config_access(
     Path(app): Path<String>,
 ) -> Result<Json<AccessListResponse>, PlatformError> {
     checks::can_read_platform_config(&auth.0)?;
+    require_application_access_if_registered(&state, &auth.0, &app).await?;
     let items = state.access_repo.find_by_application(&app).await?;
     Ok(Json(AccessListResponse {
         items: items.into_iter().map(AccessResponse::from).collect(),
@@ -383,6 +409,7 @@ pub async fn grant_platform_config_access(
     Json(req): Json<GoGrantAccessRequest>,
 ) -> Result<(StatusCode, Json<CreatedResponse>), PlatformError> {
     checks::can_update_platform_config(&auth.0)?;
+    require_application_access_if_registered(&state, &auth.0, &app).await?;
     if app.trim().is_empty() {
         return Err(PlatformError::bad_request_code(
             "APPLICATION_REQUIRED",
@@ -438,6 +465,7 @@ pub async fn revoke_platform_config_access(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| PlatformError::not_found_code("PlatformConfigAccess", &id))?;
+    require_application_access_if_registered(&state, &auth.0, &access.application_code).await?;
     state
         .revoke_access_use_case
         .run(

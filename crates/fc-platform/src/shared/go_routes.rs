@@ -104,7 +104,7 @@ impl GoRoutesState {
                 )),
             },
             sdk_sync: crate::shared::sdk_sync_go_api::SdkSyncGoState {
-                app_access,
+                app_access: app_access.clone(),
                 client_repo: repos.client_repo.clone(),
                 sync_connections_use_case: Arc::new(
                     crate::connection::operations::sync::SyncConnectionsUseCase::new(
@@ -233,6 +233,8 @@ impl GoRoutesState {
                         uow.clone(),
                     ),
                 ),
+                application_repo: repos.application_repo.clone(),
+                app_access: app_access.clone(),
             },
             client_search: crate::client::search_api::ClientSearchState {
                 client_repo: repos.client_repo.clone(),
