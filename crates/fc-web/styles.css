@@ -79,8 +79,10 @@
 
 @layer base {
   html {
-    /* The Vue app's 14px base: every rem shrinks with it. */
-    font-size: 14px;
+    /* The SPA's 12.6px base (styles/main.css): every rem shrinks with it,
+       as PrimeVue's rem tokens do there. */
+    font-size: 12.6px;
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background font-sans text-foreground antialiased;
@@ -180,6 +182,21 @@
     border-color: #cbd5e1;
     color: #1e293b;
   }
+  .fc-btn-primary-outline {
+    background: transparent;
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  .fc-btn-primary-outline:hover {
+    background: #ecfdf5;
+  }
+  .fc-btn-text-primary {
+    background: transparent;
+    color: var(--primary);
+  }
+  .fc-btn-text-primary:hover {
+    background: #ecfdf5;
+  }
   .fc-btn-outline {
     background: transparent;
     border-color: #cbd5e1;
@@ -214,6 +231,15 @@
   .fc-btn-danger:hover {
     background: #b91c1c;
     border-color: #b91c1c;
+  }
+  .fc-btn-warn {
+    background: #ea580c;
+    border-color: #ea580c;
+    color: #fff;
+  }
+  .fc-btn-warn:hover {
+    background: #c2410c;
+    border-color: #c2410c;
   }
   .fc-btn-text {
     background: transparent;
@@ -377,6 +403,129 @@
   .fc-table tbody tr[aria-selected="true"] {
     background: #f1f5f9;
   }
+  .fc-table-caps thead th {
+    color: #475569;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+  }
+  .fc-table-striped tbody tr:nth-child(even) {
+    background: #f8fafc;
+  }
+  .fc-table-sm tbody td { padding: 0.3rem 0.6rem; }
+  .fc-table-sm thead th { padding: 0.4rem 0.6rem; }
+
+  /* FcTableToolbar.vue: quick search left; refresh, Clear All and the
+     Filters popover (native popover) right. */
+  .fc-table-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .fc-toolbar-start,
+  .fc-toolbar-end {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .fc-toolbar-search {
+    width: 260px;
+    max-width: 100%;
+  }
+  .fc-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.4rem;
+    height: 1.4rem;
+    padding: 0 0.35rem;
+    border-radius: 9999px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  .fc-filter-popover {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    width: min(360px, calc(100vw - 32px));
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    box-shadow: 0 10px 30px rgb(15 23 42 / 0.15);
+    color: #1e293b;
+  }
+  .fc-filter-popover-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .fc-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: #64748b;
+  }
+  .fc-empty > svg {
+    display: block;
+    margin: 0 auto 16px;
+    color: #cbd5e1;
+  }
+  .fc-empty > span {
+    display: block;
+    margin-bottom: 12px;
+  }
+
+  /* PrimeVue Paginator (Nora): page links centred, report and rows-per-page. */
+  .fc-paginator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0.5rem 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 1rem;
+    color: #64748b;
+  }
+  .fc-page-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    height: 2.5rem;
+    padding: 0 0.5rem;
+    border-radius: 2px;
+    color: #64748b;
+    text-decoration: none;
+  }
+  a.fc-page-link:hover {
+    background: #f1f5f9;
+    color: #334155;
+  }
+  .fc-page-link[aria-current="page"] {
+    background: #ecfdf5;
+    color: #047857;
+    font-weight: 600;
+  }
+  span.fc-page-link[aria-disabled="true"] {
+    opacity: 0.5;
+  }
+  .fc-page-report {
+    padding: 0 0.5rem;
+  }
+  .fc-paginator .fc-select {
+    width: auto;
+  }
+  .fc-mono { font-family: var(--font-mono); }
+  .fc-muted { color: #64748b; }
+
   .fc-table-footer {
     display: flex;
     align-items: center;
@@ -413,13 +562,13 @@
   }
 
   /* ------------------------------------------------------ detail rows */
-  .fc-detail-grid {
+  .fc-dl-grid {
     display: grid;
     grid-template-columns: 9rem 1fr;
     gap: 12px 16px;
     align-items: baseline;
   }
-  .fc-detail-label {
+  .fc-dl-label {
     font-size: 13px;
     font-weight: 500;
     color: #64748b;
@@ -443,15 +592,29 @@
     font-weight: 600;
     color: #dc2626;
   }
+  .fc-danger-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
   .fc-danger-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 16px 20px;
-    background: #f8fafc;
-    border: 1px solid var(--border);
+    padding: 16px;
+    background: #fafafa;
+    border: 1px solid #e5e7eb;
     border-radius: 8px;
+  }
+  .fc-danger-item strong {
+    display: block;
+    margin-bottom: 4px;
+  }
+  .fc-danger-item p {
+    margin: 0;
+    font-size: 13px;
+    color: #64748b;
   }
 
   /* ------------------------------------------------------------ banners */
@@ -667,7 +830,7 @@
     color: #47a3f3;
   }
   .fc-sidebar-footer {
-    padding: 12px;
+    padding: 8px;
     border-top: 1px solid rgb(255 255 255 / 0.1);
   }
   .fc-user-trigger {
@@ -675,31 +838,50 @@
     align-items: center;
     gap: 10px;
     width: 100%;
-    padding: 6px 4px;
+    padding: 8px;
     border-radius: 8px;
     color: #fff;
     text-align: left;
     cursor: pointer;
   }
   .fc-user-trigger:hover {
-    background: rgb(255 255 255 / 0.06);
+    background: rgb(255 255 255 / 0.08);
+  }
+  .fc-user-name {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.3;
+    color: rgb(255 255 255 / 0.85);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .fc-user-email {
+    display: block;
+    font-size: 11px;
+    line-height: 1.3;
+    color: rgb(255 255 255 / 0.5);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .fc-avatar {
     display: flex;
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     border-radius: 9999px;
     background: linear-gradient(135deg, #0967d2 0%, #47a3f3 100%);
     color: #fff;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
   }
   .fc-avatar-lg {
-    width: 52px;
-    height: 52px;
+    width: 48px;
+    height: 48px;
     font-size: 18px;
   }
 
@@ -728,11 +910,11 @@
   .fc-user-menu {
     position: fixed;
     inset: auto auto 76px 12px;
-    width: 280px;
+    min-width: 280px;
     margin: 0;
     padding: 0;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 6px;
     background: #fff;
     box-shadow: 0 10px 40px rgb(15 23 42 / 0.2);
     color: #1e293b;
@@ -755,41 +937,174 @@
     color: #1e293b;
   }
   .fc-menu-item.danger {
-    color: #b91c1c;
+    color: #dc2626;
   }
   .fc-menu-item.danger:hover {
     background: #fef2f2;
+    color: #b91c1c;
   }
 
   /* ---------------------------------------------------- drawer & dialog */
-  .fc-drawer-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    background: rgb(15 23 42 / 0.25);
-  }
+  /* EntityDrawer.vue: a non-modal right panel (no mask); the list stays
+     scrollable and clickable underneath, and a stronger shadow separates
+     the two. Sizes: default 560px, wide 800px, two-thirds. */
   .fc-drawer {
     position: fixed;
     inset: 0 0 0 auto;
     z-index: 51;
     display: flex;
     flex-direction: column;
-    width: min(56rem, 100vw);
+    width: min(560px, calc(100vw - 24px));
     background: #fff;
-    box-shadow: -8px 0 32px rgb(15 23 42 / 0.15);
+    box-shadow: -8px 0 32px rgb(15 23 42 / 0.18);
+  }
+  .fc-drawer-wide { width: min(800px, calc(100vw - 24px)); }
+  .fc-drawer-two-thirds { width: min(66.667vw, calc(100vw - 24px)); }
+  .fc-drawer-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 1.25rem;
+  }
+  .fc-drawer-titles {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .fc-drawer-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1e293b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .fc-drawer-subtitle {
+    margin: 2px 0 0;
+    font-size: 13px;
+    color: #64748b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .fc-drawer-body {
     flex: 1;
     overflow-y: auto;
-    padding: 0 24px 24px;
+    padding: 0 20px 20px;
   }
   .fc-drawer-footer {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: 8px;
-    padding: 12px 24px;
-    border-top: 1px solid var(--border);
+    padding: 12px 20px;
+    border-top: 1px solid #e2e8f0;
   }
+
+  /* ------------------------------------------ form kit (Fc* components) */
+  .fc-form-section {
+    margin-bottom: 16px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .fc-form-section:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+  .fc-form-section.fc-card {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .fc-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .fc-form-section .fc-section-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+  }
+  .fc-section-description {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: #64748b;
+  }
+  .fc-section-body {
+    container-type: inline-size;
+  }
+  .fc-danger-zone .fc-section-title {
+    color: #dc2626;
+  }
+  .fc-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px;
+  }
+  .fc-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 20px;
+  }
+  .fc-span-2 {
+    grid-column: 1 / -1;
+  }
+  @container (max-width: 640px) {
+    .fc-form-grid,
+    .fc-detail-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .fc-form-field,
+  .fc-detail-field {
+    min-width: 0;
+  }
+  .fc-field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: #475569;
+    margin-bottom: 4px;
+  }
+  .fc-required { color: #dc2626; }
+  .fc-field-help {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #64748b;
+  }
+  .fc-field-error {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #dc2626;
+  }
+  .fc-detail-value {
+    font-size: 14px;
+    color: #1e293b;
+    overflow-wrap: break-word;
+  }
+  .fc-checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #1e293b;
+  }
+  .fc-checkbox-row input {
+    width: 1.1rem;
+    height: 1.1rem;
+    accent-color: var(--primary);
+  }
+  /* Read view vs edit form in a drawer: the runtime toggles `hidden`. */
+  [hidden] { display: none !important; }
   .fc-dialog {
     margin: auto;
     padding: 0;

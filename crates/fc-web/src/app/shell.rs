@@ -1,15 +1,13 @@
 //! The document, the authenticated app frame (sidebar + user menu), and the
-//! authentication layer. The frame mirrors `MainLayout.vue` /
-//! `AppSidebar.vue` / `UserMenu.vue`.
+//! authentication layer. The frame mirrors the SPA's `MainLayout.vue` /
+//! `AppSidebar.vue` / `SidebarProfile.vue`.
 
-use fc_platform::AuthContext;
-use fc_platform::checks;
 use fc_platform::shared::public_api::{LoginThemeResponse, load_login_theme};
 use topcoat::{
     Result,
     context::{Cx, memoize},
     cookie::{Cookies, cookies},
-    icon::{IconData, icon, iconify::iconify_icon},
+    icon::{icon, iconify::iconify_icon},
     router::{
         Body, Method, Next, Slot,
         error::{SeeOther, redirect, see_other, unauthorized},
@@ -22,8 +20,10 @@ use topcoat::{
     view::{Length, View, attributes, error_boundary, view},
 };
 
+use super::nav;
 use crate::auth::{auth, authenticate};
 use crate::ui::{TrustedHtml, default_logo, flash::take_flash, flash_banner};
+use fc_platform::auth::oidc_login_api::{AuthMethod, resolve_auth_method};
 
 /// Persists the sidebar's collapsed state (the Vue app keeps it in
 /// localStorage; a cookie lets the server render it without a flash).
@@ -90,288 +90,16 @@ async fn require_session(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response
     }
 }
 
-/// `/ui` itself: the first trial page the caller may open.
+/// `/ui` itself: the first ported page the caller may open (the SPA's
+/// post-login landing, `landingPath`, over fc-web's pages), else the SPA.
 #[route(GET "/ui/(app)")]
 async fn home(cx: &Cx) -> Result<SeeOther> {
     let auth = auth(cx)?;
-    let target = NAV
+    let target = nav::PORTED
         .iter()
-        .flat_map(|group| group.items)
-        .flat_map(|item| std::iter::once(item).chain(item.children))
-        .find(|item| item.href.starts_with("/ui/") && (item.visible)(auth))
-        .map_or("/dashboard", |item| item.href);
+        .find(|route| nav::can_access(auth, route))
+        .map_or_else(|| "/profile".to_owned(), |route| nav::href(route));
     Ok(see_other(target))
-}
-
-// ------------------------------------------------------------ navigation
-
-struct NavItem {
-    label: &'static str,
-    icon: IconData,
-    href: &'static str,
-    visible: fn(&AuthContext) -> bool,
-    children: &'static [NavItem],
-}
-
-struct NavGroup {
-    label: &'static str,
-    items: &'static [NavItem],
-}
-
-/// A leaf item gated by any one of `perms` (the Vue app's
-/// `ROUTE_PERMISSIONS`, `stores/permissions.ts`).
-macro_rules! nav {
-    ($label:literal, $icon:literal, $href:literal, [$($perm:literal),*]) => {
-        NavItem {
-            label: $label,
-            icon: iconify_icon!($icon),
-            href: $href,
-            visible: |a| a.has_any_permission(&[$($perm),*]),
-            children: &[],
-        }
-    };
-    ($label:literal, $icon:literal, $href:literal, $visible:expr) => {
-        NavItem { label: $label, icon: iconify_icon!($icon), href: $href, visible: $visible, children: &[] }
-    };
-}
-
-fn always(_: &AuthContext) -> bool {
-    true
-}
-
-fn any_child(_: &AuthContext) -> bool {
-    // A parent's visibility is its children's; see `visible_children`.
-    true
-}
-
-/// `frontend/src/config/navigation.ts`, filtered per caller on the server.
-/// The two trial pages point at `/ui/...`; the rest open the Vue app.
-const NAV: &[NavGroup] = &[
-    NavGroup {
-        label: "Overview",
-        items: &[nav!("Dashboard", "lucide:house", "/dashboard", always)],
-    },
-    NavGroup {
-        label: "Identity & Access",
-        items: &[
-            nav!(
-                "User Management",
-                "lucide:users",
-                "/users",
-                ["platform:iam:user:view"]
-            ),
-            nav!(
-                "Service Accounts",
-                "lucide:server",
-                "/identity/service-accounts",
-                ["platform:iam:service-account:view"]
-            ),
-            nav!(
-                "Identity Providers",
-                "lucide:id-card",
-                "/authentication/identity-providers",
-                ["platform:iam:idp:view"]
-            ),
-            nav!(
-                "Email Domains",
-                "lucide:mail",
-                "/authentication/email-domain-mappings",
-                ["platform:iam:email-domain-mapping:view"]
-            ),
-            nav!(
-                "OAuth Clients",
-                "lucide:key-round",
-                "/authentication/oauth-clients",
-                ["platform:auth:oauth-client:view"]
-            ),
-            nav!(
-                "Roles",
-                "lucide:shield",
-                "/authorization/roles",
-                ["platform:iam:role:view"]
-            ),
-            nav!(
-                "Permissions",
-                "lucide:lock",
-                "/authorization/permissions",
-                ["platform:iam:permission:view"]
-            ),
-        ],
-    },
-    NavGroup {
-        label: "Platform",
-        items: &[
-            nav!(
-                "Applications",
-                "lucide:layout-grid",
-                "/applications",
-                ["platform:admin:application:view"]
-            ),
-            nav!(
-                "Clients",
-                "lucide:building-2",
-                "/clients",
-                ["platform:admin:client:view"]
-            ),
-            nav!(
-                "CORS Origins",
-                "lucide:link",
-                "/platform/cors",
-                ["platform:admin:cors-origin:view"]
-            ),
-            // The audit log API is anchor-only (`audit/api.rs`).
-            nav!(
-                "Audit Log",
-                "lucide:history",
-                "/ui/audit-log",
-                |a| checks::require_anchor(a).is_ok() && checks::can_read_audit_logs(a).is_ok()
-            ),
-            nav!(
-                "Login Attempts",
-                "lucide:log-in",
-                "/platform/login-attempts",
-                ["platform:admin:login-attempt:view"]
-            ),
-            NavItem {
-                label: "Settings",
-                icon: iconify_icon!("lucide:settings"),
-                href: "",
-                visible: any_child,
-                children: &[nav!(
-                    "Theme",
-                    "lucide:palette",
-                    "/platform/settings/theme",
-                    ["platform:admin:config:view"]
-                )],
-            },
-            NavItem {
-                label: "Debug",
-                icon: iconify_icon!("lucide:wrench"),
-                href: "",
-                visible: any_child,
-                children: &[
-                    nav!(
-                        "Raw Events",
-                        "lucide:database",
-                        "/platform/debug/events",
-                        ["platform:messaging:event:view-raw"]
-                    ),
-                    nav!(
-                        "Raw Dispatch Jobs",
-                        "lucide:database",
-                        "/platform/debug/dispatch-jobs",
-                        ["platform:messaging:dispatch-job:view-raw"]
-                    ),
-                ],
-            },
-        ],
-    },
-    NavGroup {
-        label: "Messaging",
-        items: &[
-            nav!(
-                "Events",
-                "lucide:inbox",
-                "/events",
-                ["platform:messaging:event:view"]
-            ),
-            nav!("Event Types", "lucide:zap", "/ui/event-types", |a| {
-                checks::can_read_event_types(a).is_ok()
-            }),
-            nav!(
-                "Subscriptions",
-                "lucide:bell",
-                "/subscriptions",
-                ["platform:messaging:subscription:view"]
-            ),
-            nav!(
-                "Connections",
-                "lucide:link-2",
-                "/connections",
-                ["platform:messaging:connection:view"]
-            ),
-            nav!(
-                "Dispatch Pools",
-                "lucide:database",
-                "/dispatch-pools",
-                ["platform:messaging:dispatch-pool:view"]
-            ),
-            nav!(
-                "Dispatch Jobs",
-                "lucide:send",
-                "/dispatch-jobs",
-                ["platform:messaging:dispatch-job:view"]
-            ),
-            nav!(
-                "Scheduled Jobs",
-                "lucide:clock",
-                "/scheduled-jobs",
-                ["platform:messaging:scheduled-job:view"]
-            ),
-        ],
-    },
-    NavGroup {
-        label: "Functions",
-        items: &[
-            nav!(
-                "Functions",
-                "lucide:square-function",
-                "/functions",
-                ["platform:function:function:view"]
-            ),
-            nav!(
-                "Function Domains",
-                "lucide:globe",
-                "/function-domains",
-                ["platform:function:function:view"]
-            ),
-            nav!(
-                "Function Policies",
-                "lucide:shield-check",
-                "/function-policies",
-                ["platform:function:policy:manage"]
-            ),
-        ],
-    },
-    NavGroup {
-        label: "Developer",
-        items: &[
-            nav!(
-                "Applications",
-                "lucide:book-open",
-                "/developer",
-                [
-                    "platform:developer:application-openapi:view",
-                    "platform:developer:application-openapi:manage"
-                ]
-            ),
-            nav!(
-                "Processes",
-                "lucide:network",
-                "/processes",
-                [
-                    "platform:messaging:process:view",
-                    "platform:application-service:process:view"
-                ]
-            ),
-        ],
-    },
-];
-
-fn visible_children<'a>(item: &'a NavItem, auth: &AuthContext) -> Vec<&'a NavItem> {
-    item.children.iter().filter(|c| (c.visible)(auth)).collect()
-}
-
-fn is_visible(item: &NavItem, auth: &AuthContext) -> bool {
-    if item.children.is_empty() {
-        (item.visible)(auth)
-    } else {
-        !visible_children(item, auth).is_empty()
-    }
-}
-
-fn is_current(href: &str, path: &str) -> bool {
-    !href.is_empty() && (path == href || path.starts_with(&format!("{href}/")))
 }
 
 /// "Andrew Graaff" -> "AG", as `stores/auth.ts` `userInitials`.
@@ -410,19 +138,22 @@ async fn app_frame(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let platform_admin = auth.roles.iter().any(|r| r.starts_with("platform:"));
     let logo_height = theme.logo_height.unwrap_or(40);
 
-    let groups: Vec<(&'static str, Vec<&'static NavItem>)> = NAV
-        .iter()
-        .map(|g| {
-            (
-                g.label,
-                g.items
-                    .iter()
-                    .filter(|i| is_visible(i, auth))
-                    .collect::<Vec<_>>(),
+    let groups = nav::visible_groups(auth);
+    // SidebarProfile's Reset Password: an account whose domain signs in
+    // through an external IdP gets a notice instead of the reset page.
+    let external_idp = {
+        let deps = crate::deps(cx);
+        matches!(
+            resolve_auth_method(
+                &deps.anchor_domain_repo,
+                &deps.edm_repo,
+                &deps.idp_repo,
+                &email
             )
-        })
-        .filter(|(_, items)| !items.is_empty())
-        .collect();
+            .await,
+            Ok(AuthMethod::External { .. })
+        )
+    };
 
     Ok(view! {
         <aside class="fc-sidebar">
@@ -456,17 +187,17 @@ async fn app_frame(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                         for item in items {
                             if item.children.is_empty() {
                                 <a
-                                    href=(item.href)
+                                    href=(nav::href(item.route))
                                     class="fc-nav-item"
                                     title=(item.label)
-                                    aria-current=(is_current(item.href, &path).then_some("page"))
+                                    aria-current=(nav::is_current(item.route, &path).then_some("page"))
                                 >
                                     icon(data: item.icon.clone())
                                     <span class="fc-nav-label">(item.label)</span>
                                 </a>
                             } else {
-                                let children = visible_children(item, auth);
-                                let open = children.iter().any(|c| is_current(c.href, &path));
+                                let children = nav::visible_children(item, auth);
+                                let open = children.iter().any(|c| nav::is_current(c.route, &path));
                                 <details open=(open)>
                                     <summary class="fc-nav-item" title=(item.label)>
                                         icon(data: item.icon.clone())
@@ -476,9 +207,9 @@ async fn app_frame(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                                     <div class="fc-nav-children">
                                         for child in children {
                                             <a
-                                                href=(child.href)
+                                                href=(nav::href(child.route))
                                                 class="fc-nav-child"
-                                                aria-current=(is_current(child.href, &path).then_some("page"))
+                                                aria-current=(nav::is_current(child.route, &path).then_some("page"))
                                             >
                                                 icon(data: child.icon.clone())
                                                 <span class="fc-nav-label">(child.label)</span>
@@ -496,10 +227,10 @@ async fn app_frame(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <button type="button" class="fc-user-trigger" popovertarget="fc-user-menu">
                     <span class="fc-avatar">(&user_initials)</span>
                     <span class="fc-user-text min-w-0 flex-1">
-                        <span class="block truncate text-sm font-medium">(&display_name)</span>
-                        <span class="block truncate text-xs text-white/60">(&email)</span>
+                        <span class="fc-user-name">(&display_name)</span>
+                        <span class="fc-user-email">(&email)</span>
                     </span>
-                    icon(data: iconify_icon!("lucide:chevron-up"), size: Length::rem(1.0), attrs: attributes! { class="fc-user-text text-white/60" })
+                    icon(data: iconify_icon!("lucide:chevron-up"), size: Length::px(11.0), attrs: attributes! { class="fc-user-text shrink-0 text-white/50" })
                 </button>
             </div>
         </aside>
@@ -508,30 +239,44 @@ async fn app_frame(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
             <div class="flex items-center gap-3 p-4">
                 <span class="fc-avatar fc-avatar-lg">(&user_initials)</span>
                 <div class="min-w-0">
-                    <p class="truncate text-base font-semibold text-[#1e293b]">(&display_name)</p>
-                    <p class="truncate text-sm text-[#64748b]">(&email)</p>
+                    <p class="truncate text-[15px] font-semibold text-[#1e293b]">(&display_name)</p>
+                    <p class="truncate text-[13px] text-[#64748b]">(&email)</p>
                     if platform_admin {
-                        <span class="mt-1 inline-block rounded bg-[#dbeafe] px-2 py-0.5 text-xs font-medium text-[#1d4ed8]">"Platform Admin"</span>
+                        <span class="mt-1 inline-block rounded px-2 py-0.5 text-[11px] font-medium bg-[#dbeafe] text-[#1d4ed8]">"Platform Admin"</span>
                     }
                 </div>
             </div>
-            <div class="border-t border-border p-1.5">
+            <div class="border-t border-border p-2">
                 <a href="/profile" class="fc-menu-item">icon(data: iconify_icon!("lucide:user"), size: Length::rem(1.1)) "Profile"</a>
-                <a href="/auth/reset-password" class="fc-menu-item">icon(data: iconify_icon!("lucide:key-round"), size: Length::rem(1.1)) "Reset Password"</a>
+                if external_idp {
+                    <button type="button" class="fc-menu-item" commandfor="fc-idp-notice" command="show-modal">icon(data: iconify_icon!("lucide:key-round"), size: Length::rem(1.1)) "Reset Password"</button>
+                } else {
+                    <a href="/auth/reset-password" class="fc-menu-item">icon(data: iconify_icon!("lucide:key-round"), size: Length::rem(1.1)) "Reset Password"</a>
+                }
             </div>
-            <div class="border-t border-border p-1.5">
+            <div class="border-t border-border p-2">
                 <form method="post" action="/ui/logout">
                     <button type="submit" class="fc-menu-item danger">icon(data: iconify_icon!("lucide:log-out"), size: Length::rem(1.1)) "Sign Out"</button>
                 </form>
             </div>
             <div class="flex justify-between border-t border-border px-4 py-2.5 text-xs text-[#94a3b8]">
                 <span>"Version"</span>
-                <span>(env!("CARGO_PKG_VERSION"))</span>
+                <span class="text-[#64748b]">(env!("CARGO_PKG_VERSION"))</span>
             </div>
         </div>
+        <dialog id="fc-idp-notice" class="fc-dialog w-[400px] max-w-[calc(100vw-2rem)]" closedby="any" aria-labelledby="fc-idp-notice-title">
+            <div class="fc-dialog-header"><span id="fc-idp-notice-title">"External Identity Provider"</span></div>
+            <div class="fc-dialog-body flex flex-col gap-3 text-[#475569]">
+                <p>"Your account is managed by an external identity provider."</p>
+                <p>"To reset your password, please visit your organization's identity provider portal."</p>
+            </div>
+            <div class="fc-dialog-footer">
+                <button type="button" class="fc-btn fc-btn-secondary" commandfor="fc-idp-notice" command="close">"Close"</button>
+            </div>
+        </dialog>
 
         <div class="fc-main">
-            <main class="p-4">
+            <main class="p-[24px]">
                 flash_banner(flash: flash)
                 error_boundary(
                     fallback: |error| {

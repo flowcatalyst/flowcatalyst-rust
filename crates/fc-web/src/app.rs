@@ -5,4 +5,5 @@
 mod audit_log;
 mod event_types;
 mod login;
+mod nav;
 mod shell;

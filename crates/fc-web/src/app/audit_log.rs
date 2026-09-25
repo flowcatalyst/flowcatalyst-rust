@@ -74,9 +74,9 @@ fn list_href(entity_type: Option<&str>, operation: Option<&str>, after: Option<&
     }
     let q = q.finish();
     if q.is_empty() {
-        "/ui/audit-log".to_owned()
+        "/ui/platform/audit-log".to_owned()
     } else {
-        format!("/ui/audit-log?{q}")
+        format!("/ui/platform/audit-log?{q}")
     }
 }
 
@@ -105,7 +105,7 @@ async fn names(
     ))
 }
 
-#[page("/ui/(app)/audit-log")]
+#[page("/ui/(app)/platform/audit-log")]
 async fn audit_log(cx: &Cx) -> Result<impl View> {
     let auth = auth(cx)?;
     permit(checks::require_anchor(auth))?;
@@ -177,7 +177,7 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         page_header(title: "Audit Log", subtitle: "View system activity and changes")
 
-        <form method="get" action="/ui/audit-log" class="fc-card mb-6">
+        <form method="get" action="/ui/platform/audit-log" class="fc-card mb-6">
             <div class="fc-filter-row">
                 filter_select(
                     name: "entity_type",
@@ -195,7 +195,7 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
                 )
                 <noscript><button type="submit" class=(Btn::Secondary)>"Apply"</button></noscript>
                 if filtered {
-                    <a href="/ui/audit-log" class="fc-btn fc-btn-text ml-auto">
+                    <a href="/ui/platform/audit-log" class="fc-btn fc-btn-text ml-auto">
                         icon(data: iconify_icon!("lucide:funnel-x"), size: Length::rem(1.0))
                         "Clear Filters"
                     </a>
@@ -282,7 +282,7 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
 
 /// The detail dialog's body. A shard has its own endpoint, so it checks the
 /// caller itself; the path keeps it under the `/ui/(app)` layer.
-#[shard("/ui/(app)/audit-log/detail")]
+#[shard("/ui/(app)/platform/audit-log/detail")]
 async fn audit_log_detail(cx: &Cx, id: String) -> Result<impl View> {
     let auth = auth(cx)?;
     permit(checks::require_anchor(auth))?;
@@ -333,27 +333,27 @@ async fn audit_log_detail(cx: &Cx, id: String) -> Result<impl View> {
                     .operation_json
                     .as_deref()
                     .and_then(|s| serde_json::from_str(s).ok());
-                <div class="fc-detail-grid">
-                    <span class="fc-detail-label">"Time"</span>
+                <div class="fc-dl-grid">
+                    <span class="fc-dl-label">"Time"</span>
                     <span>local_time(at: at)</span>
-                    <span class="fc-detail-label">"Entity Type"</span>
+                    <span class="fc-dl-label">"Entity Type"</span>
                     <span>tag(label: d.entity_type.clone(), severity: entity_severity(&d.entity_type))</span>
-                    <span class="fc-detail-label">"Entity ID"</span>
+                    <span class="fc-dl-label">"Entity ID"</span>
                     <span><code class="fc-mono-chip">(d.entity_id.clone().unwrap_or_default())</code></span>
-                    <span class="fc-detail-label">"Operation"</span>
+                    <span class="fc-dl-label">"Operation"</span>
                     <span>(humanize(&d.operation))</span>
-                    <span class="fc-detail-label">"Performed By"</span>
+                    <span class="fc-dl-label">"Performed By"</span>
                     <span>(d.principal_name.clone().unwrap_or_else(|| "Unknown".to_owned()))</span>
                     if let Some(pid) = d.principal_id.clone() {
-                        <span class="fc-detail-label">"Principal ID"</span>
+                        <span class="fc-dl-label">"Principal ID"</span>
                         <span><code class="fc-mono-chip">(pid)</code></span>
                     }
                     if let Some(app) = app_name {
-                        <span class="fc-detail-label">"Application"</span>
+                        <span class="fc-dl-label">"Application"</span>
                         <span>(app)</span>
                     }
                     if let Some(client) = client_name {
-                        <span class="fc-detail-label">"Client"</span>
+                        <span class="fc-dl-label">"Client"</span>
                         <span>(client)</span>
                     }
                 </div>

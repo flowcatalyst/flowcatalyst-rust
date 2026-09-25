@@ -19,7 +19,10 @@
 //! Escape, backdrop) with no script. Menus use `popover`, collapsible nav
 //! uses `<details>`.
 
+pub mod drawer;
 pub mod flash;
+pub mod form;
+pub mod list;
 
 use chrono::{DateTime, Utc};
 use topcoat::{
@@ -32,7 +35,10 @@ use topcoat::{
     },
 };
 
+pub use drawer::{drawer_frame, drawer_header};
 pub use flash::{FlashKind, flash_banner, set_flash};
+pub use form::{detail_field, detail_value, form_field};
+pub use list::{Pager, list_query, paginator, table_toolbar};
 
 /// Trusted markup rendered as-is. Only for admin-configured content the Vue
 /// app also renders with `v-html` (the theme's `logoSvg`).
@@ -60,12 +66,15 @@ pub fn default_logo() -> TrustedHtml {
 #[allow(dead_code)]
 pub enum Btn {
     Primary,
+    PrimaryOutline,
     Secondary,
     Outline,
     WarnOutline,
     DangerOutline,
     Danger,
+    Warn,
     Text,
+    TextPrimary,
     Link,
 }
 
@@ -73,12 +82,15 @@ impl Btn {
     pub fn class(self) -> &'static str {
         match self {
             Btn::Primary => "fc-btn fc-btn-primary",
+            Btn::PrimaryOutline => "fc-btn fc-btn-primary-outline",
             Btn::Secondary => "fc-btn fc-btn-secondary",
             Btn::Outline => "fc-btn fc-btn-outline",
             Btn::WarnOutline => "fc-btn fc-btn-warn-outline",
             Btn::DangerOutline => "fc-btn fc-btn-danger-outline",
             Btn::Danger => "fc-btn fc-btn-danger",
+            Btn::Warn => "fc-btn fc-btn-warn",
             Btn::Text => "fc-btn fc-btn-text",
+            Btn::TextPrimary => "fc-btn fc-btn-text-primary",
             Btn::Link => "fc-btn fc-btn-link",
         }
     }
@@ -135,9 +147,10 @@ pub async fn tag(#[into] label: String, severity: Severity) -> Result<impl View>
     Ok(view! { <span class=(class)>(label)</span> })
 }
 
-/// A labelled `<select>` in a filter row that submits its GET form on
-/// change, so the URL is the list state (bookmarkable, survives refresh).
-/// `options` are `(value, label)`; the empty option clears the filter.
+/// A labelled `<select>` (an `FcFormField` in the Filters popover, or a
+/// filter row) that submits its GET form on change, so the URL is the list
+/// state (bookmarkable, survives refresh). `options` are `(value, label)`;
+/// the empty option clears the filter.
 #[component]
 pub async fn filter_select(
     name: &'static str,
@@ -148,8 +161,8 @@ pub async fn filter_select(
 ) -> Result<impl View> {
     let id = format!("filter-{name}");
     Ok(view! {
-        <div class="fc-filter-group">
-            <label class="fc-label" for=(&id)>(label)</label>
+        <div class="fc-form-field">
+            <label class="fc-field-label" for=(&id)>(label)</label>
             <select id=(&id) name=(name) class="fc-select" onchange="this.form.requestSubmit()">
                 <option value="" selected=(selected.is_none())>(placeholder)</option>
                 for (value, label) in options {
@@ -242,11 +255,18 @@ pub async fn confirm_dialog(
     #[into] message: String,
     #[into] confirm_label: String,
     #[default] danger: bool,
+    #[default] warn: bool,
     /// Extra hidden fields, as (name, value).
     #[default]
     fields: Vec<(String, String)>,
 ) -> Result<impl View> {
-    let confirm = if danger { Btn::Danger } else { Btn::Primary };
+    let confirm = if danger {
+        Btn::Danger
+    } else if warn {
+        Btn::Warn
+    } else {
+        Btn::Primary
+    };
     let icon_class = if danger {
         "mt-0.5 shrink-0 text-red-600"
     } else {
@@ -295,13 +315,21 @@ pub async fn local_time(at: DateTime<Utc>) -> Result<impl View> {
     })
 }
 
-/// Shown in place of table rows when there are none.
+/// Shown in place of table rows when there are none (the DataTable
+/// `#empty` slot): an inbox icon, the message, and "Clear filters" when a
+/// filter is active.
 #[component]
-pub async fn empty_state(#[into] message: String) -> Result<impl View> {
+pub async fn empty_state(
+    #[into] message: String,
+    #[default] clear_href: Option<String>,
+) -> Result<impl View> {
     Ok(view! {
-        <div class="px-6 py-12 text-center text-[#64748b]">
-            icon(data: iconify_icon!("lucide:inbox"), size: Length::rem(3.0), attrs: attributes! { class="mx-auto mb-4 text-[#cbd5e1]" })
-            <p>(message)</p>
+        <div class="fc-empty">
+            icon(data: iconify_icon!("lucide:inbox"), size: Length::px(48.0))
+            <span>(message)</span>
+            if let Some(href) = clear_href {
+                <a href=(href) class=(Btn::TextPrimary)>"Clear filters"</a>
+            }
         </div>
     })
 }
