@@ -1,22 +1,17 @@
-use indexmap::IndexMap;
+use serde::Deserialize;
+use serde_json::value::RawValue;
 
-use crate::java::{decode_utf8_lossy, utf16_to_string};
-use crate::webhook_json::{self, Value};
 use crate::Timestamp;
 
 /// Parses a `webhook` endpoint's request body into the envelope the platform
 /// sent. Mirrors Java `function-api/src/main/java/io/flowcatalyst/function/Webhook.java`
-/// (and its reader, `WebhookJson.java`): the body is decoded as Java's
-/// `new String(bytes, UTF_8)` does, parsed strictly (duplicate keys and
-/// nesting deeper than 64 are refused), and each field is checked with Java's
-/// rules and messages.
-///
-/// Strings containing an unpaired escaped surrogate (`"\ud800"`) come back
-/// with `?` in its place, which is how Java's string reaches any UTF-8 wire.
+/// in what it accepts from the platform: the body is a JSON object (UTF-8,
+/// RFC 8259), unknown members are ignored, optional members may be absent or
+/// `null`, integers must be integral and fit an `i32`, and `data` / `payload`
+/// come back as their raw JSON text, untouched.
 pub struct Webhook;
 
 /// The body is not valid JSON, or not shaped like the envelope being parsed.
-/// The message is Java's `WebhookFormatException` message, offsets included.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct WebhookFormatError(pub(crate) String);
@@ -86,141 +81,111 @@ pub struct Schedule {
     pub concurrent: bool,
 }
 
+/// The event envelope on the wire.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EventWire {
+    id: String,
+    #[serde(rename = "type")]
+    event_type: String,
+    attempt_number: i32,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    subject: Option<String>,
+    #[serde(default)]
+    correlation_id: Option<String>,
+    #[serde(default)]
+    message_group: Option<String>,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    client_code: Option<String>,
+    #[serde(default)]
+    data: Option<Box<RawValue>>,
+}
+
+/// The schedule envelope on the wire.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduleWire {
+    job_id: String,
+    job_code: String,
+    instance_id: String,
+    #[serde(default)]
+    scheduled_for: Option<String>,
+    fired_at: String,
+    trigger_kind: String,
+    #[serde(default)]
+    correlation_id: Option<String>,
+    #[serde(default)]
+    payload: Option<Box<RawValue>>,
+    tracks_completion: bool,
+    #[serde(default)]
+    timeout_seconds: Option<i32>,
+    concurrent: bool,
+}
+
 impl Webhook {
     /// Parses a subscription / direct dispatch job delivery body: the bytes
     /// themselves, or anything that holds them (the guest PDK's request).
     pub fn event(body: impl AsRef<[u8]>) -> Result<Event, WebhookFormatError> {
-        let src = decode_utf8_lossy(body.as_ref());
-        let obj = Obj::parse(&src)?;
+        let w: EventWire = parse_object(body.as_ref())?;
         Ok(Event {
-            id: obj.require_string("id")?,
-            event_type: obj.require_string("type")?,
-            attempt_number: obj.require_int("attemptNumber")?,
-            source: obj.opt_string("source")?,
-            subject: obj.opt_string("subject")?,
-            correlation_id: obj.opt_string("correlationId")?,
-            message_group: obj.opt_string("messageGroup")?,
-            client_id: obj.opt_string("clientId")?,
-            client_code: obj.opt_string("clientCode")?,
-            data_json: obj.opt_raw("data"),
+            id: w.id,
+            event_type: w.event_type,
+            attempt_number: w.attempt_number,
+            source: w.source,
+            subject: w.subject,
+            correlation_id: w.correlation_id,
+            message_group: w.message_group,
+            client_id: w.client_id,
+            client_code: w.client_code,
+            data_json: w.data.map(|raw| raw.get().to_owned()),
         })
     }
 
     /// Parses a scheduled job firing body (bytes, or anything holding them).
     pub fn schedule(body: impl AsRef<[u8]>) -> Result<Schedule, WebhookFormatError> {
-        let src = decode_utf8_lossy(body.as_ref());
-        let obj = Obj::parse(&src)?;
+        let w: ScheduleWire = parse_object(body.as_ref())?;
         Ok(Schedule {
-            job_id: obj.require_string("jobId")?,
-            job_code: obj.require_string("jobCode")?,
-            instance_id: obj.require_string("instanceId")?,
-            scheduled_for: obj.opt_instant("scheduledFor")?,
-            fired_at: obj.require_instant("firedAt")?,
-            trigger_kind: obj.require_string("triggerKind")?,
-            correlation_id: obj.opt_string("correlationId")?,
-            payload_json: obj.opt_raw("payload"),
-            tracks_completion: obj.require_bool("tracksCompletion")?,
-            timeout_seconds: obj.opt_int("timeoutSeconds")?,
-            concurrent: obj.require_bool("concurrent")?,
+            job_id: w.job_id,
+            job_code: w.job_code,
+            instance_id: w.instance_id,
+            scheduled_for: w
+                .scheduled_for
+                .map(|raw| parse_instant("scheduledFor", &raw))
+                .transpose()?,
+            fired_at: parse_instant("firedAt", &w.fired_at)?,
+            trigger_kind: w.trigger_kind,
+            correlation_id: w.correlation_id,
+            payload_json: w.payload.map(|raw| raw.get().to_owned()),
+            tracks_completion: w.tracks_completion,
+            timeout_seconds: w.timeout_seconds,
+            concurrent: w.concurrent,
         })
     }
 }
 
-fn err(message: String) -> WebhookFormatError {
-    WebhookFormatError(message)
-}
-
-/// The top-level object, with Java `Webhook`'s typed accessors.
-struct Obj<'a> {
-    src: &'a [u16],
-    members: IndexMap<Vec<u16>, Value>,
-}
-
-impl<'a> Obj<'a> {
-    fn parse(src: &'a [u16]) -> Result<Self, WebhookFormatError> {
-        match webhook_json::parse(src)? {
-            Value::Obj(members, _) => Ok(Self { src, members }),
-            _ => Err(err("webhook body must be a JSON object".into())),
-        }
+/// The body as `T`, which must come from a JSON object: serde would also
+/// read a struct from an array, positionally, and Java does not.
+fn parse_object<'de, T: Deserialize<'de>>(body: &'de [u8]) -> Result<T, WebhookFormatError> {
+    if body.trim_ascii_start().first() != Some(&b'{') {
+        return Err(WebhookFormatError(
+            "webhook body must be a JSON object".into(),
+        ));
     }
-
-    fn get(&self, key: &str) -> Option<&Value> {
-        let key: Vec<u16> = key.encode_utf16().collect();
-        self.members.get(&key)
-    }
-
-    fn require_string(&self, key: &str) -> Result<String, WebhookFormatError> {
-        match self.get(key) {
-            Some(Value::Str(v, _)) => Ok(utf16_to_string(v)),
-            _ => Err(err(format!("missing or non-string field '{key}'"))),
-        }
-    }
-
-    fn opt_string(&self, key: &str) -> Result<Option<String>, WebhookFormatError> {
-        match self.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::Str(v, _)) => Ok(Some(utf16_to_string(v))),
-            Some(_) => Err(err(format!("field '{key}' must be a string"))),
-        }
-    }
-
-    fn require_bool(&self, key: &str) -> Result<bool, WebhookFormatError> {
-        match self.get(key) {
-            Some(Value::Bool(b)) => Ok(*b),
-            _ => Err(err(format!("missing or non-boolean field '{key}'"))),
-        }
-    }
-
-    fn require_int(&self, key: &str) -> Result<i32, WebhookFormatError> {
-        match self.get(key) {
-            Some(v @ Value::Num(_)) => self.parse_int(key, v),
-            _ => Err(err(format!("missing or non-numeric field '{key}'"))),
-        }
-    }
-
-    fn opt_int(&self, key: &str) -> Result<Option<i32>, WebhookFormatError> {
-        match self.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(v @ Value::Num(_)) => self.parse_int(key, v).map(Some),
-            Some(_) => Err(err(format!("field '{key}' must be a number"))),
-        }
-    }
-
-    /// `Integer.parseInt` on the number's source text: `1.0`, `1e0` and
-    /// anything outside `i32` are refused rather than truncated.
-    fn parse_int(&self, key: &str, v: &Value) -> Result<i32, WebhookFormatError> {
-        let raw = v.raw(self.src);
-        raw.parse::<i32>()
-            .map_err(|_| err(format!("field '{key}' is not an integer: {raw}")))
-    }
-
-    fn opt_raw(&self, key: &str) -> Option<String> {
-        match self.get(key) {
-            None | Some(Value::Null) => None,
-            Some(v) => Some(v.raw(self.src)),
-        }
-    }
-
-    fn require_instant(&self, key: &str) -> Result<Timestamp, WebhookFormatError> {
-        let raw = self.require_string(key)?;
-        parse_instant(key, &raw)
-    }
-
-    fn opt_instant(&self, key: &str) -> Result<Option<Timestamp>, WebhookFormatError> {
-        self.opt_string(key)?
-            .map(|raw| parse_instant(key, &raw))
-            .transpose()
-    }
+    serde_json::from_slice(body).map_err(|e| WebhookFormatError(e.to_string()))
 }
 
 fn parse_instant(key: &str, raw: &str) -> Result<Timestamp, WebhookFormatError> {
     Timestamp::parse(raw)
-        .ok_or_else(|| err(format!("field '{key}' is not a valid timestamp: {raw}")))
+        .ok_or_else(|| WebhookFormatError(format!("field '{key}' is not a valid timestamp: {raw}")))
 }
 
 /// Java `function-api/src/test/java/io/flowcatalyst/function/WebhookTest.java`
-/// and `EventTest.java`. Every other row Java answers is in the golden
-/// tables (`tests/java_golden.rs`).
+/// and `EventTest.java`. The golden tables (`tests/java_golden.rs`) hold the
+/// rest of Java's answers.
 #[cfg(test)]
 mod tests {
     use super::*;
