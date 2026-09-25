@@ -6,13 +6,17 @@
 //!
 //! Typed IDs follow the format `{prefix}_{tsid}` (e.g., `clt_0HZXEQ5Y8JY5Z`).
 
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Crockford Base32 alphabet (excludes I, L, O, U)
 const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+/// Mixes the pseudo-random bits; not part of the id layout.
 static COUNTER: AtomicU16 = AtomicU16::new(0);
+
+/// The last `(millisecond << 12) | sequence` handed out (Go `nextMsSeq`).
+static STATE: AtomicU64 = AtomicU64::new(0);
 
 /// Well-known entity type prefixes matching the FlowCatalyst platform.
 ///
@@ -112,19 +116,47 @@ impl EntityType {
 }
 
 /// Generate a raw TSID as a Crockford Base32 string (13 characters).
+///
+/// Layout, as Go's `pkg/fcsdk/tsid`: timestamp (42 bits, ms since the epoch)
+/// | sequence (12 bits) | random (10 bits). The sequence starts at a random
+/// value each millisecond and increments within it, so ids made in one
+/// process are strictly increasing: rows inserted in creation order sort in
+/// that order when ordered by id (the dispatch scheduler's final tie-break
+/// within a message group).
 fn generate_raw() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_millis() as u64;
-
-    let counter = COUNTER.fetch_add(1, Ordering::SeqCst) as u64;
-    let random: u64 = rand_u16() as u64 & 0x3FF;
-
-    // Combine: timestamp (42 bits) | random (10 bits) | counter (12 bits)
-    let tsid = ((now & 0x3FFFFFFFFFF) << 22) | (random << 12) | (counter & 0xFFF);
-
+    let (ms, seq) = next_ms_seq();
+    COUNTER.fetch_add(1, Ordering::Relaxed);
+    let random = rand_u16() as u64 & 0x3FF;
+    let tsid = ((ms & 0x3FF_FFFF_FFFF) << 22) | ((seq & 0xFFF) << 10) | random;
     encode_crockford(tsid)
+}
+
+/// The next `(millisecond, sequence)` pair (Go `nextMsSeq`): a new
+/// millisecond starts at a random sequence; within one the sequence
+/// increments; an exhausted sequence borrows the next millisecond.
+fn next_ms_seq() -> (u64, u64) {
+    loop {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis() as u64;
+        let old = STATE.load(Ordering::SeqCst);
+        let last_ms = old >> 12;
+        let last_seq = old & 0xFFF;
+        let (ms, seq) = if now > last_ms {
+            (now, rand_u16() as u64 & 0xFFF)
+        } else if last_seq < 0xFFF {
+            (last_ms, last_seq + 1)
+        } else {
+            (last_ms + 1, rand_u16() as u64 & 0xFFF)
+        };
+        if STATE
+            .compare_exchange(old, (ms << 12) | seq, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return (ms, seq);
+        }
+    }
 }
 
 /// Generate a typed ID with a platform entity prefix: `{prefix}_{tsid}`.
@@ -225,6 +257,16 @@ fn rand_u16() -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ids from one process are strictly increasing, even many within one
+    /// millisecond (Go parity; the scheduler orders a group's jobs by id last).
+    #[test]
+    fn ids_are_strictly_increasing() {
+        let ids: Vec<String> = (0..10_000).map(|_| generate_untyped()).collect();
+        for pair in ids.windows(2) {
+            assert!(pair[0] < pair[1], "{} !< {}", pair[0], pair[1]);
+        }
+    }
 
     #[test]
     fn test_generate_typed_id() {
