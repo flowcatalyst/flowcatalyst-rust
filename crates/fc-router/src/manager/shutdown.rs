@@ -5,7 +5,7 @@
 //! task here follows.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use futures::future;
 use tracing::{debug, info, warn};
@@ -62,34 +62,17 @@ impl QueueManager {
         Ok(())
     }
 
-    /// TTL of an `in_pipeline` entry before the reaper considers it stuck.
-    /// Production processing should never take this long; legitimate
-    /// long-running work should have its visibility timeout extended.
+    /// Idle bound for an `in_pipeline` entry before this reaper considers
+    /// it stuck — see [`Self::reap_stale_entries`] for the full rule (it
+    /// ages on last-seen, with an absolute ceiling of 8× this).
     const IN_PIPELINE_TTL: Duration = Duration::from_secs(15 * 60);
     const IN_PIPELINE_REAPER_INTERVAL: Duration = Duration::from_secs(60);
 
-    /// Spawn a periodic task that scans `in_pipeline` and removes any entry
-    /// older than `IN_PIPELINE_TTL`. This is a safety net for cases where a
-    /// callback is dropped without firing AND its `Drop` impl somehow
-    /// doesn't run (e.g. forgotten ownership in a future map). Without this,
-    /// SQS would keep redelivering and `filter_duplicates` would silently
-    /// swallow each redelivery as a duplicate, leaving thousands of
-    /// messages stuck on the queue.
-    /// **Why `self: Arc<Self>`** (owned): the spawned reaper task closes
-    /// over `in_pipeline` and `app_index` (Arc clones extracted from
-    /// `self`) and lives until shutdown — the receiver's Arc is consumed
-    /// by the call site and the task becomes the new owner of the
-    /// captured references.
-    /// **Shutdown signalling.** `token` is a child of `self.shutdown`
-    /// (`CancellationToken`), level-triggered: cancellation is observed
-    /// immediately by `token.cancelled()` even if this task were somehow
-    /// spawned after `shutdown()` had already run — there is no
-    /// subscribe-before-signal race like the old `broadcast` channel had.
+    /// Defence-in-depth reaper for stuck `in_pipeline` entries, alongside
+    /// the lifecycle manager's 5-minute sweep: same rule, finer cadence.
+    /// Exits when the manager's shutdown token is cancelled.
     fn spawn_in_pipeline_reaper(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         let token = self.shutdown.child_token();
-        let in_pipeline = self.in_pipeline.clone();
-        let app_index = self.app_message_to_pipeline_key.clone();
-
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Self::IN_PIPELINE_REAPER_INTERVAL);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -99,60 +82,7 @@ impl QueueManager {
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        let now = Instant::now();
-
-                        // Snapshot candidates first (don't mutate while iterating).
-                        // Each candidate captures the full context we need to log
-                        // — once we yank the entry from the map, this is gone.
-                        struct Candidate {
-                            pipeline_key: String,
-                            app_message_id: String,
-                            broker_message_id: Option<String>,
-                            queue_identifier: String,
-                            pool_code: String,
-                            message_group_id: Option<String>,
-                            age_secs: u64,
-                        }
-                        let mut candidates: Vec<Candidate> = Vec::new();
-                        for entry in in_pipeline.iter() {
-                            let age = now.duration_since(entry.value().started_at);
-                            if age > Self::IN_PIPELINE_TTL {
-                                candidates.push(Candidate {
-                                    pipeline_key: entry.key().clone(),
-                                    app_message_id: entry.value().message_id.clone(),
-                                    broker_message_id: entry.value().broker_message_id.clone(),
-                                    queue_identifier: entry.value().queue_identifier.clone(),
-                                    pool_code: entry.value().pool_code.clone(),
-                                    message_group_id: entry.value().message_group_id.clone(),
-                                    age_secs: age.as_secs(),
-                                });
-                            }
-                        }
-
-                        for c in &candidates {
-                            in_pipeline.remove(&c.pipeline_key);
-                            app_index.remove(&c.app_message_id);
-                            warn!(
-                                pipeline_key = %c.pipeline_key,
-                                app_message_id = %c.app_message_id,
-                                broker_message_id = ?c.broker_message_id,
-                                queue = %c.queue_identifier,
-                                pool_code = %c.pool_code,
-                                message_group_id = ?c.message_group_id,
-                                age_secs = c.age_secs,
-                                ttl_secs = Self::IN_PIPELINE_TTL.as_secs(),
-                                "Reaped stuck in_pipeline entry — SQS redelivery will retry"
-                            );
-                        }
-
-                        if !candidates.is_empty() {
-                            warn!(
-                                count = candidates.len(),
-                                ttl_secs = Self::IN_PIPELINE_TTL.as_secs(),
-                                "in_pipeline reaper cycle: {} entries expired",
-                                candidates.len()
-                            );
-                        }
+                        self.reap_in_pipeline(Self::IN_PIPELINE_TTL);
                     }
                     _ = token.cancelled() => {
                         info!("In-pipeline reaper shutting down");

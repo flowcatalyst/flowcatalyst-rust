@@ -99,7 +99,17 @@ pub trait QueueConsumer: Send + Sync {
         None
     }
 
-    /// Stop the consumer
+    /// Whether a nack/defer with a delay really holds the message back for
+    /// that delay before it is redelivered (Go:
+    /// `queue.Consumer.HonoursDelayedReturn`, R5). SQS and the Postgres
+    /// queue do; NATS does not (no per-group ordering on the stream, so a
+    /// delayed head's successors would overtake it). Defaults to `true`.
+    fn honours_delayed_return(&self) -> bool {
+        true
+    }
+
+    /// Stop the consumer's intake. Every backend keeps `ack`/`nack` of
+    /// messages it already handed out working after `stop()`.
     async fn stop(&self);
 
     /// Get queue metrics (pending/in-flight message counts) — calls SQS API.

@@ -825,6 +825,13 @@ impl QueueConsumer for NatsQueueConsumer {
         Ok(())
     }
 
+    /// Go: `HonoursDelayedReturn() == false` for NATS — the stream is one
+    /// durable WorkQueue consumer with no per-group subject, so a
+    /// `NakWithDelay` never holds a delayed head's successors back.
+    fn honours_delayed_return(&self) -> bool {
+        false
+    }
+
     fn is_healthy(&self) -> bool {
         if !self.running.load(Ordering::SeqCst) {
             return false;

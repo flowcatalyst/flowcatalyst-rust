@@ -278,10 +278,40 @@ pub struct QueuedMessage {
 /// no spawned task or channel needed.
 #[async_trait::async_trait]
 pub trait MessageCallback: Send + Sync {
+    /// The pool is about to dispatch this message (Go:
+    /// `InFlightTracker.EnsureTracked`). Restores the router's in-flight
+    /// entry if it was reaped while the message sat buffered, and answers
+    /// `false` when a DIFFERENT copy of the message now owns the pipeline —
+    /// the caller should then ack this copy and not deliver it. Defaults to
+    /// `true` (no tracking).
+    fn ensure_tracked(&self) -> bool {
+        true
+    }
+
+    /// The pool is retrying this message in place (Go:
+    /// `InFlightTracker.MarkRetrying`): bumps the attempt count and stamps
+    /// the retry time, so the in-flight reaper leaves a live retry alone and
+    /// the stall detector reports it as retrying and never force-NACKs it.
+    /// Defaults to a no-op.
+    fn mark_retrying(&self) {}
+
     /// Acknowledge — delete from queue, clean up tracking.
     async fn ack(&self);
     /// Negative acknowledge — make visible again after delay, clean up tracking.
     async fn nack(&self, delay_seconds: Option<u32>);
+
+    /// Whether the message's SOURCE broker holds a nacked message back for
+    /// the requested delay before redelivering it (Go's
+    /// `queue.Consumer.HonoursDelayedReturn`, owner ruling R5 2026-09-17).
+    /// It decides what the pool does with a deferral that names a delay
+    /// (`{"ack": false, "delaySeconds": N}`, N > 0): a broker that honours
+    /// the delay gets the message back at once (R1); one that does not
+    /// would redeliver it immediately, so the pool retries it in place
+    /// instead. SQS and the Postgres queue honour it; Go's NATS consumer
+    /// answers `false`. Defaults to `true`.
+    fn honours_delayed_return(&self) -> bool {
+        true
+    }
 }
 
 /// A message bundled with its callback for batch processing

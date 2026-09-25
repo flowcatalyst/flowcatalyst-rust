@@ -51,6 +51,7 @@ mod shutdown;
 mod snapshots;
 mod stall;
 mod synth_pools;
+mod tracking;
 
 pub use registry::ConsumerStat;
 pub use snapshots::{ForceAckResult, GroupFlushSnapshot, InFlightMessageInfo};
@@ -125,7 +126,11 @@ pub(super) struct RestartRecord {
 pub struct QueueManager {
     /// In-pipeline message tracking for deduplication
     /// Wrapped in Arc so spawned tasks can share the same map
-    in_pipeline: Arc<DashMap<String, fc_common::InFlightMessage>>,
+    in_pipeline: Arc<DashMap<String, tracking::Tracked>>,
+
+    /// Generation stamped on each in-flight entry at admission — see
+    /// [`tracking::Tracked::generation`].
+    next_tracker_generation: std::sync::atomic::AtomicU64,
 
     /// App message ID to pipeline key mapping for deduplication
     /// Wrapped in Arc so spawned tasks can share the same map
@@ -504,6 +509,7 @@ impl QueueManagerBuilder {
 
         QueueManager {
             in_pipeline: Arc::new(DashMap::new()),
+            next_tracker_generation: std::sync::atomic::AtomicU64::new(0),
             app_message_to_pipeline_key: Arc::new(DashMap::new()),
             pools: DashMap::new(),
             orphaned_draining: Mutex::new(Vec::new()),

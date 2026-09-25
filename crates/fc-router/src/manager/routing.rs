@@ -19,6 +19,7 @@ use fc_queue::QueueConsumer;
 use crate::error::RouterError;
 use crate::Result;
 
+use super::tracking::Tracked;
 use super::{ConsumerRegistry, QueueManager, RunningConsumer};
 
 /// Scope a broker-native message id to the queue it came from (G11,
@@ -41,22 +42,22 @@ fn broker_scope_key(queue_identifier: &str, broker_id: &str) -> String {
 
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
-/// redelivery), performs the SQS operation, then cleans up tracking.
+/// redelivery), performs the broker operation, then cleans up tracking.
 /// No spawned task, no channel — mirrors the TS closure pattern.
+///
+/// **Ownership (H12).** The callback acts on the tracker entry only while
+/// the entry still carries this admission's `generation`. If the entry was
+/// reaped and a later copy of the same message admitted in its place, this
+/// callback neither clears that copy's entry nor uses its receipt handle:
+/// an ack goes out on this copy's own route-time handle, and a nack is
+/// skipped (releasing the message would pull it out from under the copy
+/// that now owns it).
 ///
 /// **Drop safety.** If this callback is dropped without `ack()` or `nack()`
 /// being called (panic during mediation, runtime cancellation, abandoned
-/// queue task on early drain-task exit, …) the `Drop` impl guarantees:
-///
-/// 1. The entry is removed from `in_pipeline` and
-///    `app_message_to_pipeline_key`. Without this cleanup, SQS redeliveries
-///    of the same `broker_message_id` would be silently swallowed by
-///    `filter_duplicates` Phase 1 (Check 1) and the message would stick
-///    until the SQS message retention period expires — observed in
-///    production as "thousands of messages stuck".
-/// 2. A best-effort `nack` is fired via `tokio::spawn` so SQS releases the
-///    visibility timeout sooner than its default. Failures here are
-///    swallowed; the natural visibility timeout is the eventual safety net.
+/// queue task on early drain-task exit, …) the `Drop` impl clears this
+/// admission's tracking synchronously and fires a best-effort `nack`, so
+/// broker redeliveries are not swallowed as duplicates of a dead owner.
 struct QueueMessageCallback {
     pipeline_key: String,
     app_message_id: String,
@@ -65,6 +66,12 @@ struct QueueMessageCallback {
     /// `pipeline_key` itself is scoped, so an ACK-failed retry never
     /// collides with another queue's entry at the same broker id.
     queue_identifier: String,
+    /// This admission's tracker generation — see the type's doc.
+    generation: u64,
+    /// The entry as it was admitted, with this copy's own receipt handle:
+    /// what an ack falls back to when the entry is gone, and what
+    /// `ensure_tracked` restores.
+    admitted: InFlightMessage,
     /// The consumer instance that received the message — the last-resort
     /// target when nothing in the registry answers for its queue (a message
     /// routed by a consumer the manager never registered).
@@ -76,7 +83,7 @@ struct QueueMessageCallback {
     /// through it when they run (Go: `resolveConsumer`), not through an
     /// instance captured at route time that may since have been replaced.
     registry: Arc<ConsumerRegistry>,
-    in_pipeline: Arc<DashMap<String, InFlightMessage>>,
+    in_pipeline: Arc<DashMap<String, Tracked>>,
     app_message_to_pipeline_key: Arc<DashMap<String, String>>,
     pending_delete: Arc<DashMap<String, Instant>>,
     /// Set to true the moment `ack()` or `nack()` is entered. The `Drop`
@@ -84,6 +91,19 @@ struct QueueMessageCallback {
     /// happened. AcqRel ordering: the load in Drop must observe stores from
     /// any thread that called ack/nack.
     completed: std::sync::atomic::AtomicBool,
+}
+
+/// Whose tracker entry sits under this callback's pipeline key.
+enum Ownership {
+    /// This admission's: act with the entry's freshest receipt handle.
+    Owned {
+        receipt_handle: String,
+        broker_message_id: Option<String>,
+    },
+    /// No entry (reaped, force-acked, or shutdown cleared it).
+    Gone,
+    /// A later admission of the same message owns it.
+    Other,
 }
 
 impl QueueMessageCallback {
@@ -95,64 +115,123 @@ impl QueueMessageCallback {
             .unwrap_or_else(|| self.origin.clone())
     }
 
-    /// Common cleanup: drop the in-memory tracking entries so future
-    /// redeliveries of this `broker_message_id` flow through Phase 2 again
-    /// instead of being silently swallowed as duplicates.
+    fn ownership(&self) -> Ownership {
+        match self.in_pipeline.get(&self.pipeline_key) {
+            Some(e) if e.generation == self.generation => Ownership::Owned {
+                receipt_handle: e.receipt_handle.clone(),
+                broker_message_id: e.broker_message_id.clone(),
+            },
+            Some(_) => Ownership::Other,
+            None => Ownership::Gone,
+        }
+    }
+
+    /// Drop this admission's tracking entries — never a later copy's — so
+    /// future redeliveries flow through again instead of being swallowed
+    /// as duplicates.
     fn cleanup_tracking(&self) {
-        self.in_pipeline.remove(&self.pipeline_key);
-        self.app_message_to_pipeline_key
-            .remove(&self.app_message_id);
+        let removed = self
+            .in_pipeline
+            .remove_if(&self.pipeline_key, |_, e| e.generation == self.generation)
+            .is_some();
+        if removed {
+            self.app_message_to_pipeline_key
+                .remove_if(&self.app_message_id, |_, k| *k == self.pipeline_key);
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl MessageCallback for QueueMessageCallback {
+    /// Go: `EnsureTracked` — restore this admission's entry if it was
+    /// reaped while the message sat buffered; `false` when a different
+    /// broker copy of the same application message now owns the pipeline.
+    fn ensure_tracked(&self) -> bool {
+        if self.in_pipeline.contains_key(&self.pipeline_key) {
+            return true;
+        }
+        if let Some(key) = self
+            .app_message_to_pipeline_key
+            .get(&self.app_message_id)
+            .map(|k| k.value().clone())
+        {
+            if key != self.pipeline_key && self.in_pipeline.contains_key(&key) {
+                return false;
+            }
+        }
+        self.in_pipeline
+            .entry(self.pipeline_key.clone())
+            .or_insert_with(|| Tracked::new(self.admitted.clone(), self.generation));
+        self.app_message_to_pipeline_key
+            .insert(self.app_message_id.clone(), self.pipeline_key.clone());
+        true
+    }
+
+    /// Go: `MarkRetrying`.
+    fn mark_retrying(&self) {
+        if let Some(mut e) = self.in_pipeline.get_mut(&self.pipeline_key) {
+            if e.generation == self.generation {
+                e.mark_retrying();
+            }
+        }
+    }
+
+    /// Go: the source consumer's `HonoursDelayedReturn` (NATS: false).
+    fn honours_delayed_return(&self) -> bool {
+        self.consumer().honours_delayed_return()
+    }
+
     async fn ack(&self) {
         // Mark resolved BEFORE doing any await so the Drop impl knows we
         // owned the resolution even if a panic happens mid-await.
         self.completed
             .store(true, std::sync::atomic::Ordering::Release);
 
-        // Read latest receipt handle (may have been updated by redelivery)
-        let (handle, broker_id) = self
-            .in_pipeline
-            .get(&self.pipeline_key)
-            .map(|e| (e.receipt_handle.clone(), e.broker_message_id.clone()))
-            .unwrap_or_default();
+        let (handle, broker_id) = match self.ownership() {
+            Ownership::Owned {
+                receipt_handle,
+                broker_message_id,
+            } => (receipt_handle, broker_message_id),
+            Ownership::Gone => (
+                self.admitted.receipt_handle.clone(),
+                self.admitted.broker_message_id.clone(),
+            ),
+            Ownership::Other => {
+                warn!(
+                    app_message_id = %self.app_message_id,
+                    "ACK for a copy whose tracker entry now belongs to a later admission; acking with this copy's own receipt"
+                );
+                (
+                    self.admitted.receipt_handle.clone(),
+                    self.admitted.broker_message_id.clone(),
+                )
+            }
+        };
 
-        if handle.is_empty() {
-            error!(
-                pipeline_key = %self.pipeline_key,
-                app_message_id = %self.app_message_id,
-                "ACK skipped — no receipt handle in in_pipeline (entry may have been reaped)"
-            );
-        } else {
-            if let Err(e) = self.consumer().ack(&handle).await {
-                // ACK failed — add to pending_delete BEFORE removing from in_pipeline
-                if let Some(ref bid) = broker_id {
-                    warn!(
-                        broker_message_id = %bid,
-                        app_message_id = %self.app_message_id,
-                        error = %e,
-                        "ACK failed (receipt handle likely expired) - adding to pending delete"
-                    );
-                    // G11: scope by queue, same as `pipeline_key` — see
-                    // `broker_scope_key`'s doc comment.
-                    self.pending_delete.insert(
-                        broker_scope_key(&self.queue_identifier, bid),
-                        Instant::now(),
-                    );
-                } else {
-                    error!(
-                        app_message_id = %self.app_message_id,
-                        error = %e,
-                        "ACK failed and no broker message ID to track for pending delete"
-                    );
-                }
+        if let Err(e) = self.consumer().ack(&handle).await {
+            if let Some(ref bid) = broker_id {
+                warn!(
+                    broker_message_id = %bid,
+                    app_message_id = %self.app_message_id,
+                    error = %e,
+                    "ACK failed (receipt handle likely expired) - adding to pending delete"
+                );
+                // G11: scope by queue, same as `pipeline_key` — see
+                // `broker_scope_key`'s doc comment.
+                self.pending_delete.insert(
+                    broker_scope_key(&self.queue_identifier, bid),
+                    Instant::now(),
+                );
+            } else {
+                error!(
+                    app_message_id = %self.app_message_id,
+                    error = %e,
+                    "ACK failed and no broker message ID to track for pending delete"
+                );
             }
         }
 
-        // Clean up tracking AFTER SQS operation
+        // Clean up tracking AFTER the broker operation
         self.cleanup_tracking();
     }
 
@@ -161,23 +240,22 @@ impl MessageCallback for QueueMessageCallback {
         self.completed
             .store(true, std::sync::atomic::Ordering::Release);
 
-        let handle = self
-            .in_pipeline
-            .get(&self.pipeline_key)
-            .map(|e| e.receipt_handle.clone())
-            .unwrap_or_default();
-
-        if handle.is_empty() {
-            error!(
-                pipeline_key = %self.pipeline_key,
-                app_message_id = %self.app_message_id,
-                "NACK skipped — no receipt handle in in_pipeline (entry may have been reaped)"
-            );
-        } else {
+        let handle = match self.ownership() {
+            Ownership::Owned { receipt_handle, .. } => Some(receipt_handle),
+            Ownership::Gone => Some(self.admitted.receipt_handle.clone()),
+            Ownership::Other => {
+                warn!(
+                    app_message_id = %self.app_message_id,
+                    "NACK skipped — a later admission of this message owns it"
+                );
+                None
+            }
+        };
+        if let Some(handle) = handle {
             let _ = self.consumer().nack(&handle, delay_seconds).await;
         }
 
-        // Clean up tracking AFTER SQS operation
+        // Clean up tracking AFTER the broker operation
         self.cleanup_tracking();
     }
 }
@@ -189,38 +267,27 @@ impl Drop for QueueMessageCallback {
             return;
         }
 
-        // The callback was dropped without resolution. Most likely causes:
-        //   • mediator panicked mid-mediation
-        //   • tokio task was cancelled
-        //   • drain task exited early leaving queued PoolTasks abandoned
-        //
-        // Always clear the in-memory tracking so SQS redeliveries are not
-        // silently swallowed. Fire a best-effort nack so the message
-        // returns to the queue sooner than its full visibility timeout.
-
-        let pipeline_key = self.pipeline_key.clone();
-        let app_message_id = self.app_message_id.clone();
-
-        // Snapshot the current receipt handle before we yank the entry.
-        let handle = self
-            .in_pipeline
-            .get(&pipeline_key)
-            .map(|e| e.receipt_handle.clone())
-            .unwrap_or_default();
+        // The callback was dropped without resolution (mediator panic, task
+        // cancellation, an abandoned drain task). Clear this admission's
+        // tracking so redeliveries are not swallowed, and fire a
+        // best-effort nack so the message returns sooner than its natural
+        // visibility timeout.
+        let handle = match self.ownership() {
+            Ownership::Owned { receipt_handle, .. } => Some(receipt_handle),
+            Ownership::Gone => Some(self.admitted.receipt_handle.clone()),
+            Ownership::Other => None,
+        };
 
         // Synchronous cleanup of tracking — never deferred.
         self.cleanup_tracking();
 
         warn!(
-            pipeline_key = %pipeline_key,
-            app_message_id = %app_message_id,
+            pipeline_key = %self.pipeline_key,
+            app_message_id = %self.app_message_id,
             "Callback dropped without ack/nack — fallback cleanup ran (likely mediator panic or task cancel)"
         );
 
-        if !handle.is_empty() {
-            // Best-effort nack on a detached task. If we can't get a tokio
-            // handle (e.g. shutting down), the SQS visibility timeout will
-            // eventually redeliver and processing will retry.
+        if let Some(handle) = handle {
             if let Ok(rt) = tokio::runtime::Handle::try_current() {
                 let consumer = self.consumer();
                 rt.spawn(async move {
@@ -580,7 +647,12 @@ impl QueueManager {
                         Some(Arc::clone(&batch_id)),
                         msg.receipt_handle.clone(),
                     );
-                    self.in_pipeline.insert(pipeline_key.clone(), in_flight);
+                    let generation =
+                        self.next_tracker_generation.fetch_add(1, Ordering::Relaxed) + 1;
+                    self.in_pipeline.insert(
+                        pipeline_key.clone(),
+                        Tracked::new(in_flight.clone(), generation),
+                    );
 
                     // Track app message ID -> pipeline key for requeue detection
                     self.app_message_to_pipeline_key
@@ -591,6 +663,8 @@ impl QueueManager {
                         pipeline_key: pipeline_key.clone(),
                         app_message_id: app_message_id.clone(),
                         queue_identifier,
+                        generation,
+                        admitted: in_flight,
                         origin: consumer.clone(),
                         origin_generation,
                         registry: self.consumers.clone(),
@@ -658,19 +732,19 @@ impl QueueManager {
                 // — see `broker_scope_key`'s doc comment.
                 let pipeline_key = broker_scope_key(&msg.queue_identifier, broker_msg_id);
                 if let Some(mut entry) = self.in_pipeline.get_mut(&pipeline_key) {
-                    // Update receipt handle with the new one from the redelivered message
-                    // This ensures when processing completes, ACK uses the valid (latest) receipt handle
-                    if entry.receipt_handle != msg.receipt_handle {
-                        debug!(
-                            message_id = %msg.message.id,
-                            broker_message_id = %broker_msg_id,
-                            "Updating receipt handle for redelivered message (visibility timeout)"
-                        );
-                        entry.receipt_handle = msg.receipt_handle.clone();
-                        // Also update broker_message_id in case it was a fallback key
-                        if entry.broker_message_id.is_none() {
-                            entry.broker_message_id = Some(broker_msg_id.clone());
-                        }
+                    // Adopt the redelivery's receipt handle so the eventual
+                    // ACK uses the latest valid one, and refresh the idle
+                    // clock the reaper judges the entry by (Go:
+                    // UpdateReceiptHandle refreshes LastSeenAt).
+                    debug!(
+                        message_id = %msg.message.id,
+                        broker_message_id = %broker_msg_id,
+                        "Redelivery of an in-flight message (visibility timeout)"
+                    );
+                    entry.redelivered(&msg.receipt_handle);
+                    // Also update broker_message_id in case it was a fallback key
+                    if entry.broker_message_id.is_none() {
+                        entry.broker_message_id = Some(broker_msg_id.clone());
                     }
                     drop(entry);
                     result.duplicates.push(DuplicateMessage {
@@ -715,14 +789,8 @@ impl QueueManager {
 
                 // Same broker ID or no broker ID - check if still in pipeline
                 if let Some(mut entry) = self.in_pipeline.get_mut(&existing_key) {
-                    // Update receipt handle for redelivery
-                    if entry.receipt_handle != msg.receipt_handle {
-                        debug!(
-                            message_id = %msg.message.id,
-                            "Updating receipt handle for redelivered message"
-                        );
-                        entry.receipt_handle = msg.receipt_handle.clone();
-                    }
+                    // Redelivery: adopt the handle and refresh the idle clock.
+                    entry.redelivered(&msg.receipt_handle);
                     result.duplicates.push(DuplicateMessage {
                         message: msg,
                         existing_pipeline_key: existing_key,
@@ -920,10 +988,10 @@ mod callback_drop_tests {
         consumer: Arc<RecordingConsumer>,
     ) -> (
         QueueMessageCallback,
-        Arc<DashMap<String, InFlightMessage>>,
+        Arc<DashMap<String, Tracked>>,
         Arc<DashMap<String, String>>,
     ) {
-        let in_pipeline: Arc<DashMap<String, InFlightMessage>> = Arc::new(DashMap::new());
+        let in_pipeline: Arc<DashMap<String, Tracked>> = Arc::new(DashMap::new());
         let app_index: Arc<DashMap<String, String>> = Arc::new(DashMap::new());
         let pending_delete = Arc::new(DashMap::new());
 
@@ -950,13 +1018,15 @@ mod callback_drop_tests {
             None,
             "receipt-handle-xyz".to_string(),
         );
-        in_pipeline.insert(pipeline_key.clone(), in_flight);
+        in_pipeline.insert(pipeline_key.clone(), Tracked::new(in_flight.clone(), 1));
         app_index.insert(app_message_id.clone(), pipeline_key.clone());
 
         let cb = QueueMessageCallback {
             pipeline_key,
             app_message_id,
             queue_identifier: "queue-id".to_string(),
+            generation: 1,
+            admitted: in_flight,
             origin: consumer as Arc<dyn QueueConsumer>,
             origin_generation: 0,
             registry: Arc::new(ConsumerRegistry::default()),
@@ -1031,6 +1101,146 @@ mod callback_drop_tests {
             1,
             "no double-nack on drop after explicit nack"
         );
+    }
+
+    /// H12: when the entry under this callback's key belongs to a LATER
+    /// admission (the original was reaped and a redelivery admitted anew),
+    /// the old callback must not nack the message out from under the new
+    /// copy, nor clear its entry.
+    #[tokio::test]
+    async fn stale_callback_leaves_a_later_admission_alone() {
+        let consumer = Arc::new(RecordingConsumer::default());
+        let (cb, in_pipeline, app_index) = build_callback(consumer.clone());
+        // Re-admit: same key, new generation, fresher receipt.
+        let mut newer = in_pipeline.get("broker-msg-1").unwrap().clone();
+        newer.generation = 2;
+        newer.msg.receipt_handle = "receipt-newer".to_string();
+        in_pipeline.insert("broker-msg-1".to_string(), newer);
+
+        cb.nack(Some(5)).await;
+        assert_eq!(
+            consumer.nacks.load(AtomicOrdering::SeqCst),
+            0,
+            "must not release the message the later admission owns"
+        );
+        assert_eq!(
+            in_pipeline.get("broker-msg-1").unwrap().generation,
+            2,
+            "the later admission's entry must survive"
+        );
+        assert_eq!(app_index.len(), 1);
+    }
+
+    /// An ack whose entry was taken over acks with this copy's own receipt
+    /// (the work did complete) and leaves the newer entry in place.
+    #[tokio::test]
+    async fn stale_callback_acks_with_its_own_receipt() {
+        #[derive(Default)]
+        struct Handles(parking_lot::Mutex<Vec<String>>);
+        #[async_trait]
+        impl QueueConsumer for Handles {
+            fn identifier(&self) -> &str {
+                "h"
+            }
+            async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+                Ok(vec![])
+            }
+            async fn ack(&self, h: &str) -> QueueResult<()> {
+                self.0.lock().push(h.to_string());
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            async fn stop(&self) {}
+        }
+        let handles = Arc::new(Handles::default());
+        let (mut cb, in_pipeline, _app) = build_callback(Arc::new(RecordingConsumer::default()));
+        cb.origin = handles.clone();
+        let mut newer = in_pipeline.get("broker-msg-1").unwrap().clone();
+        newer.generation = 2;
+        newer.msg.receipt_handle = "receipt-newer".to_string();
+        in_pipeline.insert("broker-msg-1".to_string(), newer);
+
+        cb.ack().await;
+        assert_eq!(*handles.0.lock(), vec!["receipt-handle-xyz".to_string()]);
+        assert_eq!(in_pipeline.get("broker-msg-1").unwrap().generation, 2);
+    }
+
+    /// Go's `EnsureTracked`: an entry reaped while the message sat buffered
+    /// is restored at dispatch; a DIFFERENT broker copy owning the app id
+    /// answers false.
+    #[tokio::test]
+    async fn ensure_tracked_restores_a_reaped_entry_and_refuses_a_foreign_owner() {
+        let consumer = Arc::new(RecordingConsumer::default());
+        let (cb, in_pipeline, app_index) = build_callback(consumer.clone());
+        in_pipeline.clear();
+        app_index.clear();
+        assert!(cb.ensure_tracked());
+        assert_eq!(in_pipeline.get("broker-msg-1").unwrap().generation, 1);
+        assert_eq!(app_index.get("app-msg-1").unwrap().value(), "broker-msg-1");
+
+        // A different broker copy of the same app message owns it now.
+        in_pipeline.clear();
+        let foreign = cb.admitted.clone();
+        in_pipeline.insert("other-broker-key".to_string(), Tracked::new(foreign, 9));
+        app_index.insert("app-msg-1".to_string(), "other-broker-key".to_string());
+        assert!(!cb.ensure_tracked());
+        // Ours is not resurrected.
+        assert!(!in_pipeline.contains_key("broker-msg-1"));
+        // Drop without resolution must not touch the foreign entry either.
+        drop(cb);
+        assert!(in_pipeline.contains_key("other-broker-key"));
+    }
+
+    /// Go's `MarkRetrying` through the callback, and NATS's
+    /// `HonoursDelayedReturn` false reaching the pool through it.
+    #[tokio::test]
+    async fn mark_retrying_and_honours_delayed_return_pass_through() {
+        struct NoDelay;
+        #[async_trait]
+        impl QueueConsumer for NoDelay {
+            fn identifier(&self) -> &str {
+                "nats"
+            }
+            async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> QueueResult<()> {
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            fn honours_delayed_return(&self) -> bool {
+                false
+            }
+            async fn stop(&self) {}
+        }
+        let (mut cb, in_pipeline, _app) = build_callback(Arc::new(RecordingConsumer::default()));
+        assert!(cb.honours_delayed_return());
+        cb.origin = Arc::new(NoDelay);
+        assert!(!cb.honours_delayed_return());
+
+        cb.mark_retrying();
+        cb.mark_retrying();
+        let e = in_pipeline.get("broker-msg-1").unwrap();
+        assert_eq!(e.attempts, 2);
+        assert!(e.last_retry_at.is_some());
+        drop(e);
+        cb.ack().await;
     }
 
     /// Regression: every pool's mediator the manager builds must record
@@ -1313,7 +1523,8 @@ mod g11_broker_scoping_tests {
                 a.queue_identifier.clone(),
                 None,
                 a.receipt_handle.clone(),
-            ),
+            )
+            .into(),
         );
         manager
             .app_message_to_pipeline_key
@@ -1336,7 +1547,8 @@ mod g11_broker_scoping_tests {
                 b.queue_identifier.clone(),
                 None,
                 b.receipt_handle.clone(),
-            ),
+            )
+            .into(),
         );
         manager
             .app_message_to_pipeline_key

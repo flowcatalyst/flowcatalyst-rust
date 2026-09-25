@@ -33,10 +33,17 @@ impl QueueManager {
 
     /// Reap stale entries from in-memory tracking maps.
     ///
-    /// Evicts `in_pipeline` and `app_message_to_pipeline_key` entries older than
-    /// `max_age`, which indicates the ACK callback task is stuck or was dropped.
-    /// Also evicts `pending_delete_broker_ids` entries older than `pending_delete_max_age`
-    /// (messages that were processed but never re-polled for deletion).
+    /// In-flight entries follow Go's `InFlightTracker.Reap`: `max_age` is
+    /// an IDLE bound measured on last-seen (refreshed by every broker
+    /// redelivery), `max_age` × 8 is an absolute ceiling measured from
+    /// admission, and a live in-place retry is exempt from the idle bound.
+    /// Reaping on the admission time alone (as this did) dropped the entry
+    /// of every delivery slower than 15 minutes; the next redelivery was
+    /// then admitted as new — a second delivery of work in progress — and
+    /// the first one's callback acked or nacked the second's entry.
+    ///
+    /// Also evicts `pending_delete_broker_ids` entries older than
+    /// `pending_delete_max_age` (processed but never re-polled for deletion).
     pub fn reap_stale_entries(
         &self,
         max_age: Duration,
@@ -47,31 +54,7 @@ impl QueueManager {
             return (0, 0);
         }
 
-        // Reap stale in_pipeline entries
-        let mut reaped_pipeline = 0;
-        if !self.in_pipeline.is_empty() {
-            let stale_keys: Vec<String> = self
-                .in_pipeline
-                .iter()
-                .filter(|entry| entry.value().started_at.elapsed() > max_age)
-                .map(|entry| entry.key().clone())
-                .collect();
-
-            for key in &stale_keys {
-                if let Some((_, entry)) = self.in_pipeline.remove(key) {
-                    self.app_message_to_pipeline_key.remove(&entry.message_id);
-                    reaped_pipeline += 1;
-                }
-            }
-
-            if reaped_pipeline > 0 {
-                warn!(
-                    reaped = reaped_pipeline,
-                    max_age_seconds = max_age.as_secs(),
-                    "Reaped stale in_pipeline entries (likely orphaned by dropped ACK tasks)"
-                );
-            }
-        }
+        let reaped_pipeline = self.reap_in_pipeline(max_age);
 
         // Reap stale pending_delete_broker_ids entries
         let reaped_pending = if self.pending_delete_broker_ids.is_empty() {
@@ -92,6 +75,57 @@ impl QueueManager {
         }
 
         (reaped_pipeline, reaped_pending)
+    }
+
+    /// Go's `Reap` over `in_pipeline` (see [`Self::reap_stale_entries`]).
+    /// Returns the number of entries removed.
+    pub(super) fn reap_in_pipeline(&self, idle: Duration) -> usize {
+        if self.in_pipeline.is_empty() {
+            return 0;
+        }
+        let ceiling = idle * super::tracking::ABSOLUTE_MAX_AGE_FACTOR;
+        let now = std::time::Instant::now();
+        let stale: Vec<(String, u64)> = self
+            .in_pipeline
+            .iter()
+            .filter(|e| e.value().should_reap(now, idle, ceiling))
+            .map(|e| (e.key().clone(), e.value().generation))
+            .collect();
+
+        let mut reaped = 0;
+        for (key, generation) in stale {
+            // Generation-checked: a message admitted afresh under the same
+            // key since the scan is not this entry.
+            if let Some((_, entry)) = self
+                .in_pipeline
+                .remove_if(&key, |_, e| e.generation == generation)
+            {
+                self.app_message_to_pipeline_key
+                    .remove_if(&entry.message_id, |_, k| *k == key);
+                let past_ceiling = now.duration_since(entry.started_at) > ceiling;
+                warn!(
+                    message_id = %entry.message_id,
+                    queue = %entry.queue_identifier,
+                    pool_code = %entry.pool_code,
+                    message_group_id = ?entry.message_group_id,
+                    age_secs = entry.started_at.elapsed().as_secs(),
+                    idle_secs = entry.last_seen.elapsed().as_secs(),
+                    attempts = entry.attempts,
+                    past_ceiling,
+                    "Reaped in-flight entry — broker redelivery will retry"
+                );
+                reaped += 1;
+            }
+        }
+        if reaped > 0 {
+            warn!(
+                reaped,
+                idle_secs = idle.as_secs(),
+                ceiling_secs = ceiling.as_secs(),
+                "Reaped stale in-flight entries"
+            );
+        }
+        reaped
     }
 
     /// Detect stalled messages that have been processing beyond the threshold.
@@ -192,7 +226,36 @@ impl QueueManager {
         // notifier) are gated by `report_stall`, so a handful of
         // long-running deliveries doing their job can't push the router
         // into Warning/Degraded purely by being re-reported every tick.
+        // Go's two populations: a message a worker is retrying in place is
+        // reported as retrying and is never force-NACKed (that would hand
+        // the broker a second copy while the retry still runs); the rest
+        // are stalled.
+        let retrying: std::collections::HashSet<String> = self
+            .in_pipeline
+            .iter()
+            .filter(|e| e.value().attempts > 0)
+            .map(|e| e.value().message_id.clone())
+            .collect();
+
         for msg in &stalled {
+            if retrying.contains(&msg.message_id) {
+                if self.report_stall(
+                    &msg.message_id,
+                    WarningSeverity::Warn,
+                    format!(
+                        "Message {} has been retrying in-pipeline for {}s in pool {}",
+                        msg.message_id, msg.elapsed_seconds, msg.pool_code
+                    ),
+                ) {
+                    warn!(
+                        message_id = %msg.message_id,
+                        pool_code = %msg.pool_code,
+                        elapsed_seconds = msg.elapsed_seconds,
+                        "Message retrying in-pipeline past the stall threshold"
+                    );
+                }
+                continue;
+            }
             let reported = self.report_stall(
                 &msg.message_id,
                 WarningSeverity::Warn,
@@ -230,7 +293,7 @@ impl QueueManager {
         let mut force_nacked = 0;
 
         for msg in &stalled {
-            if msg.elapsed_seconds >= force_threshold {
+            if msg.elapsed_seconds >= force_threshold && !retrying.contains(&msg.message_id) {
                 // `in_pipeline` is keyed by pipeline_key (the broker
                 // message id, queue-scoped — G11), not by the application
                 // `message_id` `StalledMessageInfo` carries — resolve the
@@ -359,7 +422,7 @@ mod stall_warning_tests {
         let manager = manager_with_stall_threshold(5);
         manager
             .in_pipeline
-            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1").into());
 
         // Simulate several detector ticks against the same still-stalled message.
         manager.check_and_handle_stalled_messages().await;
@@ -382,7 +445,7 @@ mod stall_warning_tests {
         let manager = manager_with_stall_threshold(5);
         manager
             .in_pipeline
-            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1").into());
 
         manager.check_and_handle_stalled_messages().await;
         assert_eq!(
@@ -404,7 +467,7 @@ mod stall_warning_tests {
         // the process.
         manager
             .in_pipeline
-            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1"));
+            .insert("bh-msg-1".to_string(), stalled_in_flight("msg-1").into());
         manager.check_and_handle_stalled_messages().await;
 
         assert_eq!(
@@ -415,6 +478,57 @@ mod stall_warning_tests {
             2,
             "a fresh stall of a previously-resolved message id must report again"
         );
+    }
+
+    /// H12: the reaper ages on last-seen — an entry admitted 20 minutes ago
+    /// whose broker keeps redelivering it (last seen just now) stays; one
+    /// nobody has seen for 16 minutes goes; nothing outlives the ceiling.
+    #[test]
+    fn reaper_ages_on_last_seen_with_an_absolute_ceiling() {
+        let manager = manager_with_stall_threshold(5);
+        let now = Instant::now();
+        let mut live: super::super::tracking::Tracked = stalled_in_flight("live").into();
+        live.msg.started_at = now - Duration::from_secs(20 * 60);
+        live.last_seen = now;
+        let mut idle: super::super::tracking::Tracked = stalled_in_flight("idle").into();
+        idle.msg.started_at = now - Duration::from_secs(20 * 60);
+        idle.last_seen = now - Duration::from_secs(16 * 60);
+        let mut ancient: super::super::tracking::Tracked = stalled_in_flight("ancient").into();
+        ancient.msg.started_at = now - Duration::from_secs(3 * 60 * 60);
+        ancient.last_seen = now;
+        manager.in_pipeline.insert("k-live".into(), live);
+        manager.in_pipeline.insert("k-idle".into(), idle);
+        manager.in_pipeline.insert("k-ancient".into(), ancient);
+
+        let (reaped, _) =
+            manager.reap_stale_entries(Duration::from_secs(15 * 60), Duration::from_secs(60));
+        assert_eq!(reaped, 2);
+        assert!(manager.in_pipeline.contains_key("k-live"));
+    }
+
+    /// Go: a message being retried in place is reported as retrying and is
+    /// never force-NACKed.
+    #[tokio::test]
+    async fn retrying_message_is_never_force_nacked() {
+        let manager = manager_with_force_nack();
+        let consumer = Arc::new(RecordingConsumer::default());
+        let rc = manager.new_running_consumer(consumer.clone(), "STREAM1".to_string(), None);
+        manager.consumers.insert(rc);
+        let mut in_flight: super::super::tracking::Tracked = stalled_in_flight("msg-r").into();
+        in_flight.msg.queue_identifier = "STREAM1/router".to_string();
+        in_flight.mark_retrying();
+        manager.in_pipeline.insert("k-r".to_string(), in_flight);
+        manager
+            .app_message_to_pipeline_key
+            .insert("msg-r".to_string(), "k-r".to_string());
+
+        assert_eq!(manager.check_and_handle_stalled_messages().await, 0);
+        assert_eq!(consumer.nacks.load(AtomicOrdering::SeqCst), 0);
+        assert!(manager.in_pipeline.contains_key("k-r"));
+        let warnings = manager
+            .warning_service()
+            .get_warnings_by_category(WarningCategory::Stall);
+        assert!(warnings[0].message.contains("retrying"));
     }
 
     // --- G10: force-NACK must resolve the consumer by identifier(), not
@@ -501,7 +615,7 @@ mod stall_warning_tests {
         in_flight.queue_identifier = "STREAM1/router".to_string();
         manager
             .in_pipeline
-            .insert("scoped-key-1".to_string(), in_flight);
+            .insert("scoped-key-1".to_string(), in_flight.into());
         manager
             .app_message_to_pipeline_key
             .insert("msg-1".to_string(), "scoped-key-1".to_string());

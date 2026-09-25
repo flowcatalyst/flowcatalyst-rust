@@ -1743,9 +1743,9 @@ async fn force_ack_in_flight_clears_entry_and_later_ack_is_harmless() {
     );
 
     // Let the in-flight delivery (already running when force-ack fired)
-    // finish. Its own ack() finds no receipt handle in `in_pipeline`
-    // (entry gone) — logged as an error, but must not panic, double-ack,
-    // or otherwise crash the task.
+    // finish. Its entry is gone, so — as Go's `ackTracked` does when the
+    // tracker no longer knows the message — it acks with its own receipt
+    // handle: a second delete of an already-deleted message, harmless.
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert_eq!(
         mediator.call_count(),
@@ -1753,9 +1753,13 @@ async fn force_ack_in_flight_clears_entry_and_later_ack_is_harmless() {
         "the delivery that was already running must still run to completion"
     );
     assert_eq!(
-        consumer.acked.lock().len(),
-        1,
-        "the delivery's own stale-handle ack must be a no-op, not a second broker ack"
+        consumer.acked.lock().clone(),
+        vec!["receipt-msg-1".to_string(), "receipt-msg-1".to_string()],
+        "the finished delivery acks with its own receipt, as Go does"
+    );
+    assert!(
+        manager.force_ack_in_flight("msg-1").await.is_none(),
+        "and it does not resurrect the tracker entry"
     );
 }
 
