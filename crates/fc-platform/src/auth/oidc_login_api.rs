@@ -1702,6 +1702,101 @@ pub fn oidc_login_router(state: OidcLoginApiState) -> Router {
         .with_state(state)
 }
 
+// ==================== Portal identity plane hooks ====================
+//
+// Go's bridge serves the portal SSO start (`/portal/auth/oidc/login`) and the
+// portal branch of this callback through the same IdP machinery. The portal
+// flow itself lives in `crate::portal::oidc`; these two functions expose the
+// IdP plumbing it needs, so this file only gains this section.
+
+/// The secrets and IdP authorize URL of a portal-plane handshake.
+pub(crate) struct PortalHandshake {
+    pub state: String,
+    pub nonce: String,
+    pub code_verifier: String,
+    pub authorize_url: String,
+}
+
+/// Start a provider-direct handshake with `idp` (Go `handlePortalOIDCLogin`
+/// after the flow is consumed): fresh state, nonce and PKCE verifier, and
+/// the IdP's authorize URL for this platform's callback.
+pub(crate) fn portal_handshake(
+    state: &OidcLoginApiState,
+    host: &str,
+    uri: &Uri,
+    idp: &IdentityProvider,
+) -> PortalHandshake {
+    let oidc_state = generate_random_string(32);
+    let nonce = generate_random_string(32);
+    let code_verifier = generate_code_verifier();
+    let challenge = generate_code_challenge(&code_verifier);
+    let callback_url = get_callback_url(state, host, uri);
+    let authorize_url =
+        build_authorization_url_from_idp(idp, &oidc_state, &nonce, &challenge, &callback_url);
+    PortalHandshake {
+        state: oidc_state,
+        nonce,
+        code_verifier,
+        authorize_url,
+    }
+}
+
+/// Exchange a portal handshake's code and verify the ID token (signature,
+/// issuer, audience, nonce, guest accounts). Returns the verified email and
+/// name, or Go's error code and message.
+pub(crate) async fn portal_verify_callback(
+    state: &OidcLoginApiState,
+    host: &str,
+    uri: &Uri,
+    idp: &IdentityProvider,
+    code: &str,
+    code_verifier: &str,
+    nonce: &str,
+) -> Result<(String, Option<String>), (StatusCode, &'static str, String)> {
+    let callback_url = get_callback_url(state, host, uri);
+    let tokens = exchange_code_for_tokens_from_idp(
+        idp,
+        code,
+        code_verifier,
+        &callback_url,
+        state.encryption_service.as_deref(),
+    )
+    .await
+    .map_err(|e| {
+        error!(error = %e, "portal OIDC code exchange failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OIDC_EXCHANGE",
+            "code exchange failed".to_string(),
+        )
+    })?;
+    let claims = validate_id_token_with_jwks(&tokens.id_token, idp, nonce, &state.jwks_cache)
+        .await
+        .map_err(|e| match e {
+            IdTokenError::NonceMismatch => (
+                StatusCode::FORBIDDEN,
+                "NONCE_MISMATCH",
+                "nonce did not match".to_string(),
+            ),
+            IdTokenError::MissingEmail => (
+                StatusCode::FORBIDDEN,
+                "NO_EMAIL",
+                "id_token has no email / preferred_username claim".to_string(),
+            ),
+            IdTokenError::ExternalGuest => (
+                StatusCode::FORBIDDEN,
+                "EXTERNAL_GUEST",
+                "external guest accounts are not supported".to_string(),
+            ),
+            other => (
+                StatusCode::FORBIDDEN,
+                "OIDC_VERIFY",
+                format!("id_token verification failed: {other}"),
+            ),
+        })?;
+    Ok((claims.email, claims.name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

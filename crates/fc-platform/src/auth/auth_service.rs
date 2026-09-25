@@ -1049,6 +1049,50 @@ impl AuthService {
         })
     }
 
+    /// The ID token of a PORTAL identity login (Go `GeneratePortalIDToken`,
+    /// authservice.go:542-552): the identity's own claims (sub = its `ptu_`
+    /// id) with no authority — empty `roles`, `applications` and `clients`,
+    /// an empty `tier`, no `client_id` — plus `portal_client_id` and, for an
+    /// app-linked portal OAuth client, `portal_app_id` / `portal_app_code`.
+    /// `identity` is a transient principal-shaped view of the portal
+    /// identity; it never touches the principal store.
+    pub fn generate_portal_id_token(
+        &self,
+        identity: &Principal,
+        client_id: &str,
+        nonce: Option<String>,
+        portal_client_id: &str,
+        portal_app: Option<(&str, &str)>,
+    ) -> Result<String> {
+        let claims = self.id_token_claims(identity, client_id, nonce, Vec::new(), Utc::now());
+        let mut value = serde_json::to_value(&claims).map_err(|e| PlatformError::Internal {
+            message: format!("Failed to encode ID token: {}", e),
+        })?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("tier".into(), serde_json::json!(""));
+            obj.insert("roles".into(), serde_json::json!([]));
+            obj.insert("applications".into(), serde_json::json!([]));
+            obj.insert("all_applications".into(), serde_json::json!(false));
+            obj.insert("clients".into(), serde_json::json!([]));
+            obj.remove("client_id");
+            if !portal_client_id.is_empty() {
+                obj.insert(
+                    "portal_client_id".into(),
+                    serde_json::json!(portal_client_id),
+                );
+            }
+            if let Some((app_id, app_code)) = portal_app.filter(|(_, code)| !code.is_empty()) {
+                obj.insert("portal_app_code".into(), serde_json::json!(app_code));
+                obj.insert("portal_app_id".into(), serde_json::json!(app_id));
+            }
+        }
+        let mut header = Header::new(self.algorithm);
+        header.kid = self.key_id.clone();
+        encode(&header, &value, &self.encoding_key).map_err(|e| PlatformError::Internal {
+            message: format!("Failed to encode ID token: {}", e),
+        })
+    }
+
     /// The access-token claim set, unsigned. Go `generateTokenWithExpiry`
     /// (authservice.go:467-501): an authoritative token carries the
     /// principal's authority and `token_use: api`; an identity token emits

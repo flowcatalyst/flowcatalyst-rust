@@ -367,6 +367,28 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             distributed_rate_limit_per_email,
         );
 
+        // Portal identity plane (Go wire_routes.go:261-291): the portal
+        // routes sit behind the OIDC bridge's per-IP governor
+        // (FC_OIDC_RATE_PER_MIN / FC_OIDC_BURST), and its hooks answer the
+        // portal-subject requests of the shared reset-token and OIDC
+        // callback routes.
+        let portal_login = crate::portal::login_api::PortalLoginState {
+            portal: self.portal.clone(),
+            oidc: self.oidc_login.clone(),
+        };
+        let portal_ip_layer = axum::middleware::from_fn_with_state(
+            IpRateLimiterState::new(&crate::portal::login_api::portal_ip_rate_config()),
+            rate_limit_per_ip,
+        );
+        let portal_reset_hook = axum::middleware::from_fn_with_state(
+            self.portal.passwords.clone(),
+            crate::portal::password::intercept,
+        );
+        let portal_oidc_hook = axum::middleware::from_fn_with_state(
+            portal_login.clone(),
+            crate::portal::oidc::intercept,
+        );
+
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
         let (router, mut openapi) = OpenApiRouter::new()
             // Same cursor-paginated read handlers serve both /api/events
@@ -631,7 +653,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_API_ME, me_router(self.me))
             .nest(
                 PATH_AUTH,
-                oidc_login_router(self.oidc_login).layer(auth_layer.clone()),
+                oidc_login_router(self.oidc_login)
+                    .layer(portal_oidc_hook)
+                    .layer(auth_layer.clone()),
             )
             .nest(
                 PATH_OAUTH,
@@ -647,11 +671,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_AUTH_PASSWORD_RESET,
                 password_reset_router(self.password_reset)
+                    .layer(portal_reset_hook)
                     .layer(distributed_password_reset_email_layer)
                     .layer(distributed_password_reset_layer)
                     .layer(auth_layer.clone()),
             )
-            // Portal identity plane: the admin surface.
+            // Portal identity plane.
             .nest(
                 PATH_API_PORTAL_USERS,
                 crate::portal::api::portal_users_router(self.portal.clone()),
@@ -659,6 +684,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_API_PORTAL_APPS,
                 crate::portal::api::portal_apps_router(self.portal),
+            )
+            .nest(
+                PATH_PORTAL,
+                crate::portal::login_api::portal_login_router(portal_login).layer(portal_ip_layer),
             )
             // Batch ingest endpoints (merged into resource routers)
             .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))

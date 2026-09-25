@@ -20,10 +20,13 @@
 pub mod api;
 mod email;
 pub mod entity;
+pub mod login_api;
+pub mod oidc;
 pub mod operations;
 pub mod password;
 pub mod policy;
 pub mod repository;
+pub mod token;
 
 use std::sync::Arc;
 

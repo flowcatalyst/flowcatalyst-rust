@@ -641,6 +641,7 @@ pub fn build_platform_routes(
         rate_limit_store: config.rate_limit_store.clone(),
         rate_limit_policies: config.rate_limit_policies.clone(),
         encryption_service: encryption_service.clone(),
+        portal: Some(portal_state.clone()),
     };
 
     let audit_logs_state = AuditLogsState {
