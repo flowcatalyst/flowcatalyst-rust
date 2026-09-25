@@ -2,6 +2,7 @@
 //!
 //! Event type definitions and schemas.
 
+pub mod access;
 pub mod api;
 pub mod entity;
 pub mod operations;

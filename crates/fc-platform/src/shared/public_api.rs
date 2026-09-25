@@ -19,7 +19,7 @@ pub struct PlatformInfoResponse {
     pub features: FeaturesResponse,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginThemeResponse {
     pub brand_name: Option<String>,
@@ -69,9 +69,15 @@ async fn get_platform_info() -> Json<PlatformInfoResponse> {
     )
 )]
 async fn get_login_theme(State(state): State<PublicApiState>) -> Json<LoginThemeResponse> {
+    Json(load_login_theme(&state.config_repo).await)
+}
+
+/// The global login theme, shared by `GET /api/public/login-theme` and the
+/// server-rendered `fc-web` login page. Any failure (missing row, bad JSON,
+/// query error) falls back to the default theme.
+pub async fn load_login_theme(config_repo: &PlatformConfigRepository) -> LoginThemeResponse {
     // Read from app_platform_configs: app_code="platform", section="login", property="theme", scope="GLOBAL"
-    let theme = match state
-        .config_repo
+    match config_repo
         .find_by_key("platform", "login", "theme", "GLOBAL", None)
         .await
     {
@@ -93,8 +99,7 @@ async fn get_login_theme(State(state): State<PublicApiState>) -> Json<LoginTheme
             tracing::warn!(error = %e, "Failed to query login theme config");
             LoginThemeResponse::default()
         }
-    };
-    Json(theme)
+    }
 }
 
 pub fn public_router(state: PublicApiState) -> Router {

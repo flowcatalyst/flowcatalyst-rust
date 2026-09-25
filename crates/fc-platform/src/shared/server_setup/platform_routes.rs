@@ -16,7 +16,6 @@
 //! password-reset endpoints are passed directly so each binary can read
 //! them from env in whatever style it prefers.
 
-use axum_extra::extract::cookie::SameSite;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -599,14 +598,7 @@ pub fn build_platform_routes(
         identity_provider_repo: repos.idp_repo.clone(),
         login_attempt_repo: repos.login_attempt_repo.clone(),
         backoff_policy: backoff_policy.clone(),
-        // Password login: Secure per deployment config (on in fc-server,
-        // off only for fc-dev's plain-http localhost), always SameSite=Lax.
-        session_cookie: SessionCookieConfig {
-            name: "fc_session".to_string(),
-            secure: config.session_cookie_secure,
-            same_site: SameSite::Lax,
-            ttl: time::Duration::seconds(86400),
-        },
+        session_cookie: SessionCookieConfig::password_login(config.session_cookie_secure),
     };
     let oauth_state = OAuthState {
         oauth_client_repo: repos.oauth_client_repo.clone(),

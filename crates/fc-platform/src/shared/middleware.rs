@@ -141,8 +141,8 @@ enum Presented {
     Nothing,
 }
 
-fn presented_credential(parts: &Parts) -> Presented {
-    if let Some(header) = parts.headers.get(AUTHORIZATION) {
+fn presented_credential(headers: &axum::http::HeaderMap) -> Presented {
+    if let Some(header) = headers.get(AUTHORIZATION) {
         const PREFIX: &str = "Bearer ";
         return match header.to_str() {
             Ok(h) if h.len() > PREFIX.len() && h[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) => {
@@ -154,7 +154,7 @@ fn presented_credential(parts: &Parts) -> Presented {
             _ => Presented::Nothing,
         };
     }
-    match extract_session_cookie(&parts.headers) {
+    match extract_session_cookie(headers) {
         Some(token) => Presented::SessionCookie(token),
         None => Presented::Nothing,
     }
@@ -179,9 +179,9 @@ enum Authentication {
 /// deactivation or role change applies at once.
 async fn authenticate(
     app_state: &AppState,
-    parts: &Parts,
+    headers: &axum::http::HeaderMap,
 ) -> std::result::Result<Authentication, AuthError> {
-    match presented_credential(parts) {
+    match presented_credential(headers) {
         Presented::Nothing => Ok(Authentication::Anonymous {
             stale_session: false,
         }),
@@ -228,6 +228,20 @@ async fn authenticate(
     }
 }
 
+/// Authenticate a request from its headers alone, for callers outside the
+/// axum extractor path (the server-rendered `fc-web` UI). Same rules as
+/// [`Authenticated`]: `Ok(None)` is anonymous (no credential, or a stale
+/// session cookie); a bad bearer or a failed lookup is an error.
+pub async fn authenticate_headers(
+    app_state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> std::result::Result<Option<AuthContext>, AuthError> {
+    match authenticate(app_state, headers).await? {
+        Authentication::Context(context) => Ok(Some(context)),
+        Authentication::Anonymous { .. } => Ok(None),
+    }
+}
+
 impl<S> FromRequestParts<S> for Authenticated
 where
     S: Send + Sync,
@@ -245,7 +259,7 @@ where
                 message: "Auth service not configured".to_string(),
             })?;
 
-        match authenticate(&app_state, parts).await? {
+        match authenticate(&app_state, &parts.headers).await? {
             Authentication::Context(context) => Ok(Authenticated(context)),
             Authentication::Anonymous { stale_session } => Err(AuthError {
                 status: StatusCode::UNAUTHORIZED,
@@ -281,7 +295,7 @@ where
         let Some(app_state) = parts.extensions.get::<AppState>().cloned() else {
             return Ok(OptionalAuth(None));
         };
-        match authenticate(&app_state, parts).await {
+        match authenticate(&app_state, &parts.headers).await {
             Ok(Authentication::Context(context)) => Ok(OptionalAuth(Some(context))),
             _ => Ok(OptionalAuth(None)),
         }

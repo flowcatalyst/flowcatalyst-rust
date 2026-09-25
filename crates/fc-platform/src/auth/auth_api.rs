@@ -186,18 +186,38 @@ pub async fn login(
     jar: CookieJar,
     Json(req): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, PlatformError> {
-    let ip = client_ip.as_deref();
+    let (principal, session_token) =
+        password_login(&state, &req.email, &req.password, client_ip.as_deref()).await?;
 
+    let jar = jar.add(state.session_cookie.build_cookie(session_token));
+
+    // Build response with user info
+    let response = LoginResponse {
+        principal_id: principal.id.clone(),
+        name: principal.name.clone(),
+        email: req.email.clone(),
+        roles: principal.roles.iter().map(|r| r.role.clone()).collect(),
+        client_id: principal.client_id.clone(),
+    };
+
+    // Return both the cookie jar and JSON response
+    Ok((jar, Json(response)))
+}
+
+/// Password login, shared by the JSON `/auth/login` handler and the
+/// server-rendered `fc-web` login form: backoff check, principal lookup,
+/// password verification, active check, lazy rehash, attempt recording.
+/// Returns the principal and a freshly issued session token; the caller
+/// sets the session cookie.
+pub async fn password_login(
+    state: &AuthState,
+    email: &str,
+    password: &str,
+    ip: Option<&str>,
+) -> Result<(crate::Principal, String), PlatformError> {
     // Run the layered backoff check BEFORE lookup so the response timing /
     // shape doesn't leak whether the email exists.
-    match login_backoff::check(
-        &state.login_attempt_repo,
-        &state.backoff_policy,
-        &req.email,
-        ip,
-    )
-    .await?
-    {
+    match login_backoff::check(&state.login_attempt_repo, &state.backoff_policy, email, ip).await? {
         BackoffDecision::Allow => {}
         BackoffDecision::Reject {
             retry_after_secs, ..
@@ -207,13 +227,13 @@ pub async fn login(
     }
 
     // Find principal by email
-    let principal = match state.principal_repo.find_by_email(&req.email).await? {
+    let principal = match state.principal_repo.find_by_email(email).await? {
         Some(p) => p,
         None => {
             // Record failed attempt (fire-and-forget)
             record_user_login_attempt(
                 &state.login_attempt_repo,
-                Some(&req.email),
+                Some(email),
                 None,
                 ip,
                 LoginOutcome::Failure,
@@ -236,7 +256,7 @@ pub async fn login(
         .map(|hash| {
             state
                 .password_service
-                .verify_password(&req.password, hash)
+                .verify_password(password, hash)
                 .unwrap_or(false)
         })
         .unwrap_or(false);
@@ -244,7 +264,7 @@ pub async fn login(
     if !password_valid {
         record_user_login_attempt(
             &state.login_attempt_repo,
-            Some(&req.email),
+            Some(email),
             Some(&principal.id),
             ip,
             LoginOutcome::Failure,
@@ -260,7 +280,7 @@ pub async fn login(
     if !principal.active {
         record_user_login_attempt(
             &state.login_attempt_repo,
-            Some(&req.email),
+            Some(email),
             Some(&principal.id),
             ip,
             LoginOutcome::Failure,
@@ -277,7 +297,7 @@ pub async fn login(
     // password. Best-effort, as Go's login (auth/login/endpoint.go:519-525):
     // a failure is logged and the login goes on.
     if stored_hash.is_some_and(|h| state.password_service.needs_rehash(h)) {
-        match state.password_service.rehash_password(&req.password) {
+        match state.password_service.rehash_password(password) {
             Ok(new_hash) => {
                 if let Err(e) = state
                     .principal_repo
@@ -296,12 +316,10 @@ pub async fn login(
     // Generate session token (uses session_token_expiry_secs, not access_token_expiry_secs)
     let session_token = state.auth_service.generate_session_token(&principal)?;
 
-    let jar = jar.add(state.session_cookie.build_cookie(session_token));
-
     // Record successful login attempt (fire-and-forget)
     record_user_login_attempt(
         &state.login_attempt_repo,
-        Some(&req.email),
+        Some(email),
         Some(&principal.id),
         ip,
         LoginOutcome::Success,
@@ -309,17 +327,7 @@ pub async fn login(
     )
     .await;
 
-    // Build response with user info
-    let response = LoginResponse {
-        principal_id: principal.id.clone(),
-        name: principal.name.clone(),
-        email: req.email.clone(),
-        roles: principal.roles.iter().map(|r| r.role.clone()).collect(),
-        client_id: principal.client_id.clone(),
-    };
-
-    // Return both the cookie jar and JSON response
-    Ok((jar, Json(response)))
+    Ok((principal, session_token))
 }
 
 /// Logout / revoke token
