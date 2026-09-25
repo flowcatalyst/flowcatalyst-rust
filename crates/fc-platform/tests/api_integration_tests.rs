@@ -188,7 +188,15 @@ fn generate_anchor_token(auth_service: &AuthService) -> String {
 async fn test_create_client_via_api() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_anchor_token(&auth_service);
+    // Creating a client needs anchor reach and the permission (Go's
+    // anchorWith(client:create)); anchor scope alone is refused.
+    let token = auth_service
+        .generate_access_token_with_scope(
+            &Principal::new_user("admin@flowcatalyst.local", UserScope::Anchor),
+            &["platform:admin:client:create".to_string()],
+            None,
+        )
+        .expect("Failed to generate access token");
 
     let response = app
         .clone()
@@ -217,8 +225,8 @@ async fn test_create_client_via_api() {
 
     assert_eq!(
         status.as_u16(),
-        200,
-        "Expected 200 OK, got {} — body: {}",
+        201,
+        "Expected 201 Created (as Go), got {} — body: {}",
         status,
         json
     );

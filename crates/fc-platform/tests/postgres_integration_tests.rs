@@ -851,11 +851,19 @@ async fn test_service_account_crud() {
     let (pool, _container) = setup_test_db().await;
     let repo = ServiceAccountRepository::new(&pool);
 
-    // Create
+    // Create. An account is read through its SERVICE principal, which
+    // shares its id (`find_by_id` is by principal id), so both rows exist,
+    // as the account's persist writes them.
     let svc = ServiceAccount::new("test-svc", "Test Service", UserScope::Anchor);
     repo.insert(&svc)
         .await
         .expect("Failed to insert service account");
+    let mut principal = Principal::new_service(&svc.id, &svc.name, UserScope::Anchor);
+    principal.id = svc.id.clone();
+    PrincipalRepository::new(&pool)
+        .insert(&principal)
+        .await
+        .expect("Failed to insert service account principal");
 
     // Find by ID
     let found = repo
