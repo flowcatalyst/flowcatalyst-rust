@@ -24,7 +24,10 @@ use axum::{
 /// `2`. With no proxy at all set to `0` (and the value is whatever the
 /// client supplied — only safe in dev).
 ///
-/// Falls back to `X-Real-IP` when no `X-Forwarded-For` is present.
+/// Falls back to `X-Real-IP` when no `X-Forwarded-For` is present, and then
+/// to the connection's peer address (Go `ratelimit.ClientIP` falls back to
+/// `RemoteAddr`), so a login attempt from a directly connected client still
+/// records its IP and still counts toward its backoff.
 #[derive(Debug, Clone)]
 pub struct ClientIp(pub Option<String>);
 
@@ -71,7 +74,19 @@ where
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Ok(ClientIp(extract_trusted_client_ip(&parts.headers)))
+        Ok(ClientIp(extract_trusted_client_ip(&parts.headers).or_else(
+            || {
+                parts
+                    .extensions
+                    .get::<fc_http_listener::PeerAddr>()
+                    .map(|peer| match peer.0.ip() {
+                        std::net::IpAddr::V6(v6) => v6
+                            .to_ipv4_mapped()
+                            .map_or_else(|| v6.to_string(), |v4| v4.to_string()),
+                        v4 => v4.to_string(),
+                    })
+            },
+        )))
     }
 }
 use crate::shared::api_common::ApiError;
