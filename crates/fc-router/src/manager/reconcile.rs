@@ -26,12 +26,30 @@ fn same_queue_config(a: &fc_common::QueueConfig, b: &fc_common::QueueConfig) -> 
 }
 
 impl QueueManager {
+    /// `config` plus a `DEFAULT-POOL` at the default concurrency (20) when
+    /// it defines none (Go: `Reconfigure`'s `wantPools`).
+    fn with_default_pool(&self, mut config: RouterConfig) -> RouterConfig {
+        if !config
+            .processing_pools
+            .iter()
+            .any(|p| p.code == self.default_pool_code)
+        {
+            config.processing_pools.push(PoolConfig {
+                code: self.default_pool_code.clone(),
+                concurrency: 20,
+                rate_limit_per_minute: None,
+            });
+        }
+        config
+    }
+
     /// Apply router configuration (initial setup).
     ///
     /// Takes `self: &Arc<Self>` so `sync_queue_consumers` can spawn poll
     /// tasks for hot-added consumers. Callers already hold the manager
     /// behind an Arc.
     pub async fn apply_config(self: &Arc<Self>, config: RouterConfig) -> Result<()> {
+        let config = self.with_default_pool(config);
         let mut pool_configs = self.pool_configs.write().await;
         for pool_config in config.processing_pools {
             let code = pool_config.code.clone();
@@ -70,6 +88,12 @@ impl QueueManager {
         }
 
         info!("Hot reloading configuration...");
+
+        // Go's Reconfigure always ensures DEFAULT-POOL: a config that does
+        // not define it must not remove it. Dropping it used to start a
+        // drain while the next message re-created it, and the two pools
+        // then ran the same message groups side by side.
+        let config = self.with_default_pool(config);
 
         // Build map of new pool configs
         let new_pool_configs: HashMap<String, PoolConfig> = config
@@ -449,12 +473,21 @@ impl QueueManager {
         }
     }
 
-    /// Get or create a pool by code
+    /// Get or create a pool by code.
+    ///
+    /// Creation is serialised by `pool_create_lock` and re-checked under it
+    /// (Go creates pools under `poolMu`): two messages for a code that has
+    /// no pool yet used to each build and start one, and the loser — with
+    /// worker tasks running — was silently dropped from the map.
     pub(super) async fn get_or_create_pool(
         &self,
         code: &str,
         config: Option<PoolConfig>,
     ) -> Result<Arc<ProcessPool>> {
+        if let Some(pool) = self.active_pool(code) {
+            return Ok(pool);
+        }
+        let _create = self.pool_create_lock.lock().await;
         if let Some(pool) = self.active_pool(code) {
             return Ok(pool);
         }
@@ -475,8 +508,12 @@ impl QueueManager {
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;
 
-        self.insert_active_pool(code.to_string(), pool_arc.clone());
+        self.insert_active_pool(code.to_string(), pool_arc.clone())
+            .await;
         info!(pool_code = %code, concurrency = pool_config.concurrency, "Created process pool");
+        // A new pool is a capacity event for any consumer parked on "no
+        // room" (Go: ensureFallbackPool signals the gate).
+        self.capacity_notify().notify_waiters();
 
         Ok(pool_arc)
     }
@@ -525,72 +562,64 @@ impl QueueManager {
         });
     }
 
-    /// Update pool configuration at runtime (hot-reload)
-    /// Note: Concurrency changes take effect on next message batch
-    /// Rate limit changes take effect immediately
+    /// Update a pool's concurrency and rate limit at runtime, IN PLACE (as
+    /// `reload_config` does, and Go's `UpdatePool`). `config` is the full
+    /// new setting: `rate_limit_per_minute: None` removes the limit. A code
+    /// with no active pool gets one created with `config`.
+    ///
+    /// This used to build a second pool and swap it in without draining the
+    /// first: both processed the same ordered groups concurrently at double
+    /// the configured rate, and shutdown never saw the displaced one.
     pub async fn update_pool_config(&self, pool_code: &str, config: PoolConfig) -> Result<()> {
-        // Check if pool exists and get current settings
-        // IMPORTANT: Drop the Ref guard before calling insert() to avoid deadlock
-        let pool_exists = if let Some(existing_pool) = self.active_pool(pool_code) {
-            let current_concurrency = existing_pool.concurrency();
-            let new_concurrency = config.concurrency;
-
-            if current_concurrency != new_concurrency {
+        match self.active_pool(pool_code) {
+            Some(pool) => {
+                if pool.concurrency() != config.concurrency && config.concurrency > 0 {
+                    pool.update_concurrency(config.concurrency).await;
+                }
+                if pool.rate_limit_per_minute() != config.rate_limit_per_minute {
+                    pool.update_rate_limit(config.rate_limit_per_minute);
+                }
                 info!(
                     pool_code = %pool_code,
-                    old_concurrency = current_concurrency,
-                    new_concurrency = new_concurrency,
-                    "Pool concurrency update requested - will take effect after pool restart"
+                    concurrency = config.concurrency,
+                    rate_limit = ?config.rate_limit_per_minute,
+                    "Pool configuration updated in place"
                 );
+                self.capacity_notify().notify_waiters();
+                Ok(())
             }
-
-            let current_rate_limit = existing_pool.rate_limit_per_minute();
-            let new_rate_limit = config.rate_limit_per_minute;
-
-            if current_rate_limit != new_rate_limit {
-                info!(
-                    pool_code = %pool_code,
-                    old_rate_limit = ?current_rate_limit,
-                    new_rate_limit = ?new_rate_limit,
-                    "Pool rate limit update requested - creating new pool"
-                );
+            None => {
+                self.get_or_create_pool(pool_code, Some(config)).await?;
+                Ok(())
             }
-            true
-        } else {
-            false
-        };
-        // Ref guard is now dropped
-
-        if pool_exists {
-            // For now, we recreate the pool with new config
-            // In production, you might want to drain first
-            // `build_mediator` shares the manager's single registry (see
-            // `get_or_create_pool`) — a reconfigured pool's fresh mediator
-            // keeps recording into it, not a private default.
-            let new_pool = ProcessPool::new(config.clone(), self.build_mediator())
-                .with_capacity_notify(self.capacity_notify().clone());
-            let pool_arc = Arc::new(new_pool);
-            pool_arc.start().await;
-
-            // Replace the old pool. `pool_exists` required an `Active`
-            // entry above, so this can't displace a `Draining` one — routed
-            // through `insert_active_pool` anyway for consistency with
-            // every other Active-pool insert site.
-            self.insert_active_pool(pool_code.to_string(), pool_arc);
-
-            info!(
-                pool_code = %pool_code,
-                concurrency = config.concurrency,
-                rate_limit = ?config.rate_limit_per_minute,
-                "Pool configuration updated"
-            );
-
-            Ok(())
-        } else {
-            // Pool doesn't exist, create it
-            self.get_or_create_pool(pool_code, Some(config)).await?;
-            Ok(())
         }
+    }
+
+    /// The operator pool update behind `PUT /monitoring/pools/{code}` (Go:
+    /// `Manager.UpdatePool`): `None` leaves a knob unchanged, and an
+    /// unknown code is refused (`false`) rather than created.
+    pub async fn update_pool(
+        &self,
+        pool_code: &str,
+        concurrency: Option<u32>,
+        rate_limit_per_minute: Option<u32>,
+    ) -> bool {
+        let Some(pool) = self.active_pool(pool_code) else {
+            return false;
+        };
+        if let Some(n) = concurrency {
+            if n == 0 {
+                return false;
+            }
+            if n != pool.concurrency() && !pool.update_concurrency(n).await {
+                return false;
+            }
+        }
+        if rate_limit_per_minute.is_some() {
+            pool.update_rate_limit(rate_limit_per_minute);
+        }
+        self.capacity_notify().notify_waiters();
+        true
     }
 
     /// Get list of all pool codes (active only — see the `pools` field's
@@ -618,5 +647,32 @@ impl QueueManager {
     /// pool with this code exists.
     pub fn is_pool_fully_drained(&self, code: &str) -> Option<bool> {
         self.pools.get(code).map(|e| e.pool.is_fully_drained())
+    }
+}
+
+#[cfg(test)]
+mod pool_creation_tests {
+    use super::*;
+    use crate::mediator::HttpMediatorConfig;
+
+    /// Concurrent first messages for one code get ONE pool (Go creates
+    /// under `poolMu`); the losers used to build and start pools that were
+    /// then silently dropped from the map with their workers running.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_creation_yields_one_pool() {
+        let manager = Arc::new(QueueManager::new(HttpMediatorConfig::dev()));
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let m = manager.clone();
+            handles.push(tokio::spawn(async move {
+                m.get_or_create_pool("RACE", None).await.unwrap()
+            }));
+        }
+        let mut pools = Vec::new();
+        for h in handles {
+            pools.push(h.await.unwrap());
+        }
+        assert!(pools.iter().all(|p| Arc::ptr_eq(p, &pools[0])));
+        assert!(manager.orphaned_draining.lock().is_empty());
     }
 }

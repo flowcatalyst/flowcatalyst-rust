@@ -239,6 +239,10 @@ pub struct QueueManager {
     /// a second concurrent reload, never message routing or stats reads.
     pool_configs: RwLock<HashMap<String, PoolConfig>>,
 
+    /// Serialises pool creation, so two first messages for one code cannot
+    /// each build a pool (Go creates pools under `poolMu`).
+    pool_create_lock: tokio::sync::Mutex<()>,
+
     /// Generation stamped on every [`RunningConsumer`].
     next_consumer_generation: std::sync::atomic::AtomicU64,
 
@@ -507,6 +511,7 @@ impl QueueManagerBuilder {
             synth_pools: DashMap::new(),
             consumers: Arc::new(ConsumerRegistry::default()),
             pool_configs: RwLock::new(HashMap::new()),
+            pool_create_lock: tokio::sync::Mutex::new(()),
             next_consumer_generation: std::sync::atomic::AtomicU64::new(0),
             polling_stopped: AtomicBool::new(false),
             restart_attempts: Mutex::new(HashMap::new()),
@@ -711,16 +716,12 @@ impl QueueManager {
             .count()
     }
 
-    /// Insert `pool` as the `Active` entry for `code`, and — if this
-    /// displaces a still-`Draining` entry under the same code — hand the
-    /// displaced pool to [`Self::orphaned_draining`] rather than losing the
-    /// only reference to it. See the `pools`/`orphaned_draining` field doc
-    /// comments for why this coexistence case exists and why it isn't
-    /// unsafe. Every call site that can create a fresh `Active` pool for a
-    /// code that might already have a `Draining` entry (`get_or_create_pool`,
-    /// `ensure_fallback_pool`) must insert through this instead of a bare
-    /// `self.pools.insert(...)`.
-    pub(super) fn insert_active_pool(&self, code: String, pool: Arc<ProcessPool>) {
+    /// Insert `pool` as the `Active` entry for `code`. A displaced entry is
+    /// never simply dropped: a still-`Draining` predecessor goes to
+    /// [`Self::orphaned_draining`], and a displaced `Active` pool — which
+    /// the creation lock should make impossible — is drained there too
+    /// rather than left running unseen by shutdown.
+    pub(super) async fn insert_active_pool(&self, code: String, pool: Arc<ProcessPool>) {
         let displaced = self.pools.insert(
             code,
             PoolEntry {
@@ -729,9 +730,11 @@ impl QueueManager {
             },
         );
         if let Some(entry) = displaced {
-            if entry.state == PoolState::Draining {
-                self.orphaned_draining.lock().push(entry.pool);
+            if entry.state == PoolState::Active {
+                warn!(pool_code = %entry.pool.code(), "Active pool displaced; draining it");
+                entry.pool.drain().await;
             }
+            self.orphaned_draining.lock().push(entry.pool);
         }
     }
 

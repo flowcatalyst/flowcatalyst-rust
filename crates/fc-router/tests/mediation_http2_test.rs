@@ -77,9 +77,7 @@ async fn start_h2c_server() -> (String, tokio::sync::oneshot::Receiver<CapturedR
                     if let Some(sender) = tx.lock().unwrap().take() {
                         let _ = sender.send(CapturedRequest { version, body });
                     }
-                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(
-                        r#"{"ok":true}"#,
-                    ))))
+                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(r#"{"ok":true}"#))))
                 }
             });
             let builder =
@@ -107,9 +105,7 @@ async fn start_http1_only_server() -> String {
             tokio::spawn(async move {
                 let io = TokioIo::new(stream);
                 let service = hyper::service::service_fn(|_req: Request<Incoming>| async move {
-                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(
-                        r#"{"ok":true}"#,
-                    ))))
+                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(r#"{"ok":true}"#))))
                 });
                 // `http1::Builder` only understands HTTP/1.1 — an h2c
                 // connection preface sent at it is not valid h1 framing,

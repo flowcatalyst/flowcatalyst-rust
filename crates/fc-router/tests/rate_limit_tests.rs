@@ -338,7 +338,12 @@ async fn test_rate_limit_stats() {
     };
     manager.apply_config(config).await.unwrap();
 
-    let stats = manager.get_pool_stats();
+    // DEFAULT-POOL is always ensured alongside the configured pool.
+    let stats: Vec<_> = manager
+        .get_pool_stats()
+        .into_iter()
+        .filter(|s| s.pool_code != "DEFAULT-POOL")
+        .collect();
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].pool_code, "TEST");
     assert_eq!(stats[0].concurrency, 5);
@@ -458,7 +463,11 @@ async fn test_pool_codes_with_rate_limits() {
     manager.apply_config(config).await.unwrap();
 
     let codes = manager.pool_codes();
-    assert_eq!(codes.len(), 3);
+    assert_eq!(
+        codes.len(),
+        4,
+        "A, B, C and the always-present DEFAULT-POOL"
+    );
     assert!(codes.contains(&"A".to_string()));
     assert!(codes.contains(&"B".to_string()));
     assert!(codes.contains(&"C".to_string()));

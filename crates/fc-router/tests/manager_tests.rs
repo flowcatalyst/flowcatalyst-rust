@@ -210,7 +210,10 @@ async fn test_apply_config() {
     manager.apply_config(config).await.unwrap();
 
     let stats = manager.get_pool_stats();
-    assert_eq!(stats.len(), 2);
+    // The two configured pools plus DEFAULT-POOL, which is always ensured
+    // (Go: Reconfigure's wantPools).
+    assert_eq!(stats.len(), 3);
+    assert!(stats.iter().any(|s| s.pool_code == "DEFAULT-POOL"));
 
     let default_pool = stats.iter().find(|s| s.pool_code == "DEFAULT").unwrap();
     assert_eq!(default_pool.concurrency, 10);
@@ -982,7 +985,12 @@ async fn test_pool_codes() {
     manager.apply_config(config).await.unwrap();
 
     let codes = manager.pool_codes();
-    assert_eq!(codes.len(), 3);
+    assert_eq!(
+        codes.len(),
+        4,
+        "A, B, C and the always-present DEFAULT-POOL"
+    );
+    assert!(codes.contains(&"DEFAULT-POOL".to_string()));
     assert!(codes.contains(&"A".to_string()));
     assert!(codes.contains(&"B".to_string()));
     assert!(codes.contains(&"C".to_string()));
@@ -1163,7 +1171,9 @@ async fn removed_pool_is_cleaned_up_by_drain_watcher_without_reaper() {
         0,
         "drain watcher should have removed the draining pool within ~1s without a reaper sweep"
     );
-    assert_eq!(manager.pool_codes(), vec!["KEEP".to_string()]);
+    let mut codes = manager.pool_codes();
+    codes.sort();
+    assert_eq!(codes, vec!["DEFAULT-POOL".to_string(), "KEEP".to_string()]);
 }
 
 /// `reload_config` restructures `sync_queue_consumers` to hold the
@@ -1839,7 +1849,12 @@ async fn manager_clear_group_flush_lifts_suppression_and_reports_in_snapshot() {
     let pool = manager.get_pool("FLUSHPOOL").expect("pool must exist");
     assert!(pool.group_flush_registry().flush("g1", Some(3600)));
 
-    let snap = manager.group_flush_snapshots();
+    // DEFAULT-POOL is always present too; look at the pool under test.
+    let snap: Vec<_> = manager
+        .group_flush_snapshots()
+        .into_iter()
+        .filter(|s| s.pool_code == "FLUSHPOOL")
+        .collect();
     assert_eq!(snap.len(), 1);
     assert_eq!(snap[0].pool_code, "FLUSHPOOL");
     assert_eq!(snap[0].active_count, 1);
@@ -1855,7 +1870,11 @@ async fn manager_clear_group_flush_lifts_suppression_and_reports_in_snapshot() {
         !pool.group_flush_registry().suppressed("g1"),
         "clear must actually lift the suppression on the pool's registry"
     );
-    let snap_after = manager.group_flush_snapshots();
+    let snap_after: Vec<_> = manager
+        .group_flush_snapshots()
+        .into_iter()
+        .filter(|s| s.pool_code == "FLUSHPOOL")
+        .collect();
     assert_eq!(snap_after[0].active_count, 0);
     assert!(snap_after[0].groups.is_empty());
 
@@ -2361,4 +2380,77 @@ async fn reload_after_stop_polling_is_refused() {
         .unwrap();
     assert!(!applied);
     assert!(factory.built().is_empty());
+}
+
+/// Go's Reconfigure always keeps a DEFAULT-POOL: a config that does not
+/// define it neither removes nor fails to create it. Dropping it started a
+/// drain while the next unrouted message re-created it — two pools running
+/// the same groups side by side.
+#[tokio::test]
+async fn reload_keeps_default_pool_when_config_omits_it() {
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(Arc::new(
+        MockMediator::new(),
+    )));
+    let cfg = |code: &str| RouterConfig {
+        processing_pools: vec![PoolConfig {
+            code: code.to_string(),
+            concurrency: 3,
+            rate_limit_per_minute: None,
+        }],
+        queues: vec![],
+    };
+    manager.apply_config(cfg("A")).await.unwrap();
+    let default_pool = manager
+        .get_pool("DEFAULT-POOL")
+        .expect("DEFAULT-POOL is always ensured");
+    assert_eq!(default_pool.concurrency(), 20);
+
+    manager.reload_config(cfg("B")).await.unwrap();
+    let after = manager.get_pool("DEFAULT-POOL").expect("still there");
+    assert!(
+        Arc::ptr_eq(&default_pool, &after),
+        "never removed and re-created"
+    );
+    assert_eq!(manager.draining_pool_count(), 1, "only A drains");
+}
+
+/// update_pool_config changes a pool in place — never a second instance.
+#[tokio::test]
+async fn update_pool_config_is_in_place() {
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(Arc::new(
+        MockMediator::new(),
+    )));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "T".to_string(),
+                concurrency: 4,
+                rate_limit_per_minute: Some(60),
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+    let before = manager.get_pool("T").unwrap();
+    manager
+        .update_pool_config(
+            "T",
+            PoolConfig {
+                code: "T".to_string(),
+                concurrency: 9,
+                rate_limit_per_minute: None,
+            },
+        )
+        .await
+        .unwrap();
+    let after = manager.get_pool("T").unwrap();
+    assert!(Arc::ptr_eq(&before, &after));
+    assert_eq!(after.concurrency(), 9);
+    assert_eq!(after.rate_limit_per_minute(), None);
+    assert_eq!(manager.draining_pool_count(), 0);
+    assert!(!manager.update_pool("NOPE", Some(2), None).await);
+    assert!(
+        !manager.update_pool("T", Some(0), None).await,
+        "0 is rejected, as Go"
+    );
 }

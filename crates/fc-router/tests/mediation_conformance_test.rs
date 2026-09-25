@@ -57,8 +57,8 @@ use std::time::Duration;
 
 use fc_common::{MediationResult, MediationType, Message, WarningSeverity};
 use fc_router::{
-    CircuitBreakerConfig, CircuitBreakerRegistry, HostPoolSizing, HttpMediator,
-    HttpMediatorConfig, HttpVersion, Mediator, WarningService, WarningServiceConfig,
+    CircuitBreakerConfig, CircuitBreakerRegistry, HostPoolSizing, HttpMediator, HttpMediatorConfig,
+    HttpVersion, Mediator, WarningService, WarningServiceConfig,
 };
 use serde::Deserialize;
 use wiremock::matchers::{method, path};
@@ -308,7 +308,11 @@ fn outcome_name(result: MediationResult) -> &'static str {
 /// of picking the right corpus word for a `(0, 0)` delta, driven by
 /// `outcome.pre_flight` (the breaker-open case is handled separately, see
 /// `run_case`'s special-cased block).
-fn breaker_word(outcome: &fc_common::MediationOutcome, before: (u64, u64), after: (u64, u64)) -> &'static str {
+fn breaker_word(
+    outcome: &fc_common::MediationOutcome,
+    before: (u64, u64),
+    after: (u64, u64),
+) -> &'static str {
     if outcome.pre_flight {
         return "none";
     }
@@ -691,7 +695,10 @@ fn finish_case(
     if mismatches.is_empty() && tolerated.is_empty() {
         report_lines.push(format!("PASS  {:<40}", case.id));
     } else if mismatches.is_empty() {
-        report_lines.push(format!("PASS* {:<40} (known divergence, tolerated)", case.id));
+        report_lines.push(format!(
+            "PASS* {:<40} (known divergence, tolerated)",
+            case.id
+        ));
         for t in tolerated {
             report_lines.push(format!("        - {t}"));
         }
