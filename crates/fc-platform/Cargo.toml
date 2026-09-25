@@ -47,6 +47,8 @@ sha2 = "0.10"
 tokio-util = { workspace = true, features = ["io"] }
 base64 = "0.22"
 argon2 = "0.5"
+# Verifies bcrypt hashes migrated from Laravel apps ($2y$), as Go does
+bcrypt = "0.19"
 rsa = { version = "0.9", features = ["pem"] }
 rand = { workspace = true }
 webauthn-rs = { workspace = true }

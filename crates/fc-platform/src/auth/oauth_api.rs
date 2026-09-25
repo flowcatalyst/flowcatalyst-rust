@@ -74,6 +74,9 @@ pub struct TokenRequest {
     /// For password grant (not recommended)
     pub username: Option<String>,
     pub password: Option<String>,
+    /// Requested scope: permission codes to narrow the granted set to (OIDC
+    /// scopes such as `openid` are ignored for that purpose)
+    pub scope: Option<String>,
 }
 
 /// Token response
@@ -115,6 +118,8 @@ pub struct IntrospectResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
@@ -147,21 +152,18 @@ pub struct UserInfoResponse {
     pub sub: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: String,
+    /// Tenancy tier (`ANCHOR` | `PARTNER` | `CLIENT`)
+    pub tier: String,
+    /// The token's granted permissions (space-delimited; empty when none)
+    pub scope: String,
     #[serde(rename = "type")]
-    pub principal_type: Option<String>,
+    pub principal_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub clients: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub roles: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub applications: Option<Vec<String>>,
+    pub clients: Vec<String>,
+    pub roles: Vec<String>,
+    pub applications: Vec<String>,
 }
 
 /// OAuth2 state
@@ -169,6 +171,8 @@ pub struct UserInfoResponse {
 pub struct OAuthState {
     pub oauth_client_repo: Arc<OAuthClientRepository>,
     pub principal_repo: Arc<PrincipalRepository>,
+    /// Role → permission / application resolution for the minted claims
+    pub role_repo: Arc<crate::RoleRepository>,
     pub auth_service: Arc<AuthService>,
     /// Authorization code storage (PostgreSQL)
     pub auth_code_repo: Arc<AuthorizationCodeRepository>,
@@ -905,10 +909,160 @@ pub async fn token(
     }
 }
 
+// ─── Claim authority (Go oauthapi/token.go + token_apiaccess.go) ─────────
+
+/// The OIDC scopes that are not permission codes (Go `oidcReservedScopes`,
+/// oauthapi/token.go:983-985).
+const OIDC_RESERVED_SCOPES: &[&str] = &[
+    "openid",
+    "profile",
+    "email",
+    "address",
+    "phone",
+    "offline_access",
+];
+
+/// The permissions to put on a token's `scope` claim (Go `grantedScope`,
+/// oauthapi/token.go:1009-1034): the principal's ceiling (its roles'
+/// permissions), narrowed to the requested permission codes when any were
+/// requested. `explicit` reports whether any were.
+async fn granted_scope(
+    state: &OAuthState,
+    principal: &crate::Principal,
+    requested: Option<&str>,
+) -> crate::shared::error::Result<(Vec<String>, bool)> {
+    let ceiling = state
+        .role_repo
+        .flatten_permissions(&crate::auth::auth_service::role_names(principal))
+        .await?;
+    let requested: Vec<&str> = requested
+        .unwrap_or("")
+        .split_whitespace()
+        .filter(|s| !OIDC_RESERVED_SCOPES.contains(s))
+        .collect();
+    if requested.is_empty() {
+        return Ok((ceiling, false));
+    }
+    let granted = requested
+        .into_iter()
+        .filter(|r| {
+            ceiling
+                .iter()
+                .any(|held| crate::role::entity::matches_pattern(r, held))
+        })
+        .map(str::to_string)
+        .collect();
+    Ok((granted, true))
+}
+
+/// The principal as an app-scoped client may see it (Go `confineToClient`,
+/// oauthapi/token.go:1078-1095): application access intersected with the
+/// client's (all-applications off), and the roles narrowed to the client's
+/// applications. Returns the principal unchanged, with its full role list,
+/// for a client with no applications.
+async fn confine_to_client(
+    state: &OAuthState,
+    principal: &crate::Principal,
+    client: &OAuthClient,
+) -> crate::shared::error::Result<(crate::Principal, Vec<String>)> {
+    let roles = crate::auth::auth_service::role_names(principal);
+    if client.application_ids.is_empty() {
+        return Ok((principal.clone(), roles));
+    }
+    let kept = state
+        .role_repo
+        .filter_roles_for_applications(&roles, &client.application_ids)
+        .await?;
+    let mut scoped = principal.clone();
+    // Go `intersectApps` (oauthapi/token_apiaccess.go:65-83).
+    scoped.accessible_application_ids = if principal.all_applications {
+        client.application_ids.clone()
+    } else {
+        client
+            .application_ids
+            .iter()
+            .filter(|id| principal.accessible_application_ids.contains(id))
+            .cloned()
+            .collect()
+    };
+    scoped.all_applications = false;
+    // Go keeps the role assignments whose name is in the narrowed list
+    // (token_apiaccess.go:40-49), matched exactly as Go does.
+    scoped.roles.retain(|ra| kept.contains(&ra.role));
+    Ok((scoped, kept))
+}
+
+/// The access token an interactive login (authorization_code and its
+/// refresh) returns. Go mints an identity-only token unless the client is
+/// flagged `apiAccess`, and for such a client an authority-bearing token
+/// narrowed to the client's applications (`mintInteractiveAccessToken`,
+/// oauthapi/token_apiaccess.go:27-60). Rust has no `apiAccess` flag and
+/// has always returned an API-usable token here, so every client takes
+/// Go's `apiAccess` path: `token_use: api`, roles and applications
+/// narrowed to an app-scoped client, `scope` = the granted permissions of
+/// the narrowed roles, `azp` = the client.
+async fn mint_interactive_access_token(
+    state: &OAuthState,
+    principal: &crate::Principal,
+    client: Option<&OAuthClient>,
+    requested_scope: Option<&str>,
+) -> crate::shared::error::Result<String> {
+    let Some(client) = client else {
+        let (granted, _) = granted_scope(state, principal, requested_scope).await?;
+        return state
+            .auth_service
+            .generate_access_token_with_scope(principal, &granted, None);
+    };
+    let (narrowed, _) = confine_to_client(state, principal, client).await?;
+    let (granted, _) = granted_scope(state, &narrowed, requested_scope).await?;
+    state.auth_service.generate_access_token_with_scope(
+        &narrowed,
+        &granted,
+        Some(&client.client_id),
+    )
+}
+
+/// The ID token for a relying party, confined to what it may know (Go
+/// `mintIDToken`, oauthapi/token.go:1056-1066): an app-scoped client sees
+/// only its applications' roles and its share of the application access.
+async fn mint_id_token(
+    state: &OAuthState,
+    principal: &crate::Principal,
+    client_id_for_aud: &str,
+    client: Option<&OAuthClient>,
+    nonce: Option<String>,
+) -> crate::shared::error::Result<String> {
+    match client.filter(|c| !c.application_ids.is_empty()) {
+        None => state
+            .auth_service
+            .generate_id_token(principal, client_id_for_aud, nonce),
+        Some(client) => {
+            let (scoped, roles) = confine_to_client(state, principal, client).await?;
+            state.auth_service.generate_id_token_with_roles(
+                &scoped,
+                client_id_for_aud,
+                nonce,
+                roles,
+            )
+        }
+    }
+}
+
+fn server_error() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+            error: "server_error".to_string(),
+            error_description: None,
+        }),
+    )
+        .into_response()
+}
+
 async fn handle_authorization_code_grant(
     state: OAuthState,
     req: TokenRequest,
-    _authenticated_client: Option<OAuthClient>,
+    authenticated_client: Option<OAuthClient>,
 ) -> Response {
     let code = match req.code {
         Some(c) => c,
@@ -1092,19 +1246,20 @@ async fn handle_authorization_code_grant(
         }
     };
 
-    // Generate access token
-    let access_token = match state.auth_service.generate_access_token(&principal) {
+    // The interactive-login access token (Go handleAuthorizationCodeGrant,
+    // oauthapi/token.go:745-761).
+    let access_token = match mint_interactive_access_token(
+        &state,
+        &principal,
+        authenticated_client.as_ref(),
+        auth_code.scope.as_deref(),
+    )
+    .await
+    {
         Ok(t) => t,
         Err(e) => {
             error!(error = %e, "Failed to generate access token");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: None,
-                }),
-            )
-                .into_response();
+            return server_error();
         }
     };
 
@@ -1116,22 +1271,19 @@ async fn handle_authorization_code_grant(
         .unwrap_or(false);
 
     let id_token = if has_openid {
-        match state.auth_service.generate_id_token(
+        match mint_id_token(
+            &state,
             &principal,
             &auth_code.client_id,
+            authenticated_client.as_ref(),
             auth_code.nonce.clone(),
-        ) {
+        )
+        .await
+        {
             Ok(t) => Some(t),
             Err(e) => {
                 error!(error = %e, "Failed to generate ID token");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "server_error".to_string(),
-                        error_description: None,
-                    }),
-                )
-                    .into_response();
+                return server_error();
             }
         }
     } else {
@@ -1185,7 +1337,7 @@ async fn handle_authorization_code_grant(
         Json(TokenResponse {
             access_token,
             token_type: "Bearer".to_string(),
-            expires_in: 3600,
+            expires_in: state.auth_service.access_token_expiry_secs(),
             refresh_token,
             id_token,
             scope: auth_code.scope,
@@ -1321,19 +1473,34 @@ async fn handle_refresh_token_grant(
             .into_response();
     }
 
-    // Generate new access token
-    let access_token = match state.auth_service.generate_access_token(&principal) {
+    // The refreshed access token follows the original login's rule,
+    // re-derived from the current principal (Go handleRefreshTokenGrant,
+    // oauthapi/token.go:866-881).
+    let refresh_client = match authenticated_client.clone() {
+        Some(c) => Some(c),
+        None => match stored_token.oauth_client_id.as_deref() {
+            Some(cid) => state
+                .oauth_client_repo
+                .find_by_client_id(cid)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        },
+    };
+    let requested_scope = stored_token.scopes.join(" ");
+    let access_token = match mint_interactive_access_token(
+        &state,
+        &principal,
+        refresh_client.as_ref(),
+        Some(&requested_scope),
+    )
+    .await
+    {
         Ok(t) => t,
         Err(e) => {
             error!(error = %e, "Failed to generate access token");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: None,
-                }),
-            )
-                .into_response();
+            return server_error();
         }
     };
 
@@ -1343,9 +1510,14 @@ async fn handle_refresh_token_grant(
     let has_openid = stored_token.scopes.iter().any(|s| s == "openid");
     let id_token = if has_openid {
         if let Some(ref client_id) = stored_token.oauth_client_id {
-            match state
-                .auth_service
-                .generate_id_token(&principal, client_id, None)
+            match mint_id_token(
+                &state,
+                &principal,
+                client_id,
+                authenticated_client.as_ref(),
+                None,
+            )
+            .await
             {
                 Ok(t) => Some(t),
                 Err(e) => {
@@ -1404,7 +1576,7 @@ async fn handle_refresh_token_grant(
         Json(TokenResponse {
             access_token,
             token_type: "Bearer".to_string(),
-            expires_in: 3600,
+            expires_in: state.auth_service.access_token_expiry_secs(),
             refresh_token: Some(raw_token),
             id_token,
             scope,
@@ -1570,18 +1742,46 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
         }
     };
 
-    let access_token = match state.auth_service.generate_access_token(&principal) {
+    // Go mintClientCredentialsToken (oauthapi/token.go:645-679): the scope
+    // claim carries the granted permissions; a request for permissions the
+    // service account does not hold is `invalid_scope`.
+    let (granted, explicit) = match granted_scope(&state, &principal, req.scope.as_deref()).await {
+        Ok(g) => g,
+        Err(e) => {
+            error!(error = %e, "Failed to resolve granted scope");
+            return server_error();
+        }
+    };
+    if explicit && granted.is_empty() {
+        let attempt = LoginAttempt {
+            identifier: Some(client_id.clone()),
+            principal_id: Some(principal.id.clone()),
+            failure_reason: Some("requested scope exceeds granted permissions".to_string()),
+            ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
+        };
+        if let Err(e) = state.login_attempt_repo.create(&attempt).await {
+            warn!(error = %e, "Failed to log service account login attempt");
+        }
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_scope".to_string(),
+                error_description: Some(
+                    "Requested scope exceeds the service account's granted permissions".to_string(),
+                ),
+            }),
+        )
+            .into_response();
+    }
+
+    let access_token = match state
+        .auth_service
+        .generate_access_token_with_scope(&principal, &granted, None)
+    {
         Ok(t) => t,
         Err(e) => {
             error!(error = %e, "Failed to generate access token");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: None,
-                }),
-            )
-                .into_response();
+            return server_error();
         }
     };
 
@@ -1606,10 +1806,10 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
         Json(TokenResponse {
             access_token,
             token_type: "Bearer".to_string(),
-            expires_in: 3600,
+            expires_in: state.auth_service.access_token_expiry_secs(),
             refresh_token: None,
             id_token: None,
-            scope: None,
+            scope: Some(granted.join(" ")).filter(|s| !s.is_empty()),
         }),
     )
         .into_response()
@@ -1843,25 +2043,56 @@ pub async fn userinfo(State(state): State<OAuthState>, headers: HeaderMap) -> Re
         Err(r) => return r,
     };
 
+    // Go Userinfo (oauthapi/userinfo.go:58-95): the authority is recomputed
+    // from the current principal and confined to the token's `azp` client,
+    // falling back to the token's own claims when the principal can't be
+    // loaded. The scope is the credential's, never recomputed.
+    let mut roles = claims.roles.clone();
+    let mut applications = claims.applications.clone();
+    let mut clients = claims.clients.clone();
+    if let Ok(Some(principal)) = state.principal_repo.find_by_id(&claims.sub).await {
+        if principal.active {
+            roles = crate::auth::auth_service::role_names(&principal);
+            applications = crate::auth::auth_service::applications_claim(&principal);
+            clients = crate::auth::auth_service::clients_claim(&principal);
+            let client = match claims.azp.as_deref().filter(|a| !a.is_empty()) {
+                Some(azp) => state
+                    .oauth_client_repo
+                    .find_by_client_id(azp)
+                    .await
+                    .ok()
+                    .flatten(),
+                None => None,
+            };
+            if let Some(client) = client.filter(|c| !c.application_ids.is_empty()) {
+                if let Ok((scoped, narrowed)) = confine_to_client(&state, &principal, &client).await
+                {
+                    roles = narrowed;
+                    applications = crate::auth::auth_service::applications_claim(&scoped);
+                }
+            }
+        }
+    }
+
+    // Go userinfoClientID (userinfo.go:143-155).
+    let client_id = clients
+        .first()
+        .filter(|c| c.as_str() != "*")
+        .map(|c| c.split(':').next().unwrap_or(c).to_string());
+
     (
         StatusCode::OK,
         Json(UserInfoResponse {
             sub: claims.sub,
             email: claims.email,
-            name: Some(claims.name),
-            scope: Some(claims.scope.as_str().to_string()),
-            principal_type: Some(claims.principal_type.as_str().to_string()),
-            client_id: claims.clients.first().and_then(|c| {
-                // Extract the raw client ID from "id:identifier" format
-                if c == "*" {
-                    None
-                } else {
-                    Some(c.split(':').next().unwrap_or(c).to_string())
-                }
-            }),
-            clients: Some(claims.clients),
-            roles: Some(claims.roles.clone()),
-            applications: Some(claims.applications),
+            name: claims.name,
+            tier: claims.tier.as_str().to_string(),
+            scope: claims.scope.unwrap_or_default(),
+            principal_type: claims.principal_type.as_str().to_string(),
+            client_id,
+            clients,
+            roles,
+            applications,
         }),
     )
         .into_response()
@@ -1917,7 +2148,10 @@ pub async fn introspect(
             Json(IntrospectResponse {
                 active: true,
                 sub: Some(claims.sub),
-                scope: Some(claims.scope.as_str().to_string()),
+                // RFC 7662 `scope` = the granted permissions; the tier rides
+                // `tier` (Go Introspect, oauthapi/introspect_revoke.go:80-93).
+                scope: claims.scope.filter(|s| !s.is_empty()),
+                tier: Some(claims.tier.as_str().to_string()),
                 client_id: claims.clients.first().cloned(),
                 email: claims.email,
                 name: Some(claims.name),
@@ -1937,6 +2171,7 @@ pub async fn introspect(
                     active: false,
                     sub: None,
                     scope: None,
+                    tier: None,
                     client_id: None,
                     email: None,
                     name: None,
@@ -2222,7 +2457,8 @@ mod tests {
         let resp = IntrospectResponse {
             active: true,
             sub: Some("user123".to_string()),
-            scope: Some("openid".to_string()),
+            scope: Some("platform:iam:user:view".to_string()),
+            tier: Some("CLIENT".to_string()),
             client_id: Some("client1".to_string()),
             email: Some("user@test.com".to_string()),
             name: Some("Test User".to_string()),
@@ -2235,6 +2471,7 @@ mod tests {
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["active"], true);
         assert_eq!(json["sub"], "user123");
+        assert_eq!(json["tier"], "CLIENT");
         // "type" rename
         assert_eq!(json["type"], "USER");
         assert!(
@@ -2249,6 +2486,7 @@ mod tests {
             active: false,
             sub: None,
             scope: None,
+            tier: None,
             client_id: None,
             email: None,
             name: None,
@@ -2271,38 +2509,45 @@ mod tests {
         let resp = UserInfoResponse {
             sub: "principal_abc".to_string(),
             email: Some("user@example.com".to_string()),
-            name: Some("Alice".to_string()),
-            scope: Some("ANCHOR".to_string()),
-            principal_type: Some("USER".to_string()),
+            name: "Alice".to_string(),
+            tier: "ANCHOR".to_string(),
+            scope: "platform:iam:user:view".to_string(),
+            principal_type: "USER".to_string(),
             client_id: Some("clt_123".to_string()),
-            clients: Some(vec!["clt_123".to_string()]),
-            roles: Some(vec!["admin".to_string()]),
-            applications: Some(vec!["app1".to_string()]),
+            clients: vec!["clt_123".to_string()],
+            roles: vec!["admin".to_string()],
+            applications: vec!["app1".to_string()],
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["sub"], "principal_abc");
         assert_eq!(json["email"], "user@example.com");
+        assert_eq!(json["tier"], "ANCHOR");
         // principal_type is renamed to "type"
         assert_eq!(json["type"], "USER");
     }
 
     #[test]
     fn test_userinfo_response_minimal() {
+        // Go's userInfoResponse (oauthapi/userinfo.go:25-36): only email and
+        // client_id are omitted when empty; the arrays are always present.
         let resp = UserInfoResponse {
             sub: "svc_001".to_string(),
             email: None,
-            name: None,
-            scope: None,
-            principal_type: None,
+            name: String::new(),
+            tier: "CLIENT".to_string(),
+            scope: String::new(),
+            principal_type: "SERVICE".to_string(),
             client_id: None,
-            clients: None,
-            roles: None,
-            applications: None,
+            clients: vec![],
+            roles: vec![],
+            applications: vec![],
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["sub"], "svc_001");
         assert!(json.get("email").is_none());
-        assert!(json.get("clients").is_none());
+        assert!(json.get("client_id").is_none());
+        assert_eq!(json["clients"], serde_json::json!([]));
+        assert_eq!(json["scope"], "");
     }
 
     #[test]

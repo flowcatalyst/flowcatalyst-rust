@@ -19,7 +19,6 @@ use crate::identity_provider::entity::IdentityProviderType;
 use crate::principal::entity::{Principal, UserIdentity, UserScope};
 use crate::principal::repository::PrincipalRepository;
 use crate::service_account::entity::RoleAssignment;
-use crate::shared::api_common::PaginationParams;
 use crate::shared::enum_str::parse_opt;
 use crate::shared::error::{NotFoundExt, PlatformError};
 use crate::shared::middleware::Authenticated;
@@ -39,9 +38,15 @@ pub struct CreateUserRequest {
     /// Display name
     pub name: String,
 
-    /// Client ID (for client-bound users)
+    /// The user's client: its `clt_` id or its identifier (e.g. `inhance`),
+    /// resolved as Go's `resolveClientRef` does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+
+    /// Requested tier: `ANCHOR`, `PARTNER` or `CLIENT` (the default). The
+    /// email domain only confirms a privileged tier, never grants one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 
     /// When false, the platform skips its password complexity rules
     /// (uppercase/lowercase/digit/special) and only enforces a 2-character
@@ -399,12 +404,23 @@ pub struct PrincipalListResponse {
     pub total: usize,
 }
 
-/// Query parameters for principals list
+/// Query parameters for principals list.
+///
+/// Every field is taken as a string, with no `#[serde(flatten)]`: a
+/// flattened struct makes serde_urlencoded hand every value over as a
+/// string, so a typed `Option<bool>` beside one rejects `?active=true`.
+/// Values are then read the way Go reads them
+/// (principal/api/api.go:130-140).
 #[derive(Debug, Deserialize, Default, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PrincipalsQuery {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
+    /// 0-based page (only with a page size)
+    pub page: Option<String>,
+
+    /// Page size; absent or `<= 0` returns every row, as Go does. `size`,
+    /// `limit` and `page_size` are accepted too.
+    #[serde(alias = "size", alias = "limit", alias = "page_size")]
+    pub page_size: Option<String>,
 
     /// Filter by type
     #[serde(rename = "type")]
@@ -423,8 +439,8 @@ pub struct PrincipalsQuery {
     /// specific user — `q` is a substring search and can return unrelated rows.
     pub email: Option<String>,
 
-    /// Filter by active status
-    pub active: Option<bool>,
+    /// Filter by active status: `true` or `false`; anything else is no filter
+    pub active: Option<String>,
 
     /// Filter by roles (comma-separated)
     pub roles: Option<String>,
@@ -436,10 +452,43 @@ pub struct PrincipalsQuery {
     pub sort_order: Option<String>,
 }
 
+impl PrincipalsQuery {
+    /// Go: only the exact strings `true` and `false` filter
+    /// (api.go:172-177).
+    pub fn active_filter(&self) -> Option<bool> {
+        match self.active.as_deref() {
+            Some("true") => Some(true),
+            Some("false") => Some(false),
+            _ => None,
+        }
+    }
+
+    /// `(page, page_size)`; `None` when every row is wanted (Go
+    /// `paginate`, api.go:272-283: a page size `<= 0` returns everything).
+    pub fn paging(&self) -> Result<Option<(usize, usize)>, PlatformError> {
+        let int = |name: &str, v: Option<&str>| -> Result<i64, PlatformError> {
+            match v.map(str::trim).filter(|v| !v.is_empty()) {
+                None => Ok(0),
+                Some(v) => v
+                    .parse::<i64>()
+                    .map_err(|_| PlatformError::validation(format!("{name} must be an integer"))),
+            }
+        };
+        let size = int("pageSize", self.page_size.as_deref())?;
+        if size <= 0 {
+            return Ok(None);
+        }
+        let page = int("page", self.page.as_deref())?.max(0);
+        Ok(Some((page as usize, size as usize)))
+    }
+}
+
 /// Principals service state
 #[derive(Clone)]
 pub struct PrincipalsState {
     pub principal_repo: Arc<PrincipalRepository>,
+    /// Resolves a user-create `clientId` given as an id or an identifier
+    pub client_repo: Arc<crate::ClientRepository>,
     /// Resolved application scopes, cached per principal; dropped when a
     /// principal's application access changes so the change applies at once.
     pub app_access: Arc<crate::shared::authorization_service::ApplicationAccessService>,
@@ -533,71 +582,53 @@ pub async fn create_user(
         None => IdentityProviderType::Internal,
     };
 
-    // Resolve scope + client association from email domain.
-    let (scope, primary_client_id, granted_client_ids) = if is_anchor_domain {
-        // Anchor: ignore any client_id on the request.
-        (UserScope::Anchor, None, Vec::new())
-    } else if let Some(ref m) = mapping {
-        match m.scope_type {
-            crate::email_domain_mapping::entity::ScopeType::Anchor => {
-                (UserScope::Anchor, None, Vec::new())
-            }
-            crate::email_domain_mapping::entity::ScopeType::Partner => {
-                let client_id = req.client_id.as_deref().ok_or_else(|| {
-                    PlatformError::validation("clientId is required for partner users")
-                })?;
-                let allowed = m.granted_client_ids.iter().any(|c| c == client_id)
-                    || m.primary_client_id.as_deref() == Some(client_id);
-                if !allowed {
-                    return Err(PlatformError::validation(format!(
-                        "clientId {} is not allowed for partner domain {}",
-                        client_id, domain
-                    )));
-                }
+    // Resolve the client reference (clt_ id or identifier) before the tier,
+    // so mapping allow-lists compare canonical ids (Go createUser,
+    // principal/api/api.go:594-606).
+    let req_client_id = match req.client_id.as_deref().map(str::trim) {
+        Some(r) if !r.is_empty() => Some(resolve_client_ref(&state, r).await?),
+        _ => None,
+    };
+    let (scope, primary_client_id) = derive_user_scope(
+        req.scope.as_deref(),
+        is_anchor_domain,
+        mapping.as_ref(),
+        req_client_id,
+    )?;
 
-                // Partner-merge: if a user already exists for this email, emit
-                // a ClientAccessGranted event via the grant use case rather
-                // than a fresh UserCreated. Keeps events + audit logs accurate.
-                if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
-                    let already_linked = existing.client_id.as_deref() == Some(client_id)
-                        || existing.assigned_clients.iter().any(|c| c == client_id);
-                    if already_linked {
-                        return Err(PlatformError::duplicate("Principal", "email", &req.email));
-                    }
-                    let cmd = GrantClientAccessCommand {
-                        user_id: existing.id.clone(),
-                        client_id: client_id.to_string(),
-                    };
-                    let ctx = ExecutionContext::create(&auth.0.principal_id);
-                    state
-                        .grant_client_access_use_case
-                        .run(cmd, ctx)
-                        .await
-                        .into_result()?;
-                    let refreshed = state
-                        .principal_repo
-                        .find_by_id(&existing.id)
-                        .await?
-                        .or_not_found("Principal", &existing.id)?;
-                    return Ok(Json(refreshed.into()));
-                }
-
-                // New partner user — home client + single grant for the
-                // requested client.
-                (
-                    UserScope::Partner,
-                    Some(client_id.to_string()),
-                    vec![client_id.to_string()],
-                )
+    // Partner-merge: if a user already exists for this email, emit a
+    // ClientAccessGranted event via the grant use case rather than a fresh
+    // UserCreated. Keeps events + audit logs accurate.
+    let granted_client_ids = if scope == UserScope::Partner {
+        let client_id = primary_client_id.clone().unwrap_or_default();
+        if let Some(existing) = state.principal_repo.find_by_email(&req.email).await? {
+            let already_linked = existing.client_id.as_deref() == Some(client_id.as_str())
+                || existing.assigned_clients.iter().any(|c| c == &client_id);
+            if already_linked {
+                return Err(PlatformError::duplicate("Principal", "email", &req.email));
             }
-            crate::email_domain_mapping::entity::ScopeType::Client => {
-                let primary = req.client_id.clone().or(m.primary_client_id.clone());
-                (UserScope::Client, primary, m.granted_client_ids.clone())
-            }
+            let cmd = GrantClientAccessCommand {
+                user_id: existing.id.clone(),
+                client_id: client_id.clone(),
+            };
+            let ctx = ExecutionContext::create(&auth.0.principal_id);
+            state
+                .grant_client_access_use_case
+                .run(cmd, ctx)
+                .await
+                .into_result()?;
+            let refreshed = state
+                .principal_repo
+                .find_by_id(&existing.id)
+                .await?
+                .or_not_found("Principal", &existing.id)?;
+            return Ok(Json(refreshed.into()));
         }
+        // New partner user — home client + single grant for the requested
+        // client.
+        vec![client_id]
     } else {
-        // Unmapped domain → client-scoped, use request's client_id verbatim.
-        (UserScope::Client, req.client_id.clone(), Vec::new())
+        Vec::new()
     };
 
     let cmd = CreateUserCommand {
@@ -660,6 +691,103 @@ pub async fn create_user(
     }
 
     Ok(Json(created.into()))
+}
+
+/// A client reference — its `clt_` id or its identifier — as the client's
+/// id. Go `resolveClientRef` (principal/api/api.go:825-845): the id first,
+/// then the identifier lower-cased; an unknown reference is a 404
+/// `Client_NOT_FOUND`, never a silently mis-scoped user.
+async fn resolve_client_ref(
+    state: &PrincipalsState,
+    reference: &str,
+) -> Result<String, PlatformError> {
+    if let Some(client) = state.client_repo.find_by_id(reference).await? {
+        return Ok(client.id);
+    }
+    if let Some(client) = state
+        .client_repo
+        .find_by_identifier(&reference.to_lowercase())
+        .await?
+    {
+        return Ok(client.id);
+    }
+    Err(PlatformError::Coded {
+        status: StatusCode::NOT_FOUND,
+        code: "Client_NOT_FOUND".to_string(),
+        message: format!("Client not found: {reference}"),
+        details: Default::default(),
+    })
+}
+
+/// The new user's tier and home client. Go `deriveUserScope`
+/// (principal/api/api.go:780-819): the requested tier wins (CLIENT when
+/// absent) and the email domain can only confirm a privileged one:
+/// - ANCHOR needs a registered anchor domain or an ANCHOR mapping, and
+///   carries no client;
+/// - PARTNER needs a PARTNER mapping and a client it allows;
+/// - CLIENT takes the requested client, else a CLIENT mapping's primary.
+pub fn derive_user_scope(
+    requested: Option<&str>,
+    is_anchor_domain: bool,
+    mapping: Option<&crate::email_domain_mapping::entity::EmailDomainMapping>,
+    client_id: Option<String>,
+) -> Result<(UserScope, Option<String>), PlatformError> {
+    use crate::email_domain_mapping::entity::ScopeType;
+    let scope = requested
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_uppercase)
+        .unwrap_or_else(|| "CLIENT".to_string());
+    match scope.as_str() {
+        "ANCHOR" => {
+            let anchor_mapped = mapping.is_some_and(|m| m.scope_type == ScopeType::Anchor);
+            if !is_anchor_domain && !anchor_mapped {
+                return Err(PlatformError::bad_request_code(
+                    "ANCHOR_DOMAIN_REQUIRED",
+                    "ANCHOR scope requires the email's domain to be a registered anchor domain",
+                ));
+            }
+            Ok((UserScope::Anchor, None))
+        }
+        "PARTNER" => {
+            let Some(m) = mapping.filter(|m| m.scope_type == ScopeType::Partner) else {
+                return Err(PlatformError::bad_request_code(
+                    "PARTNER_DOMAIN_REQUIRED",
+                    "PARTNER scope requires a PARTNER email-domain mapping for the email's domain",
+                ));
+            };
+            let Some(client_id) = client_id.filter(|c| !c.is_empty()) else {
+                return Err(PlatformError::bad_request_code(
+                    "CLIENT_REQUIRED",
+                    "clientId is required for partner users",
+                ));
+            };
+            let allowed = m.primary_client_id.as_deref() == Some(client_id.as_str())
+                || m.granted_client_ids.contains(&client_id);
+            if !allowed {
+                return Err(PlatformError::bad_request_code(
+                    "CLIENT_NOT_ALLOWED",
+                    format!(
+                        "clientId {client_id} is not allowed for partner domain {}",
+                        m.email_domain
+                    ),
+                ));
+            }
+            Ok((UserScope::Partner, Some(client_id)))
+        }
+        "CLIENT" => {
+            let client_id = client_id.or_else(|| {
+                mapping
+                    .filter(|m| m.scope_type == ScopeType::Client)
+                    .and_then(|m| m.primary_client_id.clone())
+            });
+            Ok((UserScope::Client, client_id))
+        }
+        _ => Err(PlatformError::bad_request_code(
+            "INVALID_SCOPE",
+            "scope must be ANCHOR, PARTNER, or CLIENT",
+        )),
+    }
 }
 
 /// Get principal by ID
@@ -744,7 +872,7 @@ pub async fn list_principals(
             query.client_id.as_deref(),
             parse_opt(query.scope.as_deref())?,
             parse_opt(query.principal_type.as_deref())?,
-            query.active,
+            query.active_filter(),
             query.q.as_deref(),
             query.email.as_deref(),
         )
@@ -766,8 +894,13 @@ pub async fn list_principals(
         .map(|p| p.into())
         // Roles filter (requires checking hydrated roles, stays in-memory)
         .filter(|p: &PrincipalResponse| match &query.roles {
-            Some(roles_str) if !roles_str.is_empty() => {
-                let required: Vec<&str> = roles_str.split(',').collect();
+            Some(roles_str) if !roles_str.trim().is_empty() => {
+                // Go splitCSV (api.go:239-247): trimmed, empties dropped.
+                let required: Vec<&str> = roles_str
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|r| !r.is_empty())
+                    .collect();
                 required
                     .iter()
                     .any(|r| p.roles.iter().any(|role| role == r))
@@ -776,40 +909,30 @@ pub async fn list_principals(
         })
         .collect();
 
-    // Sort
-    let sort_desc = query.sort_order.as_deref() == Some("desc");
+    // Go sortPrincipals (api.go:251-269): a stable ascending sort, reversed
+    // for "desc"; name and email compare case-insensitively.
     match query.sort_field.as_deref() {
-        Some("name") => filtered.sort_by(|a, b| {
-            let cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());
-            if sort_desc {
-                cmp.reverse()
-            } else {
-                cmp
-            }
-        }),
-        Some("email") => filtered.sort_by(|a, b| {
-            let cmp = a.email.cmp(&b.email);
-            if sort_desc {
-                cmp.reverse()
-            } else {
-                cmp
-            }
-        }),
-        _ => filtered.sort_by(|a, b| {
-            let cmp = a.created_at.cmp(&b.created_at);
-            if sort_desc {
-                cmp.reverse()
-            } else {
-                cmp
-            }
-        }),
+        Some("name") => filtered.sort_by_key(|p| p.name.to_lowercase()),
+        Some("email") => filtered.sort_by_key(|p| p.email.as_deref().unwrap_or("").to_lowercase()),
+        _ => filtered.sort_by(|a, b| a.created_at.cmp(&b.created_at)),
+    }
+    if query
+        .sort_order
+        .as_deref()
+        .is_some_and(|o| o.eq_ignore_ascii_case("desc"))
+    {
+        filtered.reverse();
     }
 
     let total = filtered.len();
-    let offset = query.pagination.offset() as usize;
-    let limit = query.pagination.limit() as usize;
-    let principals: Vec<PrincipalResponse> =
-        filtered.into_iter().skip(offset).take(limit).collect();
+    let principals: Vec<PrincipalResponse> = match query.paging()? {
+        None => filtered,
+        Some((page, size)) => filtered
+            .into_iter()
+            .skip(page.saturating_mul(size))
+            .take(size)
+            .collect(),
+    };
     Ok(Json(PrincipalListResponse { principals, total }))
 }
 
@@ -1312,6 +1435,78 @@ pub async fn delete_principal(
 // ============================================================================
 // Status Management Endpoints
 // ============================================================================
+
+/// Platform-level user sync request (Go `SyncUsersRequest`,
+/// principal/api/sync.go:16-27).
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncUsersRequest {
+    #[serde(default)]
+    #[schema(value_type = Vec<Object>)]
+    pub principals: Vec<crate::principal::operations::SyncUserInput>,
+}
+
+/// Platform-level user sync response (Go sync.go:30-35, 70-75).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncUsersResponse {
+    pub created: u32,
+    pub updated: u32,
+    /// Users deactivated by the sync: always 0 (it removes nothing)
+    pub deleted: u32,
+    pub synced_emails: Vec<String>,
+}
+
+/// Sync users (declarative upsert by email; no application scope)
+///
+/// Go's `POST /api/principals/sync` (principal/api/api.go:94, sync.go:43-76):
+/// creates or updates each listed user, carrying a migrated password hash
+/// verbatim. Every row, event and audit entry commits in one transaction.
+#[utoipa::path(
+    post,
+    path = "/sync",
+    tag = "principals",
+    operation_id = "postApiPrincipalsSync",
+    request_body = SyncUsersRequest,
+    responses(
+        (status = 200, description = "Users synced", body = SyncUsersResponse),
+        (status = 400, description = "No principals given"),
+        (status = 403, description = "Insufficient permissions")
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn sync_users(
+    State(state): State<PrincipalsState>,
+    auth: Authenticated,
+    Json(req): Json<SyncUsersRequest>,
+) -> Result<Json<SyncUsersResponse>, PlatformError> {
+    use crate::principal::operations::{SyncUsersCommand, SyncUsersUseCase};
+    use crate::usecase::{ExecutionContext, UseCase};
+
+    crate::checks::can_sync_principals(&auth.0)?;
+
+    let command = SyncUsersCommand {
+        principals: req.principals,
+    };
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    let principal_repo = state.principal_repo.clone();
+    let event = state
+        .unit_of_work
+        .run(|session| async move {
+            SyncUsersUseCase::new(principal_repo, session)
+                .run(command, ctx)
+                .await
+        })
+        .await
+        .into_result()?;
+
+    Ok(Json(SyncUsersResponse {
+        created: event.created,
+        updated: event.updated,
+        deleted: event.deactivated,
+        synced_emails: event.synced_emails,
+    }))
+}
 
 /// Activate a principal
 ///
@@ -1938,6 +2133,7 @@ pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
         // separately or only one gets mounted (previously the cause of 405s).
         .routes(routes!(list_principals))
         .routes(routes!(create_user))
+        .routes(routes!(sync_users))
         .routes(routes!(check_email_domain))
         .routes(routes!(get_principal, update_principal, delete_principal))
         .routes(routes!(activate_principal))
@@ -1956,6 +2152,189 @@ pub fn principals_router(state: PrincipalsState) -> OpenApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mapping(
+        scope_type: crate::email_domain_mapping::entity::ScopeType,
+        primary: Option<&str>,
+        granted: &[&str],
+    ) -> crate::email_domain_mapping::entity::EmailDomainMapping {
+        let mut m = crate::email_domain_mapping::entity::EmailDomainMapping::new(
+            "acme.test",
+            "idp_1",
+            scope_type,
+        );
+        m.primary_client_id = primary.map(String::from);
+        m.granted_client_ids = granted.iter().map(|g| g.to_string()).collect();
+        m
+    }
+
+    fn code(r: Result<(UserScope, Option<String>), PlatformError>) -> String {
+        match r {
+            Err(PlatformError::Coded { code, status, .. }) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                code
+            }
+            other => panic!("expected a coded 400, got {other:?}"),
+        }
+    }
+
+    /// Go `deriveUserScope` (principal/api/api.go:780-819), case by case.
+    #[test]
+    fn user_scope_is_derived_as_go_derives_it() {
+        use crate::email_domain_mapping::entity::ScopeType;
+        let clt = || Some("clt_1".to_string());
+
+        // Absent → CLIENT with the requested client; an anchor domain alone
+        // doesn't make an anchor.
+        assert_eq!(
+            derive_user_scope(None, true, None, clt()).unwrap(),
+            (UserScope::Client, clt())
+        );
+        // CLIENT falls back to a CLIENT mapping's primary.
+        let client_map = mapping(ScopeType::Client, Some("clt_9"), &["clt_8"]);
+        assert_eq!(
+            derive_user_scope(Some("client"), false, Some(&client_map), None).unwrap(),
+            (UserScope::Client, Some("clt_9".to_string()))
+        );
+        // ANCHOR needs the anchor domain (or an ANCHOR mapping); no client.
+        assert_eq!(
+            derive_user_scope(Some("ANCHOR"), true, None, clt()).unwrap(),
+            (UserScope::Anchor, None)
+        );
+        let anchor_map = mapping(ScopeType::Anchor, None, &[]);
+        assert_eq!(
+            derive_user_scope(Some(" anchor "), false, Some(&anchor_map), None).unwrap(),
+            (UserScope::Anchor, None)
+        );
+        assert_eq!(
+            code(derive_user_scope(Some("ANCHOR"), false, None, None)),
+            "ANCHOR_DOMAIN_REQUIRED"
+        );
+        // PARTNER needs a PARTNER mapping and an allowed client.
+        let partner_map = mapping(ScopeType::Partner, Some("clt_1"), &["clt_2"]);
+        assert_eq!(
+            derive_user_scope(
+                Some("PARTNER"),
+                false,
+                Some(&partner_map),
+                Some("clt_2".into())
+            )
+            .unwrap(),
+            (UserScope::Partner, Some("clt_2".to_string()))
+        );
+        assert_eq!(
+            code(derive_user_scope(Some("PARTNER"), false, None, clt())),
+            "PARTNER_DOMAIN_REQUIRED"
+        );
+        assert_eq!(
+            code(derive_user_scope(
+                Some("PARTNER"),
+                false,
+                Some(&partner_map),
+                None
+            )),
+            "CLIENT_REQUIRED"
+        );
+        assert_eq!(
+            code(derive_user_scope(
+                Some("PARTNER"),
+                false,
+                Some(&partner_map),
+                Some("clt_3".into())
+            )),
+            "CLIENT_NOT_ALLOWED"
+        );
+        assert_eq!(
+            code(derive_user_scope(Some("ADMIN"), false, None, None)),
+            "INVALID_SCOPE"
+        );
+    }
+
+    /// integral's `CreateUserUseCase.php:110-122` body, through the Laravel
+    /// SDK's `CreateUserRequest::toArray()`.
+    #[test]
+    fn integrals_create_user_body_deserializes() {
+        let req: CreateUserRequest = serde_json::from_value(serde_json::json!({
+            "email": "a@inhanceapps.com",
+            "name": "A",
+            "password": "x",
+            "enforcePasswordComplexity": false,
+            "scope": "ANCHOR"
+        }))
+        .unwrap();
+        assert_eq!(req.scope.as_deref(), Some("ANCHOR"));
+        let req: CreateUserRequest = serde_json::from_value(serde_json::json!({
+            "email": "b@tenant.test", "name": "B", "password": "x",
+            "clientId": "inhance", "enforcePasswordComplexity": false
+        }))
+        .unwrap();
+        assert_eq!(req.client_id.as_deref(), Some("inhance"));
+    }
+
+    fn principals_query(uri: &str) -> PrincipalsQuery {
+        let uri: axum::http::Uri = uri.parse().unwrap();
+        axum::extract::Query::<PrincipalsQuery>::try_from_uri(&uri)
+            .unwrap_or_else(|e| panic!("{uri}: {e}"))
+            .0
+    }
+
+    /// hr (`PrincipalDirectory.php:151`) and rfp
+    /// (`PlatformPrincipalDirectory.php:216`) send `?active=true`; hr's role
+    /// import (`ImportRolesRegisterCommand.php:275`) adds `type=USER`. No
+    /// page size, so every row comes back, as in Go.
+    #[test]
+    fn the_apps_list_query_parses_through_the_real_query_parser() {
+        let q = principals_query("/api/principals?active=true");
+        assert_eq!(q.active_filter(), Some(true));
+        assert_eq!(q.paging().unwrap(), None);
+
+        let q = principals_query("/api/principals?type=USER&active=true");
+        assert_eq!(q.principal_type.as_deref(), Some("USER"));
+        assert_eq!(q.active_filter(), Some(true));
+
+        let q = principals_query("/api/principals?active=false");
+        assert_eq!(q.active_filter(), Some(false));
+
+        // Go: anything but "true"/"false" is no filter.
+        assert_eq!(
+            principals_query("/api/principals?active=1").active_filter(),
+            None
+        );
+        assert_eq!(principals_query("/api/principals").active_filter(), None);
+    }
+
+    #[test]
+    fn a_page_size_pages_and_its_absence_returns_everything() {
+        let q = principals_query("/api/principals?page=2&pageSize=10");
+        assert_eq!(q.paging().unwrap(), Some((2, 10)));
+        // The Rust-era aliases still page.
+        assert_eq!(
+            principals_query("/api/principals?page=1&size=5")
+                .paging()
+                .unwrap(),
+            Some((1, 5))
+        );
+        assert_eq!(
+            principals_query("/api/principals?limit=7")
+                .paging()
+                .unwrap(),
+            Some((0, 7))
+        );
+        // Go paginate: a page size <= 0 returns every row.
+        assert_eq!(
+            principals_query("/api/principals?pageSize=0")
+                .paging()
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            principals_query("/api/principals?page=3").paging().unwrap(),
+            None
+        );
+        assert!(principals_query("/api/principals?pageSize=ten")
+            .paging()
+            .is_err());
+    }
     use crate::principal::entity::{Principal, PrincipalType, UserIdentity, UserScope};
     use crate::service_account::entity::RoleAssignment;
     use chrono::Utc;
@@ -1976,6 +2355,7 @@ mod tests {
             assigned_clients: vec!["clt_CLIENT1234567".to_string()],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            application_code_map: std::collections::HashMap::new(),
             all_applications: true,
             created_at: now,
             updated_at: now,
@@ -2031,6 +2411,7 @@ mod tests {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            application_code_map: std::collections::HashMap::new(),
             all_applications: false,
             created_at: now,
             updated_at: now,

@@ -412,7 +412,7 @@ async fn test_token_generation_from_db_principal() {
         .expect("Failed to validate token");
     assert_eq!(claims.sub, principal.id);
     assert_eq!(claims.email, Some("admin@flowcatalyst.local".to_string()));
-    assert_eq!(claims.scope, UserScope::Anchor);
+    assert_eq!(claims.tier, UserScope::Anchor);
     assert!(claims.clients.contains(&"*".to_string()));
 }
 
@@ -449,7 +449,7 @@ async fn test_multiple_clients_with_partner_principal() {
     let token = auth_service.generate_access_token(&loaded).unwrap();
     let claims = auth_service.validate_token(&token).unwrap();
 
-    assert_eq!(claims.scope, UserScope::Partner);
+    assert_eq!(claims.tier, UserScope::Partner);
 }
 
 // ─── Migration Idempotency Test ───────────────────────────────────────────

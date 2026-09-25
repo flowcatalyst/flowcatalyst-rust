@@ -430,6 +430,20 @@ impl PrincipalsSynced {
             format!("platform:application:{}", application_code),
         )
     }
+
+    /// Metadata for the platform-level sync (no application): Go's subject
+    /// `platform.principals` and group `platform:principals`
+    /// (principal/operations/events.go:444-464).
+    pub fn metadata_for_platform(ctx: &ExecutionContext) -> EventMetadata {
+        EventMetadata::from_ctx(
+            ctx,
+            Self::EVENT_TYPE,
+            Self::SPEC_VERSION,
+            Self::SOURCE,
+            "platform.principals".to_string(),
+            "platform:principals".to_string(),
+        )
+    }
 }
 
 /// Event emitted when application access is assigned to a user.

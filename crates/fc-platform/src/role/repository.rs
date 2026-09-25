@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
+use std::collections::HashSet;
 
 use super::entity::{AuthRole, RoleSource};
 use crate::shared::enum_str::decode;
@@ -218,6 +219,56 @@ impl RoleRepository {
             .await?;
 
         self.hydrate_roles(rows).await
+    }
+
+    /// The permissions a set of role names grants, de-duplicated and sorted
+    /// (Go `flattenPermissions`, auth/provider/provider.go:141-164: unknown
+    /// role names contribute nothing).
+    pub async fn flatten_permissions(&self, role_names: &[String]) -> Result<Vec<String>> {
+        let mut permissions: Vec<String> = self
+            .find_by_codes(role_names)
+            .await?
+            .into_iter()
+            .flat_map(|r| r.permissions)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        permissions.sort();
+        Ok(permissions)
+    }
+
+    /// The canonical names of those `role_names` that belong to one of
+    /// `application_ids`, in input order. Go `filterRolesForApplications`
+    /// (auth/provider/provider.go:183-229): an exact name match first;
+    /// failing that, a bare short name resolves within the given
+    /// applications (`name = application_code || ':' || short`). One query.
+    pub async fn filter_roles_for_applications(
+        &self,
+        role_names: &[String],
+        application_ids: &[String],
+    ) -> Result<Vec<String>> {
+        if role_names.is_empty() || application_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT r.name
+             FROM UNNEST($1::text[]) WITH ORDINALITY AS u(assigned, ord)
+             JOIN LATERAL (
+                 SELECT name, application_id FROM iam_roles
+                 WHERE name = u.assigned
+                    OR (application_id = ANY($2::text[])
+                        AND name = application_code || ':' || u.assigned)
+                 ORDER BY (name = u.assigned) DESC
+                 LIMIT 1
+             ) r ON TRUE
+             WHERE r.application_id = ANY($2::text[])
+             ORDER BY u.ord",
+        )
+        .bind(role_names)
+        .bind(application_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(name,)| name).collect())
     }
 
     /// Search roles by name or display_name (case-insensitive partial match)

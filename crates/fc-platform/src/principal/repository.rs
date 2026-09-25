@@ -82,6 +82,7 @@ impl TryFrom<PrincipalRow> for Principal {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            application_code_map: std::collections::HashMap::new(),
             all_applications: r.all_applications,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -133,6 +134,9 @@ struct ClientIdentifierRow {
 struct PrincipalApplicationAccessRow {
     principal_id: String,
     application_id: String,
+    /// The application's code; NULL when the application row is gone (the
+    /// junction has no FK), as Go's LEFT JOIN reads it.
+    application_code: Option<String>,
 }
 
 /// The application-access facts for one principal, without hydrating the
@@ -256,6 +260,38 @@ impl PrincipalRepository {
             Some(r) => Ok(Some(self.hydrate_principal(r).await?)),
             None => Ok(None),
         }
+    }
+
+    /// Replace a principal's stored password hash — infrastructure, not a
+    /// domain change: the lazy re-encoding of a hash the user just proved
+    /// they know the password for (a migrated bcrypt hash, or older argon2
+    /// parameters), made on login. Go writes it the same way, as a direct
+    /// UPDATE with no event or audit (principal/repository.go:760-770,
+    /// called from auth/login/endpoint.go:519-525).
+    pub async fn update_password_hash(&self, principal_id: &str, hash: &str) -> Result<()> {
+        sqlx::query("UPDATE iam_principals SET password_hash = $1, updated_at = $2 WHERE id = $3")
+            .bind(hash)
+            .bind(Utc::now())
+            .bind(principal_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// The USER principals with these emails (matched case-insensitively),
+    /// hydrated, in one query plus the batch hydration.
+    pub async fn find_users_by_emails(&self, emails: &[String]) -> Result<Vec<Principal>> {
+        if emails.is_empty() {
+            return Ok(vec![]);
+        }
+        let lowered: Vec<String> = emails.iter().map(|e| e.to_lowercase()).collect();
+        let rows = sqlx::query_as::<_, PrincipalRow>(
+            "SELECT * FROM iam_principals WHERE type = 'USER' AND lower(email) = ANY($1)",
+        )
+        .bind(&lowered)
+        .fetch_all(&self.pool)
+        .await?;
+        self.hydrate_principals(rows).await
     }
 
     /// Load the all-applications flag and grants for one principal in a
@@ -713,14 +749,26 @@ impl PrincipalRepository {
         principal.client_identifier_map = identifier_map;
 
         // Load application access
+        // Go's hydrateAppAccess (principal/repository.go:286-322): LEFT JOIN
+        // for the code, ordered by application id.
         let app_rows = sqlx::query_as::<_, PrincipalApplicationAccessRow>(
-            "SELECT principal_id, application_id FROM iam_principal_application_access WHERE principal_id = $1"
+            "SELECT a.principal_id, a.application_id, ap.code AS application_code
+             FROM iam_principal_application_access a
+             LEFT JOIN app_applications ap ON ap.id = a.application_id
+             WHERE a.principal_id = $1
+             ORDER BY a.application_id",
         )
         .bind(&id)
         .fetch_all(&self.pool)
         .await?;
-        principal.accessible_application_ids =
-            app_rows.into_iter().map(|a| a.application_id).collect();
+        for a in app_rows {
+            if let Some(code) = a.application_code.filter(|c| !c.is_empty()) {
+                principal
+                    .application_code_map
+                    .insert(a.application_id.clone(), code);
+            }
+            principal.accessible_application_ids.push(a.application_id);
+        }
 
         Ok(principal)
     }
@@ -797,7 +845,11 @@ impl PrincipalRepository {
 
         // Batch-load application access
         let all_app_access = sqlx::query_as::<_, PrincipalApplicationAccessRow>(
-            "SELECT principal_id, application_id FROM iam_principal_application_access WHERE principal_id = ANY($1)"
+            "SELECT a.principal_id, a.application_id, ap.code AS application_code
+             FROM iam_principal_application_access a
+             LEFT JOIN app_applications ap ON ap.id = a.application_id
+             WHERE a.principal_id = ANY($1)
+             ORDER BY a.application_id",
         )
         .bind(&principal_ids)
         .fetch_all(&self.pool)
@@ -805,7 +857,12 @@ impl PrincipalRepository {
 
         let mut app_access_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
+        let mut app_code_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for a in all_app_access {
+            if let Some(code) = a.application_code.filter(|c| !c.is_empty()) {
+                app_code_map.insert(a.application_id.clone(), code);
+            }
             app_access_map
                 .entry(a.principal_id)
                 .or_default()
@@ -838,6 +895,10 @@ impl PrincipalRepository {
                 }
                 principal.client_identifier_map = id_map;
                 if let Some(apps) = app_access_map.remove(&id) {
+                    principal.application_code_map = apps
+                        .iter()
+                        .filter_map(|a| app_code_map.get(a).map(|c| (a.clone(), c.clone())))
+                        .collect();
                     principal.accessible_application_ids = apps;
                 }
                 Ok(principal)
@@ -845,6 +906,136 @@ impl PrincipalRepository {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(principals)
+    }
+}
+
+// ── Persist<PrincipalSyncBatch> ────────────────────────────────────────────
+//
+// A platform-level user sync writes each user's `iam_principals` row and
+// replaces its role set — Go's `RolesPersister` over `CommitSync`
+// (principal/operations/sync_principals.go:241-245) — in one UNNEST upsert
+// and one UNNEST role insert, whatever the batch size. Client grants and
+// application access are not touched by a sync.
+
+impl HasId for crate::principal::entity::PrincipalSyncBatch {
+    fn id(&self) -> &str {
+        "principals"
+    }
+}
+
+#[async_trait]
+impl crate::usecase::Persist<crate::principal::entity::PrincipalSyncBatch> for PrincipalRepository {
+    async fn persist(
+        &self,
+        batch: &crate::principal::entity::PrincipalSyncBatch,
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        let ps = &batch.principals;
+        if ps.is_empty() {
+            return Ok(());
+        }
+        let now = Utc::now();
+        let ids: Vec<&str> = ps.iter().map(|p| p.id.as_str()).collect();
+        let types: Vec<&str> = ps.iter().map(|p| p.principal_type.as_str()).collect();
+        let scopes: Vec<&str> = ps.iter().map(|p| p.scope.as_str()).collect();
+        let client_ids: Vec<Option<&str>> = ps.iter().map(|p| p.client_id.as_deref()).collect();
+        let names: Vec<&str> = ps.iter().map(|p| p.name.as_str()).collect();
+        let actives: Vec<bool> = ps.iter().map(|p| p.active).collect();
+        let emails: Vec<Option<&str>> = ps.iter().map(|p| p.email()).collect();
+        let domains: Vec<Option<String>> = ps
+            .iter()
+            .map(|p| {
+                p.email()
+                    .map(|e| e.split('@').nth(1).unwrap_or("").to_string())
+            })
+            .collect();
+        let idp_types: Vec<Option<String>> = ps
+            .iter()
+            .map(|p| {
+                p.user_identity
+                    .as_ref()
+                    .and_then(|i| i.provider.clone())
+                    .or_else(|| p.is_user().then(|| "INTERNAL".to_string()))
+            })
+            .collect();
+        let hashes: Vec<Option<&str>> = ps
+            .iter()
+            .map(|p| {
+                p.user_identity
+                    .as_ref()
+                    .and_then(|i| i.password_hash.as_deref())
+            })
+            .collect();
+        let created: Vec<DateTime<Utc>> = ps.iter().map(|p| p.created_at).collect();
+        let all_apps: Vec<bool> = ps.iter().map(|p| p.all_applications).collect();
+
+        sqlx::query(
+            "INSERT INTO iam_principals (id, type, scope, client_id, name, active, email, email_domain, idp_type, password_hash, created_at, updated_at, all_applications)
+             SELECT u.id, u.type, u.scope, u.client_id, u.name, u.active, u.email, u.email_domain, u.idp_type, u.password_hash, u.created_at, $13, u.all_applications
+             FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::varchar[], $5::varchar[], $6::bool[], $7::varchar[], $8::varchar[], $9::varchar[], $10::varchar[], $11::timestamptz[], $12::bool[])
+                  AS u(id, type, scope, client_id, name, active, email, email_domain, idp_type, password_hash, created_at, all_applications)
+             ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                active = EXCLUDED.active,
+                password_hash = EXCLUDED.password_hash,
+                updated_at = EXCLUDED.updated_at",
+        )
+        .bind(&ids)
+        .bind(&types)
+        .bind(&scopes)
+        .bind(&client_ids)
+        .bind(&names)
+        .bind(&actives)
+        .bind(&emails)
+        .bind(&domains)
+        .bind(&idp_types)
+        .bind(&hashes)
+        .bind(&created)
+        .bind(&all_apps)
+        .bind(now)
+        .execute(&mut **tx.inner)
+        .await?;
+
+        sqlx::query("DELETE FROM iam_principal_roles WHERE principal_id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut **tx.inner)
+            .await?;
+        let mut role_pids: Vec<&str> = Vec::new();
+        let mut role_names: Vec<&str> = Vec::new();
+        let mut role_sources: Vec<Option<&str>> = Vec::new();
+        let mut role_ats: Vec<DateTime<Utc>> = Vec::new();
+        for p in ps {
+            for r in &p.roles {
+                role_pids.push(&p.id);
+                role_names.push(&r.role);
+                role_sources.push(r.assignment_source.map(|s| s.as_str()));
+                role_ats.push(r.assigned_at);
+            }
+        }
+        if !role_pids.is_empty() {
+            sqlx::query(
+                "INSERT INTO iam_principal_roles (principal_id, role_name, assignment_source, assigned_at)
+                 SELECT * FROM UNNEST($1::varchar[], $2::varchar[], $3::varchar[], $4::timestamptz[])
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(&role_pids)
+            .bind(&role_names)
+            .bind(&role_sources)
+            .bind(&role_ats)
+            .execute(&mut **tx.inner)
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn delete(
+        &self,
+        _batch: &crate::principal::entity::PrincipalSyncBatch,
+        _tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        Err(PlatformError::Internal {
+            message: "a principal sync batch is never deleted".to_string(),
+        })
     }
 }
 

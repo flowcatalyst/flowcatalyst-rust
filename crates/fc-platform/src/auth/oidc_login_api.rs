@@ -1462,6 +1462,10 @@ pub struct SessionEndParams {
     /// Post-logout redirect URI
     #[serde(default)]
     pub post_logout_redirect_uri: Option<String>,
+    /// The relying party's client_id, naming the client whose registered
+    /// URIs to check when there is no (usable) `id_token_hint`
+    #[serde(default)]
+    pub client_id: Option<String>,
     /// State to pass back to the client
     #[serde(default)]
     pub state: Option<String>,
@@ -1522,12 +1526,21 @@ pub async fn session_end(
                 .into_response()
         };
 
-        let Some(ref token_hint) = params.id_token_hint else {
-            return reject("id_token_hint is required to verify post_logout_redirect_uri");
-        };
-
-        let Some(client_id) = extract_aud_from_id_token_hint(token_hint) else {
-            return reject("id_token_hint is malformed");
+        // The client is the hint's audience, else the `client_id` parameter
+        // (OIDC RP-Initiated Logout 1.0 §2; Go handleSessionEnd,
+        // auth/bridge/login_endpoint.go:174-230). AgentPlanner (oidc.py:
+        // 248-258) and the Laravel SDK (OidcAuthController.php:215-247) send
+        // `client_id` when they hold no id_token.
+        let client_id = params
+            .id_token_hint
+            .as_deref()
+            .and_then(extract_aud_from_id_token_hint)
+            .filter(|aud| !aud.is_empty())
+            .or_else(|| params.client_id.clone().filter(|c| !c.is_empty()));
+        let Some(client_id) = client_id else {
+            return reject(
+                "id_token_hint or client_id is required to verify post_logout_redirect_uri",
+            );
         };
 
         let client = match state.oauth_client_repo.find_by_client_id(&client_id).await {

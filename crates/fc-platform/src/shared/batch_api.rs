@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
-use crate::event::entity::Event;
+use crate::client::repository::ClientRepository;
+use crate::event::entity::{ContextData, Event};
 use crate::event::repository::EventRepository;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -42,8 +43,32 @@ pub struct BatchEventItem {
     pub message_group: Option<String>,
     #[serde(alias = "client_id")]
     pub client_id: Option<String>,
+    /// The client's identifier, resolved to its id when `clientId` is absent
+    /// (Go event/api/api.go:168-185). The Laravel SDK's outbox sends it.
+    #[serde(alias = "client_code")]
+    pub client_code: Option<String>,
     #[serde(alias = "context_data")]
     pub context_data: Option<serde_json::Value>,
+}
+
+/// `contextData` as `[{key, value}]`; a null or non-string value reads as
+/// its text (null as empty), entries without a key are dropped.
+fn context_entries(value: Option<serde_json::Value>) -> Vec<ContextData> {
+    let Some(serde_json::Value::Array(items)) = value else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let key = item.get("key")?.as_str()?.to_string();
+            let value = match item.get("value") {
+                None | Some(serde_json::Value::Null) => String::new(),
+                Some(serde_json::Value::String(v)) => v.clone(),
+                Some(other) => other.to_string(),
+            };
+            Some(ContextData { key, value })
+        })
+        .collect()
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -68,6 +93,8 @@ pub struct BatchResponse {
 #[derive(Clone)]
 pub struct SdkEventsState {
     pub event_repo: Arc<EventRepository>,
+    /// Resolves `clientCode` to a client id
+    pub client_repo: Arc<ClientRepository>,
 }
 
 async fn batch_events(
@@ -79,6 +106,19 @@ async fn batch_events(
         return Err(PlatformError::validation("Maximum 1000 items per batch"));
     }
 
+    // Every distinct `clientCode` on items without a `clientId`, resolved in
+    // one query. An unknown code leaves the event unlinked rather than
+    // failing the batch: the event is a fact (Go event/api/api.go:151-185).
+    let mut codes: Vec<String> = req
+        .items
+        .iter()
+        .filter(|i| i.client_id.is_none())
+        .filter_map(|i| i.client_code.clone().filter(|c| !c.is_empty()))
+        .collect();
+    codes.sort();
+    codes.dedup();
+    let client_ids_by_code = state.client_repo.find_ids_by_identifiers(&codes).await?;
+
     let mut inserted_events = Vec::with_capacity(req.items.len());
 
     for item in req.items {
@@ -87,16 +127,33 @@ async fn batch_events(
             item.source.unwrap_or_default(),
             item.data.unwrap_or(serde_json::Value::Null),
         );
+        if let Some(spec_version) = item.spec_version.filter(|v| !v.is_empty()) {
+            event.spec_version = spec_version;
+        }
         event.subject = item.subject;
         event.correlation_id = item.correlation_id;
         event.causation_id = item.causation_id;
-        event.deduplication_id = item.deduplication_id;
+        // Go's event.New gives every event a deduplication id,
+        // `<type>-<tsid>` (event/entity.go:70); a sent one wins.
+        event.deduplication_id = Some(
+            item.deduplication_id
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| format!("{}-{}", event.event_type, event.id)),
+        );
         event.message_group = item.message_group;
-        event.client_id = item.client_id;
+        event.client_id = item.client_id.or_else(|| {
+            item.client_code
+                .as_deref()
+                .and_then(|code| client_ids_by_code.get(code).cloned())
+        });
+        event.context_data = context_entries(item.context_data);
 
         inserted_events.push(event);
     }
 
+    // Idempotent on the deduplication id (EventRepository::insert_many): a
+    // duplicate is dropped and still reported SUCCESS, the outcome the
+    // sender wants acknowledged (Go event/api/api.go:197-205).
     state.event_repo.insert_many(&inserted_events).await?;
 
     let results: Vec<BatchResultItem> = inserted_events

@@ -16,7 +16,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
 use crate::auth::oauth_entity::{GrantType, OAuthClient, OAuthClientType};
-use crate::shared::api_common::{PaginationParams, SuccessResponse};
+use crate::shared::api_common::SuccessResponse;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::OAuthClientRepository;
@@ -179,11 +179,11 @@ pub struct OAuthClientListResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct OAuthClientsQuery {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
-
-    /// Filter by active status
-    pub active: Option<bool>,
+    /// Filter by active status: `true` or `false`; absent (or anything
+    /// else) lists every client, as Go's unfiltered list does
+    /// (auth/api/api.go:170-187). Taken as a string: a typed bool beside a
+    /// flattened struct rejects `?active=true`.
+    pub active: Option<String>,
 }
 
 /// OAuth Clients service state
@@ -373,11 +373,20 @@ pub async fn list_oauth_clients(
 ) -> Result<Json<OAuthClientListResponse>, PlatformError> {
     crate::checks::can_read_oauth_clients(&auth.0)?;
 
-    let clients = if query.active.unwrap_or(true) {
-        state.oauth_client_repo.find_active().await?
-    } else {
-        state.oauth_client_repo.find_all().await?
+    let want_active = match query.active.as_deref() {
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None,
     };
+    let mut clients: Vec<_> = state
+        .oauth_client_repo
+        .find_all()
+        .await?
+        .into_iter()
+        .filter(|c| want_active.is_none_or(|active| c.active == active))
+        .collect();
+    // Go orders by client_name (sqlc queries/auth.sql:30-37).
+    clients.sort_by(|a, b| a.client_name.cmp(&b.client_name));
 
     Ok(Json(OAuthClientListResponse {
         clients: clients.into_iter().map(|c| c.into()).collect(),
@@ -772,4 +781,28 @@ pub fn oauth_clients_router(state: OAuthClientsState) -> OpenApiRouter {
         .routes(routes!(rotate_oauth_client_secret))
         .routes(routes!(revoke_oauth_client_previous_secret))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `?active=true` parses (a typed bool beside a flattened struct didn't).
+    #[test]
+    fn the_oauth_clients_query_parses_through_the_real_query_parser() {
+        for (uri, want) in [
+            ("/api/oauth-clients?active=true", Some("true")),
+            (
+                "/api/oauth-clients?active=false&page=0&size=20",
+                Some("false"),
+            ),
+            ("/api/oauth-clients", None),
+        ] {
+            let uri: axum::http::Uri = uri.parse().unwrap();
+            let q = axum::extract::Query::<OAuthClientsQuery>::try_from_uri(&uri)
+                .unwrap()
+                .0;
+            assert_eq!(q.active.as_deref(), want);
+        }
+    }
 }

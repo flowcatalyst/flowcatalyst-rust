@@ -666,6 +666,49 @@ mod tests {
         assert!(auth.0.accessible_clients.contains(&"*".to_string()));
     }
 
+    /// Go's middleware (shared/middleware/middleware.go:204-213): a bearer
+    /// whose `scope` carries granted permissions authorizes exactly those,
+    /// with no role lookup.
+    #[tokio::test]
+    async fn test_scope_claim_permissions_are_used_as_granted() {
+        let auth_service = test_auth_service();
+        let mut principal =
+            Principal::new_user("svc@example.com", UserScope::Client).with_client_id("client-abc");
+        // A role the (unreachable) DB would have to resolve: the scope
+        // claim must make that lookup unnecessary.
+        principal.assign_role("app:role");
+        let token = auth_service
+            .generate_access_token_with_scope(
+                &principal,
+                &["platform:iam:user:view".to_string()],
+                None,
+            )
+            .unwrap();
+        let mut parts = make_parts_with_app_state(Some(&format!("Bearer {}", token)), None);
+        let auth = Authenticated::from_request_parts(&mut parts, &())
+            .await
+            .unwrap();
+        assert!(auth.0.has_permission("platform:iam:user:view"));
+        assert!(!auth.0.has_permission("platform:iam:user:create"));
+    }
+
+    /// Go refuses an identity-only (interactive-login) access token as an
+    /// API credential (shared/middleware/middleware.go:185-194).
+    #[tokio::test]
+    async fn test_identity_token_is_not_an_api_credential() {
+        let auth_service = test_auth_service();
+        let principal = Principal::new_user("user@example.com", UserScope::Anchor);
+        let token = auth_service
+            .generate_identity_access_token(&principal, Some("oc_app"))
+            .unwrap();
+        let mut parts = make_parts_with_app_state(Some(&format!("Bearer {}", token)), None);
+        let err = Authenticated::from_request_parts(&mut parts, &())
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        assert!(err.message.contains("interactive login"), "{}", err.message);
+    }
+
     #[tokio::test]
     async fn test_authenticated_client_user_context() {
         let auth_service = test_auth_service();

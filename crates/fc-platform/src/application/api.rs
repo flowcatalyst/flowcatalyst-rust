@@ -20,7 +20,6 @@ use crate::application::operations::{
 };
 use crate::auth::oauth_entity::{GrantType, OAuthClientType};
 use crate::auth::operations::CreateOAuthClientUseCase;
-use crate::shared::api_common::PaginationParams;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseResult};
@@ -120,11 +119,15 @@ impl From<Application> for ApplicationResponse {
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct ApplicationsQuery {
-    #[serde(flatten)]
-    pub pagination: PaginationParams,
+    /// Filter by type (`APPLICATION` | `INTEGRATION`)
+    #[serde(rename = "type")]
+    pub application_type: Option<String>,
 
-    /// Filter by active status
-    pub active: Option<bool>,
+    /// Filter by active status: absent lists every application, `true` the
+    /// active ones, any other value the inactive ones (Go's repository,
+    /// application/repository.go:58-67). Taken as a string: a typed bool
+    /// beside a flattened struct rejects `?active=true`.
+    pub active: Option<String>,
 }
 
 /// Service account response DTO
@@ -392,12 +395,23 @@ pub async fn list_applications<U: UnitOfWork>(
     _auth: Authenticated,
     Query(query): Query<ApplicationsQuery>,
 ) -> Result<Json<ApplicationListResponse>, PlatformError> {
-    let apps = if query.active == Some(false) {
-        state.application_repo.find_all().await?
-    } else {
-        // Default: activeOnly = true
-        state.application_repo.find_active().await?
-    };
+    // Go lists every application, filtered only when asked, ordered by code
+    // and unpaginated (application/api/api.go:63-81).
+    let want_type =
+        crate::shared::enum_str::parse_opt::<crate::application::entity::ApplicationType>(
+            crate::shared::enum_str::non_empty(query.application_type.as_deref()),
+        )?;
+    let want_active =
+        crate::shared::enum_str::non_empty(query.active.as_deref()).map(|a| a == "true");
+    let mut apps: Vec<_> = state
+        .application_repo
+        .find_all()
+        .await?
+        .into_iter()
+        .filter(|a| want_type.is_none_or(|t| a.application_type == t))
+        .filter(|a| want_active.is_none_or(|active| a.active == active))
+        .collect();
+    apps.sort_by(|a, b| a.code.cmp(&b.code));
 
     let applications: Vec<ApplicationResponse> = apps.into_iter().map(|a| a.into()).collect();
     let total = applications.len();
@@ -1454,6 +1468,21 @@ pub fn applications_router<U: UnitOfWork + Clone>(state: ApplicationsState<U>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `?active=true` parses (a typed bool beside a flattened struct didn't).
+    #[test]
+    fn the_applications_query_parses_through_the_real_query_parser() {
+        let uri: axum::http::Uri = "/api/applications?active=true&type=APPLICATION"
+            .parse()
+            .unwrap();
+        let q = axum::extract::Query::<ApplicationsQuery>::try_from_uri(&uri)
+            .unwrap()
+            .0;
+        assert_eq!(q.active.as_deref(), Some("true"));
+        assert_eq!(q.application_type.as_deref(), Some("APPLICATION"));
+        let uri: axum::http::Uri = "/api/applications?page=0&size=20".parse().unwrap();
+        assert!(axum::extract::Query::<ApplicationsQuery>::try_from_uri(&uri).is_ok());
+    }
     use crate::application::entity::{Application, ApplicationType};
     use chrono::Utc;
 

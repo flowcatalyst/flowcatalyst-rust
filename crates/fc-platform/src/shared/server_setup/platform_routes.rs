@@ -352,6 +352,7 @@ pub fn build_platform_routes(
     ));
     let principals_state = PrincipalsState {
         principal_repo: repos.principal_repo.clone(),
+        client_repo: repos.client_repo.clone(),
         audit_service,
         anchor_domain_repo: repos.anchor_domain_repo.clone(),
         email_domain_mapping_repo: repos.edm_repo.clone(),
@@ -574,6 +575,7 @@ pub fn build_platform_routes(
     let embedded_auth_state = AuthState {
         auth_service: auth.auth.clone(),
         principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         password_service: auth.password.clone(),
         refresh_token_repo: repos.refresh_token_repo.clone(),
         email_domain_mapping_repo: repos.edm_repo.clone(),
@@ -592,6 +594,7 @@ pub fn build_platform_routes(
     let oauth_state = OAuthState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         auth_service: auth.auth.clone(),
         auth_code_repo: repos.auth_code_repo.clone(),
         refresh_token_repo: repos.refresh_token_repo.clone(),
@@ -959,6 +962,7 @@ pub fn build_platform_routes(
 
     let sdk_events_state = SdkEventsState {
         event_repo: repos.event_repo.clone(),
+        client_repo: repos.client_repo.clone(),
     };
     let debug_state = DebugState {
         event_repo: repos.event_repo.clone(),
