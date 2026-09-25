@@ -205,7 +205,7 @@ Standalone binary (`bin/fc-router/`) and embedded usage (`bin/fc-server/src/main
 
 - `EnhancedOutboxProcessor`, `EnhancedProcessorConfig` — orchestrator.
 - `OutboxRepository` trait + per-backend impls (`postgres`, `sqlite`, `mysql`, `mongo` — feature-gated).
-- `GlobalBuffer`, `GroupDistributor`, `MessageGroupProcessor` — pipeline pieces.
+- `GroupDistributor` (per-group serial drains), `GroupStateManager` (Running/Paused/Blocked) — pipeline pieces.
 - `HttpDispatcher`, `HttpDispatcherConfig` — POSTs to platform endpoints.
 - `RecoveryTask` — stuck-item recovery.
 

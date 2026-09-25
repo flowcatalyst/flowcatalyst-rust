@@ -2939,7 +2939,9 @@ name = "fc-outbox-processor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
+ "chrono",
  "fc-common",
  "fc-outbox",
  "mongodb",
@@ -2947,6 +2949,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

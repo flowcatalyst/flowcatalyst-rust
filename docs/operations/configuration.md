@@ -198,20 +198,22 @@ Stream processor architecture: [../architecture/stream-processor.md](../architec
 
 | Variable | Default | Description |
 |---|---|---|
-| `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mysql`, `mongo` |
+| `FC_OUTBOX_BACKEND` / `FC_OUTBOX_DB_TYPE` | `postgres` | `sqlite`, `postgres`, `mongo` (`fc-server` reads `FC_OUTBOX_DB_TYPE`) |
 | `FC_OUTBOX_DB_URL` | — (required) | Application database URL |
 | `FC_OUTBOX_MONGO_DB` | `flowcatalyst` | MongoDB database name (mongo only) |
 | `FC_OUTBOX_EVENTS_TABLE` | `outbox_messages` | Per-type table override |
 | `FC_OUTBOX_DISPATCH_JOBS_TABLE` | `outbox_messages` | Per-type table override |
 | `FC_OUTBOX_AUDIT_LOGS_TABLE` | `outbox_messages` | Per-type table override |
-| `FC_OUTBOX_POLL_INTERVAL_MS` | `1000` | Poll cadence when idle |
-| `FC_OUTBOX_BATCH_SIZE` | `500` | Max items per poll (across all types) |
-| `FC_API_BASE_URL` | `http://localhost:8080` | Platform API base URL |
-| `FC_API_TOKEN` | — | Bearer token (required in prod) |
-| `FC_API_BATCH_SIZE` | `100` | Items per HTTP POST to platform |
-| `FC_MAX_IN_FLIGHT` | `5000` | Cap on claimed-but-undispatched items |
-| `FC_GLOBAL_BUFFER_SIZE` | `1000` | Buffer between repo and distributor |
-| `FC_MAX_CONCURRENT_GROUPS` | `10` | Active groups dispatching simultaneously |
+| `FC_OUTBOX_POLL_INTERVAL_MS` | `1000` | Poll interval |
+| `FC_OUTBOX_BATCH_SIZE` | `100` | Rows claimed per poll (across all types) |
+| `FC_OUTBOX_PLATFORM_URL` / `FC_OUTBOX_API_URL` / `FC_API_BASE_URL` | `http://localhost:8080` | Platform API base URL |
+| `FC_OUTBOX_PLATFORM_AUTH_TOKEN` / `FC_OUTBOX_TOKEN` / `FC_API_TOKEN` | — | Bearer token (required in prod) |
+| `FC_API_BATCH_SIZE` | `100` | Most items per HTTP POST (ungrouped) |
+| `FC_OUTBOX_MAX_IN_FLIGHT` / `FC_MAX_IN_FLIGHT` | `1000` | No poll at or above this many in flight |
+| `FC_OUTBOX_MAX_CONCURRENT_GROUPS` / `FC_MAX_CONCURRENT_GROUPS` | `10` | Groups sending at once |
+| `FC_OUTBOX_MAX_RETRIES` | `3` | Attempts before a retryable failure is final |
+| `FC_OUTBOX_BLOCK_ON_ERROR` | `true` | A failed item stops its message group |
+| `FC_OUTBOX_ADMIN_PORT` | — | Standalone binary only: group admin API on 127.0.0.1 |
 
 Outbox architecture: [../architecture/outbox-processor.md](../architecture/outbox-processor.md).
 
