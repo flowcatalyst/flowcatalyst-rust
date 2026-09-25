@@ -10,6 +10,7 @@ use crate::usecase::{
     ExecutionContext, OrNotFound, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
 };
 use crate::EmailDomainMappingRepository;
+use crate::IdentityProviderRepository;
 
 /// Command for updating an email domain mapping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,13 +39,19 @@ impl crate::usecase::AuditMasked for UpdateEmailDomainMappingCommand {}
 
 pub struct UpdateEmailDomainMappingUseCase<U: UnitOfWork> {
     edm_repo: Arc<EmailDomainMappingRepository>,
+    idp_repo: Arc<IdentityProviderRepository>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
-    pub fn new(edm_repo: Arc<EmailDomainMappingRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        edm_repo: Arc<EmailDomainMappingRepository>,
+        idp_repo: Arc<IdentityProviderRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             edm_repo,
+            idp_repo,
             unit_of_work,
         }
     }
@@ -134,6 +141,21 @@ impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
             mapping.allowed_role_ids = roles.clone();
         }
         mapping.updated_at = chrono::Utc::now();
+
+        // The mapping as saved, on the provider it now routes to (a move
+        // included), must pin the tenant when that provider is multi-tenant.
+        let idp = self
+            .idp_repo
+            .find_by_id(&mapping.identity_provider_id)
+            .await
+            .or_not_found(
+                "IDENTITY_PROVIDER_NOT_FOUND",
+                format!(
+                    "Identity provider '{}' not found",
+                    mapping.identity_provider_id
+                ),
+            )?;
+        super::require_tenant_pin(idp.oidc_multi_tenant, &mapping)?;
 
         // Persist the updated entity (including junction-table re-writes)
         // before emitting the event/audit. TODO: add `impl Persist<EmailDomainMapping>

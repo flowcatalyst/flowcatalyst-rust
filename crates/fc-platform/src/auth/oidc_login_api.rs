@@ -122,6 +122,36 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+/// Error response carrying a machine-readable `code` beside the message.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CodedErrorResponse {
+    pub code: String,
+    pub error: String,
+}
+
+fn coded_error(status: StatusCode, code: &str, error: impl Into<String>) -> Response {
+    (
+        status,
+        Json(CodedErrorResponse {
+            code: code.to_string(),
+            error: error.into(),
+        }),
+    )
+        .into_response()
+}
+
+/// Owner ruling 2026-09-25, item 3 (Java ecb622fe): a multi-tenant
+/// provider's shared keys sign tokens for any tenant, and the `email` claim
+/// is settable by any tenant admin, so a mapping to one that pins no tenant
+/// binds the login to nobody. Such rows predate the save-time rule; a login
+/// through one is refused.
+fn tenant_not_pinned(
+    idp: &IdentityProvider,
+    mapping: &crate::email_domain_mapping::entity::EmailDomainMapping,
+) -> bool {
+    idp.oidc_multi_tenant && !mapping.is_tenant_pinned()
+}
+
 // ==================== Endpoints ====================
 
 /// Check authentication method for email domain
@@ -380,6 +410,19 @@ pub async fn oidc_login(
             .into_response();
     }
 
+    if tenant_not_pinned(&idp, &mapping) {
+        warn!(
+            domain = %domain,
+            identity_provider = %idp.code,
+            "OIDC login refused: multi-tenant identity provider pins no tenant"
+        );
+        return coded_error(
+            StatusCode::FORBIDDEN,
+            "TENANT_NOT_PINNED",
+            "This identity provider accepts any tenant and this domain pins none",
+        );
+    }
+
     // Generate state, nonce, and PKCE
     let oidc_state = generate_random_string(32);
     let nonce = generate_random_string(32);
@@ -522,6 +565,16 @@ pub async fn oidc_callback(
         }
     };
 
+    // The mapping may have changed since the login began.
+    if tenant_not_pinned(&idp, &mapping) {
+        warn!(
+            domain = %mapping.email_domain,
+            identity_provider = %idp.code,
+            "OIDC login refused: multi-tenant identity provider pins no tenant"
+        );
+        return error_redirect("This sign-in method is not configured for your organisation");
+    }
+
     // Exchange code for tokens
     let callback_url = get_callback_url(&state, &host, &uri);
     let tokens = match exchange_code_for_tokens_from_idp(
@@ -569,7 +622,11 @@ pub async fn oidc_callback(
     }
 
     // Validate tenant ID if required by the mapping
-    if let Some(ref required_tenant_id) = mapping.required_oidc_tenant_id {
+    if let Some(required_tenant_id) = mapping
+        .required_oidc_tenant_id
+        .as_ref()
+        .filter(|_| mapping.is_tenant_pinned())
+    {
         if let Some(ref tid) = claims.tenant_id {
             if tid != required_tenant_id {
                 warn!(

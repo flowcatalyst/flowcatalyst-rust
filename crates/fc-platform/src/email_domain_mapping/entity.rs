@@ -56,6 +56,14 @@ impl EmailDomainMapping {
             updated_at: now,
         }
     }
+
+    /// Whether the mapping pins the OIDC tenant (`tid`) a login must come
+    /// from. A blank value pins nothing.
+    pub fn is_tenant_pinned(&self) -> bool {
+        self.required_oidc_tenant_id
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty())
+    }
 }
 
 #[cfg(test)]

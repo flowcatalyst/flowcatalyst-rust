@@ -118,7 +118,8 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
         let email_domain = command.email_domain.trim().to_lowercase();
 
         // Verify identity provider exists
-        self.idp_repo
+        let idp = self
+            .idp_repo
             .find_by_id(&command.identity_provider_id)
             .await
             .or_not_found(
@@ -152,6 +153,7 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
         mapping.required_oidc_tenant_id = command.required_oidc_tenant_id.clone();
         mapping.allowed_role_ids = command.allowed_role_ids.clone();
         mapping.sync_roles_from_idp = command.sync_roles_from_idp;
+        super::require_tenant_pin(idp.oidc_multi_tenant, &mapping)?;
 
         if let Err(e) = self.edm_repo.insert(&mapping).await {
             return Err(UseCaseError::commit(format!(

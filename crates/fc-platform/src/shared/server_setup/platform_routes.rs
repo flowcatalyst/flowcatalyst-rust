@@ -750,6 +750,7 @@ pub fn build_platform_routes(
     let update_idp_use_case = Arc::new(
         crate::identity_provider::operations::UpdateIdentityProviderUseCase::new(
             repos.idp_repo.clone(),
+            repos.edm_repo.clone(),
             unit_of_work.clone(),
         ),
     );
@@ -776,6 +777,7 @@ pub fn build_platform_routes(
     let update_edm_use_case = Arc::new(
         crate::email_domain_mapping::operations::UpdateEmailDomainMappingUseCase::new(
             repos.edm_repo.clone(),
+            repos.idp_repo.clone(),
             unit_of_work.clone(),
         ),
     );
