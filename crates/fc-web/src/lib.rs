@@ -25,8 +25,9 @@ use fc_platform::auth::session_cookie::SessionCookieConfig;
 use fc_platform::repository::Repositories;
 use fc_platform::shared::server_setup::AuthServices;
 use fc_platform::{
-    AnchorDomainRepository, ApplicationRepository, AuditLogRepository, ClientRepository, EmailDomainMappingRepository, EventTypeRepository,
-    IdentityProviderRepository, PgUnitOfWork, PlatformConfigRepository, PrincipalRepository,
+    AnchorDomainRepository, ApplicationRepository, AuditLogRepository, ClientRepository,
+    EmailDomainMappingRepository, EventTypeRepository, IdentityProviderRepository, PgUnitOfWork,
+    PlatformConfigRepository, PrincipalRepository,
 };
 use topcoat::asset::RouterBuilderAssetExt;
 use topcoat::cookie::RouterBuilderCookieExt;

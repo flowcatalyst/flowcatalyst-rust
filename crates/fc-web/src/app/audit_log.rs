@@ -138,7 +138,10 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
     logs.truncate(PAGE_SIZE);
     enrich_principal_names(&mut logs, &deps.principal_repo).await;
 
-    let mut app_ids: Vec<String> = logs.iter().filter_map(|l| l.application_id.clone()).collect();
+    let mut app_ids: Vec<String> = logs
+        .iter()
+        .filter_map(|l| l.application_id.clone())
+        .collect();
     app_ids.sort();
     app_ids.dedup();
     let mut client_ids: Vec<String> = logs.iter().filter_map(|l| l.client_id.clone()).collect();
@@ -289,7 +292,10 @@ async fn audit_log_detail(cx: &Cx, id: String) -> Result<impl View> {
     let log = if id.is_empty() {
         None
     } else {
-        deps.audit_log_repo.find_by_id(&id).await.map_err(platform_error)?
+        deps.audit_log_repo
+            .find_by_id(&id)
+            .await
+            .map_err(platform_error)?
     };
     let (detail, performed_at, app_name, client_name) = match log {
         Some(mut log) => {

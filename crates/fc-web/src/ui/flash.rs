@@ -8,7 +8,6 @@ use topcoat::{
     view::{View, component, view},
 };
 
-
 const COOKIE: &str = "fc_web_flash";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

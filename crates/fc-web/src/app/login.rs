@@ -16,6 +16,7 @@ use topcoat::{
     asset::asset,
     context::Cx,
     cookie::{Cookies, cookies},
+    icon::{icon, iconify::iconify_icon},
     router::{
         Method, StatusCode,
         content::Form,
@@ -23,7 +24,6 @@ use topcoat::{
         page,
         request::{headers, method},
     },
-    icon::{icon, iconify::iconify_icon},
     runtime::{Event, signal},
     view::{Length, View, component, view},
 };
@@ -150,7 +150,10 @@ async fn login_screen(
         .clone()
         .or_else(|| theme.background_color.clone())
         .unwrap_or_else(|| "linear-gradient(135deg, #102a43 0%, #0a1929 100%)".to_owned());
-    let accent = theme.accent_color.clone().unwrap_or_else(|| "#0967d2".to_owned());
+    let accent = theme
+        .accent_color
+        .clone()
+        .unwrap_or_else(|| "#0967d2".to_owned());
     let style = format!("background: {background}; --login-accent: {accent};");
     let title = match step {
         Step::Email => "Sign in to your account",

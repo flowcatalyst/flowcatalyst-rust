@@ -154,30 +154,95 @@ const NAV: &[NavGroup] = &[
     NavGroup {
         label: "Identity & Access",
         items: &[
-            nav!("User Management", "lucide:users", "/users", ["platform:iam:user:view"]),
-            nav!("Service Accounts", "lucide:server", "/identity/service-accounts", ["platform:iam:service-account:view"]),
-            nav!("Identity Providers", "lucide:id-card", "/authentication/identity-providers", ["platform:iam:idp:view"]),
-            nav!("Email Domains", "lucide:mail", "/authentication/email-domain-mappings", ["platform:iam:email-domain-mapping:view"]),
-            nav!("OAuth Clients", "lucide:key-round", "/authentication/oauth-clients", ["platform:auth:oauth-client:view"]),
-            nav!("Roles", "lucide:shield", "/authorization/roles", ["platform:iam:role:view"]),
-            nav!("Permissions", "lucide:lock", "/authorization/permissions", ["platform:iam:permission:view"]),
+            nav!(
+                "User Management",
+                "lucide:users",
+                "/users",
+                ["platform:iam:user:view"]
+            ),
+            nav!(
+                "Service Accounts",
+                "lucide:server",
+                "/identity/service-accounts",
+                ["platform:iam:service-account:view"]
+            ),
+            nav!(
+                "Identity Providers",
+                "lucide:id-card",
+                "/authentication/identity-providers",
+                ["platform:iam:idp:view"]
+            ),
+            nav!(
+                "Email Domains",
+                "lucide:mail",
+                "/authentication/email-domain-mappings",
+                ["platform:iam:email-domain-mapping:view"]
+            ),
+            nav!(
+                "OAuth Clients",
+                "lucide:key-round",
+                "/authentication/oauth-clients",
+                ["platform:auth:oauth-client:view"]
+            ),
+            nav!(
+                "Roles",
+                "lucide:shield",
+                "/authorization/roles",
+                ["platform:iam:role:view"]
+            ),
+            nav!(
+                "Permissions",
+                "lucide:lock",
+                "/authorization/permissions",
+                ["platform:iam:permission:view"]
+            ),
         ],
     },
     NavGroup {
         label: "Platform",
         items: &[
-            nav!("Applications", "lucide:layout-grid", "/applications", ["platform:admin:application:view"]),
-            nav!("Clients", "lucide:building-2", "/clients", ["platform:admin:client:view"]),
-            nav!("CORS Origins", "lucide:link", "/platform/cors", ["platform:admin:cors-origin:view"]),
+            nav!(
+                "Applications",
+                "lucide:layout-grid",
+                "/applications",
+                ["platform:admin:application:view"]
+            ),
+            nav!(
+                "Clients",
+                "lucide:building-2",
+                "/clients",
+                ["platform:admin:client:view"]
+            ),
+            nav!(
+                "CORS Origins",
+                "lucide:link",
+                "/platform/cors",
+                ["platform:admin:cors-origin:view"]
+            ),
             // The audit log API is anchor-only (`audit/api.rs`).
-            nav!("Audit Log", "lucide:history", "/ui/audit-log", |a| checks::require_anchor(a).is_ok() && checks::can_read_audit_logs(a).is_ok()),
-            nav!("Login Attempts", "lucide:log-in", "/platform/login-attempts", ["platform:admin:login-attempt:view"]),
+            nav!(
+                "Audit Log",
+                "lucide:history",
+                "/ui/audit-log",
+                |a| checks::require_anchor(a).is_ok() && checks::can_read_audit_logs(a).is_ok()
+            ),
+            nav!(
+                "Login Attempts",
+                "lucide:log-in",
+                "/platform/login-attempts",
+                ["platform:admin:login-attempt:view"]
+            ),
             NavItem {
                 label: "Settings",
                 icon: iconify_icon!("lucide:settings"),
                 href: "",
                 visible: any_child,
-                children: &[nav!("Theme", "lucide:palette", "/platform/settings/theme", ["platform:admin:config:view"])],
+                children: &[nav!(
+                    "Theme",
+                    "lucide:palette",
+                    "/platform/settings/theme",
+                    ["platform:admin:config:view"]
+                )],
             },
             NavItem {
                 label: "Debug",
@@ -185,8 +250,18 @@ const NAV: &[NavGroup] = &[
                 href: "",
                 visible: any_child,
                 children: &[
-                    nav!("Raw Events", "lucide:database", "/platform/debug/events", ["platform:messaging:event:view-raw"]),
-                    nav!("Raw Dispatch Jobs", "lucide:database", "/platform/debug/dispatch-jobs", ["platform:messaging:dispatch-job:view-raw"]),
+                    nav!(
+                        "Raw Events",
+                        "lucide:database",
+                        "/platform/debug/events",
+                        ["platform:messaging:event:view-raw"]
+                    ),
+                    nav!(
+                        "Raw Dispatch Jobs",
+                        "lucide:database",
+                        "/platform/debug/dispatch-jobs",
+                        ["platform:messaging:dispatch-job:view-raw"]
+                    ),
                 ],
             },
         ],
@@ -194,28 +269,91 @@ const NAV: &[NavGroup] = &[
     NavGroup {
         label: "Messaging",
         items: &[
-            nav!("Events", "lucide:inbox", "/events", ["platform:messaging:event:view"]),
-            nav!("Event Types", "lucide:zap", "/ui/event-types", |a| checks::can_read_event_types(a).is_ok()),
-            nav!("Subscriptions", "lucide:bell", "/subscriptions", ["platform:messaging:subscription:view"]),
-            nav!("Connections", "lucide:link-2", "/connections", ["platform:messaging:connection:view"]),
-            nav!("Dispatch Pools", "lucide:database", "/dispatch-pools", ["platform:messaging:dispatch-pool:view"]),
-            nav!("Dispatch Jobs", "lucide:send", "/dispatch-jobs", ["platform:messaging:dispatch-job:view"]),
-            nav!("Scheduled Jobs", "lucide:clock", "/scheduled-jobs", ["platform:messaging:scheduled-job:view"]),
+            nav!(
+                "Events",
+                "lucide:inbox",
+                "/events",
+                ["platform:messaging:event:view"]
+            ),
+            nav!("Event Types", "lucide:zap", "/ui/event-types", |a| {
+                checks::can_read_event_types(a).is_ok()
+            }),
+            nav!(
+                "Subscriptions",
+                "lucide:bell",
+                "/subscriptions",
+                ["platform:messaging:subscription:view"]
+            ),
+            nav!(
+                "Connections",
+                "lucide:link-2",
+                "/connections",
+                ["platform:messaging:connection:view"]
+            ),
+            nav!(
+                "Dispatch Pools",
+                "lucide:database",
+                "/dispatch-pools",
+                ["platform:messaging:dispatch-pool:view"]
+            ),
+            nav!(
+                "Dispatch Jobs",
+                "lucide:send",
+                "/dispatch-jobs",
+                ["platform:messaging:dispatch-job:view"]
+            ),
+            nav!(
+                "Scheduled Jobs",
+                "lucide:clock",
+                "/scheduled-jobs",
+                ["platform:messaging:scheduled-job:view"]
+            ),
         ],
     },
     NavGroup {
         label: "Functions",
         items: &[
-            nav!("Functions", "lucide:square-function", "/functions", ["platform:function:function:view"]),
-            nav!("Function Domains", "lucide:globe", "/function-domains", ["platform:function:function:view"]),
-            nav!("Function Policies", "lucide:shield-check", "/function-policies", ["platform:function:policy:manage"]),
+            nav!(
+                "Functions",
+                "lucide:square-function",
+                "/functions",
+                ["platform:function:function:view"]
+            ),
+            nav!(
+                "Function Domains",
+                "lucide:globe",
+                "/function-domains",
+                ["platform:function:function:view"]
+            ),
+            nav!(
+                "Function Policies",
+                "lucide:shield-check",
+                "/function-policies",
+                ["platform:function:policy:manage"]
+            ),
         ],
     },
     NavGroup {
         label: "Developer",
         items: &[
-            nav!("Applications", "lucide:book-open", "/developer", ["platform:developer:application-openapi:view", "platform:developer:application-openapi:manage"]),
-            nav!("Processes", "lucide:network", "/processes", ["platform:messaging:process:view", "platform:application-service:process:view"]),
+            nav!(
+                "Applications",
+                "lucide:book-open",
+                "/developer",
+                [
+                    "platform:developer:application-openapi:view",
+                    "platform:developer:application-openapi:manage"
+                ]
+            ),
+            nav!(
+                "Processes",
+                "lucide:network",
+                "/processes",
+                [
+                    "platform:messaging:process:view",
+                    "platform:application-service:process:view"
+                ]
+            ),
         ],
     },
 ];
@@ -274,7 +412,15 @@ async fn app_frame(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
 
     let groups: Vec<(&'static str, Vec<&'static NavItem>)> = NAV
         .iter()
-        .map(|g| (g.label, g.items.iter().filter(|i| is_visible(i, auth)).collect::<Vec<_>>()))
+        .map(|g| {
+            (
+                g.label,
+                g.items
+                    .iter()
+                    .filter(|i| is_visible(i, auth))
+                    .collect::<Vec<_>>(),
+            )
+        })
         .filter(|(_, items)| !items.is_empty())
         .collect();
 

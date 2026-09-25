@@ -135,7 +135,11 @@ async fn event_type_list(cx: &Cx, open_id: String) -> Result<impl View> {
     // BFF list's rule).
     let visible: Vec<EventType> = all
         .into_iter()
-        .filter(|et| et.client_id.as_deref().is_none_or(|c| auth.can_access_client(c)))
+        .filter(|et| {
+            et.client_id
+                .as_deref()
+                .is_none_or(|c| auth.can_access_client(c))
+        })
         .collect();
 
     let mut applications: Vec<String> = visible.iter().map(|et| et.application.clone()).collect();
@@ -419,7 +423,9 @@ async fn drawer_body(auth: AuthContext, et: EventType) -> Result<impl View> {
 /// One schema version: its row, its actions, and the dialogs they open.
 #[component]
 async fn schema_row(base: String, sv: SpecVersion, can_write: bool) -> Result<impl View> {
-    let key = sv.version.replace(|c: char| !c.is_ascii_alphanumeric(), "-");
+    let key = sv
+        .version
+        .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
     let view_id = format!("schema-view-{key}");
     let finalise_id = format!("schema-finalise-{key}");
     let deprecate_id = format!("schema-deprecate-{key}");

@@ -26,9 +26,9 @@ use topcoat::{
     Result,
     context::Cx,
     icon::{IconData, icon, iconify::iconify_icon},
-    view::{Length, 
-        AttributeValueViewParts, Child, NodeViewParts, PartsWriter, View, attributes, component,
-        view,
+    view::{
+        AttributeValueViewParts, Child, Length, NodeViewParts, PartsWriter, View, attributes,
+        component, view,
     },
 };
 
@@ -219,11 +219,7 @@ async fn pager_link(
 #[component]
 pub async fn code_chips(#[into] code: String) -> Result<impl View> {
     const KINDS: [&str; 4] = ["app", "subdomain", "aggregate", "event"];
-    let parts: Vec<(usize, String)> = code
-        .split(':')
-        .map(str::to_owned)
-        .enumerate()
-        .collect();
+    let parts: Vec<(usize, String)> = code.split(':').map(str::to_owned).enumerate().collect();
     Ok(view! {
         <span class="fc-code">
             for (i, part) in parts {
