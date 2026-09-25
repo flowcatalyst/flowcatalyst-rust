@@ -1,0 +1,276 @@
+{
+  "$comment": [
+    "What a router SHOULD do with a mediation response — not what either",
+    "implementation currently does. Where the two differ, the corpus asserts",
+    "the behaviour that is right on the merits and records the other as a",
+    "defect; `correct` names which side that is. A row is never expected to",
+    "agree with Go merely because Go is older.",
+    "",
+    "Every case is stated as an HTTP response or a named precondition, never",
+    "as a call into either implementation, so any router that speaks HTTP can",
+    "run it. See conformance/README.md for the runner contract."
+  ],
+  "version": 1,
+  "cases": [
+    {
+      "id": "success-empty-body",
+      "spec": "§6 outcome table row 1",
+      "given": {"kind": "response", "status": 200, "body": ""},
+      "expect": {"outcome": "Success", "statusCode": 200, "delaySeconds": 0,
+                 "warning": "none",
+                 "disposition": "DELIVERED", "breaker": "success", "metric": "success"}
+    },
+    {
+      "id": "success-non-json-body",
+      "why": "A target that answers 200 with HTML has still accepted the message.",
+      "given": {"kind": "response", "status": 200, "body": "<html>ok</html>"},
+      "expect": {"outcome": "Success", "statusCode": 200, "delaySeconds": 0,
+                 "warning": "none",
+                 "disposition": "DELIVERED", "breaker": "success", "metric": "success"}
+    },
+    {
+      "id": "success-json-without-ack",
+      "given": {"kind": "response", "status": 200, "body": "{\"id\":\"abc\"}"},
+      "expect": {"outcome": "Success", "statusCode": 200, "delaySeconds": 0,
+                 "warning": "none",
+                 "disposition": "DELIVERED", "breaker": "success", "metric": "success"}
+    },
+    {
+      "id": "success-ack-true",
+      "given": {"kind": "response", "status": 200, "body": "{\"ack\":true}"},
+      "expect": {"outcome": "Success", "statusCode": 200, "delaySeconds": 0,
+                 "warning": "none",
+                 "disposition": "DELIVERED", "breaker": "success", "metric": "success"}
+    },
+    {
+      "id": "success-carries-real-2xx-status",
+      "spec": "Q51",
+      "why": "201 and 202 mean different things to an operator reading a trace.",
+      "given": {"kind": "response", "status": 201, "body": ""},
+      "expect": {"outcome": "Success", "statusCode": 201, "delaySeconds": 0,
+                 "warning": "none",
+                 "disposition": "DELIVERED", "breaker": "success", "metric": "success"},
+      "divergence": {
+        "correct": "java",
+        "basis": "The status is the target's own answer. Flattening 201 and 202 to 200 discards information the router never had a reason to hold an opinion about, and an operator reading a trace cannot recover it.",
+        "go": "common.Success() hard-codes StatusCode 200, so 201/202/204 all report 200 (verified at 819b390)",
+        "tracked": "docs/spec/router-fixes.md Fix 1"
+      }
+    },
+    {
+      "id": "deferred-ack-false",
+      "why": "The target accepted the request and declined the work: not a failure, so the breaker must not count it.",
+      "given": {"kind": "response", "status": 200, "body": "{\"ack\":false}"},
+      "expect": {"outcome": "Deferred", "statusCode": 200, "delaySeconds": 0,
+                 "warning": "none",
+                 "disposition": "RETRY_IN_PLACE", "breaker": "neither", "metric": "transient"}
+    },
+    {
+      "id": "deferred-ack-false-with-delay",
+      "given": {"kind": "response", "status": 200, "body": "{\"ack\":false,\"delaySeconds\":15}"},
+      "expect": {"outcome": "Deferred", "statusCode": 200, "delaySeconds": 15,
+                 "warning": "none",
+                 "disposition": "RETRY_IN_PLACE", "breaker": "neither", "metric": "transient"}
+    },
+    {
+      "id": "success-flush-group",
+      "spec": "eff2a29, Q54",
+      "given": {"kind": "response", "status": 200, "body": "{\"ack\":true,\"flushGroup\":true}"},
+      "expect": {"outcome": "Success", "statusCode": 200, "delaySeconds": 0, "flushGroup": true,
+                 "warning": "none",
+                 "disposition": "DELIVERED", "breaker": "success", "metric": "success"}
+    },
+    {
+      "id": "success-flush-group-with-delay",
+      "given": {"kind": "response", "status": 200, "body": "{\"ack\":true,\"flushGroup\":true,\"delaySeconds\":20}"},
+      "expect": {"outcome": "Success", "statusCode": 200, "delaySeconds": 20, "flushGroup": true,
+                 "warning": "none",
+                 "disposition": "DELIVERED", "breaker": "success", "metric": "success"}
+    },
+    {
+      "id": "config-error-400",
+      "why": "The request is wrong and will stay wrong. Breaker SUCCESS, which is counter-intuitive and right: a breaker exists to detect an unhealthy TARGET, and a target rejecting a bad request promptly is working perfectly. Counting it a failure would trip the circuit on a client bug and stop delivery to a healthy endpoint.",
+      "given": {"kind": "response", "status": 400, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 400,
+                 "warning": "ERROR",
+                 "disposition": "UNDELIVERABLE", "breaker": "success", "metric": "failure"}
+    },
+    {
+      "id": "config-error-401",
+      "given": {"kind": "response", "status": 401, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 401,
+                 "warning": "ERROR",
+                 "disposition": "UNDELIVERABLE", "breaker": "success", "metric": "failure"}
+    },
+    {
+      "id": "config-error-403",
+      "given": {"kind": "response", "status": 403, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 403,
+                 "warning": "ERROR",
+                 "disposition": "UNDELIVERABLE", "breaker": "success", "metric": "failure"}
+    },
+    {
+      "id": "config-error-404",
+      "given": {"kind": "response", "status": 404, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 404,
+                 "warning": "ERROR",
+                 "disposition": "UNDELIVERABLE", "breaker": "success", "metric": "failure"}
+    },
+    {
+      "id": "config-error-501",
+      "why": "The one 5xx that is permanent. A target answering \"not implemented\" will not implement it part-way through a retry schedule, so treating it as transient is an unbounded retry that cannot succeed. Breaker success for the same reason a 404 is one: the endpoint answered, so it is healthy — it is the request it cannot serve.",
+      "given": {"kind": "response", "status": 501, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 501,
+                 "warning": "CRITICAL",
+                 "disposition": "UNDELIVERABLE", "breaker": "success", "metric": "failure"},
+      "history": {
+        "found": "This corpus. Java was letting 501 fall into the generic `status >= 500` branch and retrying a target that had said it does not implement the hook.",
+        "corroboration": "Go reached the same answer independently in 4f2d52c, before this corpus existed. Two implementations arriving separately at the same rule is the strongest evidence available here that the rule is right."
+      }
+    },
+    {
+      "id": "config-error-other-4xx",
+      "given": {"kind": "response", "status": 418, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 418,
+                 "warning": "ERROR",
+                 "disposition": "UNDELIVERABLE", "breaker": "success", "metric": "failure"},
+      "divergence": {
+        "correct": "java",
+        "basis": "A 4xx nobody wrote a named branch for still ACK-drops the message permanently, which is the one condition the warning column encodes. Go warns on 400/401/403/404/501 and then only logs for the rest, so an operator is told about a 404 and not about a 422 — same permanence, same deletion, no notice. That is the shape of an omission, not a decision.",
+        "go": "the generic 4xx fallback calls slog.Warn only, never warnConfig, so no warning is recorded (found by the Go conformance runner)"
+      }
+    },
+    {
+      "id": "rate-limited-honours-retry-after",
+      "why": "429 is a healthy target asking us to slow down. Neither a breaker success nor a failure.",
+      "given": {"kind": "response", "status": 429, "body": "", "headers": {"Retry-After": "12"}},
+      "expect": {"outcome": "RateLimited", "statusCode": 429, "delaySeconds": 12,
+                 "warning": "none",
+                 "disposition": "RETRY_IN_PLACE", "breaker": "neither", "metric": "rateLimited"}
+    },
+    {
+      "id": "rate-limited-without-retry-after",
+      "given": {"kind": "response", "status": 429, "body": ""},
+      "expect": {"outcome": "RateLimited", "statusCode": 429, "delaySeconds": 30,
+                 "warning": "none",
+                 "disposition": "RETRY_IN_PLACE", "breaker": "neither", "metric": "rateLimited"}
+    },
+    {
+      "id": "rate-limited-ignores-unparseable-retry-after",
+      "why": "An HTTP-date Retry-After is legal and unparsed here; falling back beats throwing.",
+      "given": {"kind": "response", "status": 429, "body": "", "headers": {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}},
+      "expect": {"outcome": "RateLimited", "statusCode": 429, "delaySeconds": 30,
+                 "warning": "none",
+                 "disposition": "RETRY_IN_PLACE", "breaker": "neither", "metric": "rateLimited"}
+    },
+    {
+      "id": "process-error-500",
+      "why": "R-57 (owner, 2026-09-02): any 5xx other than 502/503/504 means the app ran and answered — permanent rejection like a 4xx, single attempt, warning is the trace.",
+      "given": {"kind": "response", "status": 500, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 500, "delaySeconds": 0,
+                 "warning": "ERROR",
+                 "disposition": "REJECTED", "breaker": "success", "metric": "failure"}
+    },
+    {
+      "id": "process-error-505-rejects",
+      "why": "R-57 (owner, 2026-09-02): 'every other 5xx' is a range, not the single status 500 — an implementation that special-cases only 500 and retries every other non-gateway 5xx forever is non-conformant. 505 pins the boundary as a range.",
+      "given": {"kind": "response", "status": 505, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 505, "delaySeconds": 0,
+                 "warning": "ERROR",
+                 "disposition": "REJECTED", "breaker": "success", "metric": "failure"}
+    },
+    {
+      "id": "process-error-502-returns-to-broker",
+      "why": "502/503/504 say the target is not ready, not that the message is bad, so the group goes back rather than being dropped.",
+      "given": {"kind": "response", "status": 502, "body": ""},
+      "expect": {"outcome": "ErrorProcess", "statusCode": 502, "delaySeconds": 30,
+                 "warning": "none",
+                 "disposition": "RETURN_TO_BROKER", "breaker": "failure", "metric": "transient"}
+    },
+    {
+      "id": "process-error-503-returns-to-broker",
+      "given": {"kind": "response", "status": 503, "body": ""},
+      "expect": {"outcome": "ErrorProcess", "statusCode": 503, "delaySeconds": 30,
+                 "warning": "none",
+                 "disposition": "RETURN_TO_BROKER", "breaker": "failure", "metric": "transient"}
+    },
+    {
+      "id": "process-error-504-returns-to-broker",
+      "given": {"kind": "response", "status": 504, "body": ""},
+      "expect": {"outcome": "ErrorProcess", "statusCode": 504, "delaySeconds": 30,
+                 "warning": "none",
+                 "disposition": "RETURN_TO_BROKER", "breaker": "failure", "metric": "transient"}
+    },
+    {
+      "id": "unexpected-status-1xx",
+      "why": "Neither implementation may claim the message was rejected when it cannot tell whether it was even seen.",
+      "given": {"kind": "response", "status": 199, "body": ""},
+      "expect": {"outcome": "ErrorConnection", "statusCode": 0, "delaySeconds": 30,
+                 "warning": "none",
+                 "disposition": "RETURN_TO_BROKER", "breaker": "failure", "metric": "failure"},
+      "divergence": {
+        "go": "DISPUTED. Reading mediator.go says a 1xx reaches the default arm as ErrorProcess(0, 30). But net/http's readLoop waits for a terminal response after any non-101 1xx rather than treating it as final, so a bare-1xx server should break the connection and yield ErrorConnection — matching Java exactly. A reproduction of Go's classifier agreed with the second reading. NOT resolved from source alone: settle it by running the Go runner against the real module.",
+        "java": "ErrorConnection(0, 30) — java.net.http refuses to treat 1xx as final and fails the exchange, so classify() never sees it",
+        "correct": "both",
+        "basis": "DISPUTED ON THE OUTCOME NAME ONLY — see `go`. Agreed on every field that decides the message's fate. Neither may claim the message was rejected when it cannot tell whether the target ever saw it. Both land on RETURN_TO_BROKER, a 30s delay and a breaker failure — identical fate for the message, which is what the row exists to pin. The differing outcome NAME is a client-library artefact, not a policy difference."
+      }
+    },
+    {
+      "id": "unfollowed-3xx-is-permanent",
+      "spec": "ruling: 3xx is a permanent error",
+      "why": "A redirect the client did not follow is a misconfigured target, not a transient fault.",
+      "given": {"kind": "response", "status": 301, "body": ""},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 301,
+                 "warning": "ERROR",
+                 "disposition": "UNDELIVERABLE", "breaker": "success", "metric": "failure"},
+      "divergence": {
+        "correct": "java",
+        "basis": "Retrying reproduces the redirect every time, so the message can never be delivered as addressed — an unbounded retry that cannot succeed. Following it instead is not the fix either: 301/302/303 downgrade POST to GET and drop the body, so the target would receive nothing and the router would record a success.",
+        "go": "falls through to the default arm: ErrorProcess(30) with StatusCode unset, so it retries for ever and reports status 0 (verified at 819b390)",
+        "owner": "ruling 2026-08-24"
+      }
+    },
+    {
+      "id": "connection-refused",
+      "why": "Nothing was learned about the message, so it must go back to the broker rather than be dropped.",
+      "given": {"kind": "unreachableTarget"},
+      "expect": {"outcome": "ErrorConnection", "statusCode": 0, "delaySeconds": 30,
+                 "warning": "none",
+                 "disposition": "RETURN_TO_BROKER", "breaker": "failure", "metric": "failure"}
+    },
+    {
+      "id": "malformed-target-url",
+      "why": "Silently undeliverable: no host to call, and retrying cannot invent one.",
+      "given": {"kind": "malformedTargetUrl"},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 0,
+                 "warning": "ERROR",
+                 "disposition": "UNDELIVERABLE", "breaker": "none", "metric": "failure"},
+      "divergence": {
+        "correct": "java",
+        "basis": "This path ACK-drops every message routed through it, permanently, and it is a configuration mistake an operator can actually fix — a target URL with no host. That is precisely the case for telling someone. Go warns on 400/401/403/404/501 for exactly this reason and then does not warn here, which reads as an omission rather than a decision: the pre-flight rejections are MORE clearly configuration errors than a 404 is, not less.",
+        "go": "returns ErrorConfig silently — no warning service call, AND records a breaker SUCCESS for a rejection that never touched the network (verified at 819b390). Java skips the breaker entirely for both pre-flight paths, which is the better answer: a call that was never made is no evidence at all about the target\u2019s health, in either direction."
+      }
+    },
+    {
+      "id": "unsupported-mediation-type",
+      "given": {"kind": "unsupportedMediationType"},
+      "expect": {"outcome": "ErrorConfig", "statusCode": 0,
+                 "warning": "ERROR",
+                 "disposition": "UNDELIVERABLE", "breaker": "none", "metric": "failure"},
+      "divergence": {
+        "correct": "java",
+        "basis": "This path ACK-drops every message routed through it, permanently, and it is a configuration mistake an operator can actually fix — a mediation type that is not HTTP. That is precisely the case for telling someone. Go warns on 400/401/403/404/501 for exactly this reason and then does not warn here, which reads as an omission rather than a decision: the pre-flight rejections are MORE clearly configuration errors than a 404 is, not less.",
+        "go": "returns ErrorConfig silently — no warning service call, AND records a breaker SUCCESS for a rejection that never touched the network (verified at 819b390). Java skips the breaker entirely for both pre-flight paths, which is the better answer: a call that was never made is no evidence at all about the target\u2019s health, in either direction."
+      }
+    },
+    {
+      "id": "breaker-open-makes-no-call",
+      "why": "No call was made, so there is nothing to say about the target that the breaker is not already saying: no metric, and the group returns rather than being dropped.",
+      "given": {"kind": "breakerOpen"},
+      "expect": {"outcome": "CircuitOpen", "statusCode": 0,
+                 "warning": "none",
+                 "disposition": "RETURN_TO_BROKER", "breaker": "neither", "metric": "none",
+                 "httpCallMade": false}
+    }
+  ]
+}
