@@ -282,6 +282,19 @@ pub trait MessageCallback: Send + Sync {
     async fn ack(&self);
     /// Negative acknowledge — make visible again after delay, clean up tracking.
     async fn nack(&self, delay_seconds: Option<u32>);
+
+    /// Whether the message's SOURCE broker holds a nacked message back for
+    /// the requested delay before redelivering it (Go's
+    /// `queue.Consumer.HonoursDelayedReturn`, owner ruling R5 2026-09-17).
+    /// It decides what the pool does with a deferral that names a delay
+    /// (`{"ack": false, "delaySeconds": N}`, N > 0): a broker that honours
+    /// the delay gets the message back at once (R1); one that does not
+    /// would redeliver it immediately, so the pool retries it in place
+    /// instead. SQS and the Postgres queue honour it; Go's NATS consumer
+    /// answers `false`. Defaults to `true`.
+    fn honours_delayed_return(&self) -> bool {
+        true
+    }
 }
 
 /// A message bundled with its callback for batch processing
@@ -501,16 +514,19 @@ pub enum MediationResult {
     ErrorProcess,
     /// Connection error - NACK for retry
     ErrorConnection,
-    /// Destination throttled the request (HTTP 429). NACK with `Retry-After`
-    /// delay, but do NOT count toward circuit-breaker failures or attempt
-    /// budget — the destination is healthy, just throttling us.
+    /// Destination throttled the request (HTTP 429). Retried in place by
+    /// the pool with `Retry-After` as the backoff floor; does NOT count
+    /// toward circuit-breaker failures — the destination is healthy, just
+    /// throttling us.
     RateLimited,
     /// Target answered 2xx with `{"ack": false}` (ledger 22b/Deferred): it
     /// received the request and explicitly declined the work right now
     /// (e.g. a blocked record). Not a failure — the endpoint is reachable
     /// and healthy — so this must be breaker-neutral, like `RateLimited`.
-    /// NACK with the target's requested delay (or the pool's own backoff
-    /// floor when absent) so the message is retried in place.
+    /// Retried in place by the pool on its deferred backoff curve, with the
+    /// target's requested delay as the floor — or, when the target named a
+    /// delay and the broker can hold it, handed back with exactly that
+    /// delay (see `fc_router::pool::disposition_of`).
     Deferred,
     /// The mediator's own circuit breaker was open for this endpoint, so no
     /// network call was attempted at all (ledger R-12's breaker admission
@@ -521,16 +537,9 @@ pub enum MediationResult {
     /// unlike them it is not a delivery attempt at all — nearer in kind to
     /// a pre-flight rejection.
     ///
-    /// NACK with a short fixed delay, and (in an ordered group) cascade a
-    /// NACK to the rest of the group — mirrors the pool's two previous
-    /// inline short-circuits verbatim; see `pool::disposition_of`'s
-    /// `CircuitOpen` arm doc for exactly how each prior call site behaved
-    /// and why unifying them landed on `GroupEffect::Release`. **Known
-    /// gap, not fixed by this variant's introduction:** the
-    /// cross-implementation conformance corpus
-    /// (`breaker-open-makes-no-call`) expects no metric recorded at all
-    /// for this case; both prior call sites recorded a `Failure` metric,
-    /// and this port preserves that unchanged.
+    /// NACK with a short fixed delay, and (in an ordered group) hand the
+    /// rest of the group back with it. No pool metric is recorded: nothing
+    /// was attempted (corpus `breaker-open-makes-no-call`).
     CircuitOpen,
 }
 

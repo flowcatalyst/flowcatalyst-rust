@@ -61,8 +61,9 @@ pub use notification::{
 #[cfg(feature = "email")]
 pub use notification::{EmailConfig, EmailNotificationService};
 pub use pool::{
-    disposition_of, BrokerAction, Disposition, DispositionMetric, GroupEffect, GroupInfo,
-    MediatingEntry, PoolConfigUpdate, ProcessPool,
+    deferred_delay, disposition_of, retry_delay, BrokerAction, Disposition, DispositionMetric,
+    GroupEffect, GroupInfo, MediatingEntry, PoolConfigUpdate, ProcessPool,
+    MAX_IN_PIPELINE_ATTEMPTS,
 };
 pub use queue_health_monitor::{spawn_queue_health_monitor, QueueHealthConfig, QueueHealthMonitor};
 pub use standby::{
