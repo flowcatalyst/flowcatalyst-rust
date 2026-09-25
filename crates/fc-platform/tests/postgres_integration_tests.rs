@@ -1564,3 +1564,37 @@ async fn test_cron_migration_leaves_rows_alone_where_go_or_java_migrated() {
         assert!(run(&pool).await.unwrap().already_applied);
     }
 }
+
+/// The Postgres rate-limit store allows exactly `limit` events per window,
+/// as Redis's INCR does: the row a check records counts toward its own
+/// decision.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_postgres_rate_limit_store_allows_exactly_the_limit() {
+    use fc_platform::shared::rate_limit_store::{
+        Bucket, PostgresRateLimitStore, RateLimitDecision, RateLimitPolicy, RateLimitStore,
+    };
+
+    let (pool, _container) = setup_test_db().await;
+    let store = PostgresRateLimitStore::new(pool.clone());
+    let policy = RateLimitPolicy::new(std::time::Duration::from_secs(60), 3);
+    let mut decisions = Vec::new();
+    for _ in 0..4 {
+        decisions.push(
+            store
+                .check_and_record(Bucket::PASSWORD_RESET_EMAIL, "a@b.c", policy)
+                .await
+                .unwrap(),
+        );
+    }
+    assert!(decisions[..3].iter().all(|d| *d == RateLimitDecision::Allow));
+    assert!(matches!(decisions[3], RateLimitDecision::Reject { .. }));
+    assert_eq!(
+        store
+            .check_and_record(Bucket::PASSWORD_RESET_EMAIL, "x@b.c", policy)
+            .await
+            .unwrap(),
+        RateLimitDecision::Allow,
+        "each key has its own budget"
+    );
+}
