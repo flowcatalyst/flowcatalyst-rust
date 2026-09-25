@@ -1,4 +1,11 @@
-/// The FlowCatalyst function contract, version 0.1.0.
+/// The FlowCatalyst function contract, version 0.1.1.
+///
+/// 0.1.1 adds `events.emit-event` (and its two types) and changes nothing
+/// else, so it is a superset of
+/// 0.1.0: a component built against 0.1.0 links unchanged against a host
+/// that serves 0.1.1 (the Component Model resolves `0.1.x` imports
+/// semver-compatibly). A component that calls `emit-event` needs a 0.1.1
+/// host.
 ///
 /// A FlowCatalyst function is a WASI 0.2 component that exports
 /// `wasi:http/incoming-handler`: the host hands it each invocation as an
@@ -39,7 +46,7 @@
 /// `deps/` holds the WASI 0.2.12 packages this one refers to, copied
 /// unchanged from wasmtime-wasi-http 49.0.1 (WebAssembly/WASI, Apache-2.0
 /// WITH LLVM-exception).
-package flowcatalyst:function@0.1.0;
+package flowcatalyst:function@0.1.1;
 
 /// The function's manifest-declared configuration.
 interface config {
@@ -131,6 +138,37 @@ interface events {
     /// Publishes one event through the host's control plane. Returns once
     /// the platform has accepted or refused it.
     emit: func(event: outbound-event) -> result<_, emit-error>;
+
+    /// The platform refused the event, and why (added in 0.1.1).
+    record refusal-reason {
+        /// The platform's own error code, as `refusal.code`.
+        code: string,
+        /// The HTTP status the platform answered with. A 5xx is worth a
+        /// retry; a 4xx is not.
+        status: u16,
+        /// The platform's own message: which check refused the event. Empty
+        /// when it gave none.
+        message: string,
+    }
+
+    /// Why `emit-event` did not publish an event (added in 0.1.1):
+    /// `emit-error`'s cases, each with its reason.
+    variant emit-event-error {
+        /// The host refused the event before it reached the platform, as
+        /// `emit-error.invalid`.
+        invalid(string),
+        /// The platform refused the event.
+        refused(refusal-reason),
+        /// The platform could not be reached (code `UNAVAILABLE`, status
+        /// 503); the payload says what failed. Worth a retry.
+        unavailable(string),
+    }
+
+    /// Publishes one event, as `emit`, and answers the id the platform
+    /// stored it under (added in 0.1.1). The id is empty when the platform
+    /// accepted the event but its answer could not be read: the event is
+    /// stored, so never emit it again.
+    emit-event: func(event: outbound-event) -> result<string, emit-event-error>;
 }
 
 /// What the host knows about the current invocation beyond the HTTP request

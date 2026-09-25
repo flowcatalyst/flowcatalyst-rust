@@ -12,6 +12,7 @@ use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+use crate::audit::stored_redaction::redact_stored_document;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::AuditLog;
@@ -70,6 +71,10 @@ impl From<AuditLog> for AuditLogResponse {
     }
 }
 
+/// Redacted on read (Java b4a15fd8, S11): a row stored before source-side
+/// redaction — every Go-era row, and rows from SDKs that predate it — is
+/// never served with its secret, whether or not the sweep has run. The rule
+/// is the sweep's own ([`redact_stored_document`]), so the two can't drift.
 impl From<AuditLog> for AuditLogDetailResponse {
     fn from(log: AuditLog) -> Self {
         let entity_id_opt = if log.entity_id.is_empty() {
@@ -77,9 +82,9 @@ impl From<AuditLog> for AuditLogDetailResponse {
         } else {
             Some(log.entity_id)
         };
-        let op_json = log
-            .operation_json
-            .map(|v| serde_json::to_string(&v).unwrap_or_default());
+        let op_json = log.operation_json.map(|v| {
+            serde_json::to_string(&redact_stored_document(&log.operation, &v)).unwrap_or_default()
+        });
         Self {
             id: log.id,
             operation: log.operation,
@@ -520,4 +525,63 @@ pub fn audit_logs_router(state: AuditLogsState) -> OpenApiRouter {
         .routes(routes!(get_entity_audit_logs))
         .routes(routes!(get_principal_audit_logs))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn detail(operation: &str, stored: Value) -> Value {
+        let log = AuditLog::new("Thing", "thg_1", operation, Some(stored), None);
+        let body = AuditLogDetailResponse::from(log)
+            .operation_json
+            .expect("operation json");
+        serde_json::from_str(&body).expect("served json")
+    }
+
+    /// Every shared vector the name rule alone decides (`masked` empty) is
+    /// served exactly as the spec expects, from a row stored unredacted.
+    #[test]
+    fn a_stored_row_is_served_redacted_per_the_shared_vectors() {
+        let vectors: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../../docs/spec/audit-redaction-vectors.json"
+        ))
+        .unwrap();
+        let mut checked = 0;
+        for v in vectors {
+            if !v["masked"].as_array().is_some_and(|m| m.is_empty()) {
+                continue;
+            }
+            assert_eq!(
+                detail("SomeCommand", v["input"].clone()),
+                v["expected"],
+                "{}",
+                v["name"]
+            );
+            checked += 1;
+        }
+        assert!(checked >= 5, "only {checked} vectors checked");
+    }
+
+    /// A Go-era set-property row keeps its value only when it is `PLAIN`.
+    #[test]
+    fn a_stored_secret_config_value_is_served_masked() {
+        let secret = detail(
+            "SetPropertyCommand",
+            json!({"property": "apiKey2", "value": "s3cr3t", "valueType": "SECRET"}),
+        );
+        assert_eq!(secret["value"], "***");
+        let plain = detail(
+            "SetPropertyCommand",
+            json!({"property": "colour", "value": "blue", "valueType": "PLAIN"}),
+        );
+        assert_eq!(plain["value"], "blue");
+    }
+
+    #[test]
+    fn a_row_without_json_is_served_without_json() {
+        let log = AuditLog::new("Thing", "thg_1", "SomeCommand", None, None);
+        assert!(AuditLogDetailResponse::from(log).operation_json.is_none());
+    }
 }

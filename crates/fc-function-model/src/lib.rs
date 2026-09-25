@@ -60,8 +60,8 @@ pub use hostname::Hostname;
 pub use http_method::HttpMethod;
 pub use json::{JsonNode, JsonNumber, JsonParseError};
 pub use manifest::{
-    Cors, DbRef, Endpoint, Limits, Manifest, ManifestProblem, ManifestRejected, PublicRoute,
-    ScheduleSpec, SubscriptionSpec, UnreadableManifest,
+    Cors, DbRef, DroppedPart, Endpoint, Limits, Manifest, ManifestProblem, ManifestRejected,
+    PublicRoute, ScheduleSpec, SubscriptionSpec, UnreadableManifest,
 };
 pub use pool_url_template::{InvalidPoolUrl, PoolUrlTemplate};
 pub use route_pattern::{PathParams, RouteMatch, RoutePattern, Segment};

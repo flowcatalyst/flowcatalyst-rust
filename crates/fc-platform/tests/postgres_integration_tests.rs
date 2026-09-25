@@ -596,6 +596,65 @@ async fn test_unit_of_work_commit() {
     assert!(!logs.is_empty(), "At least one audit log should exist");
 }
 
+/// Java 9d71ffd4: a concurrent writer took a unique key between a use
+/// case's validate check and its persist. The database's unique violation
+/// is a 409 `DUPLICATE_KEY` naming the aggregate, not a 500, and nothing of
+/// the losing write is committed.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_unit_of_work_unique_violation_is_duplicate_key() {
+    let (pool, _container) = setup_test_db().await;
+    let client_repo = ClientRepository::new(&pool);
+
+    use fc_platform::client::operations::events::ClientCreated;
+    use fc_platform::usecase::ExecutionContext;
+    use fc_platform::{PgUnitOfWork, UnitOfWork};
+
+    #[derive(serde::Serialize)]
+    struct CreateClientCommand {
+        name: String,
+    }
+    impl fc_platform::usecase::AuditMasked for CreateClientCommand {}
+
+    let uow = PgUnitOfWork::new(pool.clone());
+    let ctx = ExecutionContext::create("test-principal-id");
+    let commit = |client: Client| {
+        let uow = &uow;
+        let repo = &client_repo;
+        let ctx = &ctx;
+        async move {
+            let event = ClientCreated::new(ctx, &client.id, &client.name, &client.identifier, None);
+            let command = CreateClientCommand {
+                name: client.name.clone(),
+            };
+            uow.commit(&client, repo, event, &command)
+                .await
+                .into_result()
+        }
+    };
+
+    commit(Client::new("First", "same-identifier"))
+        .await
+        .expect("the first writer commits");
+    let loser = Client::new("Second", "same-identifier");
+    let loser_id = loser.id.clone();
+    let err = commit(loser).await.expect_err("the unique key is taken");
+    assert_eq!(err.http_status_code(), 409);
+    assert_eq!(err.code(), "DUPLICATE_KEY");
+    assert!(
+        err.message().contains(&format!("Client {loser_id}")),
+        "{}",
+        err.message()
+    );
+
+    let (events,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM msg_events WHERE subject LIKE $1")
+        .bind(format!("%{loser_id}%"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(events, 0, "the losing write rolled back");
+}
+
 // ─── Dispatch Pool Repository Tests ───────────────────────────────────────
 
 #[tokio::test]
@@ -841,6 +900,80 @@ async fn test_functions_migration_is_idempotent() {
     for source in ["CODE", "API", "UI", "FUNCTION"] {
         assert!(def.contains(&format!("'{source}'")), "{def}");
     }
+}
+
+/// Migration 038 (Java V18): a sync rollup's audit row is keyed by the
+/// application code, so an application whose code is longer than a TSID
+/// must still commit. The probe backfills the tracker on a database that
+/// already has the width, and re-running the SQL is a no-op.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_sync_rollup_audit_fits_a_long_application_code() {
+    use fc_platform::event_type::operations::EventTypesSynced;
+    use fc_platform::usecase::ExecutionContext;
+    use fc_platform::{PgUnitOfWork, UnitOfWork};
+
+    let (pool, _container) = setup_test_db().await;
+    let code = "a-rather-long-application-code-of-fifty-characters";
+    assert_eq!(code.len(), 50);
+
+    #[derive(serde::Serialize)]
+    struct SyncEventTypesCommand {
+        application_code: String,
+    }
+    impl fc_platform::usecase::AuditMasked for SyncEventTypesCommand {}
+
+    let ctx = ExecutionContext::create("test-principal-id");
+    let event = EventTypesSynced {
+        metadata: EventTypesSynced::metadata_for(&ctx, code),
+        application_code: code.to_string(),
+        created: 1,
+        updated: 0,
+        deleted: 0,
+        synced_codes: vec![format!("{code}:orders:order:created")],
+        schemas_created: 0,
+        schemas_updated: 0,
+        schemas_unchanged: 0,
+    };
+    let command = SyncEventTypesCommand {
+        application_code: code.to_string(),
+    };
+    let result = PgUnitOfWork::new(pool.clone())
+        .emit_event(event, &command)
+        .await
+        .into_result();
+    assert!(result.is_ok(), "the rollup commits: {:?}", result.err());
+
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM aud_logs WHERE entity_type = 'Application' AND entity_id = $1",
+    )
+    .bind(code)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 1);
+
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/038_aud_logs_entity_id_width.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("re-running 038 is a no-op");
+    sqlx::query("DELETE FROM _schema_migrations")
+        .execute(&pool)
+        .await
+        .unwrap();
+    run_migrations(&pool, MigrationProfile::Production)
+        .await
+        .expect("migrations over the widened column");
+    let (tracked,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM _schema_migrations \
+         WHERE migration_id = '038_aud_logs_entity_id_width')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(tracked, "the probe recognises an applied 038");
 }
 
 // ─── Service Account Repository Tests ─────────────────────────────────────
@@ -1438,4 +1571,38 @@ async fn test_cron_migration_leaves_rows_alone_where_go_or_java_migrated() {
         assert_eq!(crons_of(&pool, "sjb_plain").await, vec!["0 0 * * * *"]);
         assert!(run(&pool).await.unwrap().already_applied);
     }
+}
+
+/// The Postgres rate-limit store allows exactly `limit` events per window,
+/// as Redis's INCR does: the row a check records counts toward its own
+/// decision.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn test_postgres_rate_limit_store_allows_exactly_the_limit() {
+    use fc_platform::shared::rate_limit_store::{
+        Bucket, PostgresRateLimitStore, RateLimitDecision, RateLimitPolicy, RateLimitStore,
+    };
+
+    let (pool, _container) = setup_test_db().await;
+    let store = PostgresRateLimitStore::new(pool.clone());
+    let policy = RateLimitPolicy::new(std::time::Duration::from_secs(60), 3);
+    let mut decisions = Vec::new();
+    for _ in 0..4 {
+        decisions.push(
+            store
+                .check_and_record(Bucket::PASSWORD_RESET_EMAIL, "a@b.c", policy)
+                .await
+                .unwrap(),
+        );
+    }
+    assert!(decisions[..3].iter().all(|d| *d == RateLimitDecision::Allow));
+    assert!(matches!(decisions[3], RateLimitDecision::Reject { .. }));
+    assert_eq!(
+        store
+            .check_and_record(Bucket::PASSWORD_RESET_EMAIL, "x@b.c", policy)
+            .await
+            .unwrap(),
+        RateLimitDecision::Allow,
+        "each key has its own budget"
+    );
 }

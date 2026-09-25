@@ -157,7 +157,8 @@ impl TestHost {
 
     /// How [`Events::emit`](crate::Events::emit) answers, after the host's
     /// own checks (a blank type, data that is not JSON). The default accepts
-    /// every event.
+    /// every event. An accepted event gets the id `evt_<n>`, the n-th event
+    /// accepted.
     #[cfg(feature = "flowcatalyst")]
     pub fn emit_with(
         mut self,
@@ -237,7 +238,7 @@ impl Backend for TestBackend {
 
     /// The host's checks, in its order, then the responder.
     #[cfg(feature = "flowcatalyst")]
-    fn emit(&self, event: &OutboundEvent) -> Result<(), EmitError> {
+    fn emit(&self, event: &OutboundEvent) -> Result<String, EmitError> {
         if event.event_type().trim().is_empty() {
             return Err(EmitError::Invalid(
                 emit_error::INVALID_EVENT_TYPE_REQUIRED.into(),
@@ -259,8 +260,9 @@ impl Backend for TestBackend {
         if let (None, Some(causation)) = (event.causation_id(), &self.invocation.causation_id) {
             received = received.with_causation_id(causation.clone());
         }
-        self.emitted.borrow_mut().push(received);
-        Ok(())
+        let mut emitted = self.emitted.borrow_mut();
+        emitted.push(received);
+        Ok(format!("evt_{}", emitted.len()))
     }
 
     fn log(&self, level: Level, message: &str) {
@@ -384,10 +386,13 @@ mod tests {
         let event = OutboundEvent::new("a:b:c:d", "d-1")
             .unwrap()
             .with_data(&b"{}"[..]);
-        events.emit(&event).unwrap();
-        events
-            .emit(&event.clone().with_correlation_id("mine"))
-            .unwrap();
+        assert_eq!(events.emit(&event).unwrap(), "evt_1");
+        assert_eq!(
+            events
+                .emit(&event.clone().with_correlation_id("mine"))
+                .unwrap(),
+            "evt_2"
+        );
         let sent = host.emitted();
         assert_eq!(
             (sent[0].correlation_id(), sent[0].causation_id()),
@@ -418,12 +423,13 @@ mod tests {
             Err(EmitError::Refused {
                 code: "EVENT_TYPE_NOT_OWNED".into(),
                 status: 403,
+                message: "not yours".into(),
             })
         });
         let refused = refusing.context().events().emit(&event).unwrap_err();
         assert_eq!(
-            (refused.code(), refused.status()),
-            ("EVENT_TYPE_NOT_OWNED", 403)
+            (refused.code(), refused.status(), refused.message()),
+            ("EVENT_TYPE_NOT_OWNED", 403, "not yours")
         );
         assert!(refusing.emitted().is_empty());
     }

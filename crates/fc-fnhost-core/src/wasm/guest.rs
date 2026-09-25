@@ -23,6 +23,7 @@ wasmtime::component::bindgen!({
     world: "imports",
     imports: {
         "flowcatalyst:function/events.emit": async,
+        "flowcatalyst:function/events.emit-event": async,
     },
 });
 
@@ -68,25 +69,34 @@ pub struct FunctionShared {
     pub emitter: Emitter,
 }
 
+/// Why the host did not publish an event: its own refusal before the
+/// platform (an `INVALID_EVENT` code), or the platform's answer.
+enum EmitFailure {
+    Invalid(String),
+    Platform(fc_function_abi::EventEmitError),
+}
+
 impl FunctionShared {
+    /// Publishes `event`; the id the platform stored it under.
     async fn emit(
         self: Arc<Self>,
         event: events::OutboundEvent,
         defaults: (String, Option<String>),
-    ) -> Result<(), events::EmitError> {
-        use events::EmitError;
+    ) -> Result<String, EmitFailure> {
         if crate::java::is_blank(&event.type_) {
-            return Err(EmitError::Invalid(
+            return Err(EmitFailure::Invalid(
                 emit_error::INVALID_EVENT_TYPE_REQUIRED.to_owned(),
             ));
         }
         if crate::java::is_blank(&event.dedup_id) {
-            return Err(EmitError::Invalid(emit_error::DEDUP_ID_REQUIRED.to_owned()));
+            return Err(EmitFailure::Invalid(
+                emit_error::DEDUP_ID_REQUIRED.to_owned(),
+            ));
         }
         let data = match &event.data {
             None => Value::Null,
             Some(text) => serde_json::from_str(text)
-                .map_err(|_| EmitError::Invalid(INVALID_EVENT_DATA_NOT_JSON.to_owned()))?,
+                .map_err(|_| EmitFailure::Invalid(INVALID_EVENT_DATA_NOT_JSON.to_owned()))?,
         };
         let (correlation_id, causation_id) = defaults;
         let request = EmitRequest {
@@ -111,14 +121,7 @@ impl FunctionShared {
                 .unwrap_or_else(|_| Err(fc_function_abi::EventEmitError::unavailable())),
             None => control_plane.emit(&request).await,
         };
-        match sent {
-            Ok(()) => Ok(()),
-            Err(e) if e.code() == emit_error::UNAVAILABLE => Err(EmitError::Unavailable),
-            Err(e) => Err(EmitError::Refused(events::Refusal {
-                code: e.code().to_owned(),
-                status: e.status(),
-            })),
-        }
+        sent.map_err(EmitFailure::Platform)
     }
 }
 
@@ -224,13 +227,56 @@ impl log::Host for GuestState {
     }
 }
 
-impl events::Host for GuestState {
-    async fn emit(&mut self, event: events::OutboundEvent) -> Result<(), events::EmitError> {
-        let defaults = (
+impl GuestState {
+    fn emit_defaults(&self) -> (String, Option<String>) {
+        (
             self.invocation.context.correlation_id.clone(),
             self.invocation.context.causation_id.clone(),
-        );
-        self.function.clone().emit(event, defaults).await
+        )
+    }
+}
+
+impl events::Host for GuestState {
+    /// 0.1.0's emit: no id, and a refusal without its reason.
+    async fn emit(&mut self, event: events::OutboundEvent) -> Result<(), events::EmitError> {
+        use events::EmitError;
+        let defaults = self.emit_defaults();
+        match self.function.clone().emit(event, defaults).await {
+            Ok(_) => Ok(()),
+            Err(EmitFailure::Invalid(code)) => Err(EmitError::Invalid(code)),
+            Err(EmitFailure::Platform(e)) if e.code() == emit_error::UNAVAILABLE => {
+                Err(EmitError::Unavailable)
+            }
+            Err(EmitFailure::Platform(e)) => Err(EmitError::Refused(events::Refusal {
+                code: e.code().to_owned(),
+                status: e.status(),
+            })),
+        }
+    }
+
+    /// 0.1.1 (Java 571fdff1, owner ruling 11): the event id on success, the
+    /// platform's reason on a refusal.
+    async fn emit_event(
+        &mut self,
+        event: events::OutboundEvent,
+    ) -> Result<String, events::EmitEventError> {
+        use events::EmitEventError;
+        let defaults = self.emit_defaults();
+        self.function
+            .clone()
+            .emit(event, defaults)
+            .await
+            .map_err(|failure| match failure {
+                EmitFailure::Invalid(code) => EmitEventError::Invalid(code),
+                EmitFailure::Platform(e) if e.code() == emit_error::UNAVAILABLE => {
+                    EmitEventError::Unavailable(e.message().to_owned())
+                }
+                EmitFailure::Platform(e) => EmitEventError::Refused(events::RefusalReason {
+                    code: e.code().to_owned(),
+                    status: e.status(),
+                    message: e.message().to_owned(),
+                }),
+            })
     }
 }
 

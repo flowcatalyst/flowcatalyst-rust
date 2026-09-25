@@ -34,9 +34,21 @@ pub const ENTRYPOINT: &str = "wasi:http/incoming-handler";
 /// Every committed guest, in `SHA256SUMS` (and `tests/guests/build.sh`)
 /// order. `pdk`, `pdk-pure` and `hello` are written with the guest SDK
 /// (`crates/fc-function-pdk`; `hello` is `examples/function-hello-rust`).
-pub const GUESTS: [&str; 13] = [
-    "echo", "spin", "alloc", "fail", "config", "secret", "http", "emit", "log", "pure", "pdk",
-    "pdk-pure", "hello",
+pub const GUESTS: [&str; 14] = [
+    "echo",
+    "spin",
+    "alloc",
+    "fail",
+    "config",
+    "secret",
+    "http",
+    "emit",
+    "emit_event",
+    "log",
+    "pure",
+    "pdk",
+    "pdk-pure",
+    "hello",
 ];
 
 pub fn fixtures_dir() -> PathBuf {

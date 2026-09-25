@@ -45,7 +45,7 @@ async fn handle(req: Request, ctx: Context) -> Result<Response, Error> {
             .with_subject("thing-1")
             .with_json(&data)?;
             let result = match ctx.events().emit(&event) {
-                Ok(()) => j!({"ok": true}),
+                Ok(_) => j!({"ok": true}),
                 Err(e) => j!({
                     "ok": false,
                     "code": e.code(),

@@ -16,7 +16,7 @@
 # unifies it back on); `hello` is examples/function-hello-rust (G2).
 set -euo pipefail
 cd "$(dirname "$0")"
-all=(echo spin alloc fail config secret http emit log pure pdk pdk-pure hello)
+all=(echo spin alloc fail config secret http emit emit_event log pure pdk pdk-pure hello)
 if [[ $# -gt 0 ]]; then guests=("$@"); else guests=("${all[@]}"); fi
 example=../../../../examples/function-hello-rust
 pdk=../../../fc-function-pdk

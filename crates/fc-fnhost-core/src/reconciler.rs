@@ -19,7 +19,12 @@
 //!   ETag, and it could close an old version whose replacement failed,
 //!   against new-before-old. The platform keeps sending it for one release,
 //!   for JVM hosts;
-//! - failures are never cached: every failed entry is retried next cycle.
+//! - failures are never cached across cycles: every failed entry is retried
+//!   next cycle. Within a cycle, a version refused at load is not loaded
+//!   again on first call (lazy or pinned) with the same settings: the
+//!   refusal is a property of its digest-pinned artifact and manifest, and
+//!   recompiling it per request would only burn CPU. Its detail is logged
+//!   when the refusal is new or changes (Java 5afabe52).
 //!
 //! [`ReconcileLoop`]: crate::reconcile_loop::ReconcileLoop
 
@@ -93,6 +98,23 @@ impl ReconcileObserver for NoopObserver {}
 
 type Key = (FunctionAddress, i32);
 
+struct Refusal {
+    reason: String,
+    cycle: u64,
+    fingerprint: String,
+}
+
+/// What [`Reconciler::load_pinned`] found.
+pub enum PinnedLoad {
+    Loaded(Arc<LoadedFunction>),
+    /// Desired, but not yet prepared and nothing failed: `503
+    /// VERSION_NOT_READY` with `Retry-After`.
+    Preparing,
+    /// Refused for good (preparing or loading failed): `404
+    /// VERSION_NOT_AVAILABLE`.
+    Refused,
+}
+
 #[derive(Default)]
 struct State {
     etag: Option<String>,
@@ -101,6 +123,13 @@ struct State {
     prepared: HashMap<String, PathBuf>,
     /// `(address, version) → reason`, retried every cycle.
     failures: HashMap<Key, String>,
+    /// Load refusals (`LoadOutcome::Refused`): the reason, and the reconcile
+    /// cycle and settings fingerprint it was found under. A refusal is a
+    /// property of the digest-pinned artifact, its manifest and settings, so
+    /// a first-call load (lazy or pinned) is not attempted again for the
+    /// same key in the same cycle with the same settings; the next cycle
+    /// retries it once, as failures always are.
+    refusals: HashMap<Key, Refusal>,
     version_id_by_key: HashMap<Key, String>,
     /// `address → live entry routed lazily`.
     lazy_routes: HashMap<FunctionAddress, Entry>,
@@ -308,15 +337,18 @@ impl Reconciler {
                 state.failures.remove(&key);
             }
             Err(reason) => {
-                state.failures.insert(key, reason.clone());
+                let previous = state.failures.insert(key, reason.clone());
                 drop(state);
                 self.observer().load_error(&reason);
-                tracing::warn!(
-                    address = %entry.address,
-                    version = entry.version,
-                    reason = %reason,
-                    "failed to prepare a function version"
-                );
+                // Retried every cycle; logged when new or changed (Java 5afabe52).
+                if previous.as_deref() != Some(reason.as_str()) {
+                    tracing::warn!(
+                        address = %entry.address,
+                        version = entry.version,
+                        reason = %reason,
+                        "failed to prepare a function version"
+                    );
+                }
             }
         }
     }
@@ -425,12 +457,52 @@ impl Reconciler {
         self.state.lock().settings_fingerprint.get(&entry.address) != Some(&new)
     }
 
-    fn record_failure(&self, entry: &Entry, reason: String) {
-        self.state
+    /// Records `reason` for `entry`; whether it is new or changed, so the
+    /// caller logs its detail once rather than on every retry (Java
+    /// 5afabe52).
+    fn record_failure(&self, entry: &Entry, reason: String) -> bool {
+        let previous = self
+            .state
             .lock()
             .failures
             .insert((entry.address.clone(), entry.version), reason.clone());
         self.observer().load_error(&reason);
+        previous.as_deref() != Some(reason.as_str())
+    }
+
+    /// Notes a load refusal under the current cycle and settings; whether
+    /// its reason is new or changed.
+    fn note_refusal(&self, entry: &Entry, reason: &str) -> bool {
+        let refusal = Refusal {
+            reason: reason.to_owned(),
+            cycle: self.reconcile_count(),
+            fingerprint: settings_fingerprint(&entry.config, &entry.secrets),
+        };
+        self.state
+            .lock()
+            .refusals
+            .insert((entry.address.clone(), entry.version), refusal)
+            .is_none_or(|previous| previous.reason != reason)
+    }
+
+    /// Whether `entry` was refused at load in this cycle with these
+    /// settings: a first-call load does not try again until the next cycle.
+    fn refused_this_cycle(&self, entry: &Entry) -> bool {
+        self.state
+            .lock()
+            .refusals
+            .get(&(entry.address.clone(), entry.version))
+            .is_some_and(|r| {
+                r.cycle == self.reconcile_count()
+                    && r.fingerprint == settings_fingerprint(&entry.config, &entry.secrets)
+            })
+    }
+
+    fn clear_refusal(&self, entry: &Entry) {
+        self.state
+            .lock()
+            .refusals
+            .remove(&(entry.address.clone(), entry.version));
     }
 
     /// **New before old**: the displaced version is closed only after the
@@ -450,6 +522,7 @@ impl Reconciler {
                 );
                 match self.registry.put(function.clone(), warm) {
                     Ok(displaced) => {
+                        self.clear_refusal(entry);
                         self.state
                             .lock()
                             .failures
@@ -463,26 +536,35 @@ impl Reconciler {
                         Some(function)
                     }
                     Err(full) => {
-                        self.record_failure(entry, "LOAD:REGISTRY_FULL".to_owned());
-                        tracing::warn!(
-                            address = %entry.address,
-                            version = entry.version,
-                            err = %full,
-                            "registry refused to load a function version: at capacity and every loaded entry is warm"
-                        );
+                        // Capacity is transient: retried on the next call, but
+                        // logged only when new.
+                        if self.record_failure(entry, "LOAD:REGISTRY_FULL".to_owned()) {
+                            tracing::warn!(
+                                address = %entry.address,
+                                version = entry.version,
+                                err = %full,
+                                "registry refused to load a function version: at capacity and every loaded entry is warm"
+                            );
+                        }
                         function.close().await; // never registered
                         None
                     }
                 }
             }
+            // The loader's detail reaches the log when a version's refusal is
+            // new or changes, not on every cycle (or call) that finds it
+            // still refused (Java 5afabe52).
             LoadOutcome::Refused { reason, detail } => {
-                self.record_failure(entry, format!("LOAD:{reason}"));
-                tracing::warn!(address = %entry.address, version = entry.version, reason = %reason, detail = %detail, "function version refused to load");
+                self.note_refusal(entry, &reason);
+                if self.record_failure(entry, format!("LOAD:{reason}")) {
+                    tracing::warn!(address = %entry.address, version = entry.version, reason = %reason, detail = %detail, "function version refused to load");
+                }
                 None
             }
             LoadOutcome::Failed { code, detail } => {
-                self.record_failure(entry, code.clone());
-                tracing::warn!(address = %entry.address, version = entry.version, reason = %code, detail = %detail, "failed to load a function version");
+                if self.record_failure(entry, code.clone()) {
+                    tracing::warn!(address = %entry.address, version = entry.version, reason = %code, detail = %detail, "failed to load a function version");
+                }
                 None
             }
         }
@@ -512,6 +594,9 @@ impl Reconciler {
         let Some(path) = self.state.lock().prepared.get(&route.version_id).cloned() else {
             return current;
         };
+        if self.refused_this_cycle(&route) {
+            return current; // refused already this cycle: not recompiled per call
+        }
         let outcome = self.attempt_load(&path, &route).await;
         match self.apply_load_outcome(outcome, &route, false).await {
             Some(loaded) => Some(loaded),
@@ -520,17 +605,59 @@ impl Reconciler {
     }
 
     /// Loads `entry`'s version fresh, outside the registry, for a versioned
-    /// call pinning a candidate (H5). The caller owns the result.
-    pub async fn load_pinned(&self, entry: &Entry) -> Option<Arc<LoadedFunction>> {
-        let path = self.state.lock().prepared.get(&entry.version_id).cloned()?;
-        match self.attempt_load(&path, entry).await {
-            LoadOutcome::Loaded(instance) => Some(LoadedFunction::new(
-                entry.address.clone(),
-                entry.version,
-                instance,
-            )),
-            _ => None,
+    /// call pinning a candidate (H5). The caller owns the result. Says which
+    /// case it hit when nothing loaded (owner ruling 12): the version is
+    /// still being prepared, or it was refused.
+    pub async fn load_pinned(&self, entry: &Entry) -> PinnedLoad {
+        let path = {
+            let state = self.state.lock();
+            match state.prepared.get(&entry.version_id) {
+                Some(path) => path.clone(),
+                None if state
+                    .failures
+                    .contains_key(&(entry.address.clone(), entry.version)) =>
+                {
+                    return PinnedLoad::Refused
+                }
+                None => return PinnedLoad::Preparing,
+            }
+        };
+        if self.refused_this_cycle(entry) {
+            return PinnedLoad::Refused; // not recompiled per call
         }
+        match self.attempt_load(&path, entry).await {
+            LoadOutcome::Loaded(instance) => {
+                self.clear_refusal(entry);
+                PinnedLoad::Loaded(LoadedFunction::new(
+                    entry.address.clone(),
+                    entry.version,
+                    instance,
+                ))
+            }
+            LoadOutcome::Refused { reason, detail } => {
+                if self.note_refusal(entry, &reason) {
+                    tracing::warn!(address = %entry.address, version = entry.version, reason = %reason, detail = %detail, "pinned function version refused to load");
+                }
+                PinnedLoad::Refused
+            }
+            LoadOutcome::Failed { code, detail } => {
+                tracing::warn!(address = %entry.address, version = entry.version, reason = %code, detail = %detail, "failed to load a pinned function version");
+                PinnedLoad::Refused
+            }
+        }
+    }
+
+    /// Whether `entry`'s version is still being prepared: desired, not yet
+    /// prepared, and no failure recorded for it (Java `isPreparing`, owner
+    /// ruling 12). It can change between a call that loaded nothing and this
+    /// one; the worst case is one 503 as preparation completes, which a
+    /// retry resolves.
+    pub fn is_preparing(&self, entry: &Entry) -> bool {
+        let state = self.state.lock();
+        !state.prepared.contains_key(&entry.version_id)
+            && !state
+                .failures
+                .contains_key(&(entry.address.clone(), entry.version))
     }
 
     // ── webhook signing secrets ──────────────────────────────────────────
@@ -628,6 +755,7 @@ impl Reconciler {
                 }
             }
             state.failures.retain(|key, _| named.contains(key));
+            state.refusals.retain(|key, _| named.contains(key));
             // Routes and per-address load locks go with the address, or the
             // maps only ever grow over the life of the process.
             state

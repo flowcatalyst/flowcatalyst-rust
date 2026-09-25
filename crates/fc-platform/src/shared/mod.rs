@@ -8,6 +8,7 @@ pub mod database;
 pub mod default_processes;
 pub mod enum_str;
 pub mod error;
+pub mod log_throttle;
 pub mod middleware;
 pub mod tsid;
 // APIs

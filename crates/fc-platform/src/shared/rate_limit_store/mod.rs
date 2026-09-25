@@ -32,7 +32,8 @@ pub mod postgres;
 pub mod redis;
 
 pub use middleware::{
-    distributed_rate_limit_per_ip, enforce_distributed, DistributedIpLimitState,
+    distributed_rate_limit_per_email, distributed_rate_limit_per_ip, enforce_distributed,
+    DistributedEmailLimitState, DistributedIpLimitState,
 };
 pub use postgres::PostgresRateLimitStore;
 pub use redis::RedisRateLimitStore;

@@ -156,11 +156,16 @@ impl std::fmt::Debug for OutboundEvent {
 /// from `POST /control/functions/events`, or [`emit_error::UNAVAILABLE`] /
 /// `503` when the platform could not be reached. A function can retry on a
 /// 5xx and fail loudly on [`emit_error::EVENT_TYPE_NOT_OWNED`].
+///
+/// `message` (Java 67b04a51) is the reason: the platform's own `message`
+/// for a refusal (which check refused the emit), or what failed for a
+/// transport failure; empty when there is none.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("emit refused: {code} ({status})")]
+#[error("emit refused: {code} ({status}){}", if message.is_empty() { String::new() } else { format!(": {message}") })]
 pub struct EventEmitError {
     code: String,
     status: u16,
+    message: String,
 }
 
 impl EventEmitError {
@@ -169,7 +174,20 @@ impl EventEmitError {
         Self {
             code: code.into(),
             status,
+            message: String::new(),
         }
+    }
+
+    /// This refusal, with its reason.
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
+        self
+    }
+
+    /// Why: the platform's own message, or what failed to reach it; empty
+    /// when there is none.
+    pub fn message(&self) -> &str {
+        &self.message
     }
 
     /// A transport failure: [`emit_error::UNAVAILABLE`], `503`.
@@ -265,5 +283,12 @@ mod tests {
             "emit refused: EVENT_TYPE_NOT_OWNED (403)"
         );
         assert_eq!(EventEmitError::unavailable().status(), 503);
+        // Java 67b04a51: the platform's reason joins the text.
+        let refused = EventEmitError::new("EVENT_TYPE_NOT_OWNED", 403).with_message("nope");
+        assert_eq!(refused.message(), "nope");
+        assert_eq!(
+            refused.to_string(),
+            "emit refused: EVENT_TYPE_NOT_OWNED (403): nope"
+        );
     }
 }

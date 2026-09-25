@@ -114,7 +114,8 @@ use crate::shared::rate_limit_middleware::{
     rate_limit_per_ip, IpRateLimiterState, RateLimitConfig,
 };
 use crate::shared::rate_limit_store::{
-    distributed_rate_limit_per_ip, Bucket, DistributedIpLimitState,
+    distributed_rate_limit_per_email, distributed_rate_limit_per_ip, Bucket,
+    DistributedEmailLimitState, DistributedIpLimitState,
 };
 use crate::usecase::UnitOfWork;
 use std::sync::Arc;
@@ -342,6 +343,19 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 policy: self.rate_limit_policies.password_reset_ip,
             },
             distributed_rate_limit_per_ip,
+        );
+        // S2.7: the reset request is budgeted per address too, and over
+        // budget it answers exactly as it always does, so the limit can't
+        // be used to tell a known address from an unknown one.
+        let distributed_password_reset_email_layer = axum::middleware::from_fn_with_state(
+            DistributedEmailLimitState {
+                store: self.rate_limit_store.clone(),
+                bucket: Bucket::PASSWORD_RESET_EMAIL,
+                policy: self.rate_limit_policies.password_reset_email,
+                path_suffix: "/request",
+                over_budget: password_reset_requested_response,
+            },
+            distributed_rate_limit_per_email,
         );
 
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
@@ -624,6 +638,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_AUTH_PASSWORD_RESET,
                 password_reset_router(self.password_reset)
+                    .layer(distributed_password_reset_email_layer)
                     .layer(distributed_password_reset_layer)
                     .layer(auth_layer.clone()),
             )
@@ -691,57 +706,136 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 }),
             );
 
-        // SPA serving (if static_dir is configured)
-        let app = if let Some(ref static_dir) = self.static_dir {
-            let index_path = std::path::PathBuf::from(static_dir).join("index.html");
-            if index_path.exists() {
-                use axum::http::header::CACHE_CONTROL;
-                use axum::http::HeaderValue;
-                use tower_http::services::{ServeDir, ServeFile};
-                use tower_http::set_header::SetResponseHeaderLayer;
-
-                tracing::info!(dir = %static_dir, "Serving static frontend files with SPA fallback");
-
-                let assets_dir = std::path::PathBuf::from(static_dir).join("assets");
-                let assets_service = tower::ServiceBuilder::new()
-                    .layer(SetResponseHeaderLayer::overriding(
-                        CACHE_CONTROL,
-                        HeaderValue::from_static("public, max-age=31536000, immutable"),
-                    ))
-                    .service(ServeDir::new(&assets_dir));
-
-                // SPA routes that conflict with API nests (e.g., /auth/login vs POST /auth/login).
-                // Without these, the /auth nest returns 405 for GET requests the SPA should handle.
-                let spa_index = index_path.clone();
-                let spa_handler = get(move || {
-                    let path = spa_index.clone();
-                    async move {
-                        match tokio::fs::read_to_string(&path).await {
-                            Ok(html) => axum::response::Html(html).into_response(),
-                            Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                        }
-                    }
-                });
-
-                app.route("/auth/login", spa_handler.clone())
-                    .route("/auth/forgot-password", spa_handler.clone())
-                    .route("/auth/reset-password", spa_handler)
-                    .nest_service("/assets", assets_service)
-                    .fallback_service(
-                        ServeDir::new(static_dir).fallback(ServeFile::new(index_path)),
-                    )
-            } else {
-                tracing::warn!(dir = %static_dir, "Static dir set but index.html not found");
-                app
-            }
-        } else {
-            // No static_dir — don't add a root handler. The binary can add its own
-            // (fc-dev uses embedded assets, fc-server/fc-platform-server may redirect to Swagger).
-            app
+        // SPA serving (if static_dir is configured). No static_dir: no root
+        // handler. The binary can add its own (fc-dev uses embedded assets,
+        // fc-server/fc-platform-server may redirect to Swagger).
+        let app = match self.static_dir {
+            Some(ref static_dir) => serve_spa(app, static_dir),
+            None => app,
         };
 
         (app, openapi)
     }
+}
+
+/// Serve the SPA in `static_dir` under `app`: hashed `/assets/*` immutable,
+/// the shell never cacheable, and the shell as the fallback for any path no
+/// route claims. A directory without `index.html` serves nothing.
+pub fn serve_spa(app: Router, static_dir: &str) -> Router {
+    let index_path = std::path::PathBuf::from(static_dir).join("index.html");
+    if index_path.exists() {
+        use axum::http::header::CACHE_CONTROL;
+        use axum::http::HeaderValue;
+        use tower_http::services::{ServeDir, ServeFile};
+        use tower_http::set_header::SetResponseHeaderLayer;
+
+        tracing::info!(dir = %static_dir, "Serving static frontend files with SPA fallback");
+
+        let assets_dir = std::path::PathBuf::from(static_dir).join("assets");
+        let assets_service = tower::ServiceBuilder::new()
+            .layer(SetResponseHeaderLayer::overriding(
+                CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=31536000, immutable"),
+            ))
+            .service(ServeDir::new(&assets_dir));
+
+        // SPA routes that conflict with API nests (e.g., /auth/login vs POST /auth/login).
+        // Without these, the /auth nest returns 405 for GET requests the SPA should handle.
+        let spa_index = index_path.clone();
+        let spa_handler = get(move || {
+            let path = spa_index.clone();
+            async move {
+                match tokio::fs::read_to_string(&path).await {
+                    Ok(html) => (
+                        [(CACHE_CONTROL, SPA_SHELL_CACHE_CONTROL)],
+                        axum::response::Html(html),
+                    )
+                        .into_response(),
+                    Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            }
+        });
+
+        // The shell — `/`, `/index.html` by name, and the SPA
+        // fallback for any other path — is never cacheable, so a
+        // browser never keeps a stale SPA after a deploy (Java
+        // 8fd35a8b). Every other static file keeps default caching.
+        let fallback_service = tower::ServiceBuilder::new()
+            .layer(SetResponseHeaderLayer::overriding(
+                CACHE_CONTROL,
+                |res: &axum::http::Response<_>| {
+                    is_html(res.headers())
+                        .then(|| HeaderValue::from_static(SPA_SHELL_CACHE_CONTROL))
+                },
+            ))
+            .service(ServeDir::new(static_dir).fallback(ServeFile::new(index_path)));
+
+        app.route("/auth/login", spa_handler.clone())
+            .route("/auth/forgot-password", spa_handler.clone())
+            .route("/auth/reset-password", spa_handler)
+            .nest_service("/assets", assets_service)
+            .fallback_service(fallback_service)
+    } else {
+        tracing::warn!(dir = %static_dir, "Static dir set but index.html not found");
+        app
+    }
+}
+
+/// `POST /auth/password-reset/request`'s one answer — for a known address,
+/// an unknown one, and one over its budget alike (the handler's silent
+/// success; `password_reset_email_budget_is_silent` pins the two equal).
+fn password_reset_requested_response() -> axum::response::Response {
+    Json(serde_json::json!({
+        "message": "If an account exists, a reset email has been sent."
+    }))
+    .into_response()
+}
+
+/// The platform API listener's timeouts (owner ruling 10): keep-alive idle
+/// 75 s, 30 s to read a request, nothing while a handler runs. A function
+/// artifact upload (up to 256 MiB) is read against a 30 s stall deadline
+/// instead of a total one, as Java reads its streaming uploads.
+pub fn listener_timeouts() -> fc_http_listener::ListenerTimeouts {
+    fc_http_listener::ListenerTimeouts::new(
+        r#"{"error":"REQUEST_TIMEOUT","code":"REQUEST_TIMEOUT","message":"the request was not received in time"}"#,
+    )
+    .with_streamed_uploads(is_artifact_upload)
+}
+
+/// `PUT /api/functions/{address}/artifacts/{digest}`.
+fn is_artifact_upload(method: &axum::http::Method, uri: &axum::http::Uri) -> bool {
+    let Some(rest) = uri.path().strip_prefix("/api/functions/") else {
+        return false;
+    };
+    let segments: Vec<&str> = rest.split('/').collect();
+    method == axum::http::Method::PUT
+        && segments.len() == 3
+        && segments[1] == "artifacts"
+        && !segments[0].is_empty()
+        && !segments[2].is_empty()
+}
+
+/// Serve the platform API on `listener` with [`listener_timeouts`] until
+/// `shutdown` completes, then let in-flight requests finish. In place of
+/// `axum::serve`, which has no per-connection timeouts.
+pub async fn serve_api(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: impl std::future::Future<Output = ()> + Send,
+) {
+    fc_http_listener::serve(listener, app, listener_timeouts(), shutdown).await
+}
+
+/// `Cache-Control` of every SPA shell response (index.html, whether asked
+/// for by name, as `/`, or as the fallback for a client-side route). Hashed
+/// `/assets/*` keep `public, max-age=31536000, immutable`.
+pub const SPA_SHELL_CACHE_CONTROL: &str = "no-cache, no-store, must-revalidate";
+
+fn is_html(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("text/html"))
 }
 
 // =============================================================================
@@ -753,4 +847,93 @@ async fn health_handler() -> Json<serde_json::Value> {
         "status": "UP",
         "version": env!("CARGO_PKG_VERSION")
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{header::CACHE_CONTROL, Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn cache_control(app: &Router, path: &str) -> (StatusCode, Option<String>) {
+        let res = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let cc = res
+            .headers()
+            .get(CACHE_CONTROL)
+            .map(|v| v.to_str().unwrap().to_string());
+        (res.status(), cc)
+    }
+
+    /// Java 8fd35a8b: every shell response is never cacheable; hashed
+    /// assets stay immutable and other static files keep default caching.
+    #[test]
+    fn only_an_artifact_upload_is_read_against_a_stall_deadline() {
+        let upload = |m: axum::http::Method, p: &str| is_artifact_upload(&m, &p.parse().unwrap());
+        let digest = format!("sha256:{}", "a".repeat(64));
+        assert!(upload(
+            axum::http::Method::PUT,
+            &format!("/api/functions/shop.default.hello/artifacts/{digest}")
+        ));
+        assert!(!upload(
+            axum::http::Method::GET,
+            &format!("/api/functions/shop.default.hello/artifacts/{digest}")
+        ));
+        assert!(!upload(
+            axum::http::Method::PUT,
+            "/api/functions/shop.default.hello"
+        ));
+        assert!(!upload(
+            axum::http::Method::PUT,
+            "/api/functions//artifacts/x"
+        ));
+        assert!(!upload(
+            axum::http::Method::PUT,
+            "/api/principals/x/artifacts/y"
+        ));
+        assert_eq!(
+            listener_timeouts().request_read,
+            fc_http_listener::REQUEST_READ
+        );
+    }
+
+    #[tokio::test]
+    async fn the_spa_shell_is_never_cacheable_and_assets_stay_immutable() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), "<html>shell</html>").unwrap();
+        std::fs::write(dir.path().join("robots.txt"), "User-agent: *").unwrap();
+        std::fs::create_dir(dir.path().join("assets")).unwrap();
+        std::fs::write(dir.path().join("assets/index-abc123.js"), "1").unwrap();
+        let app = serve_spa(Router::new(), dir.path().to_str().unwrap());
+
+        let shell = Some(SPA_SHELL_CACHE_CONTROL.to_string());
+        for path in [
+            "/",
+            "/index.html",
+            "/applications/app_1",
+            "/auth/login",
+            "/auth/reset-password",
+        ] {
+            assert_eq!(
+                cache_control(&app, path).await,
+                (StatusCode::OK, shell.clone()),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            cache_control(&app, "/assets/index-abc123.js").await,
+            (
+                StatusCode::OK,
+                Some("public, max-age=31536000, immutable".to_string())
+            )
+        );
+        assert_eq!(
+            cache_control(&app, "/robots.txt").await,
+            (StatusCode::OK, None)
+        );
+    }
 }

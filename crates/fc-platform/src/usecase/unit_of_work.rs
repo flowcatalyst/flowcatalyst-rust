@@ -92,13 +92,57 @@ fn transaction_required() -> UseCaseError {
     )
 }
 
-/// A write a repository refuses for a business reason of its own (a unique
-/// constraint it maps to a code, e.g. `fn_routes`' `PUBLIC_ROUTE_TAKEN`)
-/// keeps that code and its `409`; any other failure is a failed commit.
-fn write_failure(what: &str, e: crate::shared::error::PlatformError) -> UseCaseError {
+/// SQLSTATE `23505`, unique_violation.
+const UNIQUE_VIOLATION: &str = "23505";
+
+/// The aggregate a write failure names: its type's short name and its id.
+fn aggregate_subject<A: HasId>(aggregate: &A) -> String {
+    let type_name = std::any::type_name::<A>();
+    let short = type_name
+        .split('<')
+        .next()
+        .unwrap_or(type_name)
+        .rsplit("::")
+        .next()
+        .unwrap_or(type_name);
+    format!("{} {}", short, aggregate.id())
+}
+
+/// Whether a repository write failed on a unique key: the database's
+/// unique violation, or a repository's own `Duplicate`.
+fn is_unique_violation(e: &crate::shared::error::PlatformError) -> bool {
+    match e {
+        crate::shared::error::PlatformError::Duplicate { .. } => true,
+        crate::shared::error::PlatformError::Sqlx(sqlx::Error::Database(db)) => {
+            db.code().as_deref() == Some(UNIQUE_VIOLATION)
+        }
+        _ => false,
+    }
+}
+
+/// A repository write that failed.
+///
+/// - A write a repository refuses for a business reason of its own (a
+///   unique constraint it maps to a code, e.g. `fn_routes`'
+///   `PUBLIC_ROUTE_TAKEN`) keeps that code and its `409`.
+/// - Any other unique violation is `409 DUPLICATE_KEY` naming the
+///   aggregate (Java 9d71ffd4): the use case's validate step checked for the
+///   duplicate, and a concurrent writer took the key between that check and
+///   this persist, so the caller is told what the check would have said.
+/// - Anything else is a failed commit, naming the aggregate.
+fn write_failure<A: HasId>(
+    what: &str,
+    aggregate: &A,
+    e: crate::shared::error::PlatformError,
+) -> UseCaseError {
+    let subject = aggregate_subject(aggregate);
     match e {
         e @ crate::shared::error::PlatformError::BusinessRule { .. } => UseCaseError::from(e),
-        e => UseCaseError::commit(format!("Failed to {what} aggregate: {e}")),
+        e if is_unique_violation(&e) => UseCaseError::business_rule(
+            "DUPLICATE_KEY",
+            format!("{subject} conflicts with an existing row on a unique key"),
+        ),
+        e => UseCaseError::commit(format!("Failed to {what} {subject}: {e}")),
     }
 }
 
@@ -443,7 +487,7 @@ impl UnitOfWork for PgUnitOfWork {
         if let Err(e) = persist_result {
             let _ = txn.rollback().await;
             error!("Failed to persist aggregate: {}", e);
-            return UseCaseResult::failure(write_failure("persist", e));
+            return UseCaseResult::failure(write_failure("persist", aggregate, e));
         }
 
         if let Err(e) = Self::persist_event_and_audit(&mut txn, &event, command).await {
@@ -499,7 +543,7 @@ impl UnitOfWork for PgUnitOfWork {
         if let Err(e) = delete_result {
             let _ = txn.rollback().await;
             error!("Failed to delete aggregate: {}", e);
-            return UseCaseResult::failure(write_failure("delete", e));
+            return UseCaseResult::failure(write_failure("delete", aggregate, e));
         }
 
         if let Err(e) = Self::persist_event_and_audit(&mut txn, &event, command).await {
@@ -556,7 +600,7 @@ impl UnitOfWork for PgUnitOfWork {
             if let Err(e) = persist_result {
                 let _ = txn.rollback().await;
                 error!("Failed to persist aggregate in batch: {}", e);
-                return UseCaseResult::failure(write_failure("persist", e));
+                return UseCaseResult::failure(write_failure("persist", aggregate, e));
             }
         }
 
@@ -697,7 +741,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
         };
         if let Err(e) = persist_result {
             error!("Failed to persist aggregate in scoped tx: {}", e);
-            return UseCaseResult::failure(write_failure("persist", e));
+            return UseCaseResult::failure(write_failure("persist", aggregate, e));
         }
 
         if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
@@ -736,7 +780,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
         };
         if let Err(e) = delete_result {
             error!("Failed to delete aggregate in scoped tx: {}", e);
-            return UseCaseResult::failure(write_failure("delete", e));
+            return UseCaseResult::failure(write_failure("delete", aggregate, e));
         }
 
         if let Err(e) = PgUnitOfWork::persist_event_and_audit(txn, &event, command).await {
@@ -814,7 +858,7 @@ impl UnitOfWork for TxScopedUnitOfWork {
             };
             if let Err(e) = persist_result {
                 error!("Failed to persist aggregate in scoped batch: {}", e);
-                return UseCaseResult::failure(write_failure("persist", e));
+                return UseCaseResult::failure(write_failure("persist", aggregate, e));
             }
         }
 
@@ -1048,6 +1092,55 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), "TRANSACTION_REQUIRED");
+    }
+
+    struct Thing(&'static str);
+    impl HasId for Thing {
+        fn id(&self) -> &str {
+            self.0
+        }
+    }
+
+    /// Java 9d71ffd4: a unique key taken between validate and persist is a
+    /// 409 naming the aggregate; a repository's own code is kept; anything
+    /// else is a failed commit that names the aggregate.
+    #[test]
+    fn a_unique_violation_at_persist_is_a_conflict_naming_the_aggregate() {
+        use crate::shared::error::PlatformError;
+
+        let err = write_failure(
+            "persist",
+            &Thing("thg_1"),
+            PlatformError::duplicate("Thing", "code", "x"),
+        );
+        assert_eq!((err.http_status_code(), err.code()), (409, "DUPLICATE_KEY"));
+        assert!(err.message().contains("Thing thg_1"), "{}", err.message());
+        let body = PlatformError::from(err);
+        assert!(
+            matches!(body, PlatformError::BusinessRule { ref code, .. } if code == "DUPLICATE_KEY")
+        );
+
+        let err = write_failure(
+            "persist",
+            &Thing("thg_2"),
+            PlatformError::business_rule("PUBLIC_ROUTE_TAKEN", "taken"),
+        );
+        assert_eq!(
+            (err.http_status_code(), err.code()),
+            (409, "PUBLIC_ROUTE_TAKEN")
+        );
+
+        let err = write_failure(
+            "delete",
+            &Thing("thg_3"),
+            PlatformError::internal("disk on fire"),
+        );
+        assert_eq!((err.http_status_code(), err.code()), (500, "COMMIT_FAILED"));
+        assert!(
+            err.message().contains("delete Thing thg_3"),
+            "{}",
+            err.message()
+        );
     }
 
     #[test]

@@ -429,6 +429,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "037_function_component_runtime",
             include_str!("../../../../migrations/037_function_component_runtime.sql"),
         ),
+        // Java's V18: aud_logs.entity_id widened to 100, so a sync rollup's
+        // audit row (keyed by the application code) fits.
+        (
+            "038_aud_logs_entity_id_width",
+            include_str!("../../../../migrations/038_aud_logs_entity_id_width.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -574,6 +580,14 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              AND EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'fn_hosts' \
                AND column_name = 'runtimes')",
+        ),
+        // A database Java migrated to V18 already has the width.
+        (
+            "038_aud_logs_entity_id_width",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'aud_logs' \
+               AND column_name = 'entity_id' \
+               AND character_maximum_length >= 100)",
         ),
     ];
 

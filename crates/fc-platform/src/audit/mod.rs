@@ -7,6 +7,7 @@ pub mod entity;
 pub mod operations;
 pub mod repository;
 pub mod service;
+pub mod stored_redaction;
 
 // Re-export main types
 pub use api::audit_logs_router;

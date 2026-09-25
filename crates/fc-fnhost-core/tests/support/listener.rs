@@ -331,6 +331,7 @@ impl Default for Options {
 
 pub struct Harness {
     pub control: Arc<FakeControlPlane>,
+    pub store: Arc<FakeStore>,
     pub reconciler: Arc<Reconciler>,
     pub metrics: Arc<FnMetrics>,
     pub listener: Arc<FnListener>,
@@ -387,11 +388,12 @@ impl Harness {
         let control = FakeControlPlane::new();
         let loader = Arc::new(ScriptedLoader::default());
         let registry = Arc::new(FunctionRegistry::new(options.max_loaded, shared.clone()));
+        let store = FakeStore::new();
         let reconciler = Arc::new(Reconciler::new(
             "default",
             "host-1",
             control.clone(),
-            FakeStore::new(),
+            store.clone(),
             Signatures::Off,
             Loaders::none().with("wasm", loader.clone()),
             registry.clone(),
@@ -420,6 +422,7 @@ impl Harness {
             .map(|p| format!("http://127.0.0.1:{p}"));
         Self {
             control,
+            store,
             reconciler,
             metrics,
             listener,

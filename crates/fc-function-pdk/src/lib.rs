@@ -35,7 +35,7 @@
 //! | `Result.ack/retry/fail/json/http` | [`Response`] (re-exported), [`json()`](fn@json) |
 //! | a thrown exception | an `Err` from the handler: logged; `500 {"error":"the function failed"}` |
 //! | `ctx.config()`, `ctx.secrets()` | [`Context::config`], [`Context::secrets`] |
-//! | `ctx.events().emit(OutboundEvent)` / `EventEmitException` | [`Events::emit`] / [`EmitError`] |
+//! | `ctx.events().emit(OutboundEvent)` / `EmitResult` | [`Events::emit`] (the event id) / [`EmitError`] |
 //! | `ctx.http().send(HttpCall)` / `HttpCallRefusedException` | [`Http::send`] / [`HttpError::Denied`] |
 //! | `ctx.logger()` | [`Context::logger`], and the `log` crate (feature `log`) |
 //! | `ctx.clock()` | [`Context::now`] |

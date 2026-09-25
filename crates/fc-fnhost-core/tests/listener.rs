@@ -1017,6 +1017,105 @@ fn versioned_document() -> serde_json::Value {
     ])
 }
 
+/// Owner ruling 12 (Java 8a130505): past the token, permission and reach
+/// checks, a pinned version still being prepared answers 503
+/// `VERSION_NOT_READY` with `Retry-After: 5`; refused for good it stays 404
+/// `VERSION_NOT_AVAILABLE`.
+#[tokio::test]
+async fn h11_a_pinned_version_still_preparing_is_503_until_ready() {
+    let jwks = TestJwks::start().await;
+    let h = Harness::start_with(
+        versioned_document(),
+        Options {
+            platform_url: Some(jwks.url.clone()),
+            ..Options::default()
+        },
+    )
+    .await;
+    let bearer = |claims: Claims| format!("Bearer {}", jwks.mint(&claims));
+    let invoke = "platform:function:version:invoke";
+    let with_perm = bearer(Claims::new("prn_v", "CLIENT", invoke, &["clt_1"]));
+    let other_client = bearer(Claims::new("prn_o", "CLIENT", invoke, &["clt_OTHER"]));
+
+    let candidate = |version: i32| {
+        with(
+            entry(
+                ADDR,
+                version,
+                "candidate",
+                "echo",
+                5,
+                json!([{"path": "/x", "auth": "none"}]),
+            ),
+            json!({"clientId": "clt_1", "applicationId": "app_1"}),
+        )
+    };
+    let mut document = versioned_document();
+    let functions = document["functions"].as_array_mut().unwrap();
+    functions.push(candidate(3));
+    functions.push(candidate(4));
+    h.store.hold(&format!("mem://{ADDR}/3"));
+    h.store.fail(
+        &format!("mem://{ADDR}/4"),
+        fc_fnhost_core::artifact::ArtifactError::DigestMismatch {
+            expected: support::fakes::digest_for(ADDR, 4),
+            actual: support::fakes::digest_for("x", 0),
+        },
+    );
+    h.control.serve(support::fakes::Answer::Document(
+        support::fakes::document_json(document),
+    ));
+    let cycle = {
+        let reconciler = h.reconciler.clone();
+        let now = h.clock.now();
+        tokio::spawn(async move { reconciler.reconcile_once(now).await })
+    };
+    let address = fc_function_abi::FunctionAddress::parse(ADDR).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while h
+        .reconciler
+        .document()
+        .and_then(|d| d.entry_for(&address, 4).map(|_| ()))
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the reconcile never began preparing"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    let preparing = h
+        .get(&fpath(ADDR, ":3/x"), &[("Authorization", &with_perm)])
+        .await;
+    assert_eq!(preparing.status, 503, "{}", preparing.text());
+    assert_eq!(
+        preparing.text(),
+        r#"{"error":"VERSION_NOT_READY","message":"the version is still being prepared"}"#
+    );
+    assert_eq!(preparing.header("retry-after").as_deref(), Some("5"));
+    // Only past the reach checks: nothing leaks to a caller out of reach.
+    let out_of_reach = h
+        .get(&fpath(ADDR, ":3/x"), &[("Authorization", &other_client)])
+        .await;
+    assert_eq!(out_of_reach.status, 404);
+    assert_eq!(h.get(&fpath(ADDR, ":3/x"), &[]).await.status, 401);
+
+    h.store.release(&format!("mem://{ADDR}/3"));
+    cycle.await.unwrap();
+    let ready = h
+        .get(&fpath(ADDR, ":3/x"), &[("Authorization", &with_perm)])
+        .await;
+    assert_eq!(ready.status, 200, "{}", ready.text());
+    assert_eq!(ready.json()["label"], format!("{ADDR}@3"));
+
+    let refused = h
+        .get(&fpath(ADDR, ":4/x"), &[("Authorization", &with_perm)])
+        .await;
+    assert_eq!(refused.status, 404, "{}", refused.text());
+    assert_eq!(refused.error(), "VERSION_NOT_AVAILABLE");
+}
+
 #[tokio::test]
 async fn h11_versioned_invoke() {
     let jwks = TestJwks::start().await;

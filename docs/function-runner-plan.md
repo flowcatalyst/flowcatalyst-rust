@@ -498,6 +498,8 @@ interface is Java's, unchanged: no new manifest runtime value, desired state, or
   optional: a pure `wasi:http/proxy` component runs unchanged.
   - `config.get` and `secrets.get`: declared keys only; secret values are never logged.
   - `log.log(level, message)`.
+  - `events.emit-event(outbound-event) -> result<string, emit-event-error>` (0.1.1, owner ruling 11): the event
+    id, or the refusal with the platform's `message`; a 0.1.0 component keeps linking (semver-compatible 0.1.x).
   - `events.emit(outbound-event) -> result<_, emit-error>`: through `POST /control/functions/events`, with
     Java's defaults for correlation and causation ids. `emit-error` is one of:
     - `invalid(code)`: `INVALID_EVENT: …` or `DEDUP_ID_REQUIRED`, and the event never reaches the platform;
@@ -608,7 +610,7 @@ and `wit-bindgen =0.57.1` over `wit/flowcatalyst-function` (world `imports`).
   `Webhook::schedule(&req)` (fc-function-abi's parsers now take `impl AsRef<[u8]>`).
 - `Context`: `invocation()` (ids, `FunctionAddress`, version, `Caller`, correlation/causation, original
   host/path, remote address, path params), `config()`/`secrets()` `get`/`require` (Java's
-  `MissingKey` messages), `events().emit` (`EmitError::{Invalid, Refused{code,status}, Unavailable}`
+  `MissingKey` messages), `events().emit` (`Ok(event_id)` through 0.1.1's `emit-event`; `EmitError::{Invalid, Refused{code,status,message}, Unavailable}`
   with Java's codes, `into` `EventEmitError`), `logger()` plus a `log`-crate bridge, `http()` over
   `wasi:http/outgoing-handler` (`HttpCall`/`HttpReply`; `HttpError::Denied(HttpDenied)` for a policy
   refusal), `now()`.

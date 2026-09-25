@@ -320,6 +320,62 @@ fn alias_prefixes() {
 
 // ── read_stored ─────────────────────────────────────────────────────────
 
+/// Java 892c711b: what the tolerant reader drops (or reads with a fallback)
+/// is reported, so the caller can log it; the rest still reads, and a
+/// well-formed manifest reports nothing.
+#[test]
+fn read_stored_reports_every_part_it_drops() {
+    let stored = tree(
+        r#"{"runtime":"wasm","entrypoint":"handle","pool":"p",
+            "endpoints":[{"path":"/ok","auth":"webhook"},{"path":"no-leading-slash","auth":"none"}],
+            "subscriptions":[
+              {"eventType":"a:b:c:d","path":"/ok","mode":"SOMETIMES"},
+              {"eventType":"a:b:c:e","path":"/elsewhere"}],
+            "schedules":[{"cron":"0 * * * * *"}],
+            "public":[{"hostname":"not a host"}],
+            "db":[{"name":"main","secretRef":"DB_URL"},{"name":"Bad Name","secretRef":"DB_URL"}]}"#,
+    );
+    let (m, dropped) = Manifest::read_stored_reporting(&stored).unwrap();
+    assert_eq!(m.endpoints.len(), 1);
+    assert_eq!(m.subscriptions.len(), 1);
+    assert_eq!(m.subscriptions[0].mode, SubscriptionMode::Immediate);
+    assert_eq!(m.db.len(), 1);
+    let parts: Vec<(&str, &str)> = dropped.iter().map(|d| (d.part, d.entry.as_str())).collect();
+    assert_eq!(
+        parts,
+        [
+            ("endpoint", r#"{"path":"no-leading-slash","auth":"none"}"#),
+            (
+                "subscription mode (fell back to IMMEDIATE)",
+                r#""SOMETIMES""#
+            ),
+            (
+                "subscription",
+                r#"{"eventType":"a:b:c:e","path":"/elsewhere"}"#
+            ),
+            ("schedule", r#"{"cron":"0 * * * * *"}"#),
+            ("public route", r#"{"hostname":"not a host"}"#),
+            ("db", r#"{"name":"Bad Name","secretRef":"DB_URL"}"#),
+        ]
+    );
+    assert_eq!(Manifest::read_stored(&stored).unwrap(), m);
+
+    let (_, none) = Manifest::read_stored_reporting(&m.to_json()).unwrap();
+    assert!(none.is_empty(), "{none:?}");
+}
+
+#[test]
+fn a_dropped_parts_entry_is_capped() {
+    let long = "x".repeat(400);
+    let stored = tree(&format!(
+        r#"{{"runtime":"wasm","entrypoint":"handle","endpoints":[{{"path":"{long}"}}]}}"#
+    ));
+    let (_, dropped) = Manifest::read_stored_reporting(&stored).unwrap();
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].entry.chars().count(), 301);
+    assert!(dropped[0].entry.ends_with('…'));
+}
+
 #[test]
 fn read_stored_fails_only_when_runtime_or_entrypoint_is_unreadable() {
     for json in [

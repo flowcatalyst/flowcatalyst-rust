@@ -523,8 +523,9 @@ async fn main() -> Result<()> {
     let api_addr = format!("0.0.0.0:{}", api_port);
     info!("API server listening on http://{}", api_addr);
     let api_listener = TcpListener::bind(&api_addr).await?;
+    // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
     let api_task = tokio::spawn(async move {
-        axum::serve(api_listener, app).await.unwrap();
+        fc_platform::router::serve_api(api_listener, app, std::future::pending()).await;
     });
 
     let metrics_addr = format!("0.0.0.0:{}", metrics_port);

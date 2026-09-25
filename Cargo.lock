@@ -2784,6 +2784,7 @@ dependencies = [
  "fc-function-abi",
  "fc-function-model",
  "fc-function-signing",
+ "fc-http-listener",
  "futures",
  "gethostname",
  "hex",
@@ -2858,6 +2859,23 @@ dependencies = [
  "serde_json",
  "sha2",
  "x509-cert",
+]
+
+[[package]]
+name = "fc-http-listener"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "http 1.4.0",
+ "http-body 1.0.1",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "pin-project-lite",
+ "tokio",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -2954,6 +2972,7 @@ dependencies = [
  "fc-function-abi",
  "fc-function-model",
  "fc-function-signing",
+ "fc-http-listener",
  "fc-queue",
  "futures",
  "governor",
@@ -2989,6 +3008,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "urlencoding",
  "utoipa",
  "utoipa-axum",

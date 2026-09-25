@@ -8,8 +8,6 @@
 //! - Metrics endpoint
 
 use anyhow::Result;
-use axum::http::header::CACHE_CONTROL;
-use axum::http::HeaderValue;
 use axum::{response::Json, routing::get, Router};
 use clap::Parser;
 use std::sync::Arc;
@@ -17,8 +15,6 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::{ServeDir, ServeFile};
-use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 
@@ -986,26 +982,7 @@ async fn main() -> Result<()> {
         let index_path = std::path::PathBuf::from(&static_dir).join("index.html");
         if index_path.exists() {
             info!(dir = %static_dir, "Serving frontend from filesystem (live reload)");
-            let assets_dir = std::path::PathBuf::from(&static_dir).join("assets");
-            let assets_service = tower::ServiceBuilder::new()
-                .layer(SetResponseHeaderLayer::overriding(
-                    CACHE_CONTROL,
-                    HeaderValue::from_static("public, max-age=31536000, immutable"),
-                ))
-                .service(ServeDir::new(&assets_dir));
-
-            api_app
-                .route("/auth/login", axum::routing::get(embedded_spa_handler))
-                .route(
-                    "/auth/forgot-password",
-                    axum::routing::get(embedded_spa_handler),
-                )
-                .route(
-                    "/auth/reset-password",
-                    axum::routing::get(embedded_spa_handler),
-                )
-                .nest_service("/assets", assets_service)
-                .fallback_service(ServeDir::new(&static_dir).fallback(ServeFile::new(index_path)))
+            fc_platform::router::serve_spa(api_app, &static_dir)
         } else {
             warn!(dir = %static_dir, "FC_STATIC_DIR set but index.html not found — using embedded assets");
             api_app.fallback(axum::routing::get(embedded_asset_handler))
@@ -1031,18 +1008,13 @@ async fn main() -> Result<()> {
     let api_listener = TcpListener::bind(&api_addr).await?;
     let api_handle = {
         let mut shutdown_rx = shutdown_tx.subscribe();
+        // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
         tokio::spawn(async move {
-            let server = axum::serve(api_listener, api_app);
-            tokio::select! {
-                result = server => {
-                    if let Err(e) = result {
-                        error!("API server error: {}", e);
-                    }
-                }
-                _ = shutdown_rx.recv() => {
-                    info!("API server shutting down");
-                }
-            }
+            fc_platform::router::serve_api(api_listener, api_app, async move {
+                let _ = shutdown_rx.recv().await;
+                info!("API server shutting down");
+            })
+            .await;
         })
     };
 
@@ -1190,45 +1162,62 @@ async fn health_handler() -> Json<serde_json::Value> {
 async fn embedded_asset_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
     let path = uri.path().trim_start_matches('/');
 
+    // The shell asked for by name is the shell: never cacheable.
+    if path.is_empty() || path == "index.html" {
+        return embedded_spa_handler().await.into_response();
+    }
+
     // Try exact path first (for assets like /assets/index-BKjElYp6.js)
     if let Some(file) = FrontendAssets::get(path) {
-        let mime = mime_guess::from_path(path).first_or_octet_stream();
-        let mut headers = axum::http::HeaderMap::new();
-        headers.insert(
-            axum::http::header::CONTENT_TYPE,
-            mime.as_ref().parse().unwrap(),
-        );
-        // Immutable cache for hashed assets
-        if path.starts_with("assets/") {
-            headers.insert(
-                axum::http::header::CACHE_CONTROL,
-                "public, max-age=31536000, immutable".parse().unwrap(),
-            );
-        }
-        return (headers, file.data.to_vec()).into_response();
+        return embedded_file_response(path, file.data.to_vec());
     }
 
     // SPA fallback: serve index.html for all other paths
     embedded_spa_handler().await.into_response()
 }
 
-/// Serve the embedded index.html (SPA entry point).
+/// An embedded file other than the shell: hashed `/assets/*` are
+/// immutable; anything else keeps default caching.
+fn embedded_file_response(path: &str, data: Vec<u8>) -> axum::response::Response {
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        mime.as_ref().parse().unwrap(),
+    );
+    if path.starts_with("assets/") {
+        headers.insert(
+            axum::http::header::CACHE_CONTROL,
+            "public, max-age=31536000, immutable".parse().unwrap(),
+        );
+    }
+    (headers, data).into_response()
+}
+
+/// Serve the embedded index.html (SPA entry point). Never cacheable
+/// (Java 8fd35a8b), so a browser never keeps a stale shell after an upgrade.
 async fn embedded_spa_handler() -> impl axum::response::IntoResponse {
     match FrontendAssets::get("index.html") {
-        Some(file) => {
-            let mut headers = axum::http::HeaderMap::new();
-            headers.insert(
-                axum::http::header::CONTENT_TYPE,
-                "text/html; charset=utf-8".parse().unwrap(),
-            );
-            (headers, file.data.to_vec()).into_response()
-        }
+        Some(file) => embedded_shell_response(file.data.to_vec()),
         None => (
             axum::http::StatusCode::NOT_FOUND,
             "Frontend not embedded in this build",
         )
             .into_response(),
     }
+}
+
+fn embedded_shell_response(html: Vec<u8>) -> axum::response::Response {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        "text/html; charset=utf-8".parse().unwrap(),
+    );
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static(fc_platform::router::SPA_SHELL_CACHE_CONTROL),
+    );
+    (headers, html).into_response()
 }
 
 use axum::response::IntoResponse;
@@ -1334,4 +1323,53 @@ async fn auto_sync_developer_portal(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod spa_cache_tests {
+    use super::*;
+    use axum::http::header::CACHE_CONTROL;
+
+    fn cache_control(res: &axum::response::Response) -> Option<&str> {
+        res.headers()
+            .get(CACHE_CONTROL)
+            .map(|v| v.to_str().unwrap())
+    }
+
+    /// Java 8fd35a8b: the shell is never cacheable; hashed assets stay
+    /// immutable; other embedded files keep default caching.
+    #[test]
+    fn the_embedded_shell_is_never_cacheable() {
+        let shell = embedded_shell_response(b"<html></html>".to_vec());
+        assert_eq!(
+            cache_control(&shell),
+            Some(fc_platform::router::SPA_SHELL_CACHE_CONTROL)
+        );
+        let asset = embedded_file_response("assets/index-abc.js", vec![]);
+        assert_eq!(
+            cache_control(&asset),
+            Some("public, max-age=31536000, immutable")
+        );
+        assert_eq!(
+            cache_control(&embedded_file_response("favicon.ico", vec![])),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn index_html_by_name_and_the_fallback_are_the_shell() {
+        if FrontendAssets::get("index.html").is_none() {
+            return; // a build without the frontend embeds nothing to serve
+        }
+        for path in ["/", "/index.html", "/applications/app_1"] {
+            let res = embedded_asset_handler(path.parse().unwrap())
+                .await
+                .into_response();
+            assert_eq!(
+                cache_control(&res),
+                Some(fc_platform::router::SPA_SHELL_CACHE_CONTROL),
+                "{path}"
+            );
+        }
+    }
 }

@@ -208,6 +208,36 @@ impl ManifestRejected {
     }
 }
 
+/// A part of a stored manifest the tolerant reader could not read and
+/// dropped, or read with a fallback (Java 892c711b). The stored manifest was
+/// accepted strictly when published, so a part that no longer reads is
+/// drift or corruption: a live function losing a route or changing its
+/// dispatch mode must leave a trace. This crate has no logging; the caller
+/// logs these. Manifest entries carry names (a secret's key), never secret
+/// values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DroppedPart {
+    /// `endpoint`, `subscription`, `subscription mode (fell back to
+    /// IMMEDIATE)`, `schedule`, `public route` or `db`.
+    pub part: &'static str,
+    /// The entry as stored, compact JSON, capped at
+    /// [`DroppedPart::MAX_ENTRY_CHARS`] characters (then `…`).
+    pub entry: String,
+}
+
+impl DroppedPart {
+    pub const MAX_ENTRY_CHARS: usize = 300;
+
+    fn new(part: &'static str, entry: &JsonNode) -> Self {
+        let text = entry.to_string();
+        let entry = match text.char_indices().nth(Self::MAX_ENTRY_CHARS) {
+            Some((cut, _)) => format!("{}…", &text[..cut]),
+            None => text,
+        };
+        Self { part, entry }
+    }
+}
+
 /// A stored manifest [`Manifest::read_stored`] cannot read (Java's
 /// `IllegalStateException`): there is no safe default for `runtime` or
 /// `entrypoint`.
@@ -446,7 +476,16 @@ impl Manifest {
     /// Reads a stored `fn_versions.manifest`. Ignores unknown keys, applies
     /// no ceilings, and drops a malformed endpoint, subscription, schedule,
     /// public route or `db` entry instead of failing.
+    /// [`Manifest::read_stored_reporting`] says what it dropped.
     pub fn read_stored(root: &JsonNode) -> Result<Manifest, UnreadableManifest> {
+        Self::read_stored_reporting(root).map(|(manifest, _)| manifest)
+    }
+
+    /// [`Manifest::read_stored`], and every part it dropped or read with a
+    /// fallback, in document order by kind, for the caller to log.
+    pub fn read_stored_reporting(
+        root: &JsonNode,
+    ) -> Result<(Manifest, Vec<DroppedPart>), UnreadableManifest> {
         if !root.is_object() {
             return Err(UnreadableManifest("manifest is unreadable: not an object"));
         }
@@ -467,22 +506,24 @@ impl Manifest {
         if java_is_blank(&entrypoint) {
             return Err(UnreadableManifest("manifest entrypoint is unreadable"));
         }
-        let endpoints = read_endpoints(root);
-        Ok(Manifest {
+        let mut dropped = Vec::new();
+        let endpoints = read_endpoints(root, &mut dropped);
+        let manifest = Manifest {
             runtime,
             entrypoint,
             pool: read_pool(root),
             warm: read_bool(root, "warm", false),
             limits: read_limits(root, runtime),
-            subscriptions: read_subscriptions(root, &endpoints),
-            schedules: read_schedules(root, &endpoints),
+            subscriptions: read_subscriptions(root, &endpoints, &mut dropped),
+            schedules: read_schedules(root, &endpoints, &mut dropped),
             endpoints,
-            public_routes: read_public_routes(root),
-            db: read_db(root),
+            public_routes: read_public_routes(root, &mut dropped),
+            db: read_db(root, &mut dropped),
             config: read_setting_key_list(root, "config"),
             secrets: read_setting_key_list(root, "secrets"),
             http_allow: read_string_list(root, "httpAllow"),
-        })
+        };
+        Ok((manifest, dropped))
     }
 
     /// The `pool` of a stored manifest [`Manifest::read_stored`] may refuse:
@@ -1862,11 +1903,29 @@ fn read_array<'a>(node: &'a JsonNode, key: &str) -> &'a [JsonNode] {
     node.get(key).and_then(JsonNode::as_array).unwrap_or(&[])
 }
 
-fn read_endpoints(root: &JsonNode) -> Vec<Endpoint> {
-    read_array(root, "endpoints")
-        .iter()
-        .filter_map(read_endpoint)
-        .collect()
+/// `read(entry)` for each entry of `root[key]`; an entry it cannot read is
+/// reported as a dropped `part`.
+fn read_entries<T>(
+    root: &JsonNode,
+    key: &str,
+    part: &'static str,
+    dropped: &mut Vec<DroppedPart>,
+    mut read: impl FnMut(&JsonNode, &mut Vec<DroppedPart>) -> Option<T>,
+) -> Vec<T> {
+    let mut out = Vec::new();
+    for entry in read_array(root, key) {
+        match read(entry, dropped) {
+            Some(value) => out.push(value),
+            None => dropped.push(DroppedPart::new(part, entry)),
+        }
+    }
+    out
+}
+
+fn read_endpoints(root: &JsonNode, dropped: &mut Vec<DroppedPart>) -> Vec<Endpoint> {
+    read_entries(root, "endpoints", "endpoint", dropped, |node, _| {
+        read_endpoint(node)
+    })
 }
 
 fn read_endpoint(node: &JsonNode) -> Option<Endpoint> {
@@ -1915,10 +1974,17 @@ fn read_webhook_match(literal: &RoutePattern, endpoints: &[Endpoint]) -> bool {
         .is_some_and(|e| e.auth == EndpointAuth::Webhook)
 }
 
-fn read_subscriptions(root: &JsonNode, endpoints: &[Endpoint]) -> Vec<SubscriptionSpec> {
-    read_array(root, "subscriptions")
-        .iter()
-        .filter_map(|node| {
+fn read_subscriptions(
+    root: &JsonNode,
+    endpoints: &[Endpoint],
+    dropped: &mut Vec<DroppedPart>,
+) -> Vec<SubscriptionSpec> {
+    read_entries(
+        root,
+        "subscriptions",
+        "subscription",
+        dropped,
+        |node, dropped| {
             if !node.is_object() {
                 return None;
             }
@@ -1927,14 +1993,25 @@ fn read_subscriptions(root: &JsonNode, endpoints: &[Endpoint]) -> Vec<Subscripti
             if !read_webhook_match(&path, endpoints) {
                 return None;
             }
+            // A present but unreadable mode would change delivery semantics
+            // silently: it falls back, and is reported.
+            let mode = match present(node.get("mode")) {
+                None => Manifest::DEFAULT_SUBSCRIPTION_MODE,
+                Some(mode) => mode
+                    .as_str()
+                    .and_then(dispatch_mode_strict)
+                    .unwrap_or_else(|| {
+                        dropped.push(DroppedPart::new(
+                            "subscription mode (fell back to IMMEDIATE)",
+                            mode,
+                        ));
+                        Manifest::DEFAULT_SUBSCRIPTION_MODE
+                    }),
+            };
             Some(SubscriptionSpec {
                 event_type: event_type.to_string(),
                 path,
-                mode: node
-                    .get("mode")
-                    .and_then(JsonNode::as_str)
-                    .and_then(dispatch_mode_strict)
-                    .unwrap_or(Manifest::DEFAULT_SUBSCRIPTION_MODE),
+                mode,
                 max_retries: read_positive_int(
                     Some(node),
                     "maxRetries",
@@ -1947,95 +2024,90 @@ fn read_subscriptions(root: &JsonNode, endpoints: &[Endpoint]) -> Vec<Subscripti
                 ),
                 data_only: read_bool(node, "dataOnly", Manifest::DEFAULT_SUBSCRIPTION_DATA_ONLY),
             })
-        })
-        .collect()
+        },
+    )
 }
 
-fn read_schedules(root: &JsonNode, endpoints: &[Endpoint]) -> Vec<ScheduleSpec> {
-    read_array(root, "schedules")
-        .iter()
-        .filter_map(|node| {
-            if !node.is_object() {
-                return None;
-            }
-            let cron = non_blank_str(node.get("cron"))?;
-            let path = read_literal_path(node, "path")?;
-            if !read_webhook_match(&path, endpoints) {
-                return None;
-            }
-            Some(ScheduleSpec {
-                cron: cron.to_string(),
-                timezone: node
-                    .get("timezone")
-                    .and_then(JsonNode::as_str)
-                    .map(str::to_string),
-                path,
-                payload: present(node.get("payload")).cloned(),
-            })
+fn read_schedules(
+    root: &JsonNode,
+    endpoints: &[Endpoint],
+    dropped: &mut Vec<DroppedPart>,
+) -> Vec<ScheduleSpec> {
+    read_entries(root, "schedules", "schedule", dropped, |node, _| {
+        if !node.is_object() {
+            return None;
+        }
+        let cron = non_blank_str(node.get("cron"))?;
+        let path = read_literal_path(node, "path")?;
+        if !read_webhook_match(&path, endpoints) {
+            return None;
+        }
+        Some(ScheduleSpec {
+            cron: cron.to_string(),
+            timezone: node
+                .get("timezone")
+                .and_then(JsonNode::as_str)
+                .map(str::to_string),
+            path,
+            payload: present(node.get("payload")).cloned(),
         })
-        .collect()
+    })
 }
 
-fn read_public_routes(root: &JsonNode) -> Vec<PublicRoute> {
-    read_array(root, "public")
-        .iter()
-        .filter_map(|node| {
-            if !node.is_object() {
-                return None;
-            }
-            let hostname = Hostname::try_parse(node.get("hostname")?.as_str()?)?;
-            let path_prefix = match present(node.get("pathPrefix")) {
-                None => default_path_prefix(),
-                Some(_) => read_literal_path(node, "pathPrefix")?,
-            };
-            // A malformed alias entry is dropped, not the route.
-            let mut alias_prefixes: Vec<String> = Vec::new();
-            for alias in read_array(node, "aliasPrefixes")
-                .iter()
-                .filter_map(JsonNode::as_str)
+fn read_public_routes(root: &JsonNode, dropped: &mut Vec<DroppedPart>) -> Vec<PublicRoute> {
+    read_entries(root, "public", "public route", dropped, |node, _| {
+        if !node.is_object() {
+            return None;
+        }
+        let hostname = Hostname::try_parse(node.get("hostname")?.as_str()?)?;
+        let path_prefix = match present(node.get("pathPrefix")) {
+            None => default_path_prefix(),
+            Some(_) => read_literal_path(node, "pathPrefix")?,
+        };
+        // A malformed alias entry is dropped, not the route.
+        let mut alias_prefixes: Vec<String> = Vec::new();
+        for alias in read_array(node, "aliasPrefixes")
+            .iter()
+            .filter_map(JsonNode::as_str)
+        {
+            if DnsLabel::is_valid(alias)
+                && alias != LIVE_ALIAS
+                && !alias_prefixes.iter().any(|a| a == alias)
             {
-                if DnsLabel::is_valid(alias)
-                    && alias != LIVE_ALIAS
-                    && !alias_prefixes.iter().any(|a| a == alias)
-                {
-                    alias_prefixes.push(alias.to_string());
-                }
+                alias_prefixes.push(alias.to_string());
             }
-            Some(PublicRoute {
-                hostname,
-                path_prefix,
-                alias_prefixes,
-            })
+        }
+        Some(PublicRoute {
+            hostname,
+            path_prefix,
+            alias_prefixes,
         })
-        .collect()
+    })
 }
 
-fn read_db(root: &JsonNode) -> Vec<DbRef> {
-    read_array(root, "db")
-        .iter()
-        .filter_map(|node| {
-            if !node.is_object() {
-                return None;
-            }
-            let name = node
-                .get("name")
-                .and_then(JsonNode::as_str)
-                .filter(|n| DnsLabel::is_valid(n))?;
-            let secret_ref = node
-                .get("secretRef")
-                .and_then(JsonNode::as_str)
-                .filter(|s| SettingKey::is_valid(s))?;
-            Some(DbRef {
-                name: DnsLabel::new_unchecked(name),
-                secret_ref: secret_ref.to_string(),
-                pool_size: read_positive_int(
-                    Some(node),
-                    "poolSize",
-                    FunctionLimits::DEFAULT_DB_POOL_SIZE,
-                ),
-            })
+fn read_db(root: &JsonNode, dropped: &mut Vec<DroppedPart>) -> Vec<DbRef> {
+    read_entries(root, "db", "db", dropped, |node, _| {
+        if !node.is_object() {
+            return None;
+        }
+        let name = node
+            .get("name")
+            .and_then(JsonNode::as_str)
+            .filter(|n| DnsLabel::is_valid(n))?;
+        let secret_ref = node
+            .get("secretRef")
+            .and_then(JsonNode::as_str)
+            .filter(|s| SettingKey::is_valid(s))?;
+        Some(DbRef {
+            name: DnsLabel::new_unchecked(name),
+            secret_ref: secret_ref.to_string(),
+            pool_size: read_positive_int(
+                Some(node),
+                "poolSize",
+                FunctionLimits::DEFAULT_DB_POOL_SIZE,
+            ),
         })
-        .collect()
+    })
 }
 
 fn read_string_list(node: &JsonNode, key: &str) -> Vec<String> {

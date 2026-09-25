@@ -36,13 +36,16 @@ impl RateLimitStore for PostgresRateLimitStore {
         key: &str,
         policy: RateLimitPolicy,
     ) -> Result<RateLimitDecision, RateLimitError> {
-        let window_start =
-            Utc::now() - chrono::Duration::from_std(policy.window).unwrap_or(chrono::Duration::zero());
+        let window_start = Utc::now()
+            - chrono::Duration::from_std(policy.window).unwrap_or(chrono::Duration::zero());
 
         // Atomic insert + count-within-window. The CTE inserts unconditionally
         // (every attempt counts toward the window total, including the one
         // we're checking), then the SELECT returns the new total. One round
-        // trip; no read-modify-write race.
+        // trip; no read-modify-write race. A data-modifying CTE's row is not
+        // visible to the rest of its own statement (the statement's snapshot
+        // predates it), so the row just inserted is added explicitly —
+        // without it the store allowed `limit + 1`, unlike Redis's INCR.
         let count: i64 = sqlx::query_scalar(
             r#"
             WITH ins AS (
@@ -50,7 +53,7 @@ impl RateLimitStore for PostgresRateLimitStore {
                 VALUES ($1, $2, NOW())
                 RETURNING 1
             )
-            SELECT COUNT(*)
+            SELECT (SELECT COUNT(*) FROM ins) + COUNT(*)
             FROM iam_rate_limit_events
             WHERE bucket = $1
               AND key = $2
@@ -95,8 +98,8 @@ impl RateLimitStore for PostgresRateLimitStore {
     }
 
     async fn prune(&self, older_than: Duration) -> Result<u64, RateLimitError> {
-        let cutoff = Utc::now()
-            - chrono::Duration::from_std(older_than).unwrap_or(chrono::Duration::zero());
+        let cutoff =
+            Utc::now() - chrono::Duration::from_std(older_than).unwrap_or(chrono::Duration::zero());
         let res = sqlx::query("DELETE FROM iam_rate_limit_events WHERE occurred_at < $1")
             .bind(cutoff)
             .execute(&self.pool)

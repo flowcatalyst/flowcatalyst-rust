@@ -22,6 +22,7 @@ use sqlx::PgPool;
 use super::entity::{FunctionVersion, SignerIdentity, VersionState};
 use super::{Digest, DnsLabel, JsonNode, Manifest, LIVE_ALIAS};
 use crate::shared::error::{PlatformError, Result};
+use crate::shared::log_throttle::LogThrottle;
 use crate::usecase::{DbTx, LockedRead, Persist};
 
 /// The next version number of a function, read under its row lock.
@@ -191,7 +192,7 @@ impl FunctionVersionRepository {
         for (version_id, function_id, text) in rows {
             let manifest = JsonNode::parse(&text)
                 .map_err(|_| "fn_versions.manifest is not valid JSON".to_string())
-                .and_then(|json| Manifest::read_stored(&json).map_err(|e| e.to_string()));
+                .and_then(|json| read_stored_manifest(&json, &version_id));
             match manifest {
                 Ok(m) if m.warm && &m.pool == pool => count += 1,
                 Ok(_) => {}
@@ -418,6 +419,35 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
     }
 }
 
+/// A stored manifest, read tolerantly. What the reader drops (or reads with
+/// a fallback) is logged at WARN (Java 892c711b): the manifest was accepted
+/// strictly at publish, so a part that no longer reads is drift or
+/// corruption, and a live function must not lose a route or change its
+/// dispatch mode without a trace. Throttled to one line a minute (every
+/// repository read of the row runs this); a dropped entry carries names,
+/// never secret values, and is capped.
+fn read_stored_manifest(
+    json: &JsonNode,
+    version_id: &str,
+) -> std::result::Result<Manifest, String> {
+    let (manifest, dropped) = Manifest::read_stored_reporting(json).map_err(|e| e.to_string())?;
+    if !dropped.is_empty() {
+        static DROPPED_LOG: LogThrottle = LogThrottle::new(std::time::Duration::from_secs(60));
+        if let Some(suppressed) = DROPPED_LOG.admit() {
+            for part in &dropped {
+                tracing::warn!(
+                    %version_id,
+                    part = part.part,
+                    entry = %part.entry,
+                    suppressed_since_last = suppressed,
+                    "a stored function manifest part could not be read and was dropped"
+                );
+            }
+        }
+    }
+    Ok(manifest)
+}
+
 fn to_entity_or_corrupt(row: VersionRow) -> Result<FunctionVersion> {
     let id = row.id.clone();
     to_entity(row).map_err(|cause| {
@@ -430,7 +460,7 @@ fn to_entity_or_corrupt(row: VersionRow) -> Result<FunctionVersion> {
 fn to_entity(row: VersionRow) -> std::result::Result<FunctionVersion, String> {
     let json = JsonNode::parse(&row.manifest)
         .map_err(|_| "fn_versions.manifest is not valid JSON".to_string())?;
-    let manifest = Manifest::read_stored(&json).map_err(|e| e.to_string())?;
+    let manifest = read_stored_manifest(&json, &row.id)?;
     let state = match (row.state.as_str(), row.ready_at, row.retired_at) {
         ("PUBLISHED", _, _) => VersionState::Published,
         ("READY", Some(at), _) => VersionState::Ready(at),
@@ -456,4 +486,55 @@ fn to_entity(row: VersionRow) -> std::result::Result<FunctionVersion, String> {
         published_by: row.published_by,
         published_at: row.published_at,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Java 892c711b: a part the tolerant reader drops is logged (once a
+    /// minute at most), and the rest still reads.
+    #[test]
+    fn a_dropped_manifest_part_is_logged_throttled() {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let stored = JsonNode::parse(
+            r#"{"runtime":"wasm","entrypoint":"handle",
+                "endpoints":[{"path":"/ok","auth":"none"},{"path":"no-leading-slash","auth":"none"}]}"#,
+        )
+        .unwrap();
+        tracing::subscriber::with_default(subscriber, || {
+            let manifest = read_stored_manifest(&stored, "fnv_1").unwrap();
+            assert_eq!(manifest.endpoints.len(), 1);
+            read_stored_manifest(&stored, "fnv_1").unwrap();
+        });
+        let text = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("could not be read and was dropped"))
+            .collect();
+        assert_eq!(lines.len(), 1, "throttled: {text}");
+        assert!(lines[0].contains("WARN"), "{}", lines[0]);
+        assert!(lines[0].contains("part=\"endpoint\""), "{}", lines[0]);
+        assert!(lines[0].contains("no-leading-slash"), "{}", lines[0]);
+        assert!(lines[0].contains("fnv_1"), "{}", lines[0]);
+    }
 }

@@ -9,6 +9,7 @@
 //! | `deploy <artifact> [<address>]` | publish, wait for `READY`, promote `live` |
 //! | `promote [<address>] --version <n>` | wait for `READY`, promote an alias |
 //! | `invoke <address>[:<version>]` | calls the function through the host |
+//! | `validate [<address>] --manifest <file> [--alias <name>]` | the platform's manifest check and promote plan; publishes nothing |
 //! | `config get\|set`, `secret set` | the function's platform-side settings |
 //!
 //! Global options (accepted after any subcommand, too): `--platform-url`,
@@ -23,6 +24,7 @@ mod deploy;
 mod init;
 mod invoke;
 mod settings;
+mod validate;
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -35,7 +37,7 @@ use credentials::{Credentials, Flags};
 
 #[derive(clap::Args, Debug)]
 #[command(
-    about = "Manage functions: init, build, publish, deploy, promote, invoke, config, secret",
+    about = "Manage functions: init, build, publish, deploy, promote, invoke, validate, config, secret",
     subcommand_required = true,
     arg_required_else_help = true
 )]
@@ -85,6 +87,8 @@ pub enum FnCommand {
     Promote(deploy::PromoteArgs),
     /// Call a function through the function host.
     Invoke(invoke::InvokeArgs),
+    /// Validate a manifest and preview its promote plan, without publishing.
+    Validate(validate::ValidateArgs),
     /// A function's config values.
     #[command(subcommand)]
     Config(settings::ConfigCommand),
@@ -212,6 +216,7 @@ pub async fn run_with(args: &FnArgs, env: &dyn Fn(&str) -> Option<String>, io: &
         FnCommand::Deploy(a) => deploy::deploy(&ctx, a, io).await,
         FnCommand::Promote(a) => deploy::promote(&ctx, a, io).await,
         FnCommand::Invoke(a) => invoke::run(&ctx, a, io).await,
+        FnCommand::Validate(a) => validate::run(&ctx, a, io).await,
         FnCommand::Config(c) => settings::config(&ctx, c, io).await,
         FnCommand::Secret(c) => settings::secret(&ctx, c, io).await,
     };
