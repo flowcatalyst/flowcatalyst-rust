@@ -19,11 +19,11 @@
 //!     a keep-alive connection waits for its next request, and would close
 //!     every idle connection at 30 s;
 //!   - a body that doesn't arrive in time answers `408` and closes the
-//!     connection (its unread rest can't be skipped).
-//!   A route that takes large uploads (the platform's function artifacts,
-//!   up to 256 MiB) reads its body against a **stall** deadline instead: 30 s
-//!   without a byte, not 30 s in total, so a slow but steady upload is never
-//!   cut (Java's streaming exchanges do the same).
+//!     connection (its unread rest can't be skipped);
+//!   - a route that takes large uploads (the platform's function artifacts,
+//!     up to 256 MiB) reads its body against a **stall** deadline instead:
+//!     30 s without a byte, not 30 s in total, so a slow but steady upload
+//!     is never cut (Java's streaming exchanges do the same).
 //! - **While the handler runs, and while a response streams**, nothing
 //!   fires: a long invocation working silently or an SSE stream between
 //!   events is never cut.
