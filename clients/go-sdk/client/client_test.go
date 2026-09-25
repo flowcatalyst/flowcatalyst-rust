@@ -34,7 +34,7 @@ func TestClientGetAttachesBearerToken(t *testing.T) {
 func TestClientReturnsAPIErrorOnNon2xx(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"code":"EVENT_TYPE_NOT_FOUND","message":"missing"}`))
+		_, _ = w.Write([]byte(`{"error":"EVENT_TYPE_NOT_FOUND","message":"missing"}`))
 	}))
 	defer srv.Close()
 
@@ -49,6 +49,25 @@ func TestClientReturnsAPIErrorOnNon2xx(t *testing.T) {
 	assert.Equal(t, "missing", apiErr.Message())
 	assert.True(t, apiErr.IsNotFound())
 	assert.False(t, apiErr.Retryable())
+}
+
+func TestAPIErrorCodeReadsTheErrorFieldThenCode(t *testing.T) {
+	for _, tc := range []struct {
+		body, code, message string
+	}{
+		// The platform's envelope: the code is in `error`.
+		{`{"error":"EVENT_TYPE_NOT_FOUND","message":"missing","details":{"id":"x"}}`, "EVENT_TYPE_NOT_FOUND", "missing"},
+		// Only `code`: still read.
+		{`{"code":"BUSY","message":"later"}`, "BUSY", "later"},
+		// Both: `error` wins.
+		{`{"error":"CODE_EXISTS","code":"OTHER"}`, "CODE_EXISTS", ""},
+		{`not json`, "", ""},
+		{``, "", ""},
+	} {
+		e := &client.APIError{StatusCode: http.StatusConflict, Body: tc.body}
+		assert.Equal(t, tc.code, e.Code(), tc.body)
+		assert.Equal(t, tc.message, e.Message(), tc.body)
+	}
 }
 
 func TestClientRetriesOn503(t *testing.T) {

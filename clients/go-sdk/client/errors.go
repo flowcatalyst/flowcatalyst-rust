@@ -29,8 +29,9 @@ func (e *APIError) Error() string {
 }
 
 // Code returns the platform's error code if the body is a structured
-// envelope (e.g. {"code": "EVENT_TYPE_NOT_FOUND", "message": "..."}),
-// or "" if the body is unstructured.
+// envelope, or "" if the body is unstructured. The platform sends the code
+// in `error` ({"error": "EVENT_TYPE_NOT_FOUND", "message": "..."}); a
+// body that carries it in `code` instead is read too.
 func (e *APIError) Code() string {
 	code, _ := e.codeAndMessage()
 	return code
@@ -71,7 +72,8 @@ func (e *APIError) IsForbidden() bool { return e.StatusCode == http.StatusForbid
 func (e *APIError) IsConflict() bool { return e.StatusCode == http.StatusConflict }
 
 // codeAndMessage attempts to parse the body as a structured error
-// envelope. Falls back to ("","") on any parsing failure.
+// envelope: the code from `error` (the platform's field), else `code`; the
+// message from `message`. Falls back to ("","") on any parsing failure.
 func (e *APIError) codeAndMessage() (string, string) {
 	if e.Body == "" {
 		return "", ""
@@ -84,9 +86,9 @@ func (e *APIError) codeAndMessage() (string, string) {
 	if err := json.Unmarshal([]byte(e.Body), &env); err != nil {
 		return "", ""
 	}
-	msg := env.Message
-	if msg == "" {
-		msg = env.Error
+	code := env.Error
+	if code == "" {
+		code = env.Code
 	}
-	return env.Code, msg
+	return code, env.Message
 }
