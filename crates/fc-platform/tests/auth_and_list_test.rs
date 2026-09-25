@@ -95,6 +95,44 @@ async fn unauthenticated_requests_rejected_with_401() {
     }
 }
 
+/// The raw debug views expose every tenant's event and dispatch-job
+/// payloads. They were once mounted with no authentication at all; they
+/// must be 401 without a token and 403 without Go's view-raw permissions
+/// (`platform:messaging:event:view-raw` / `dispatch-job:view-raw`), and
+/// open to an anchor admin.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn raw_debug_views_require_authentication_and_view_raw() {
+    let app = TestApp::setup().await;
+    let client_token = app.client_user_token("clt_some_client_id");
+    let admin_token = app.anchor_admin_token().await;
+
+    for path in [
+        "/bff/debug/events",
+        "/bff/debug/events/evt_missing",
+        "/bff/debug/dispatch-jobs",
+        "/bff/debug/dispatch-jobs/dsp_missing",
+    ] {
+        let resp = app.get_unauth(path).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "GET {path} unauthenticated"
+        );
+
+        let resp = app.get(path, &client_token).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "GET {path} without view-raw"
+        );
+    }
+    for path in ["/bff/debug/events", "/bff/debug/dispatch-jobs"] {
+        let resp = app.get(path, &admin_token).await;
+        assert_eq!(resp.status(), StatusCode::OK, "GET {path} as anchor admin");
+    }
+}
+
 // ── 2. List endpoints (read-path smoke) ─────────────────────────────────────
 
 /// Anchor-admin (scope=ANCHOR + ADMIN_ALL permission) can list each main

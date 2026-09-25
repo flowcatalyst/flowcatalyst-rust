@@ -4,7 +4,9 @@
 //! These endpoints query the raw collections (events, dispatch_jobs)
 //! rather than the optimized read projections.
 
+use crate::shared::authorization_service::checks;
 use crate::shared::error::{PlatformError, Result};
+use crate::shared::middleware::Authenticated;
 use crate::{DispatchJob, Event};
 use crate::{DispatchJobRepository, EventRepository};
 use axum::{
@@ -193,8 +195,10 @@ impl From<&DispatchJob> for RawDispatchJobResponse {
 /// meaningless.
 async fn list_raw_events(
     State(state): State<DebugState>,
+    auth: Authenticated,
     Query(params): Query<DebugListQuery>,
 ) -> Result<Json<Vec<RawEventResponse>>> {
+    checks::can_read_events_raw(&auth.0)?;
     let events = state
         .event_repo
         .find_recent_with_cursor(None, params.limit())
@@ -206,8 +210,10 @@ async fn list_raw_events(
 /// Get a single raw event by ID (debug/admin only)
 async fn get_raw_event(
     State(state): State<DebugState>,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RawEventResponse>> {
+    checks::can_read_events_raw(&auth.0)?;
     let event = state
         .event_repo
         .find_by_id(&id)
@@ -226,8 +232,10 @@ async fn get_raw_event(
 /// navigation is meaningless.
 async fn list_raw_dispatch_jobs(
     State(state): State<DebugState>,
+    auth: Authenticated,
     Query(params): Query<DebugListQuery>,
 ) -> Result<Json<Vec<RawDispatchJobResponse>>> {
+    checks::can_read_dispatch_jobs_raw(&auth.0)?;
     let jobs = state
         .dispatch_job_repo
         .find_recent_with_cursor(None, params.limit())
@@ -239,8 +247,10 @@ async fn list_raw_dispatch_jobs(
 /// Get a single raw dispatch job by ID (debug/admin only)
 async fn get_raw_dispatch_job(
     State(state): State<DebugState>,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RawDispatchJobResponse>> {
+    checks::can_read_dispatch_jobs_raw(&auth.0)?;
     let job = state
         .dispatch_job_repo
         .find_by_id(&id)
