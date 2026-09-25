@@ -67,6 +67,31 @@ pub trait Persist<A: HasId + Send + Sync>: Send + Sync {
     async fn delete(&self, aggregate: &A, tx: &mut DbTx<'_>) -> crate::shared::error::Result<()>;
 }
 
+/// A read a repository makes under a row lock (`SELECT … FOR UPDATE`),
+/// inside the unit of work's transaction, so the lock holds until that
+/// transaction commits (Java's `TxOperation` reads through
+/// `TxScopedUnitOfWork.dbTx()`, e.g. `FunctionVersionRepository.nextVersion`).
+/// `Q` names the read; a repository may offer several.
+#[async_trait]
+pub trait LockedRead<Q: Send + Sync>: Send + Sync {
+    type Output: Send;
+
+    async fn read_locked(
+        &self,
+        query: &Q,
+        tx: &mut DbTx<'_>,
+    ) -> crate::shared::error::Result<Self::Output>;
+}
+
+/// A locked read outside a transaction-scoped unit of work: the lock would
+/// be released before anything relied on it.
+fn transaction_required() -> UseCaseError {
+    UseCaseError::internal(
+        "TRANSACTION_REQUIRED",
+        "a locked read needs a transaction-scoped unit of work (PgUnitOfWork::run)",
+    )
+}
+
 // ─── UnitOfWork trait ────────────────────────────────────────────────────────
 
 /// Unit of Work for atomic control plane operations.
@@ -112,6 +137,16 @@ pub trait UnitOfWork: Send + Sync {
     where
         E: DomainEvent + Send + 'static,
         C: Serialize + AuditMasked + Send + Sync;
+
+    /// A [`LockedRead`] on this unit of work's transaction. Only a
+    /// transaction-scoped unit of work ([`PgUnitOfWork::run`]) has one that
+    /// outlives the call, so only it holds the lock until its commit; any
+    /// other refuses with `500 TRANSACTION_REQUIRED` rather than take a lock
+    /// that would be released at once.
+    async fn read_locked<Q, R>(&self, repository: &R, query: &Q) -> Result<R::Output, UseCaseError>
+    where
+        Q: Send + Sync,
+        R: LockedRead<Q>;
 
     /// Commit a batch of aggregate upserts of the same type via one repository,
     /// plus a single domain event and audit log — all in one transaction.
@@ -547,6 +582,18 @@ impl UnitOfWork for PgUnitOfWork {
         UseCaseResult::success(event)
     }
 
+    async fn read_locked<Q, R>(
+        &self,
+        _repository: &R,
+        _query: &Q,
+    ) -> Result<R::Output, UseCaseError>
+    where
+        Q: Send + Sync,
+        R: LockedRead<Q>,
+    {
+        Err(transaction_required())
+    }
+
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
         E: DomainEvent + Send + 'static,
@@ -702,6 +749,22 @@ impl UnitOfWork for TxScopedUnitOfWork {
         }
 
         UseCaseResult::success(event)
+    }
+
+    async fn read_locked<Q, R>(&self, repository: &R, query: &Q) -> Result<R::Output, UseCaseError>
+    where
+        Q: Send + Sync,
+        R: LockedRead<Q>,
+    {
+        let mut guard = self.tx.lock().await;
+        let txn = guard.as_mut().ok_or_else(|| {
+            UseCaseError::commit("TxScopedUnitOfWork: transaction already finalized")
+        })?;
+        let mut tx = DbTx { inner: txn };
+        repository
+            .read_locked(query, &mut tx)
+            .await
+            .map_err(UseCaseError::from)
     }
 
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
@@ -915,6 +978,18 @@ impl UnitOfWork for InMemoryUnitOfWork {
         UseCaseResult::success(event)
     }
 
+    async fn read_locked<Q, R>(
+        &self,
+        _repository: &R,
+        _query: &Q,
+    ) -> Result<R::Output, UseCaseError>
+    where
+        Q: Send + Sync,
+        R: LockedRead<Q>,
+    {
+        Err(transaction_required())
+    }
+
     async fn emit_event<E, C>(&self, event: E, command: &C) -> UseCaseResult<E>
     where
         E: DomainEvent + Send + 'static,
@@ -945,6 +1020,43 @@ impl UnitOfWork for InMemoryUnitOfWork {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Counter;
+
+    #[async_trait]
+    impl LockedRead<&'static str> for Counter {
+        type Output = i32;
+
+        async fn read_locked(
+            &self,
+            _query: &&'static str,
+            _tx: &mut DbTx<'_>,
+        ) -> crate::shared::error::Result<i32> {
+            Ok(1)
+        }
+    }
+
+    /// A lock taken outside a transaction that reaches the commit would be
+    /// released at once, so only a scoped unit of work performs one.
+    #[tokio::test]
+    async fn a_locked_read_needs_a_transaction_scoped_unit_of_work() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let err = PgUnitOfWork::new(pool)
+            .read_locked(&Counter, &"fnc_1")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (err.http_status_code(), err.code()),
+            (500, "TRANSACTION_REQUIRED")
+        );
+        let err = InMemoryUnitOfWork::new()
+            .read_locked(&Counter, &"fnc_1")
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "TRANSACTION_REQUIRED");
+    }
 
     #[test]
     fn test_extract_aggregate_type() {
