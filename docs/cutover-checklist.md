@@ -6,7 +6,7 @@ existing behaviour, Java for functions, and owner rulings override both
 as they merge to `main`.
 
 ## Correctness gates (decisions #28, #29)
-- [ ] Mediation conformance corpus: a Rust runner, all rows passing, and the deviations from Go listed in
+- [x] Mediation conformance corpus: a Rust runner, all rows passing, and the deviations from Go listed in
       `docs/parity/router-deviations-from-go.md` (`feat/go-conformance`)
 - [ ] Delivery parity harness, Go vs Rust end to end over SQS: scenarios pass or are ruled
       (`feat/harness-delivery`)
@@ -15,9 +15,9 @@ as they merge to `main`.
 ## Message pipeline (`docs/reviews/message-pipeline-review-2026-09-25.md`)
 - [ ] Scheduler publishes to SQS; jobs are inserted PENDING; Go's claim/hold/backoff model; `/process`
       authenticated, claimed, ACK semantics as Go; fan-out cache guard (`feat/go-scheduler`)
-- [ ] Outbox: status after the outcome; atomic claim for every item type; retries and recovery as Go; SDK
+- [x] Outbox: status after the outcome; atomic claim for every item type; retries and recovery as Go; SDK
       outbox dispatch jobs carry ids (`feat/go-outbox`)
-- [ ] Router delivery semantics: in-pipeline deferred retry; group FIFO; panic slot leak (`feat/go-conformance`)
+- [x] Router delivery semantics: in-pipeline deferred retry; group FIFO; panic slot leak (`feat/go-conformance`)
 - [ ] Router lifecycle: NATS defaults, config reload, shutdown order, consumer rebuild, watchdog, pool update
       in place, reaper, leader timeouts, HTTP-before-leadership (`feat/go-router-life`)
 
