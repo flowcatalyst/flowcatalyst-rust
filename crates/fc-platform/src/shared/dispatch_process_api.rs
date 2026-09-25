@@ -20,6 +20,7 @@ use tracing::{debug, error, info, warn};
 use crate::dispatch_job::delivery_credentials::{DeliveryCredentials, Resolved};
 use crate::dispatch_job::entity::{DispatchAttemptStatus, DispatchStatus, ErrorType};
 use crate::dispatch_job::repository::{DispatchJobRepository, NewDispatchAttempt};
+use crate::shared::capped_body::{read_capped, DELIVERY_RESPONSE_CAP};
 use crate::shared::error::PlatformError;
 use crate::shared::webhook_signer;
 
@@ -147,7 +148,9 @@ async fn process_dispatch(
     let outcome = match result {
         Ok(response) => {
             let status_code = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
+            // Read only as far as Go's 64 KiB cap: the endpoint chooses
+            // how much it sends, and the body is stored on the attempt.
+            let body = read_capped(response, DELIVERY_RESPONSE_CAP).await.text();
 
             if (200..300).contains(&(status_code as i32)) {
                 // Check for explicit ack=false (deferred)

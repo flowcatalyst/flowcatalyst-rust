@@ -84,6 +84,19 @@ impl ConnectionRepository {
         row.map(Connection::try_from).transpose()
     }
 
+    /// The connections `ids` name (one query); an id naming none is absent.
+    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Connection>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows =
+            sqlx::query_as::<_, ConnectionRow>("SELECT * FROM msg_connections WHERE id = ANY($1)")
+                .bind(ids)
+                .fetch_all(&self.pool)
+                .await?;
+        rows.into_iter().map(Connection::try_from).collect()
+    }
+
     pub async fn find_by_code_and_client(
         &self,
         code: &str,

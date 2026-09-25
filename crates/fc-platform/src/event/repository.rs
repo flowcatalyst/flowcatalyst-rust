@@ -226,6 +226,24 @@ impl EventRepository {
             .collect())
     }
 
+    /// Which of `ids` already name a stored event, across every partition
+    /// (one query). Ingest uses it to acknowledge a re-sent event whose
+    /// caller-supplied id is stored without writing it again.
+    pub async fn find_existing_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashSet<String>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let rows =
+            sqlx::query_as::<_, (String,)>("SELECT DISTINCT id FROM msg_events WHERE id = ANY($1)")
+                .bind(ids)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Event>> {
         let row = sqlx::query_as::<_, EventRow>("SELECT * FROM msg_events WHERE id = $1")
             .bind(id)

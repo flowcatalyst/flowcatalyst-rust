@@ -93,11 +93,22 @@ pub fn build_platform_routes(
     platform_application_id: String,
 ) -> PlatformRoutes<PgUnitOfWork> {
     // ── Simple states ─────────────────────────────────────────────────────
+    // The one ingest signing guard: dispatch-job (S5) and event (S6) ingest
+    // on every route.
+    let signing_guard = Arc::new(crate::dispatch_job::signing_guard::SigningGuard::new(
+        repos.subscription_repo.clone(),
+        repos.connection_repo.clone(),
+        repos.service_account_repo.clone(),
+        repos.application_repo.clone(),
+        repos.principal_repo.clone(),
+    ));
     let events_state = EventsState {
         event_repo: repos.event_repo.clone(),
+        signing: signing_guard.clone(),
     };
     let dispatch_jobs_state = DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        signing: signing_guard.clone(),
     };
     let filter_options_state = FilterOptionsState {
         client_repo: repos.client_repo.clone(),
@@ -404,12 +415,16 @@ pub fn build_platform_routes(
     let create_sub_use_case = Arc::new(
         crate::subscription::operations::CreateSubscriptionUseCase::new(
             repos.subscription_repo.clone(),
+            repos.service_account_repo.clone(),
+            repos.connection_repo.clone(),
             unit_of_work.clone(),
         ),
     );
     let update_sub_use_case = Arc::new(
         crate::subscription::operations::UpdateSubscriptionUseCase::new(
             repos.subscription_repo.clone(),
+            repos.service_account_repo.clone(),
+            repos.connection_repo.clone(),
             unit_of_work.clone(),
         ),
     );
@@ -960,11 +975,13 @@ pub fn build_platform_routes(
     };
     let sdk_dispatch_jobs_state = SdkDispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        signing: signing_guard.clone(),
     };
 
     let sdk_events_state = SdkEventsState {
         event_repo: repos.event_repo.clone(),
         client_repo: repos.client_repo.clone(),
+        signing: signing_guard.clone(),
     };
     let debug_state = DebugState {
         event_repo: repos.event_repo.clone(),

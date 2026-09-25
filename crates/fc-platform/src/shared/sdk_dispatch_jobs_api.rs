@@ -13,7 +13,9 @@ use utoipa::ToSchema;
 
 use crate::dispatch_job::api::CreateDispatchJobRequest;
 use crate::dispatch_job::entity::parse_dispatch_mode;
-use crate::shared::batch_api::{BatchResponse, BatchResultItem};
+use crate::permissions;
+use crate::shared::authorization_service::checks;
+use crate::shared::batch_api::{job_ids_taken, BatchResponse, BatchResultItem, SuppliedJobIds};
 use crate::shared::enum_str::{non_empty, parse_opt};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -22,6 +24,8 @@ use crate::{DispatchJob, DispatchJobRepository, DispatchKind, DispatchMetadata, 
 #[derive(Clone)]
 pub struct SdkDispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
+    /// Refuses a job signed by an identity the caller may not use (S5).
+    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
 
 /// SDK batch dispatch-jobs request. The wrapper key is `items` (1:1 with the
@@ -38,6 +42,10 @@ async fn sdk_batch_create_dispatch_jobs(
     auth: Authenticated,
     Json(req): Json<SdkBatchDispatchJobsRequest>,
 ) -> Result<Json<BatchResponse>, PlatformError> {
+    // Go shared/sdk/dispatch_jobs_batch.go:174: the batch-write permission,
+    // checked before anything is read.
+    checks::require_permission(&auth.0, permissions::admin::BATCH_DISPATCH_JOBS_WRITE)?;
+
     // Validate batch size
     if req.items.is_empty() {
         return Err(PlatformError::validation(
@@ -51,17 +59,15 @@ async fn sdk_batch_create_dispatch_jobs(
     }
 
     let mut created_jobs: Vec<DispatchJob> = Vec::new();
+    // Supplied ids (Go honours them): each valid and named once in the batch.
+    let mut supplied = SuppliedJobIds::default();
 
     for job_req in req.items {
-        // Validate client access if specified
-        if let Some(ref cid) = job_req.client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    cid
-                )));
-            }
-        }
+        // The client the job is written under (owner decision #24): a
+        // single-client caller's absent client is its client; any other
+        // non-anchor must name one it can access.
+        let client_id =
+            crate::shared::caller_reach::require_writable_client(&auth.0, job_req.client_id)?;
 
         // Absent/empty means EVENT; anything else must be an exact kind (400).
         let kind: DispatchKind = parse_opt(non_empty(job_req.kind.as_deref()))?.unwrap_or_default();
@@ -100,9 +106,7 @@ async fn sdk_batch_create_dispatch_jobs(
         if let Some(correlation_id) = job_req.correlation_id {
             job.correlation_id = Some(correlation_id);
         }
-        if let Some(client_id) = job_req.client_id {
-            job.client_id = Some(client_id);
-        }
+        job.client_id = client_id;
         if let Some(subscription_id) = job_req.subscription_id {
             job.subscription_id = Some(subscription_id);
         }
@@ -128,7 +132,8 @@ async fn sdk_batch_create_dispatch_jobs(
             job.payload_content_type = content_type;
         }
 
-        job.service_account_id = Some(job_req.service_account_id);
+        // Optional, as in Go's BatchItem: an outbox item carries none.
+        job.service_account_id = crate::shared::caller_reach::non_blank(job_req.service_account_id);
         job.mode = mode;
         job.retry_strategy = retry_strategy;
         job.data_only = job_req.data_only;
@@ -137,12 +142,30 @@ async fn sdk_batch_create_dispatch_jobs(
             job.metadata.push(DispatchMetadata { key, value });
         }
 
+        if let Some(id) = supplied.claim(job_req.id.as_deref())? {
+            job.id = id;
+        }
+
         job.mark_queued();
         created_jobs.push(job);
     }
 
-    // Bulk insert
-    state.dispatch_job_repo.insert_many(&created_jobs).await?;
+    // The identity each job would be signed with must be one the caller may
+    // use (a subscription of the job's own client; an application's own
+    // account only for that application): a whole-request 403 before
+    // anything is written.
+    state.signing.check_jobs(&auth.0, &created_jobs).await?;
+
+    // Bulk insert. A supplied id that already names a job refuses the whole
+    // batch 409 DUPLICATE_ID (Java ruling 17c), checked against the live
+    // table under an advisory lock.
+    let taken = state
+        .dispatch_job_repo
+        .insert_new(&created_jobs, supplied.ids())
+        .await?;
+    if !taken.is_empty() {
+        return Err(job_ids_taken(&taken));
+    }
 
     // Per-item result list — 1:1 with the outbox/SDK contract
     // {results:[{id,status,error?}]}. Insert is all-or-nothing, so every

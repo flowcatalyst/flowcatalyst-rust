@@ -384,6 +384,13 @@ async fn test_api_batch_events_throughput() {
     let sdk_events_state = SdkEventsState {
         event_repo,
         client_repo: Arc::new(fc_platform::ClientRepository::new(&pool)),
+        signing: Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
+            Arc::new(fc_platform::SubscriptionRepository::new(&pool)),
+            Arc::new(fc_platform::ConnectionRepository::new(&pool)),
+            Arc::new(fc_platform::ServiceAccountRepository::new(&pool)),
+            Arc::new(fc_platform::ApplicationRepository::new(&pool)),
+            Arc::new(fc_platform::PrincipalRepository::new(&pool)),
+        )),
     };
     let app: Router = Router::new()
         .nest("/api/events", sdk_events_batch_router(sdk_events_state))
@@ -391,7 +398,11 @@ async fn test_api_batch_events_throughput() {
 
     let principal = Principal::new_user("load@test.local", UserScope::Anchor);
     let token = auth_service
-        .generate_access_token(&principal)
+        .generate_access_token_with_scope(
+            &principal,
+            &[fc_platform::permissions::admin::BATCH_EVENTS_WRITE.to_string()],
+            None,
+        )
         .expect("Failed to generate token");
 
     // 10 batch requests of 100 events each = 1000 events

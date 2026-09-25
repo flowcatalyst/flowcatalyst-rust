@@ -6,6 +6,7 @@ pub mod api;
 pub mod delivery_credentials;
 pub mod entity;
 pub mod repository;
+pub mod signing_guard;
 
 // Re-export main types
 pub use api::dispatch_jobs_router;

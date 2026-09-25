@@ -244,9 +244,15 @@ impl ScheduledJobDispatcher {
             }
             Ok(resp) => {
                 let status = resp.status();
-                let body = resp.text().await.unwrap_or_else(|_| String::new());
-                let truncated: String = body.chars().take(500).collect();
-                let err = format!("HTTP {} (expected 2xx): {}", status, truncated);
+                // Only as far as Go's 500-byte snippet: the rest of a slow or
+                // huge body is never read (the scheduler loop waits on it).
+                let snippet = crate::shared::capped_body::read_capped(
+                    resp,
+                    crate::shared::capped_body::SCHEDULED_JOB_ERROR_SNIPPET_CAP,
+                )
+                .await
+                .text();
+                let err = format!("HTTP {} (expected 2xx): {}", status, snippet);
                 self.handle_failure(job, inst, attempts_after_inc, &err)
                     .await
             }

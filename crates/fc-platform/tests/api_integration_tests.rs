@@ -81,6 +81,19 @@ fn test_auth_service() -> AuthService {
     })
 }
 
+/// The ingest signing guard over the test database.
+fn ingest_signing_guard(
+    pool: &sqlx::PgPool,
+) -> Arc<fc_platform::dispatch_job::signing_guard::SigningGuard> {
+    Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
+        Arc::new(fc_platform::SubscriptionRepository::new(pool)),
+        Arc::new(fc_platform::ConnectionRepository::new(pool)),
+        Arc::new(fc_platform::ServiceAccountRepository::new(pool)),
+        Arc::new(ApplicationRepository::new(pool)),
+        Arc::new(fc_platform::PrincipalRepository::new(pool)),
+    ))
+}
+
 /// Build a minimal Axum router wired to the test database, returning the
 /// router and the AuthService (for token generation).
 fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
@@ -152,10 +165,12 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
     let sdk_events_state = SdkEventsState {
         event_repo: Arc::new(EventRepository::new(pool)),
         client_repo: Arc::new(fc_platform::ClientRepository::new(pool)),
+        signing: ingest_signing_guard(pool),
     };
 
     let sdk_dispatch_jobs_state = SdkDispatchJobsState {
         dispatch_job_repo: Arc::new(DispatchJobRepository::new(pool)),
+        signing: ingest_signing_guard(pool),
     };
 
     let router: Router = Router::new()
@@ -179,6 +194,22 @@ fn generate_anchor_token(auth_service: &AuthService) -> String {
     auth_service
         .generate_access_token(&principal)
         .expect("Failed to generate access token")
+}
+
+/// An anchor token granted the two ingest permissions on its `scope`
+/// (Go's `platform:messaging:batch:{events,dispatch-jobs}-write`).
+fn generate_ingest_token(auth_service: &AuthService) -> String {
+    let principal = Principal::new_user("ingest@flowcatalyst.local", UserScope::Anchor);
+    auth_service
+        .generate_access_token_with_scope(
+            &principal,
+            &[
+                fc_platform::permissions::admin::BATCH_EVENTS_WRITE.to_string(),
+                fc_platform::permissions::admin::BATCH_DISPATCH_JOBS_WRITE.to_string(),
+            ],
+            None,
+        )
+        .expect("Failed to generate ingest token")
 }
 
 // ─── Test Cases ────────────────────────────────────────────────────────────
@@ -359,7 +390,7 @@ async fn test_unauthorized_request() {
 async fn test_batch_events_via_api() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_anchor_token(&auth_service);
+    let token = generate_ingest_token(&auth_service);
 
     let response = app
         .clone()
@@ -414,7 +445,7 @@ async fn test_batch_events_via_api() {
 async fn test_batch_events_exceeds_limit() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_anchor_token(&auth_service);
+    let token = generate_ingest_token(&auth_service);
 
     // Build a batch with 101 items (exceeds the 100-item limit)
     let items: Vec<serde_json::Value> = (0..101)
@@ -456,7 +487,7 @@ async fn test_batch_events_exceeds_limit() {
 async fn test_batch_dispatch_jobs_via_api() {
     let (pool, _container) = setup_test_db().await;
     let (app, auth_service) = build_test_router(&pool);
-    let token = generate_anchor_token(&auth_service);
+    let token = generate_ingest_token(&auth_service);
 
     let response = app
         .clone()

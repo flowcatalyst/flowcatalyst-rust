@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::events::SubscriptionCreated;
+use crate::service_account::signing_reach::require_usable_signers;
+use crate::shared::authorization_service::AuthContext;
 use crate::subscription::entity::DispatchMode;
 use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
-use crate::SubscriptionRepository;
+use crate::{ConnectionRepository, ServiceAccountRepository, SubscriptionRepository};
 use crate::{EventTypeBinding, Subscription};
 
 /// Subscription code pattern: lowercase alphanumeric with hyphens
@@ -80,6 +82,12 @@ pub struct CreateSubscriptionCommand {
     /// Send raw event data only (no envelope)
     #[serde(default)]
     pub data_only: bool,
+
+    /// Who is creating it, for the signing-reach check (never serialised,
+    /// so never in the audit log). A named account or connection with no
+    /// caller is refused.
+    #[serde(skip)]
+    pub caller: Option<AuthContext>,
 }
 
 impl crate::usecase::AuditMasked for CreateSubscriptionCommand {}
@@ -87,13 +95,22 @@ impl crate::usecase::AuditMasked for CreateSubscriptionCommand {}
 /// Use case for creating a new subscription.
 pub struct CreateSubscriptionUseCase<U: UnitOfWork> {
     subscription_repo: Arc<SubscriptionRepository>,
+    service_account_repo: Arc<ServiceAccountRepository>,
+    connection_repo: Arc<ConnectionRepository>,
     unit_of_work: Arc<U>,
 }
 
 impl<U: UnitOfWork> CreateSubscriptionUseCase<U> {
-    pub fn new(subscription_repo: Arc<SubscriptionRepository>, unit_of_work: Arc<U>) -> Self {
+    pub fn new(
+        subscription_repo: Arc<SubscriptionRepository>,
+        service_account_repo: Arc<ServiceAccountRepository>,
+        connection_repo: Arc<ConnectionRepository>,
+        unit_of_work: Arc<U>,
+    ) -> Self {
         Self {
             subscription_repo,
+            service_account_repo,
+            connection_repo,
             unit_of_work,
         }
     }
@@ -146,12 +163,24 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         Ok(())
     }
 
+    /// A named service account or connection must exist and be one the
+    /// caller may sign with (S7; Java `CreateSubscription`, b1ce6e55 and
+    /// eac7ef57: no owning-application exemption).
     async fn authorize(
         &self,
-        _command: &CreateSubscriptionCommand,
+        command: &CreateSubscriptionCommand,
         _ctx: &ExecutionContext,
     ) -> Result<(), UseCaseError> {
-        Ok(())
+        require_usable_signers(
+            command.caller.as_ref(),
+            &self.service_account_repo,
+            &self.connection_repo,
+            command.service_account_id.as_deref(),
+            true,
+            command.connection_id.as_deref(),
+            true,
+        )
+        .await
     }
 
     async fn execute(
@@ -263,6 +292,7 @@ mod tests {
             max_retries: Some(5),
             timeout_seconds: Some(60),
             data_only: false,
+            caller: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();

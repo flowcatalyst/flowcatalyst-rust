@@ -697,11 +697,17 @@ async fn main() -> Result<()> {
 
         // Anchor: the outbox forwards every client's messages. Go's fcdev
         // gives its internal router principal the same scope.
-        let internal_principal = Principal::new_service(
+        let mut internal_principal = Principal::new_service(
             "outbox-processor",
             "Outbox Processor (internal)",
             fc_platform::principal::entity::UserScope::Anchor,
         );
+        // The ingest routes need `platform:messaging:batch:*-write`, and an
+        // event or job of any application's type may be ingested only by a
+        // caller that may sign as it. The dev outbox forwards every
+        // application's messages, so it holds the built-in super-admin role
+        // (seeded before serving), as Go's fcdev bootstrap principal does.
+        internal_principal.assign_role(fc_platform::role::entity::roles::super_admin().name);
         let token = auth_services
             .auth
             .generate_access_token(&internal_principal)
@@ -912,6 +918,13 @@ async fn main() -> Result<()> {
     // this itself as compatibility for the generated frontend client).
     let dispatch_jobs_state = fc_platform::api::DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
+        signing: Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
+            repos.subscription_repo.clone(),
+            repos.connection_repo.clone(),
+            repos.service_account_repo.clone(),
+            repos.application_repo.clone(),
+            repos.principal_repo.clone(),
+        )),
     };
     let filter_options_state = fc_platform::api::FilterOptionsState {
         client_repo: repos.client_repo.clone(),

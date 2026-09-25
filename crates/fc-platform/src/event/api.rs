@@ -237,6 +237,9 @@ fn split_csv(input: Option<&str>) -> Vec<String> {
 #[derive(Clone)]
 pub struct EventsState {
     pub event_repo: Arc<EventRepository>,
+    /// Refuses an application's event types from a caller that may not
+    /// sign as that application (S6, ruling 17a).
+    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
 
 /// Create a new event
@@ -263,8 +266,34 @@ pub async fn create_event(
     auth: Authenticated,
     Json(req): Json<CreateEventRequest>,
 ) -> Result<(axum::http::StatusCode, Json<CreateEventResponse>), PlatformError> {
-    // Verify permission
-    crate::shared::authorization_service::checks::can_write_events(&auth.0)?;
+    // Go event/api/api.go:90: the ingest permission, exactly.
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::BATCH_EVENTS_WRITE,
+    )?;
+
+    // The client the event is written under: an explicit one, else a
+    // non-anchor's first client (Go event/api/api.go:103-108), and a
+    // non-anchor never writes a platform-scoped event (owner decision #24).
+    // Decided before the deduplication lookup, so a refused caller learns
+    // nothing about stored events.
+    let client_id = crate::shared::caller_reach::non_blank(req.client_id.clone()).or_else(|| {
+        if auth.0.is_anchor() {
+            None
+        } else {
+            crate::shared::caller_reach::client_ids(&auth.0)
+                .into_iter()
+                .next()
+        }
+    });
+    let client_id = crate::shared::caller_reach::require_writable_client(&auth.0, client_id)?;
+
+    // An application's event type only from a caller that may sign as it
+    // (owner ruling 17a).
+    state
+        .signing
+        .check_event_types(&auth.0, [req.event_type.as_str()])
+        .await?;
 
     // Check for duplicate deduplication ID
     if let Some(ref dedup_id) = req.deduplication_id {
@@ -278,25 +307,6 @@ pub async fn create_event(
                     is_duplicate: true,
                 }),
             ));
-        }
-    }
-
-    // Determine client ID
-    let client_id = req.client_id.or_else(|| {
-        if auth.0.is_anchor() {
-            None
-        } else {
-            auth.0.accessible_clients.first().cloned()
-        }
-    });
-
-    // Validate client access if specified
-    if let Some(ref cid) = client_id {
-        if !auth.0.can_access_client(cid) {
-            return Err(PlatformError::forbidden(format!(
-                "No access to client: {}",
-                cid
-            )));
         }
     }
 
@@ -489,7 +499,12 @@ pub async fn batch_create_events(
     auth: Authenticated,
     Json(req): Json<BatchCreateEventsRequest>,
 ) -> Result<Json<BatchCreateResponse>, PlatformError> {
-    crate::shared::authorization_service::checks::can_write_events(&auth.0)?;
+    // The same ingest permission as `/api/events/batch` (Go registers one
+    // handler for both).
+    crate::shared::authorization_service::checks::require_permission(
+        &auth.0,
+        crate::permissions::admin::BATCH_EVENTS_WRITE,
+    )?;
 
     // Validate batch size
     if req.events.is_empty() {
@@ -523,7 +538,23 @@ pub async fn batch_create_events(
         .filter_map(|e| e.deduplication_id.clone().map(|d| (d, e)))
         .collect();
 
-    for event_req in req.events.into_iter() {
+    // Every item's client first: one the caller may not write refuses the
+    // whole batch before anything is looked up or written (owner decision
+    // #24; the batch rule — no first-client default — as Go and Java's
+    // /bff/events/batch, which is the batch ingest handler).
+    let client_ids = req
+        .events
+        .iter()
+        .map(|e| crate::shared::caller_reach::require_writable_client(&auth.0, e.client_id.clone()))
+        .collect::<Result<Vec<_>, PlatformError>>()?;
+    // And every item's type from a caller that may sign as its application
+    // (owner ruling 17a).
+    state
+        .signing
+        .check_event_types(&auth.0, req.events.iter().map(|e| e.event_type.as_str()))
+        .await?;
+
+    for (event_req, client_id) in req.events.into_iter().zip(client_ids) {
         if let Some(existing) = event_req
             .deduplication_id
             .as_deref()
@@ -532,25 +563,6 @@ pub async fn batch_create_events(
             all_events.push(existing.clone());
             duplicate_count += 1;
             continue;
-        }
-
-        // Determine client ID
-        let client_id = event_req.client_id.or_else(|| {
-            if auth.0.is_anchor() {
-                None
-            } else {
-                auth.0.accessible_clients.first().cloned()
-            }
-        });
-
-        // Validate client access if specified
-        if let Some(ref cid) = client_id {
-            if !auth.0.can_access_client(cid) {
-                return Err(PlatformError::forbidden(format!(
-                    "No access to client: {}",
-                    cid
-                )));
-            }
         }
 
         // Create event
