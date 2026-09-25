@@ -170,7 +170,7 @@ const NAV: &[NavGroup] = &[
             nav!("Clients", "lucide:building-2", "/clients", ["platform:admin:client:view"]),
             nav!("CORS Origins", "lucide:link", "/platform/cors", ["platform:admin:cors-origin:view"]),
             // The audit log API is anchor-only (`audit/api.rs`).
-            nav!("Audit Log", "lucide:history", "/ui/audit-log", |a| checks::require_anchor(a).is_ok()),
+            nav!("Audit Log", "lucide:history", "/ui/audit-log", |a| checks::require_anchor(a).is_ok() && checks::can_read_audit_logs(a).is_ok()),
             nav!("Login Attempts", "lucide:log-in", "/platform/login-attempts", ["platform:admin:login-attempt:view"]),
             NavItem {
                 label: "Settings",

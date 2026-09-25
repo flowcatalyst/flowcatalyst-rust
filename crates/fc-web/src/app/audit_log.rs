@@ -107,7 +107,9 @@ async fn names(
 
 #[page("/ui/(app)/audit-log")]
 async fn audit_log(cx: &Cx) -> Result<impl View> {
-    permit(checks::require_anchor(auth(cx)?))?;
+    let auth = auth(cx)?;
+    permit(checks::require_anchor(auth))?;
+    permit(checks::can_read_audit_logs(auth))?;
     let deps = crate::deps(cx);
     let query = query_params::<AuditQuery>(cx)?;
     let entity_type = query.entity_type.as_deref().filter(|s| !s.is_empty());
@@ -279,7 +281,9 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
 /// caller itself; the path keeps it under the `/ui/(app)` layer.
 #[shard("/ui/(app)/audit-log/detail")]
 async fn audit_log_detail(cx: &Cx, id: String) -> Result<impl View> {
-    permit(checks::require_anchor(auth(cx)?))?;
+    let auth = auth(cx)?;
+    permit(checks::require_anchor(auth))?;
+    permit(checks::can_read_audit_logs(auth))?;
     let deps = crate::deps(cx);
 
     let log = if id.is_empty() {
