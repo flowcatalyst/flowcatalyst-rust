@@ -622,3 +622,190 @@ async fn client_selection_and_passkeys_take_the_session_cookie_only() {
         .await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+/// Sign `user` in to the planner client through the code flow and return
+/// its refresh token.
+async fn planner_refresh_token(app: &TestApp, user: &fc_platform::domain::Principal) -> String {
+    let session = app.auth_service.generate_session_token(user).unwrap();
+    let resp = send(
+        app,
+        with_header(
+            authorize_request(None),
+            "cookie",
+            format!("fc_session={session}"),
+        ),
+    )
+    .await;
+    let loc = location(&resp);
+    let code = loc
+        .split("code=")
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .next()
+        .unwrap()
+        .to_string();
+    let (status, body) = token_request(
+        app,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", PLANNER_REDIRECT),
+            ("client_id", "agent-planner"),
+            ("code_verifier", PKCE_VERIFIER),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["refresh_token"]
+        .as_str()
+        .expect("refresh_token")
+        .to_string()
+}
+
+async fn refresh(app: &TestApp, token: &str) -> (StatusCode, Value) {
+    token_request(
+        app,
+        &[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", token),
+            ("client_id", "agent-planner"),
+        ],
+    )
+    .await
+}
+
+/// (expires_at, consumed, revoked, replacedBy, family) of the row for `raw`.
+async fn refresh_row(
+    app: &TestApp,
+    raw: &str,
+) -> (
+    chrono::DateTime<chrono::Utc>,
+    bool,
+    bool,
+    Option<String>,
+    Option<String>,
+) {
+    let hash = fc_platform::RefreshToken::hash_token(raw);
+    sqlx::query_as(
+        "SELECT expires_at, consumed_at IS NOT NULL,
+                coalesce((payload->>'revoked')::boolean, false),
+                payload->>'replacedBy', grant_id
+         FROM oauth_oidc_payloads WHERE type = 'RefreshToken' AND payload->>'tokenHash' = $1",
+    )
+    .bind(hash)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap()
+}
+
+/// Triage S12 (Java 6a06a7f0 S2.5, 477db983; Go grantstore.Rotate):
+/// rotation is single-use, keeps the family and its absolute expiry; a
+/// client racing itself is not signed out; a replay after the 10 s leeway
+/// revokes the whole family.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn refresh_rotation_is_atomic_with_family_reuse_detection() {
+    let app = TestApp::setup().await;
+    seed_public_client(&app).await;
+    let user = seed_user(&app, "ada@flowcatalyst.test", "Correct-Horse-9!").await;
+    let first = planner_refresh_token(&app, &user).await;
+    let (first_expiry, ..) = refresh_row(&app, &first).await;
+
+    // A rotation: the new token inherits the expiry and the family; the old
+    // one is consumed and linked to it.
+    let (status, body) = refresh(&app, &first).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let second = body["refresh_token"].as_str().unwrap().to_string();
+    let (expiry, consumed, revoked, replaced_by, family) = refresh_row(&app, &first).await;
+    assert!(consumed && revoked);
+    assert_eq!(
+        replaced_by.as_deref(),
+        Some(fc_platform::RefreshToken::hash_token(&second).as_str())
+    );
+    let (second_expiry, _, _, _, second_family) = refresh_row(&app, &second).await;
+    assert_eq!(
+        second_expiry.timestamp(),
+        first_expiry.timestamp(),
+        "no fresh 30 days"
+    );
+    assert_eq!(expiry, first_expiry);
+    assert!(family.is_some());
+    assert_eq!(second_family, family);
+
+    // Two concurrent presentations of the same token both succeed, and
+    // exactly one consumed it (the other got a sibling).
+    let (a, b) = tokio::join!(refresh(&app, &second), refresh(&app, &second));
+    assert_eq!(a.0, StatusCode::OK, "{}", a.1);
+    assert_eq!(b.0, StatusCode::OK, "{}", b.1);
+    let third_a = a.1["refresh_token"].as_str().unwrap().to_string();
+    let third_b = b.1["refresh_token"].as_str().unwrap().to_string();
+    assert_ne!(third_a, third_b);
+    let (live,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM oauth_oidc_payloads
+         WHERE type = 'RefreshToken' AND grant_id = $1 AND consumed_at IS NULL",
+    )
+    .bind(&family)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(live, 2, "the winner's token and the sibling");
+
+    // A replay of `second` after the leeway is reuse: the family dies.
+    sqlx::query(
+        "UPDATE oauth_oidc_payloads
+         SET payload = jsonb_set(payload, '{revokedAt}', to_jsonb($2::text)),
+             consumed_at = $3
+         WHERE type = 'RefreshToken' AND payload->>'tokenHash' = $1",
+    )
+    .bind(fc_platform::RefreshToken::hash_token(&second))
+    .bind((chrono::Utc::now() - chrono::Duration::seconds(60)).to_rfc3339())
+    .bind(chrono::Utc::now() - chrono::Duration::seconds(60))
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (status, body) = refresh(&app, &second).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    for token in [&third_a, &third_b] {
+        let (status, body) = refresh(&app, token).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    }
+}
+
+/// Triage S2 (Go handleRefresh): /auth/refresh authenticates no client, so
+/// a token issued to an OAuth client is refused there and not consumed.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn auth_refresh_refuses_a_client_bound_token() {
+    use axum::http::Method;
+    let app = TestApp::setup().await;
+    seed_public_client(&app).await;
+    let user = seed_user(&app, "ada@flowcatalyst.test", "Correct-Horse-9!").await;
+    let token = planner_refresh_token(&app, &user).await;
+
+    let (status, body) = read_json(
+        send(
+            &app,
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/refresh")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "refreshToken": token }).to_string()))
+                .unwrap(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("not issued to this client"),
+        "{body}"
+    );
+    let (_, consumed, ..) = refresh_row(&app, &token).await;
+    assert!(!consumed, "a refusal consumes nothing");
+    let (status, body) = refresh(&app, &token).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}

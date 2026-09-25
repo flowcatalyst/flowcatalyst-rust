@@ -58,11 +58,16 @@ impl From<PayloadRow> for RefreshToken {
 
         let revoked = p.get("revoked").and_then(|v| v.as_bool()).unwrap_or(false);
 
+        // `revokedAt` is RFC 3339 text (Go's storage contract); rows Rust
+        // revoked before it wrote that form carry Postgres' timestamp text,
+        // so the consumed_at column — stamped in the same statement —
+        // stands in.
         let revoked_at = p
             .get("revokedAt")
             .and_then(|v| v.as_str())
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc));
+            .map(|dt| dt.with_timezone(&Utc))
+            .or(if revoked { m.consumed_at } else { None });
 
         let token_family = p
             .get("tokenFamily")
@@ -176,6 +181,74 @@ impl RefreshTokenRepository {
         Ok(())
     }
 
+    /// Rotate atomically (Java `GrantStore.consumeValidByHash` + insert +
+    /// `markReplaced` in one transaction, 6a06a7f0 S2.5): consume the
+    /// presented token — revoked, `replacedBy` the replacement, filed in
+    /// `family` if it had none — only if it is still valid and unconsumed,
+    /// then insert the replacement. Of two concurrent rotations exactly one
+    /// consumes: the other's UPDATE waits on the row lock and, re-checking
+    /// `consumed_at IS NULL` against the committed row, matches nothing.
+    /// Returns whether this call consumed the token (nothing is written
+    /// when it did not).
+    pub async fn consume_and_replace(
+        &self,
+        token_hash: &str,
+        family: &str,
+        replacement: &RefreshToken,
+    ) -> Result<bool> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await?;
+        let consumed = sqlx::query_scalar::<_, String>(
+            r#"UPDATE oauth_oidc_payloads
+            SET payload = jsonb_set(
+                    jsonb_set(
+                        jsonb_set(
+                            jsonb_set(payload, '{revoked}', 'true'::jsonb),
+                            '{revokedAt}', to_jsonb($4::text)
+                        ),
+                        '{replacedBy}', to_jsonb($5::text)
+                    ),
+                    '{tokenFamily}',
+                    COALESCE(NULLIF(payload->'tokenFamily', 'null'::jsonb), to_jsonb($6::text))
+                ),
+                grant_id = COALESCE(grant_id, $6),
+                consumed_at = $3
+            WHERE type = $1
+              AND payload->>'tokenHash' = $2
+              AND consumed_at IS NULL
+              AND expires_at > NOW()
+              AND (payload->>'revoked' IS NULL OR payload->>'revoked' = 'false')
+            RETURNING id"#,
+        )
+        .bind(PAYLOAD_TYPE)
+        .bind(token_hash)
+        .bind(now)
+        .bind(now.to_rfc3339())
+        .bind(&replacement.token_hash)
+        .bind(family)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if consumed.is_none() {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+        sqlx::query(
+            r#"INSERT INTO oauth_oidc_payloads
+                (id, type, payload, grant_id, user_code, uid, expires_at, consumed_at, created_at)
+            VALUES ($1, $2, $3, $4, NULL, NULL, $5, NULL, $6)"#,
+        )
+        .bind(Self::make_id(&replacement.id))
+        .bind(PAYLOAD_TYPE)
+        .bind(Self::to_payload(replacement))
+        .bind(&replacement.token_family)
+        .bind(Some(replacement.expires_at))
+        .bind(replacement.created_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
     /// Find a refresh token by its hash
     pub async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>> {
         let row = sqlx::query_as::<_, PayloadRow>(
@@ -258,13 +331,14 @@ impl RefreshTokenRepository {
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                 jsonb_set(payload, '{revoked}', 'true'::jsonb),
-                '{revokedAt}', to_jsonb($2::text)
+                '{revokedAt}', to_jsonb($3::text)
             ),
             consumed_at = $2
             WHERE id = $1"#,
         )
         .bind(&composite_id)
         .bind(now)
+        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -277,7 +351,7 @@ impl RefreshTokenRepository {
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                 jsonb_set(payload, '{revoked}', 'true'::jsonb),
-                '{revokedAt}', to_jsonb($3::text)
+                '{revokedAt}', to_jsonb($4::text)
             ),
             consumed_at = $3
             WHERE type = $1 AND payload->>'tokenHash' = $2"#,
@@ -285,6 +359,7 @@ impl RefreshTokenRepository {
         .bind(PAYLOAD_TYPE)
         .bind(token_hash)
         .bind(now)
+        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() > 0)
@@ -299,7 +374,7 @@ impl RefreshTokenRepository {
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                 jsonb_set(payload, '{revoked}', 'true'::jsonb),
-                '{revokedAt}', to_jsonb($3::text)
+                '{revokedAt}', to_jsonb($4::text)
             ),
             consumed_at = $3
             WHERE type = $1
@@ -311,6 +386,7 @@ impl RefreshTokenRepository {
         .bind(PAYLOAD_TYPE)
         .bind(principal_id)
         .bind(now)
+        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
@@ -338,7 +414,7 @@ impl RefreshTokenRepository {
             r#"UPDATE oauth_oidc_payloads
             SET payload = jsonb_set(
                 jsonb_set(payload, '{revoked}', 'true'::jsonb),
-                '{revokedAt}', to_jsonb($3::text)
+                '{revokedAt}', to_jsonb($4::text)
             ),
             consumed_at = $3
             WHERE type = $1
@@ -348,6 +424,7 @@ impl RefreshTokenRepository {
         .bind(PAYLOAD_TYPE)
         .bind(family_id)
         .bind(now)
+        .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())

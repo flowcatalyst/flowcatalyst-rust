@@ -1400,44 +1400,21 @@ async fn handle_refresh_token_grant(
         }
     };
 
-    // Hash the provided token and look it up
-    let token_hash = RefreshToken::hash_token(&refresh_token_str);
-
-    let stored_token = match state
-        .refresh_token_repo
-        .find_valid_by_hash(&token_hash)
-        .await
+    // Rotate: atomic single use, family reuse detection with a 10 s
+    // sibling leeway, the client binding, and the family's inherited
+    // expiry (see `refresh_rotation`).
+    let requesting_client_id = authenticated_client.as_ref().map(|c| c.client_id.as_str());
+    let rotated = match crate::auth::refresh_rotation::rotate(
+        &*state.refresh_token_repo,
+        &refresh_token_str,
+        requesting_client_id,
+    )
+    .await
     {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: Some("Invalid or expired refresh token".to_string()),
-                }),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            error!(error = %e, "Failed to lookup refresh token");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: None,
-                }),
-            )
-                .into_response();
-        }
-    };
-
-    // P1-3: Validate that the requesting client_id matches the stored token's oauth_client_id
-    if let Some(ref stored_client_id) = stored_token.oauth_client_id {
-        let requesting_client_id = authenticated_client.as_ref().map(|c| c.client_id.as_str());
-        if requesting_client_id != Some(stored_client_id.as_str()) {
+        Ok(Ok(rotated)) => rotated,
+        Ok(Err(crate::auth::refresh_rotation::Rejection::Refused { token_client_id })) => {
             warn!(
-                stored_client_id = %stored_client_id,
+                stored_client_id = %token_client_id,
                 requesting_client_id = ?requesting_client_id,
                 "Refresh token client binding mismatch"
             );
@@ -1450,20 +1427,29 @@ async fn handle_refresh_token_grant(
             )
                 .into_response();
         }
-    }
-
-    // Revoke the old token (token rotation for security)
-    if let Err(e) = state.refresh_token_repo.revoke_by_hash(&token_hash).await {
-        error!(error = %e, "Failed to revoke old refresh token");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "server_error".to_string(),
-                error_description: None,
-            }),
-        )
-            .into_response();
-    }
+        Ok(Err(_)) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_grant".to_string(),
+                    error_description: Some("Invalid or expired refresh token".to_string()),
+                }),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            error!(error = %e, "Failed to rotate refresh token");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "server_error".to_string(),
+                    error_description: None,
+                }),
+            )
+                .into_response();
+        }
+    };
+    let stored_token = rotated.stored;
 
     // Find the principal
     let principal = match state
@@ -1567,30 +1553,7 @@ async fn handle_refresh_token_grant(
         None
     };
 
-    // Generate new refresh token (rotation)
-    let (raw_token, token_entity) = RefreshToken::generate_token_pair(&principal.id);
-    let token_entity = token_entity
-        .with_accessible_clients(stored_token.accessible_clients.clone())
-        .with_scopes(stored_token.scopes.clone());
-
-    // Preserve oauth_client_id on rotated token
-    let token_entity = if let Some(ref cid) = stored_token.oauth_client_id {
-        token_entity.with_oauth_client(cid.clone())
-    } else {
-        token_entity
-    };
-
-    if let Err(e) = state.refresh_token_repo.insert(&token_entity).await {
-        error!(error = %e, "Failed to store new refresh token");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "server_error".to_string(),
-                error_description: None,
-            }),
-        )
-            .into_response();
-    }
+    let raw_token = rotated.new_raw;
 
     info!(principal_id = %principal.id, "Token refreshed via refresh_token grant");
 
