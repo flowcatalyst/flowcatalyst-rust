@@ -14,6 +14,7 @@ pub mod tsid;
 pub mod application_roles_sdk_api;
 pub mod batch_api;
 pub mod caller_reach;
+pub mod capped_body;
 pub mod bff_dashboard_api;
 pub mod bff_developer_api;
 pub mod bff_event_types_api;
