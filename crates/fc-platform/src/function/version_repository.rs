@@ -28,6 +28,57 @@ use crate::usecase::{DbTx, LockedRead, Persist};
 #[derive(Debug, Clone)]
 pub struct NextVersionOf(pub String);
 
+/// One version by id, read under its own row lock (Java `lockById`): the
+/// mark-ready use case's guard, so two heartbeats racing to mark one
+/// version ready serialise and the loser sees the winner's `READY`.
+#[derive(Debug, Clone)]
+pub struct VersionById(pub String);
+
+/// A stored version whose manifest cannot be read (Java
+/// `FunctionVersionRepository.CorruptVersion`). `pool` is a best-effort
+/// peek ([`Manifest::peek_stored_pool`]); `None` only when the column is not
+/// a JSON object at all. `cause` never carries manifest content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorruptVersion {
+    pub version_id: String,
+    pub function_id: String,
+    pub version: i32,
+    pub pool: Option<DnsLabel>,
+    pub cause: String,
+}
+
+/// A batch read's answer (Java `VersionBatch`): the readable versions under
+/// the caller's key, and every corrupt row reported instead of failing the
+/// batch, so the caller decides what one corrupt version may take down.
+#[derive(Debug, Default)]
+pub struct VersionBatch {
+    pub versions: HashMap<String, FunctionVersion>,
+    pub corrupt: Vec<CorruptVersion>,
+}
+
+impl VersionBatch {
+    fn add(&mut self, key: String, row: VersionRow) {
+        let version_id = row.id.clone();
+        let function_id = row.function_id.clone();
+        let version = row.version;
+        let peeked = JsonNode::parse(&row.manifest)
+            .ok()
+            .and_then(|json| Manifest::peek_stored_pool(&json));
+        match to_entity(row) {
+            Ok(v) => {
+                self.versions.insert(key, v);
+            }
+            Err(cause) => self.corrupt.push(CorruptVersion {
+                version_id,
+                function_id,
+                version,
+                pool: peeked,
+                cause,
+            }),
+        }
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct VersionRow {
     id: String,
@@ -185,8 +236,19 @@ impl FunctionVersionRepository {
     /// Every version named by `ids`, by id. A missing id, and a row whose
     /// manifest cannot be read, are both simply absent.
     pub async fn find_by_ids(&self, ids: &[String]) -> Result<HashMap<String, FunctionVersion>> {
+        let batch = self.find_batch_by_ids(ids).await?;
+        for c in &batch.corrupt {
+            tracing::warn!(version_id = %c.version_id, cause = %c.cause, "skipping a corrupt function version");
+        }
+        Ok(batch.versions)
+    }
+
+    /// Every version named by `ids`, by id; a corrupt row is reported in
+    /// [`VersionBatch::corrupt`] (Java `findByIds`).
+    pub async fn find_batch_by_ids(&self, ids: &[String]) -> Result<VersionBatch> {
+        let mut batch = VersionBatch::default();
         if ids.is_empty() {
-            return Ok(HashMap::new());
+            return Ok(batch);
         }
         let rows = sqlx::query_as::<_, VersionRow>(&format!(
             "SELECT {COLUMNS} FROM fn_versions WHERE id = ANY($1)"
@@ -194,19 +256,82 @@ impl FunctionVersionRepository {
         .bind(ids)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                let id = row.id.clone();
-                match to_entity(row) {
-                    Ok(v) => Some((v.id.clone(), v)),
-                    Err(cause) => {
-                        tracing::warn!(version_id = %id, %cause, "skipping a corrupt function version");
-                        None
-                    }
-                }
-            })
-            .collect())
+        for row in rows {
+            batch.add(row.id.clone(), row);
+        }
+        Ok(batch)
+    }
+
+    /// Each function's highest-numbered `PUBLISHED` version, keyed by
+    /// function id (Java `newestPublishedByFunctions`). When that row is
+    /// corrupt it is reported instead, never replaced by an older one.
+    pub async fn newest_published_by_functions(
+        &self,
+        function_ids: &[String],
+    ) -> Result<VersionBatch> {
+        let mut batch = VersionBatch::default();
+        if function_ids.is_empty() {
+            return Ok(batch);
+        }
+        let rows = sqlx::query_as::<_, VersionRow>(&format!(
+            "SELECT DISTINCT ON (function_id) {COLUMNS} FROM fn_versions \
+             WHERE function_id = ANY($1) AND state = 'PUBLISHED' \
+             ORDER BY function_id ASC, version DESC"
+        ))
+        .bind(function_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in rows {
+            batch.add(row.function_id.clone(), row);
+        }
+        Ok(batch)
+    }
+
+    /// The versions at each `(function_id, version)` pair, in one query,
+    /// keyed by version id: the heartbeat's lookup of what a host reports.
+    pub async fn find_batch_by_function_versions(
+        &self,
+        pairs: &[(String, i32)],
+    ) -> Result<VersionBatch> {
+        let mut batch = VersionBatch::default();
+        if pairs.is_empty() {
+            return Ok(batch);
+        }
+        let function_ids: Vec<&str> = pairs.iter().map(|(f, _)| f.as_str()).collect();
+        let numbers: Vec<i32> = pairs.iter().map(|(_, v)| *v).collect();
+        let rows = sqlx::query_as::<_, VersionRow>(&format!(
+            "SELECT {COLUMNS} FROM fn_versions \
+             WHERE (function_id, version) IN (SELECT * FROM UNNEST($1::text[], $2::int[]))"
+        ))
+        .bind(&function_ids)
+        .bind(&numbers)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in rows {
+            batch.add(row.id.clone(), row);
+        }
+        Ok(batch)
+    }
+}
+
+#[async_trait]
+impl LockedRead<VersionById> for FunctionVersionRepository {
+    type Output = Option<FunctionVersion>;
+
+    /// `SELECT … FOR UPDATE` on the version row (Java `lockById`); a
+    /// corrupt row fails loudly, as every single-row read does.
+    async fn read_locked(
+        &self,
+        query: &VersionById,
+        tx: &mut DbTx<'_>,
+    ) -> Result<Option<FunctionVersion>> {
+        let row = sqlx::query_as::<_, VersionRow>(&format!(
+            "SELECT {COLUMNS} FROM fn_versions WHERE id = $1 FOR UPDATE"
+        ))
+        .bind(&query.0)
+        .fetch_optional(&mut **tx.inner)
+        .await?;
+        row.map(to_entity_or_corrupt).transpose()
     }
 }
 

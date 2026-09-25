@@ -9,7 +9,7 @@
 //! return a value, only keys and metadata; [`FunctionSettingsRepository::decrypt_secrets`]
 //! is for the host control plane's desired state (P6).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -49,6 +49,28 @@ impl FunctionSettingsRepository {
                 .fetch_all(&self.pool)
                 .await?;
         Ok(rows.into_iter().collect())
+    }
+
+    /// Every function's config in `function_ids`, in one query, keyed by
+    /// function (absent for a function with none).
+    pub async fn config_maps(
+        &self,
+        function_ids: &[String],
+    ) -> Result<HashMap<String, BTreeMap<String, String>>> {
+        let mut out: HashMap<String, BTreeMap<String, String>> = HashMap::new();
+        if function_ids.is_empty() {
+            return Ok(out);
+        }
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT function_id, key, value FROM fn_config WHERE function_id = ANY($1)",
+        )
+        .bind(function_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        for (function_id, key, value) in rows {
+            out.entry(function_id).or_default().insert(key, value);
+        }
+        Ok(out)
     }
 
     // ── secrets ────────────────────────────────────────────────────────────
@@ -113,6 +135,54 @@ impl FunctionSettingsRepository {
                     tracing::warn!(function_id, key = %key, error = %e, "function secret did not decrypt");
                     None
                 }
+            })
+            .collect())
+    }
+
+    /// [`Self::decrypt_secrets`] for many `(function_id, declared keys)`
+    /// requests in one query, answered in request order. Only the keys a
+    /// request names are decrypted for it.
+    pub async fn decrypt_secrets_each(
+        &self,
+        requests: &[(&str, Vec<String>)],
+    ) -> Result<Vec<BTreeMap<String, String>>> {
+        let empty = || requests.iter().map(|_| BTreeMap::new()).collect();
+        let Some(encryption) = &self.encryption else {
+            return Ok(empty());
+        };
+        let function_ids: Vec<&str> = requests
+            .iter()
+            .filter(|(_, keys)| !keys.is_empty())
+            .map(|(f, _)| *f)
+            .collect();
+        if function_ids.is_empty() {
+            return Ok(empty());
+        }
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT function_id, key, value_ref FROM fn_secrets WHERE function_id = ANY($1)",
+        )
+        .bind(&function_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut refs: HashMap<(String, String), String> = HashMap::new();
+        for (function_id, key, value_ref) in rows {
+            refs.insert((function_id, key), value_ref);
+        }
+        Ok(requests
+            .iter()
+            .map(|(function_id, keys)| {
+                keys.iter()
+                    .filter_map(|key| {
+                        let value_ref = refs.get(&(function_id.to_string(), key.clone()))?;
+                        match encryption.decrypt_ref(value_ref) {
+                            Ok(plaintext) => Some((key.clone(), plaintext)),
+                            Err(e) => {
+                                tracing::warn!(function_id, key = %key, error = %e, "function secret did not decrypt");
+                                None
+                            }
+                        }
+                    })
+                    .collect()
             })
             .collect())
     }

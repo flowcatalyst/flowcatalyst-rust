@@ -233,6 +233,36 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - The gate is anchor plus `platform:function:host:control`; with no credential, 401.
 - A golden test compares the desired-state bytes with the Java output for the same fixture rows.
 
+> **P6 outcome (2026-09-25).** Done on `feat/fn-p6-control`.
+> - The four routes are `function/control_api.rs`, merged into the platform router outside the OpenAPI
+>   document (Java keeps them out of its lockfile too). The gate is Java's: the platform's bearer
+>   extractor answers 401 with no credential, then `403 ANCHOR_REQUIRED` and `403 PERMISSION_REQUIRED`.
+>   A host authenticates with `client_credentials` as a service account with no client ids (so its
+>   tokens are anchor-scoped) holding the built-in `function-host` role.
+> - **Desired state** (`function/desired_state.rs`) is written with the Jackson-compatible `JsonNode`
+>   writer in Java's record key order. Golden: Java's own `DesiredState.build`, run over a
+>   Java-migrated Postgres loaded with `tests/data/function/desired-state-fixture.sql`, wrote
+>   `desired-state-golden.json` (`tests/java/…/operations/DesiredStateGoldenGen.java`; the classes
+>   changed since the pin were recompiled from the pinned sources). The Rust build over the same rows,
+>   in a Rust-migrated database, gives the same bytes and ETags for all four pools (live, candidate,
+>   alias-only, warm/lazy, signer, webhook signing secret, declared-only config and decrypted secrets,
+>   `missingSettings`, JSON escaping, `unload` at the live window's edge, `publicRoutes`, a corrupt
+>   candidate skipped, a corrupt live version's `500 CORRUPT_ROW` in its own pool only). The reads are
+>   batched: a fixed number of queries per build, where Java reads settings and credentials per
+>   function.
+> - **Heartbeat**: the host upsert and the stale-host purge run in one transaction through
+>   `FunctionHostRepository::heartbeat`, with no event and no audit (the infrastructure exception, as
+>   Java). `MarkVersionReady` (`operations/mark_ready.rs`) is a use case on `PgUnitOfWork::run` that
+>   reads the version under its row lock (`LockedRead<VersionById>`) and emits
+>   `platform:function:version:ready`; the heartbeat swallows `VERSION_NOT_PUBLISHED`. As Java's
+>   `LoadState.ok`, a `REGISTERED` report marks ready as well as `LOADED`.
+> - **Events** go through the ingest repository `POST /api/events/batch` uses, `source =
+>   function:<address>`, with Java's four checks in order. **Artifacts** stream from the blob store.
+> - `tests/function_host_e2e_test.rs` runs the platform on a socket and an in-process `FnHost` against
+>   it: create, upload `pdk.wasm`, publish (signatures off), config and secret, the host registers the
+>   candidate and the platform marks it `READY`, promote, the host serves it with its settings, the
+>   guest's emit lands in `msg_events`, disable unloads it, delete empties the document.
+
 **P7: frontend** (about 2,500 of Vue)
 - Port the Java SPA pages: `frontend/src/pages/{functions,function-domains,function-policies}` plus `api/functions.ts`.
 - Follow CLAUDE.md frontend conventions (PrimeVue, no Tailwind, `useListState`).

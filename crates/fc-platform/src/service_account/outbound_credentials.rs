@@ -110,6 +110,25 @@ impl OutboundCredentialsResolver {
         Ok(resolved)
     }
 
+    /// [`Self::for_application`] for many applications at once, read fresh:
+    /// no cache is consulted or filled (Java's desired state calls the
+    /// uncached `OutboundCredentials.resolve`, memoised for one build only,
+    /// so a rotated secret reaches the next poll). Absent for an application
+    /// with no active account.
+    pub async fn for_applications_fresh(
+        &self,
+        application_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, OutboundCredentials>> {
+        let stored = self
+            .service_accounts
+            .oldest_active_webhook_credentials_for(application_ids)
+            .await?;
+        Ok(stored
+            .into_iter()
+            .map(|(application_id, s)| (application_id, self.open(&s)))
+            .collect())
+    }
+
     /// One named account's credentials (Java `OutboundCredentials.resolveById`).
     pub async fn by_service_account_id(&self, id: &str) -> Result<ById> {
         if let Some(hit) = self.by_id.get(id) {

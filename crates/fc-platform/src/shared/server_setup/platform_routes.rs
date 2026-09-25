@@ -1053,6 +1053,27 @@ pub fn build_platform_routes(
         },
     };
 
+    // The host control plane reads what the function routes write, with the
+    // same artifact store and the same credentials resolver (read fresh).
+    let function_control_state = crate::function::control_api::FunctionControlState {
+        desired: Arc::new(crate::function::desired_state::DesiredStateBuilder {
+            functions: repos.function_repo.clone(),
+            versions: repos.function_version_repo.clone(),
+            hosts: repos.function_host_repo.clone(),
+            settings: functions_state.settings.clone(),
+            routes: repos.function_route_repo.clone(),
+            credentials: outbound_credentials.clone(),
+        }),
+        functions: repos.function_repo.clone(),
+        versions: repos.function_version_repo.clone(),
+        hosts: repos.function_host_repo.clone(),
+        applications: repos.application_repo.clone(),
+        event_types: repos.event_type_repo.clone(),
+        events: repos.event_repo.clone(),
+        artifacts: functions_state.ops.artifacts.clone(),
+        unit_of_work: functions_state.ops.unit_of_work.clone(),
+    };
+
     let bff_scheduled_jobs_state = crate::shared::bff_scheduled_jobs_api::BffScheduledJobsState {
         repo: repos.scheduled_job_repo.clone(),
         instance_repo: repos.scheduled_job_instance_repo.clone(),
@@ -1106,6 +1127,7 @@ pub fn build_platform_routes(
         processes: processes_state,
         scheduled_jobs: scheduled_jobs_state,
         functions: functions_state,
+        function_control: function_control_state,
         dispatch_jobs: dispatch_jobs_state,
         filter_options: filter_options_state,
         clients: clients_state,

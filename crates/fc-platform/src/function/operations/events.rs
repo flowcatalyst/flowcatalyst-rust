@@ -231,6 +231,35 @@ impl VersionPublished {
     }
 }
 
+/// `{functionId, address, versionId, version, hostId}`: a host's heartbeat
+/// marked the version `READY` (Java `FunctionEvents.VersionReady`), grouped
+/// with the function's own events.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionReady {
+    #[serde(skip)]
+    pub metadata: EventMetadata,
+    pub function_id: String,
+    pub address: String,
+    pub version_id: String,
+    pub version: i32,
+    pub host_id: String,
+}
+impl_domain_event!(VersionReady);
+
+impl VersionReady {
+    pub fn new(ctx: &ExecutionContext, f: &Function, v: &FunctionVersion, host_id: &str) -> Self {
+        Self {
+            metadata: function_metadata(ctx, VERSION_READY, f),
+            function_id: f.id.clone(),
+            address: f.address.render(),
+            version_id: v.id.clone(),
+            version: v.version,
+            host_id: host_id.to_string(),
+        }
+    }
+}
+
 /// `{functionId, address, versionId, version}`.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
