@@ -8,6 +8,8 @@ interface Props {
 	placeholder?: string;
 	showClear?: boolean;
 	maxSelectedLabels?: number;
+	/** Pass "self" when hosted inside a Popover (e.g. the filter popup) */
+	appendTo?: string;
 }
 
 withDefaults(defineProps<Props>(), {
@@ -15,6 +17,7 @@ withDefaults(defineProps<Props>(), {
 	placeholder: "All Clients",
 	showClear: true,
 	maxSelectedLabels: 2,
+	appendTo: "body",
 });
 
 const emit = defineEmits<{
@@ -44,6 +47,7 @@ function onUpdate(value: string | string[] | null) {
     :placeholder="placeholder"
     :maxSelectedLabels="maxSelectedLabels"
     :loading="loading"
+    :appendTo="appendTo"
     filter
     class="client-filter"
     @update:modelValue="onUpdate"
@@ -57,6 +61,7 @@ function onUpdate(value: string | string[] | null) {
     :placeholder="placeholder"
     :showClear="showClear"
     :loading="loading"
+    :appendTo="appendTo"
     filter
     class="client-filter"
     @update:modelValue="onUpdate"

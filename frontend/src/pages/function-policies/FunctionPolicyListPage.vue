@@ -2,15 +2,18 @@
 // Function policies (anchor only): per owner, the signers allowed to publish
 // and the limit ceilings. `GET /api/function-policies` returns the stored
 // rows; an owner without one is shown with the platform defaults, read once
-// (the default shape is the same for every such owner).
+// (the default shape is the same for every such owner). A policy opens in a
+// drawer over this list.
 import { computed, onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { functionsApi, type PolicyResponse } from "@/api/functions";
-import { useReturnTo } from "@/composables/useReturnTo";
 import { useClientOptions } from "@/composables/useClientOptions";
 import { useListState } from "@/composables/useListState";
+import { useTableFilters } from "@/composables/useTableFilters";
 import { formatDate } from "@/pages/functions/format";
 
-const { navigateToDetail } = useReturnTo();
+const router = useRouter();
+const route = useRoute();
 const clientOptions = useClientOptions();
 
 interface Row {
@@ -22,12 +25,18 @@ interface Row {
 const rows = ref<Row[]>([]);
 const loading = ref(true);
 
-const { filters, hasActiveFilters, clearFilters } = useListState({
+const listState = useListState({
 	filters: {
 		q: { type: "string", key: "q" },
 		stored: { type: "boolean", key: "stored" },
 	},
 });
+const { filters } = listState;
+// The rows are filtered below (search spans signers); the toolbar only needs
+// the popup badge and Clear All.
+const { activeFilterCount, clearAll } = useTableFilters(listState, [
+	{ field: "stored", param: "stored" },
+]);
 
 const storedOptions = [
 	{ label: "Custom policies", value: true },
@@ -83,12 +92,11 @@ async function load() {
 
 onMounted(load);
 
-function viewPolicy(row: Row) {
-	navigateToDetail(`/function-policies/${encodeURIComponent(row.owner)}`);
-}
-
-function onRowClick(event: { data: Row }) {
-	viewPolicy(event.data);
+function openDetail(row: Row) {
+	void router.push({
+		path: `/function-policies/${encodeURIComponent(row.owner)}`,
+		query: route.query,
+	});
 }
 </script>
 
@@ -102,34 +110,6 @@ function onRowClick(event: { data: Row }) {
     </header>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <div class="filter-row">
-          <IconField class="search-field">
-            <InputIcon class="pi pi-search" />
-            <InputText v-model="filters.q.value" placeholder="Owner, issuer or subject…" />
-          </IconField>
-          <Select
-            v-model="filters.stored.value"
-            :options="storedOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All owners"
-            class="filter-select"
-            showClear
-          />
-          <Button
-            v-if="hasActiveFilters"
-            icon="pi pi-filter-slash"
-            text
-            rounded
-            severity="secondary"
-            v-tooltip="'Clear filters'"
-            @click="clearFilters"
-          />
-          <Button icon="pi pi-refresh" text rounded v-tooltip="'Refresh'" @click="load" />
-        </div>
-      </div>
-
       <DataTable
         :value="filteredRows"
         :loading="loading"
@@ -137,12 +117,40 @@ function onRowClick(event: { data: Row }) {
         paginator
         :rows="50"
         :rowsPerPageOptions="[50, 100, 250]"
-        row-hover
-        selection-mode="single"
+        rowHover
         stripedRows
+        :rowClass="() => 'clickable-row'"
         emptyMessage="No owners found"
-        @row-click="onRowClick"
+        @row-click="(e) => openDetail(e.data)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Owner, issuer or subject..."
+            show-refresh
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+            @refresh="load"
+          >
+            <template #filters>
+              <FcFormField label="Policy">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.stored.value"
+                    :options="storedOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All owners"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
         <Column header="Owner">
           <template #body="{ data }">
             <span :class="{ 'scope-platform': data.owner === 'platform' }">{{ data.ownerLabel }}</span>
@@ -178,36 +186,15 @@ function onRowClick(event: { data: Row }) {
         </Column>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: the policy child route renders over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="load" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 16px;
-}
-
-.filter-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.filter-select {
-  min-width: 200px;
-}
-
-.search-field {
-  flex: 1 1 240px;
-}
-
-.search-field :deep(.p-inputtext) {
-  width: 100%;
-}
-
 .signer-line {
   font-size: 0.8125rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

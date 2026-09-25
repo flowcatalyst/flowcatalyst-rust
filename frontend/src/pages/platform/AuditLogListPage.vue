@@ -12,6 +12,7 @@ import {
 import { applicationsApi } from "@/api/applications";
 import { useCursorPagination } from "@/composables/useCursorPagination";
 import { useListState } from "@/composables/useListState";
+import { useTableFilters } from "@/composables/useTableFilters";
 import { useClientOptions } from "@/composables/useClientOptions";
 import ClientFilter from "@/components/ClientFilter.vue";
 
@@ -28,23 +29,36 @@ const { ensureLoaded: ensureClients, getLabel: getClientLabel } = useClientOptio
 
 // Filters synced to URL. Page size is controlled by the cursor pager, not
 // in URL — cursor pagination doesn't have stable page numbers anyway.
+const listState = useListState(
+	{
+		filters: {
+			entityType: { type: "string", key: "entityType" },
+			operation: { type: "string", key: "operation" },
+			applicationIds: { type: "array", key: "applicationIds" },
+			clientIds: { type: "array", key: "clientIds" },
+		},
+		pageSize: 100,
+		debounceFields: [],
+	},
+	() => {
+		if (initialLoading.value) return;
+		void cursor.reset();
+	},
+);
 const { filters, pageSize, hasActiveFilters, clearFilters: clearListFilters } =
-	useListState(
-		{
-			filters: {
-				entityType: { type: "string", key: "entityType" },
-				operation: { type: "string", key: "operation" },
-				applicationIds: { type: "array", key: "applicationIds" },
-				clientIds: { type: "array", key: "clientIds" },
-			},
-			pageSize: 100,
-			debounceFields: [],
-		},
-		() => {
-			if (initialLoading.value) return;
-			void cursor.reset();
-		},
-	);
+	listState;
+
+// The audit-log API has no free-text search param — the toolbar hides its
+// search box and all constraints live in the popup.
+
+// Lazy cursor table: the DataTable filter meta isn't bound — popup inputs
+// write the listState refs directly and onChange resets the cursor.
+const { activeFilterCount } = useTableFilters(listState, [
+	{ field: "entityType", param: "entityType" },
+	{ field: "operation", param: "operation" },
+	{ field: "applicationIds", param: "applicationIds" },
+	{ field: "clientIds", param: "clientIds" },
+]);
 
 const cursor = useCursorPagination<AuditLog>({
 	fetchPage: async (after) => {
@@ -139,7 +153,8 @@ function getEntityTypeSeverity(entityType: string): string {
 	return types[entityType] || "secondary";
 }
 
-function formatJson(json: string | null): string {
+// Absent on the wire means `undefined` (huma omits empty optionals).
+function formatJson(json: string | null | undefined): string {
 	if (!json) return "No data";
 	try {
 		return JSON.stringify(JSON.parse(json), null, 2);
@@ -164,66 +179,6 @@ onMounted(async () => {
       </div>
     </header>
 
-    <!-- Filters -->
-    <div class="fc-card filter-card">
-      <div class="filter-row">
-        <div class="filter-group">
-          <label>Entity Type</label>
-          <Select
-            v-model="filters.entityType.value"
-            :options="entityTypes"
-            placeholder="All Entity Types"
-            :showClear="true"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Operation</label>
-          <Select
-            v-model="filters.operation.value"
-            :options="operations"
-            placeholder="All Operations"
-            :showClear="true"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Application</label>
-          <MultiSelect
-            v-model="filters.applicationIds.value"
-            :options="applicationOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All Applications"
-            :maxSelectedLabels="2"
-            filter
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Client</label>
-          <ClientFilter
-            v-model="filters.clientIds.value"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-actions">
-          <Button
-            v-if="hasActiveFilters"
-            label="Clear Filters"
-            icon="pi pi-filter-slash"
-            text
-            severity="secondary"
-            @click="clearFilters"
-          />
-        </div>
-      </div>
-    </div>
-
     <!-- Data Table -->
     <div class="fc-card table-card">
       <div v-if="initialLoading" class="loading-container">
@@ -238,6 +193,65 @@ onMounted(async () => {
         @row-click="(e) => viewDetails(e.data)"
         :rowClass="() => 'clickable-row'"
       >
+        <template #header>
+          <FcTableToolbar
+            :show-search="false"
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="hasActiveFilters"
+            show-refresh
+            @refresh="cursor.refresh"
+            @clear-all="clearFilters"
+          >
+            <template #filters>
+              <FcFormField label="Entity Type">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.entityType.value"
+                    :options="entityTypes"
+                    placeholder="All Entity Types"
+                    :showClear="true"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Operation">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.operation.value"
+                    :options="operations"
+                    placeholder="All Operations"
+                    :showClear="true"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Application">
+                <template #default="{ id: fieldId }">
+                  <MultiSelect
+                    :id="fieldId"
+                    v-model="filters.applicationIds.value"
+                    :options="applicationOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All Applications"
+                    :maxSelectedLabels="2"
+                    filter
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Client">
+                <ClientFilter
+                  v-model="filters.clientIds.value"
+                  appendTo="self"
+                />
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+
         <Column field="performedAt" header="Time" style="width: 15%">
           <template #body="{ data }">
             <span class="time-text">{{ formatDateTime(data.performedAt) }}</span>
@@ -416,38 +430,6 @@ onMounted(async () => {
   text-align: center;
 }
 
-.filter-card {
-  margin-bottom: 24px;
-}
-
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 200px;
-}
-
-.filter-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #475569;
-}
-
-.filter-input {
-  width: 100%;
-}
-
-.filter-actions {
-  margin-left: auto;
-}
-
 .table-card {
   padding: 0;
   overflow: hidden;
@@ -584,21 +566,5 @@ onMounted(async () => {
   overflow-x: auto;
   max-height: 300px;
   margin: 0;
-}
-
-@media (max-width: 768px) {
-  .filter-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .filter-group {
-    min-width: 100%;
-  }
-
-  .filter-actions {
-    margin-left: 0;
-    margin-top: 8px;
-  }
 }
 </style>

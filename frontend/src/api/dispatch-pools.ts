@@ -1,26 +1,21 @@
 import { apiFetch } from "./client";
+import type {
+	CreatedResponse,
+	DispatchPoolListResponse as GenDispatchPoolListResponse,
+	DispatchPoolResponse,
+} from "./generated";
 
+// Request-side string union the forms/filters rely on. The generated
+// response types deliberately stay `string` (the spec doesn't carry enums —
+// see docs/frontend-api-types-adoption.md on SDK coordination).
 export type DispatchPoolStatus = "ACTIVE" | "SUSPENDED" | "ARCHIVED";
 
-export interface DispatchPool {
-	id: string;
-	code: string;
-	name: string;
-	description?: string;
-	/** `null` means concurrency-only (no rate limiter). */
-	rateLimit: number | null;
-	concurrency: number;
-	clientId?: string;
-	clientIdentifier?: string;
-	status: DispatchPoolStatus;
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface DispatchPoolListResponse {
-	pools: DispatchPool[];
-	total: number;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports. `rateLimit` is absent (not `null`) on the wire
+// for concurrency-only pools.
+export type DispatchPool = DispatchPoolResponse;
+export type DispatchPoolListResponse = GenDispatchPoolListResponse;
 
 export interface CreateDispatchPoolRequest {
 	code: string;
@@ -46,11 +41,6 @@ export interface DispatchPoolFilters {
 	anchorLevel?: boolean;
 }
 
-export interface StatusResponse {
-	message: string;
-	poolId: string;
-}
-
 export const dispatchPoolsApi = {
 	list(filters: DispatchPoolFilters = {}): Promise<DispatchPoolListResponse> {
 		const params = new URLSearchParams();
@@ -67,7 +57,8 @@ export const dispatchPoolsApi = {
 		return apiFetch(`/dispatch-pools/${id}`);
 	},
 
-	create(data: CreateDispatchPoolRequest): Promise<DispatchPool> {
+	/** POST /dispatch-pools returns the standard created envelope `{ id }`, not the full pool. */
+	create(data: CreateDispatchPoolRequest): Promise<CreatedResponse> {
 		return apiFetch("/dispatch-pools", {
 			method: "POST",
 			body: JSON.stringify(data),
@@ -81,19 +72,21 @@ export const dispatchPoolsApi = {
 		});
 	},
 
-	delete(id: string): Promise<StatusResponse> {
+	// delete/suspend/activate return 204 No Content on the wire; the old
+	// `{ message, poolId }` envelope never existed.
+	delete(id: string): Promise<void> {
 		return apiFetch(`/dispatch-pools/${id}`, {
 			method: "DELETE",
 		});
 	},
 
-	suspend(id: string): Promise<StatusResponse> {
+	suspend(id: string): Promise<void> {
 		return apiFetch(`/dispatch-pools/${id}/suspend`, {
 			method: "POST",
 		});
 	},
 
-	activate(id: string): Promise<StatusResponse> {
+	activate(id: string): Promise<void> {
 		return apiFetch(`/dispatch-pools/${id}/activate`, {
 			method: "POST",
 		});

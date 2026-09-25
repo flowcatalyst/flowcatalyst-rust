@@ -3,32 +3,28 @@
  */
 
 import { apiFetch, bffFetch } from "./client";
+import type {
+	AuditLogApplicationIdsResponse,
+	AuditLogClientIdsResponse,
+	AuditLogEntityTypesResponse,
+	AuditLogListResponse as GenAuditLogListResponse,
+	AuditLogOperationsResponse,
+	AuditLogResponse,
+} from "./generated";
 
-export interface AuditLog {
-	id: string;
-	entityType: string;
-	entityId: string;
-	operation: string;
-	principalId: string | null;
-	principalName: string | null;
-	applicationId: string | null;
-	clientId: string | null;
-	performedAt: string;
-}
-
-export interface AuditLogDetail extends AuditLog {
-	operationJson: string | null;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports. Absent fields are `undefined` (not `null`) on
+// the wire, and the detail endpoint returns the same AuditLogResponse —
+// `operationJson` lives on the base shape (optional).
+export type AuditLog = AuditLogResponse;
+export type AuditLogDetail = AuditLogResponse;
 
 /**
  * Cursor-paginated audit logs response. Backend keysets on
  * `(performedAt, id) DESC` and never counts — `aud_logs` is unbounded.
  */
-export interface AuditLogListResponse {
-	auditLogs: AuditLog[];
-	hasMore: boolean;
-	nextCursor?: string;
-}
+export type AuditLogListResponse = GenAuditLogListResponse;
 
 export interface AuditLogFilters {
 	entityType?: string;
@@ -87,29 +83,29 @@ export async function fetchAuditLogsForEntity(
 /**
  * Fetch distinct entity types that have audit logs.
  */
-export async function fetchEntityTypes(): Promise<{ entityTypes: string[] }> {
-	return apiFetch<{ entityTypes: string[] }>("/audit-logs/entity-types");
+export async function fetchEntityTypes(): Promise<AuditLogEntityTypesResponse> {
+	return apiFetch<AuditLogEntityTypesResponse>("/audit-logs/entity-types");
 }
 
 /**
  * Fetch distinct operations that have audit logs.
  */
-export async function fetchOperations(): Promise<{ operations: string[] }> {
-	return apiFetch<{ operations: string[] }>("/audit-logs/operations");
+export async function fetchOperations(): Promise<AuditLogOperationsResponse> {
+	return apiFetch<AuditLogOperationsResponse>("/audit-logs/operations");
 }
 
 /**
  * Fetch distinct application IDs present in audit logs.
  */
-export async function fetchDistinctApplicationIds(): Promise<{ applicationIds: string[] }> {
-	return apiFetch<{ applicationIds: string[] }>("/audit-logs/application-ids");
+export async function fetchDistinctApplicationIds(): Promise<AuditLogApplicationIdsResponse> {
+	return apiFetch<AuditLogApplicationIdsResponse>("/audit-logs/application-ids");
 }
 
 /**
  * Fetch distinct client IDs present in audit logs.
  */
-export async function fetchDistinctClientIds(): Promise<{ clientIds: string[] }> {
-	return apiFetch<{ clientIds: string[] }>("/audit-logs/client-ids");
+export async function fetchDistinctClientIds(): Promise<AuditLogClientIdsResponse> {
+	return apiFetch<AuditLogClientIdsResponse>("/audit-logs/client-ids");
 }
 
 /**

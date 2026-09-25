@@ -1,52 +1,37 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
 	connectionsApi,
 	type Connection,
 	type ConnectionStatus,
 } from "@/api/connections";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 const connections = ref<Connection[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-const { filters } = useListState({
+const listState = useListState({
 	filters: {
 		q: { type: "string" as const, key: "q" },
 		status: { type: "string" as const, key: "status" },
 	},
 });
+const { filters } = listState;
 
-const statusOptions = [
-	{ label: "All Statuses", value: "" },
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[{ field: "status", param: "status" }],
+);
+
+const statusFilterOptions = [
 	{ label: "Active", value: "ACTIVE" },
 	{ label: "Paused", value: "PAUSED" },
 ];
-
-const filteredConnections = computed(() => {
-	let result = connections.value;
-
-	if (filters.status.value) {
-		result = result.filter((conn) => conn.status === filters.status.value);
-	}
-
-	if (filters.q.value) {
-		const query = filters.q.value.toLowerCase();
-		result = result.filter(
-			(conn) =>
-				conn.code.toLowerCase().includes(query) ||
-				conn.name.toLowerCase().includes(query) ||
-				conn.clientIdentifier?.toLowerCase().includes(query),
-		);
-	}
-
-	return result;
-});
 
 onMounted(async () => {
 	await loadConnections();
@@ -64,6 +49,17 @@ async function loadConnections() {
 	} finally {
 		loading.value = false;
 	}
+}
+
+function openDetail(id: string, edit = false) {
+	void router.push({
+		path: `/connections/${id}`,
+		query: edit ? { ...route.query, edit: "true" } : route.query,
+	});
+}
+
+function openCreate() {
+	void router.push({ path: "/connections/new", query: route.query });
 }
 
 function getStatusSeverity(status: ConnectionStatus) {
@@ -96,40 +92,53 @@ function getScopeLabel(conn: Connection) {
         <h1 class="page-title">Connections</h1>
         <p class="page-subtitle">Manage webhook connections for event delivery</p>
       </div>
-      <Button label="Create Connection" icon="pi pi-plus" @click="router.push('/connections/new')" />
+      <Button label="Create Connection" icon="pi pi-plus" @click="openCreate" />
     </header>
 
     <Message v-if="error" severity="error" class="error-message">{{ error }}</Message>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <IconField class="search-wrapper">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="filters.q.value" placeholder="Search connections..." />
-        </IconField>
-        <Select
-          v-model="filters.status.value"
-          :options="statusOptions"
-          optionLabel="label"
-          optionValue="value"
-          placeholder="Filter by status"
-          class="status-filter"
-        />
-      </div>
-
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredConnections"
+        :value="connections"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['code', 'name', 'clientIdentifier']"
         paginator
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
         stripedRows
-        emptyMessage="No connections found"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => openDetail(e.data.id)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search connections..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.status.value"
+                    :options="statusFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+        <template #empty>No connections found</template>
+
         <Column field="code" header="Code" sortable>
           <template #body="{ data }">
             <code class="conn-code">{{ data.code }}</code>
@@ -151,54 +160,28 @@ function getScopeLabel(conn: Connection) {
             {{ formatDate(data.createdAt) }}
           </template>
         </Column>
-        <Column header="Actions" style="width: 120px">
+        <Column header="Actions" style="width: 80px">
           <template #body="{ data }">
-            <Button
-              icon="pi pi-eye"
-              text
-              rounded
-              v-tooltip="'View'"
-              @click="navigateToDetail(`/connections/${data.id}`)"
-            />
             <Button
               icon="pi pi-pencil"
               text
               rounded
               v-tooltip="'Edit'"
-              @click="navigateToDetail(`/connections/${data.id}`)"
+              @click.stop="openDetail(data.id, true)"
             />
           </template>
         </Column>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadConnections" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.search-wrapper {
-  flex: 1;
-}
-
-.search-wrapper :deep(.pi-search) {
-  color: #94a3b8;
-}
-
-.status-filter {
-  min-width: 180px;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  padding: 60px;
-}
-
 .error-message {
   margin-bottom: 16px;
 }

@@ -6,6 +6,8 @@
  * Roles an admin assigned by hand stand out; roles that sync or the platform
  * granted are muted.
  */
-export function assignmentSourceSeverity(source: string): 'info' | 'secondary' {
-  return source === 'ADMIN_ASSIGNED' || source === 'ADMIN' ? 'info' : 'secondary';
+export function assignmentSourceSeverity(source: string): "info" | "secondary" {
+	return source === "ADMIN_ASSIGNED" || source === "ADMIN"
+		? "info"
+		: "secondary";
 }

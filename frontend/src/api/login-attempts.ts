@@ -3,29 +3,22 @@
  */
 
 import { apiFetch } from "./client";
+import type {
+	LoginAttemptListResponse as GenLoginAttemptListResponse,
+	LoginAttemptResponse,
+} from "./generated";
 
-export interface LoginAttempt {
-	id: string;
-	attemptType: string;
-	outcome: string;
-	failureReason: string | null;
-	identifier: string;
-	principalId: string | null;
-	ipAddress: string | null;
-	userAgent: string | null;
-	attemptedAt: string;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports.
+export type LoginAttempt = LoginAttemptResponse;
 
 /**
  * Cursor-paginated login attempts. Backend keysets on
  * `(attemptedAt, id) DESC`; `iam_login_attempts` is unbounded so we never
  * count.
  */
-export interface LoginAttemptListResponse {
-	items: LoginAttempt[];
-	hasMore: boolean;
-	nextCursor?: string;
-}
+export type LoginAttemptListResponse = GenLoginAttemptListResponse;
 
 export interface LoginAttemptFilters {
 	attemptType?: string;

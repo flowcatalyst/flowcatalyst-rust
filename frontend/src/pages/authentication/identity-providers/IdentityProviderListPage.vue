@@ -1,41 +1,35 @@
 <script setup lang="ts">
 import { toast } from "@/utils/errorBus";
-import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
 	identityProvidersApi,
 	type IdentityProvider,
 } from "@/api/identity-providers";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 const providers = ref<IdentityProvider[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-const { filters } = useListState({
+const listState = useListState({
 	filters: {
 		q: { type: "string", key: "q" },
 	},
 });
+const { filters } = listState;
+
+// Search-only toolbar: no popup filter specs, but the derived meta still
+// drives the DataTable's client-side global filter.
+const { filters: tableFilters, clearAll } = useTableFilters(listState, []);
 
 // Delete dialog state
 const showDeleteDialog = ref(false);
 const providerToDelete = ref<IdentityProvider | null>(null);
 const deleteLoading = ref(false);
-
-const filteredProviders = computed(() => {
-	if (!filters.q.value) return providers.value;
-	const query = filters.q.value.toLowerCase();
-	return providers.value.filter(
-		(provider) =>
-			provider.name.toLowerCase().includes(query) ||
-			provider.code.toLowerCase().includes(query) ||
-			provider.type.toLowerCase().includes(query),
-	);
-});
 
 onMounted(async () => {
 	await loadProviders();
@@ -55,6 +49,20 @@ async function loadProviders() {
 	}
 }
 
+function openDetail(id: string, edit = false) {
+	void router.push({
+		path: `/authentication/identity-providers/${id}`,
+		query: edit ? { ...route.query, edit: "true" } : route.query,
+	});
+}
+
+function openCreate() {
+	void router.push({
+		path: "/authentication/identity-providers/new",
+		query: route.query,
+	});
+}
+
 function confirmDelete(provider: IdentityProvider) {
 	providerToDelete.value = provider;
 	showDeleteDialog.value = true;
@@ -71,8 +79,12 @@ async function deleteProvider() {
 			(p) => p.id !== providerToDelete.value?.id,
 		);
 		showDeleteDialog.value = false;
-		toast.success("Success", `Identity provider "${providerToDelete.value.name}" deleted`);
-	} catch (e: unknown) {
+		toast.success(
+			"Success",
+			`Identity provider "${providerToDelete.value.name}" deleted`,
+		);
+	} catch {
+		// delete errors surface via the global error toast
 	} finally {
 		deleteLoading.value = false;
 		providerToDelete.value = null;
@@ -97,36 +109,35 @@ function formatDate(dateString: string) {
           Configure external identity providers for federated authentication.
         </p>
       </div>
-      <Button
-        label="Add Identity Provider"
-        icon="pi pi-plus"
-        @click="router.push('/authentication/identity-providers/new')"
-      />
+      <Button label="Add Identity Provider" icon="pi pi-plus" @click="openCreate" />
     </header>
 
     <Message v-if="error" severity="error" class="error-message">{{ error }}</Message>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <IconField class="search-wrapper">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="filters.q.value" placeholder="Search providers..." />
-        </IconField>
-      </div>
-
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredProviders"
+        :value="providers"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['name', 'code', 'type']"
         paginator
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
         stripedRows
-        emptyMessage="No identity providers found"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => openDetail(e.data.id)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search providers..."
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          />
+        </template>
+        <template #empty>No identity providers found</template>
+
         <Column field="name" header="Name" sortable>
           <template #body="{ data }">
             <span class="provider-name">{{ data.name }}</span>
@@ -174,19 +185,19 @@ function formatDate(dateString: string) {
           <template #body="{ data }">
             <div class="action-buttons">
               <Button
-                icon="pi pi-eye"
+                v-tooltip="'Edit'"
+                icon="pi pi-pencil"
                 text
                 rounded
-                v-tooltip="'View Details'"
-                @click="navigateToDetail(`/authentication/identity-providers/${data.id}`)"
+                @click.stop="openDetail(data.id, true)"
               />
               <Button
+                v-tooltip="'Delete'"
                 icon="pi pi-trash"
                 text
                 rounded
                 severity="danger"
-                v-tooltip="'Delete'"
-                @click="confirmDelete(data)"
+                @click.stop="confirmDelete(data)"
               />
             </div>
           </template>
@@ -214,34 +225,25 @@ function formatDate(dateString: string) {
       </div>
 
       <template #footer>
-        <Button label="Cancel" text @click="showDeleteDialog = false" :disabled="deleteLoading" />
+        <Button label="Cancel" text :disabled="deleteLoading" @click="showDeleteDialog = false" />
         <Button
           label="Delete"
           icon="pi pi-trash"
           severity="danger"
-          @click="deleteProvider"
           :loading="deleteLoading"
+          @click="deleteProvider"
         />
       </template>
     </Dialog>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadProviders" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  margin-bottom: 16px;
-}
-
-.search-wrapper :deep(.pi-search) {
-  color: #94a3b8;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  padding: 60px;
-}
-
 .error-message {
   margin-bottom: 16px;
 }

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 import {
 	scheduledJobsApi,
 	type ScheduledJob,
@@ -10,29 +10,43 @@ import {
 } from "@/api/scheduled-jobs";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 
 const jobs = ref<ScheduledJob[]>([]);
 const total = ref(0);
 const loading = ref(false);
 
-const { filters, page, pageSize, hasActiveFilters, clearFilters, onPage } =
-	useListState(
-		{
-			filters: {
-				clientId: { type: "string", key: "clientId" },
-				status: { type: "string", key: "status" },
-				search: { type: "string", key: "q" },
-			},
-			pageSize: 20,
-			sortField: "createdAt",
-			sortOrder: "desc",
+const listState = useListState(
+	{
+		filters: {
+			clientIds: { type: "array", key: "clients" },
+			applicationIds: { type: "array", key: "applications" },
+			statuses: { type: "array", key: "statuses" },
+			search: { type: "string", key: "q" },
 		},
-		() => load(),
-	);
+		pageSize: 20,
+		sortField: "createdAt",
+		sortOrder: "desc",
+	},
+	() => load(),
+);
+const { filters, page, pageSize, onPage } = listState;
+
+// Lazy table: the DataTable filter meta isn't bound — popup inputs write the
+// listState refs directly and load() serializes them into API params.
+const { activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[
+		{ field: "clientId", param: "clientIds" },
+		{ field: "application", param: "applicationIds" },
+		{ field: "status", param: "statuses" },
+	],
+	{ globalParam: "search" },
+);
 
 const filterOptions = ref<ScheduledJobsFilterOptions>({
 	clients: [],
+	applications: [],
 	statuses: [],
 });
 
@@ -48,8 +62,11 @@ async function load() {
 	loading.value = true;
 	try {
 		const result = await scheduledJobsApi.list({
-			clientId: filters.clientId.value || undefined,
-			status: filters.status.value || undefined,
+			clientIds: filters.clientIds.value.length ? filters.clientIds.value : undefined,
+			applicationIds: filters.applicationIds.value.length
+				? filters.applicationIds.value
+				: undefined,
+			statuses: filters.statuses.value.length ? filters.statuses.value : undefined,
 			search: filters.search.value || undefined,
 			page: page.value,
 			size: pageSize.value,
@@ -68,8 +85,12 @@ onMounted(async () => {
 	await load();
 });
 
+function createJob() {
+	void router.push({ path: "/scheduled-jobs/create", query: route.query });
+}
+
 function viewJob(job: ScheduledJob) {
-	navigateToDetail(`/scheduled-jobs/${job.id}`);
+	void router.push({ path: `/scheduled-jobs/${job.id}`, query: route.query });
 }
 
 function onRowClick(event: { data: ScheduledJob }) {
@@ -108,53 +129,10 @@ function formatDate(s?: string): string {
         <h1 class="page-title">Scheduled Jobs</h1>
         <p class="page-subtitle">Cron-triggered webhook jobs</p>
       </div>
-      <Button
-        label="New Scheduled Job"
-        icon="pi pi-plus"
-        @click="router.push('/scheduled-jobs/create')"
-      />
+      <Button label="New Scheduled Job" icon="pi pi-plus" @click="createJob" />
     </header>
 
-    <div class="fc-card">
-      <div class="toolbar">
-        <div class="filter-row">
-          <Select
-            v-model="filters.clientId.value"
-            :options="filterOptions.clients"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All clients"
-            class="filter-select"
-            showClear
-          />
-          <Select
-            v-model="filters.status.value"
-            :options="filterOptions.statuses"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All statuses"
-            class="filter-select"
-            showClear
-          />
-          <IconField class="search-field">
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.search.value"
-              placeholder="Code or name…"
-            />
-          </IconField>
-          <Button
-            v-if="hasActiveFilters"
-            icon="pi pi-filter-slash"
-            text
-            rounded
-            severity="secondary"
-            v-tooltip="'Clear filters'"
-            @click="clearFilters"
-          />
-        </div>
-      </div>
-
+    <div class="fc-card table-card">
       <DataTable
         :value="jobs"
         :loading="loading"
@@ -166,13 +144,65 @@ function formatDate(s?: string): string {
         :rows-per-page-options="[10, 20, 50, 100]"
         data-key="id"
         row-hover
+        :rowClass="() => 'clickable-row'"
         selection-mode="single"
         stripedRows
-        emptyMessage="No scheduled jobs found"
         @row-click="onRowClick"
         @page="onPage"
       >
-        <Column header="Code" field="code" style="width: 22%">
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.search.value"
+            search-placeholder="Code or name…"
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Client">
+                <template #default="{ id: fieldId }">
+                  <MultiSelect
+                    :id="fieldId"
+                    v-model="filters.clientIds.value"
+                    :options="filterOptions.clients"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All clients"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Application">
+                <template #default="{ id: fieldId }">
+                  <MultiSelect
+                    :id="fieldId"
+                    v-model="filters.applicationIds.value"
+                    :options="filterOptions.applications"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All applications"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <MultiSelect
+                    :id="fieldId"
+                    v-model="filters.statuses.value"
+                    :options="filterOptions.statuses"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+
+        <Column header="Code" field="code" style="width: 20%">
           <template #body="{ data }">
             <span class="font-mono text-sm">{{ data.code }}</span>
             <div v-if="data.hasActiveInstance" class="active-flag">
@@ -180,14 +210,20 @@ function formatDate(s?: string): string {
             </div>
           </template>
         </Column>
-        <Column header="Name" field="name" style="width: 18%" />
-        <Column header="Scope" style="width: 14%">
+        <Column header="Name" field="name" style="width: 15%" />
+        <Column header="Client" style="width: 12%">
           <template #body="{ data }">
             <span v-if="data.clientName">{{ data.clientName }}</span>
             <span v-else class="scope-platform">Platform</span>
           </template>
         </Column>
-        <Column header="Crons" style="width: 18%">
+        <Column header="Application" style="width: 12%">
+          <template #body="{ data }">
+            <span v-if="data.applicationName">{{ data.applicationName }}</span>
+            <span v-else class="scope-platform">—</span>
+          </template>
+        </Column>
+        <Column header="Crons" style="width: 16%">
           <template #body="{ data }">
             <span class="font-mono text-sm">{{ formatCrons(data.crons) }}</span>
             <div class="text-muted text-xs">{{ data.timezone }}</div>
@@ -198,52 +234,36 @@ function formatDate(s?: string): string {
             <Tag :value="data.status" :severity="statusSeverity(data.status)" />
           </template>
         </Column>
-        <Column header="Last Fired" style="width: 14%">
+        <Column header="Last Fired" style="width: 12%">
           <template #body="{ data }">
             <span class="text-sm">{{ formatDate(data.lastFiredAt) }}</span>
           </template>
         </Column>
-        <Column header="" style="width: 4rem">
-          <template #body="{ data }">
+        <template #empty>
+          <div class="empty-message">
+            <span>No scheduled jobs found</span>
             <Button
-              icon="pi pi-arrow-right"
-              severity="secondary"
-              text
-              rounded
-              @click.stop="viewJob(data)"
+              v-if="listState.hasActiveFilters.value"
+              label="Clear filters"
+              link
+              @click="clearAll"
             />
-          </template>
-        </Column>
+          </div>
+        </template>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="load" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 16px;
-}
-
-.filter-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.filter-select {
-  min-width: 200px;
-}
-
-.search-field {
-  flex: 1 1 240px;
-}
-
-.search-field :deep(.p-inputtext) {
-  width: 100%;
+.table-card {
+  padding: 0;
+  overflow: hidden;
 }
 
 .font-mono {
@@ -266,5 +286,16 @@ function formatDate(s?: string): string {
 .scope-platform {
   color: var(--text-color-secondary);
   font-style: italic;
+}
+
+.empty-message {
+  text-align: center;
+  padding: 32px 24px;
+  color: #64748b;
+}
+
+.empty-message span {
+  display: block;
+  margin-bottom: 8px;
 }
 </style>

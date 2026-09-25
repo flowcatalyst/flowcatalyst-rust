@@ -1,3 +1,5 @@
+// Stays hand-rolled: BFF endpoint — deliberately stripped from the OpenAPI
+// spec (StripBFFPaths), so no generated types exist for it.
 import { bffFetch } from "./client";
 
 /**

@@ -1,20 +1,21 @@
 import { apiFetch } from "./client";
+import type {
+	ClientApplicationResponse,
+	ClientApplicationsResponse as GenClientApplicationsResponse,
+	ClientListResponse as GenClientListResponse,
+	ClientResponse,
+	CreatedResponse,
+	StatusChangeResponse,
+} from "./generated";
 
-export interface Client {
-	id: string;
-	name: string;
-	identifier: string;
-	status: "ACTIVE" | "INACTIVE" | "SUSPENDED";
-	statusReason?: string;
-	statusChangedAt?: string;
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface ClientListResponse {
-	clients: Client[];
-	total?: number;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports. The generated `status` stays plain `string`
+// (the spec doesn't carry enums — see docs/frontend-api-types-adoption.md).
+export type Client = ClientResponse;
+export type ClientListResponse = GenClientListResponse;
+export type ClientApplication = ClientApplicationResponse;
+export type ClientApplicationsResponse = GenClientApplicationsResponse;
 
 export interface CreateClientRequest {
 	name: string;
@@ -25,24 +26,6 @@ export interface UpdateClientRequest {
 	name: string;
 }
 
-export interface ClientApplication {
-	id: string;
-	code: string;
-	name: string;
-	description?: string;
-	iconUrl?: string;
-	website?: string;
-	effectiveWebsite?: string;
-	logoMimeType?: string;
-	active: boolean;
-	enabledForClient: boolean;
-}
-
-export interface ClientApplicationsResponse {
-	applications: ClientApplication[];
-	total: number;
-}
-
 export interface ClientSearchParams {
 	q?: string;
 	status?: string;
@@ -50,13 +33,17 @@ export interface ClientSearchParams {
 }
 
 export const clientsApi = {
-	list(params?: { page?: number; pageSize?: number; status?: string } | string): Promise<ClientListResponse> {
+	list(
+		params?: { page?: number; pageSize?: number; status?: string } | string,
+	): Promise<ClientListResponse> {
 		const searchParams = new URLSearchParams();
 		if (typeof params === "string") {
 			if (params) searchParams.set("status", params);
 		} else if (params) {
-			if (params.page !== undefined) searchParams.set("page", String(params.page));
-			if (params.pageSize !== undefined) searchParams.set("pageSize", String(params.pageSize));
+			if (params.page !== undefined)
+				searchParams.set("page", String(params.page));
+			if (params.pageSize !== undefined)
+				searchParams.set("pageSize", String(params.pageSize));
 			if (params.status) searchParams.set("status", params.status);
 		}
 		const query = searchParams.toString();
@@ -69,9 +56,7 @@ export const clientsApi = {
 		if (params.status) searchParams.set("status", params.status);
 		if (params.limit) searchParams.set("limit", String(params.limit));
 		const queryString = searchParams.toString();
-		return apiFetch(
-			`/clients/search${queryString ? `?${queryString}` : ""}`,
-		);
+		return apiFetch(`/clients/search${queryString ? `?${queryString}` : ""}`);
 	},
 
 	get(id: string): Promise<Client> {
@@ -82,7 +67,8 @@ export const clientsApi = {
 		return apiFetch(`/clients/by-identifier/${identifier}`);
 	},
 
-	create(data: CreateClientRequest): Promise<Client> {
+	/** POST /clients returns the standard created envelope `{ id }`, not the full client. */
+	create(data: CreateClientRequest): Promise<CreatedResponse> {
 		return apiFetch("/clients", {
 			method: "POST",
 			body: JSON.stringify(data),
@@ -96,20 +82,20 @@ export const clientsApi = {
 		});
 	},
 
-	activate(id: string): Promise<{ message: string }> {
+	activate(id: string): Promise<StatusChangeResponse> {
 		return apiFetch(`/clients/${id}/activate`, {
 			method: "POST",
 		});
 	},
 
-	suspend(id: string, reason: string): Promise<{ message: string }> {
+	suspend(id: string, reason: string): Promise<StatusChangeResponse> {
 		return apiFetch(`/clients/${id}/suspend`, {
 			method: "POST",
 			body: JSON.stringify({ reason }),
 		});
 	},
 
-	deactivate(id: string, reason: string): Promise<{ message: string }> {
+	deactivate(id: string, reason: string): Promise<StatusChangeResponse> {
 		return apiFetch(`/clients/${id}/deactivate`, {
 			method: "POST",
 			body: JSON.stringify({ reason }),
@@ -120,7 +106,7 @@ export const clientsApi = {
 		id: string,
 		category: string,
 		text: string,
-	): Promise<{ message: string }> {
+	): Promise<StatusChangeResponse> {
 		return apiFetch(`/clients/${id}/notes`, {
 			method: "POST",
 			body: JSON.stringify({ category, text }),
@@ -132,10 +118,7 @@ export const clientsApi = {
 		return apiFetch(`/clients/${clientId}/applications`);
 	},
 
-	enableApplication(
-		clientId: string,
-		applicationId: string,
-	): Promise<{ message: string }> {
+	enableApplication(clientId: string, applicationId: string): Promise<void> {
 		return apiFetch(
 			`/clients/${clientId}/applications/${applicationId}/enable`,
 			{
@@ -144,10 +127,7 @@ export const clientsApi = {
 		);
 	},
 
-	disableApplication(
-		clientId: string,
-		applicationId: string,
-	): Promise<{ message: string }> {
+	disableApplication(clientId: string, applicationId: string): Promise<void> {
 		return apiFetch(
 			`/clients/${clientId}/applications/${applicationId}/disable`,
 			{
@@ -159,7 +139,7 @@ export const clientsApi = {
 	updateApplications(
 		clientId: string,
 		enabledApplicationIds: string[],
-	): Promise<{ message: string }> {
+	): Promise<void> {
 		return apiFetch(`/clients/${clientId}/applications`, {
 			method: "PUT",
 			body: JSON.stringify({ enabledApplicationIds }),

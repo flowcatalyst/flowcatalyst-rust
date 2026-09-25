@@ -2,54 +2,72 @@
 import { ref, onMounted } from "vue";
 import { useCursorPagination } from "@/composables/useCursorPagination";
 import { useListState } from "@/composables/useListState";
+import { useTableFilters } from "@/composables/useTableFilters";
 import {
-  fetchLoginAttempts,
-  type LoginAttempt,
+	fetchLoginAttempts,
+	type LoginAttempt,
 } from "@/api/login-attempts";
+import { usersApi } from "@/api/users";
+import { oauthClientsApi } from "@/api/oauth-clients";
 
+const listState = useListState(
+	{
+		filters: {
+			attemptType: { type: "string", key: "attemptType" },
+			outcome: { type: "string", key: "outcome" },
+			identifier: { type: "string", key: "identifier" },
+			dateFrom: { type: "string", key: "from" },
+			dateTo: { type: "string", key: "to" },
+		},
+		pageSize: 100,
+		debounceFields: ["identifier"],
+	},
+	() => {
+		if (initialLoading.value) return;
+		void cursor.reset();
+	},
+);
 const { filters, pageSize, hasActiveFilters, clearFilters: clearListFilters } =
-  useListState(
-    {
-      filters: {
-        attemptType: { type: "string", key: "attemptType" },
-        outcome: { type: "string", key: "outcome" },
-        identifier: { type: "string", key: "identifier" },
-        dateFrom: { type: "string", key: "from" },
-        dateTo: { type: "string", key: "to" },
-      },
-      pageSize: 100,
-      debounceFields: ["identifier"],
-    },
-    () => {
-      if (initialLoading.value) return;
-      void cursor.reset();
-    },
-  );
+	listState;
+
+// Lazy cursor table: the DataTable filter meta isn't bound — popup inputs
+// write the listState refs directly and onChange resets the cursor. The
+// debounced `identifier` field doubles as the toolbar's global search.
+const { activeFilterCount } = useTableFilters(
+	listState,
+	[
+		{ field: "attemptType", param: "attemptType" },
+		{ field: "outcome", param: "outcome" },
+		{ field: "dateFrom", param: "dateFrom" },
+		{ field: "dateTo", param: "dateTo" },
+	],
+	{ globalParam: "identifier" },
+);
 
 const cursor = useCursorPagination<LoginAttempt>({
-  fetchPage: async (after) => {
-    const r = await fetchLoginAttempts({
-      attemptType: filters.attemptType.value || undefined,
-      outcome: filters.outcome.value || undefined,
-      identifier: filters.identifier.value.trim() || undefined,
-      dateFrom: filters.dateFrom.value || undefined,
-      dateTo: filters.dateTo.value || undefined,
-      after,
-      pageSize: pageSize.value,
-    });
-    return {
-      items: r.items,
-      hasMore: r.hasMore,
-      ...(r.nextCursor !== undefined ? { nextCursor: r.nextCursor } : {}),
-    };
-  },
+	fetchPage: async (after) => {
+		const r = await fetchLoginAttempts({
+			attemptType: filters.attemptType.value || undefined,
+			outcome: filters.outcome.value || undefined,
+			identifier: filters.identifier.value.trim() || undefined,
+			dateFrom: filters.dateFrom.value || undefined,
+			dateTo: filters.dateTo.value || undefined,
+			after,
+			pageSize: pageSize.value,
+		});
+		return {
+			items: r.items,
+			hasMore: r.hasMore,
+			...(r.nextCursor !== undefined ? { nextCursor: r.nextCursor } : {}),
+		};
+	},
 });
 const attempts = cursor.items;
 const loading = cursor.loading;
 const initialLoading = ref(true);
 
 async function clearFilters() {
-  clearListFilters();
+	clearListFilters();
 }
 
 // Detail dialog
@@ -59,38 +77,99 @@ const showDetailDialog = ref(false);
 const attemptTypeOptions = ["USER_LOGIN", "SERVICE_ACCOUNT_TOKEN"];
 const outcomeOptions = ["SUCCESS", "FAILURE"];
 
+/** A resolved navigation target for one of the dialog's id rows. */
+interface ResolvedLink {
+	name: string;
+	params: Record<string, string>;
+}
+
+// Resolved once per dialog open (docs/spec/login-attempt-links.md F2). A
+// failed lookup (403, 404, network) leaves the corresponding ref `null` —
+// the row then renders as plain `<code>`, exactly as before, and is never
+// surfaced as an error toast (both API calls suppress the global banner and
+// the 401/403 session modal).
+const principalLink = ref<ResolvedLink | null>(null);
+const identifierLink = ref<ResolvedLink | null>(null);
+
+const silent = { suppressGlobalErrorToast: true, suppressAuthErrorEvent: true };
+
+// Bumped on every open, so a slow lookup for a previously opened attempt
+// can never write its links onto the attempt now showing.
+let resolveGeneration = 0;
+
+async function resolveLinks(attempt: LoginAttempt) {
+	const generation = ++resolveGeneration;
+	const current = () => generation === resolveGeneration;
+	principalLink.value = null;
+	identifierLink.value = null;
+
+	if (attempt.principalId) {
+		try {
+			const principal = await usersApi.get(attempt.principalId, silent);
+			if (!current()) return;
+			if (principal.type === "USER") {
+				principalLink.value = { name: "user-detail", params: { id: attempt.principalId } };
+			} else if (principal.type === "SERVICE" && principal.serviceAccountId) {
+				principalLink.value = {
+					name: "service-account-detail",
+					params: { id: principal.serviceAccountId },
+				};
+			}
+		} catch {
+			// stays unresolved — the row renders as plain text.
+		}
+	}
+
+	if (attempt.attemptType === "SERVICE_ACCOUNT_TOKEN") {
+		try {
+			const client = await oauthClientsApi.getByClientId(attempt.identifier, silent);
+			if (!current()) return;
+			identifierLink.value = { name: "oauth-client-detail", params: { id: client.id } };
+		} catch {
+			// stays unresolved — the row renders as plain text.
+		}
+	} else if (attempt.attemptType === "DEVELOPER_TOKEN") {
+		// The identifier IS the USER principal id — same target as the
+		// Principal ID row, whatever that resolved (or failed) to.
+		identifierLink.value = principalLink.value;
+	} else if (attempt.attemptType === "USER_LOGIN" && principalLink.value?.name === "user-detail") {
+		identifierLink.value = principalLink.value;
+	}
+}
+
 function viewDetails(attempt: LoginAttempt) {
-  selectedAttempt.value = attempt;
-  showDetailDialog.value = true;
+	selectedAttempt.value = attempt;
+	showDetailDialog.value = true;
+	void resolveLinks(attempt);
 }
 
 function formatDateTime(isoString: string): string {
-  return new Date(isoString).toLocaleString();
+	return new Date(isoString).toLocaleString();
 }
 
 function formatAttemptType(type: string): string {
-  return type === "USER_LOGIN" ? "User Login" : "Service Account";
+	return type === "USER_LOGIN" ? "User Login" : "Service Account";
 }
 
 function formatFailureReason(reason: string | null): string {
-  if (!reason) return "";
-  return reason
-    .replace(/_/g, " ")
-    .toLowerCase()
-    .replace(/^./, (c) => c.toUpperCase());
+	if (!reason) return "";
+	return reason
+		.replace(/_/g, " ")
+		.toLowerCase()
+		.replace(/^./, (c) => c.toUpperCase());
 }
 
 function outcomeSeverity(outcome: string): string {
-  return outcome === "SUCCESS" ? "success" : "danger";
+	return outcome === "SUCCESS" ? "success" : "danger";
 }
 
 function attemptTypeSeverity(type: string): string {
-  return type === "USER_LOGIN" ? "info" : "secondary";
+	return type === "USER_LOGIN" ? "info" : "secondary";
 }
 
 onMounted(async () => {
-  await cursor.loadFirst();
-  initialLoading.value = false;
+	await cursor.loadFirst();
+	initialLoading.value = false;
 });
 </script>
 
@@ -100,73 +179,12 @@ onMounted(async () => {
       <div>
         <h1 class="page-title">Login Attempts</h1>
         <p class="page-subtitle">Authentication attempt history for users and service accounts</p>
+        <p class="page-note">
+          SSO sign-ins appear when the platform accepts or refuses the identity provider's response. Failures at the
+          identity provider itself (wrong password, MFA) are only in that provider's logs.
+        </p>
       </div>
     </header>
-
-    <!-- Filters -->
-    <div class="fc-card filter-card">
-      <div class="filter-row">
-        <div class="filter-group">
-          <label>Attempt Type</label>
-          <Select
-            v-model="filters.attemptType.value"
-            :options="attemptTypeOptions"
-            placeholder="All Types"
-            :showClear="true"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Outcome</label>
-          <Select
-            v-model="filters.outcome.value"
-            :options="outcomeOptions"
-            placeholder="All Outcomes"
-            :showClear="true"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Identifier</label>
-          <InputText
-            v-model="filters.identifier.value"
-            placeholder="Email or client_id"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>From</label>
-          <InputText
-            v-model="filters.dateFrom.value"
-            type="datetime-local"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>To</label>
-          <InputText
-            v-model="filters.dateTo.value"
-            type="datetime-local"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-actions">
-          <Button
-            v-if="hasActiveFilters"
-            label="Clear Filters"
-            icon="pi pi-filter-slash"
-            text
-            severity="secondary"
-            @click="clearFilters"
-          />
-        </div>
-      </div>
-    </div>
 
     <!-- Data Table -->
     <div class="fc-card table-card">
@@ -182,6 +200,63 @@ onMounted(async () => {
         @row-click="(e) => viewDetails(e.data)"
         :rowClass="() => 'clickable-row'"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.identifier.value"
+            search-placeholder="Search by email or client_id..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="hasActiveFilters"
+            show-refresh
+            @refresh="cursor.refresh"
+            @clear-all="clearFilters"
+          >
+            <template #filters>
+              <FcFormField label="Attempt Type">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.attemptType.value"
+                    :options="attemptTypeOptions"
+                    placeholder="All Types"
+                    :showClear="true"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Outcome">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.outcome.value"
+                    :options="outcomeOptions"
+                    placeholder="All Outcomes"
+                    :showClear="true"
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="From">
+                <template #default="{ id: fieldId }">
+                  <InputText
+                    :id="fieldId"
+                    v-model="filters.dateFrom.value"
+                    type="datetime-local"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="To">
+                <template #default="{ id: fieldId }">
+                  <InputText
+                    :id="fieldId"
+                    v-model="filters.dateTo.value"
+                    type="datetime-local"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+
         <Column field="attemptedAt" header="Time" style="width: 16%">
           <template #body="{ data }">
             <span class="time-text">{{ formatDateTime(data.attemptedAt) }}</span>
@@ -308,12 +383,26 @@ onMounted(async () => {
 
           <div class="detail-row">
             <span class="detail-label">Identifier</span>
-            <code class="identifier-text">{{ selectedAttempt.identifier }}</code>
+            <RouterLink
+              v-if="identifierLink"
+              :to="{ name: identifierLink.name, params: identifierLink.params }"
+              @click="showDetailDialog = false"
+            >
+              <code class="identifier-text">{{ selectedAttempt.identifier }}</code>
+            </RouterLink>
+            <code v-else class="identifier-text">{{ selectedAttempt.identifier }}</code>
           </div>
 
           <div class="detail-row" v-if="selectedAttempt.principalId">
             <span class="detail-label">Principal ID</span>
-            <code class="identifier-text">{{ selectedAttempt.principalId }}</code>
+            <RouterLink
+              v-if="principalLink"
+              :to="{ name: principalLink.name, params: principalLink.params }"
+              @click="showDetailDialog = false"
+            >
+              <code class="identifier-text">{{ selectedAttempt.principalId }}</code>
+            </RouterLink>
+            <code v-else class="identifier-text">{{ selectedAttempt.principalId }}</code>
           </div>
 
           <div class="detail-row" v-if="selectedAttempt.ipAddress">
@@ -332,6 +421,13 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.page-note {
+  color: #94a3b8;
+  margin-top: 4px;
+  font-size: 12px;
+  max-width: 60rem;
+}
+
 .cursor-pager {
   display: flex;
   align-items: center;
@@ -345,38 +441,6 @@ onMounted(async () => {
   color: var(--text-color-secondary);
   min-width: 4.5rem;
   text-align: center;
-}
-
-.filter-card {
-  margin-bottom: 24px;
-}
-
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 180px;
-}
-
-.filter-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #475569;
-}
-
-.filter-input {
-  width: 100%;
-}
-
-.filter-actions {
-  margin-left: auto;
 }
 
 .table-card {
@@ -488,21 +552,5 @@ onMounted(async () => {
   font-size: 12px;
   color: #64748b;
   word-break: break-all;
-}
-
-@media (max-width: 768px) {
-  .filter-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .filter-group {
-    min-width: 100%;
-  }
-
-  .filter-actions {
-    margin-left: 0;
-    margin-top: 8px;
-  }
 }
 </style>

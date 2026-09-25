@@ -22,11 +22,10 @@ describe("function route permissions", () => {
 	});
 
 	it("gates in-page actions as the route guard does", () => {
-		// A backend without `permissions` (null): the admin-role fallback.
-		const base = { clientId: null, permissions: null };
-		expect(userHasPermission({ ...base, roles: ["platform:super-admin"] }, "platform:function:alias:promote")).toBe(true);
-		expect(userHasPermission({ ...base, roles: ["acme:viewer"] }, "platform:function:alias:promote")).toBe(false);
-		// With permissions, they decide, wildcards included.
+		// The permissions /auth/me sends decide, wildcards included; a role
+		// name alone grants nothing.
+		const base = { clientId: null };
+		expect(userHasPermission({ ...base, roles: ["platform:super-admin"], permissions: [] }, "platform:function:alias:promote")).toBe(false);
 		expect(
 			userHasPermission(
 				{ ...base, roles: ["platform:super-admin"], permissions: ["platform:*:*:*"] },

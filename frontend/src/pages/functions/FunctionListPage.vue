@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
 	functionsApi,
 	type FunctionResponse,
@@ -11,11 +11,13 @@ import { applicationsApi, type Application } from "@/api/applications";
 import { useAuthStore } from "@/stores/auth";
 import { isUnscopedUser, userHasPermission } from "@/stores/permissions";
 import { useListState } from "@/composables/useListState";
+import { useTableFilters } from "@/composables/useTableFilters";
 import { useReturnTo } from "@/composables/useReturnTo";
 import { useClientOptions } from "@/composables/useClientOptions";
 import { formatDate, functionStatusSeverity } from "./format";
 
 const router = useRouter();
+const route = useRoute();
 const { navigateToDetail } = useReturnTo();
 const authStore = useAuthStore();
 const clientOptions = useClientOptions();
@@ -35,18 +37,25 @@ const applications = ref<Application[]>([]);
 const pools = ref<PoolSummaryResponse[]>([]);
 const poolsLoading = ref(true);
 
-const { filters, page, pageSize, hasActiveFilters, clearFilters, onPage } =
-	useListState(
-		{
-			filters: {
-				applicationCode: { type: "string", key: "application" },
-				clientId: { type: "string", key: "client" },
-				status: { type: "string", key: "status" },
-			},
-			pageSize: 20,
+const listState = useListState(
+	{
+		filters: {
+			applicationCode: { type: "string", key: "application" },
+			clientId: { type: "string", key: "client" },
+			status: { type: "string", key: "status" },
 		},
-		() => load(),
-	);
+		pageSize: 20,
+	},
+	() => load(),
+);
+const { filters, page, pageSize, onPage } = listState;
+// Server-side filters (lazy table): the toolbar popup only needs the badge
+// count and Clear All.
+const { activeFilterCount, clearAll } = useTableFilters(listState, [
+	{ field: "applicationCode", param: "applicationCode" },
+	{ field: "clientId", param: "clientId" },
+	{ field: "status", param: "status" },
+]);
 
 const applicationOptions = computed(() =>
 	applications.value.map((a) => ({ label: a.name, value: a.code })),
@@ -129,6 +138,10 @@ function viewFunction(fn: FunctionResponse) {
 function onRowClick(event: { data: FunctionResponse }) {
 	viewFunction(event.data);
 }
+
+function openCreate() {
+	void router.push({ path: "/functions/new", query: route.query });
+}
 </script>
 
 <template>
@@ -142,56 +155,11 @@ function onRowClick(event: { data: FunctionResponse }) {
         v-if="canManage"
         label="New Function"
         icon="pi pi-plus"
-        @click="router.push('/functions/new')"
+        @click="openCreate"
       />
     </header>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <div class="filter-row">
-          <Select
-            v-model="filters.applicationCode.value"
-            :options="applicationOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All applications"
-            class="filter-select"
-            filter
-            showClear
-          />
-          <Select
-            v-if="showClientFilter"
-            v-model="filters.clientId.value"
-            :options="ownerFilterOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All owners"
-            class="filter-select"
-            filter
-            showClear
-          />
-          <Select
-            v-model="filters.status.value"
-            :options="statusOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All statuses"
-            class="filter-select"
-            showClear
-          />
-          <Button
-            v-if="hasActiveFilters"
-            icon="pi pi-filter-slash"
-            text
-            rounded
-            severity="secondary"
-            v-tooltip="'Clear filters'"
-            @click="clearFilters"
-          />
-          <Button icon="pi pi-refresh" text rounded v-tooltip="'Refresh'" @click="load" />
-        </div>
-      </div>
-
       <DataTable
         :value="functions"
         :loading="loading"
@@ -203,12 +171,69 @@ function onRowClick(event: { data: FunctionResponse }) {
         :rows-per-page-options="[10, 20, 50, 100]"
         data-key="id"
         row-hover
-        selection-mode="single"
         stripedRows
         emptyMessage="No functions found"
+        :rowClass="() => 'clickable-row'"
         @row-click="onRowClick"
         @page="onPage"
       >
+        <template #header>
+          <FcTableToolbar
+            :show-search="false"
+            show-refresh
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+            @refresh="load"
+          >
+            <template #filters>
+              <FcFormField label="Application">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.applicationCode.value"
+                    :options="applicationOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All applications"
+                    filter
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField v-if="showClientFilter" label="Owner">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.clientId.value"
+                    :options="ownerFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All owners"
+                    filter
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.status.value"
+                    :options="statusOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
         <Column header="Address">
           <template #body="{ data }">
             <span class="font-mono text-sm">{{ data.address }}</span>
@@ -263,28 +288,15 @@ function onRowClick(event: { data: FunctionResponse }) {
         </li>
       </ul>
     </div>
+
+    <!-- Drawer outlet: the create child route renders over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="load" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-bottom: 16px;
-}
-
-.filter-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.filter-select {
-  min-width: 200px;
-}
-
 .font-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }

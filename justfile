@@ -117,15 +117,16 @@ run:
 # spec still uses path-derived operationIds, so regenerating from it would
 # rename every generated class and break the published SDK API. Until its
 # operationIds match Go's (see docs/sdks.md), the SDK steps refuse to run
-# unless FC_SDK_REGEN_FROM_RUST_SPEC=1 (the frontend client is always
-# regenerated).
+# unless FC_SDK_REGEN_FROM_RUST_SPEC=1.
+#
+# The frontend is not regenerated here: the SPA is Go's and is typed against
+# Go's OpenAPI lockfile (frontend/openapi/openapi.json, a copy of
+# flowcatalyst-go's api/openapi.lock.json — see frontend/PROVENANCE.md).
+# `cd frontend && pnpm api:generate` regenerates its types from that copy.
 # Regenerate every SDK from the live platform's OpenAPI spec
 regen-sdks:
     @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi >/dev/null \
         || (echo "✗ Platform not reachable at http://localhost:{{ FC_API_PORT }}/q/openapi — run 'just run' (or 'just dev') first."; exit 1)
-    @echo "▸ Frontend generated client"
-    @curl -fsS http://localhost:{{ FC_API_PORT }}/q/openapi -o frontend/openapi/openapi.json
-    cd frontend && pnpm api:generate
     @[ "${FC_SDK_REGEN_FROM_RUST_SPEC:-}" = "1" ] \
         || (echo "✗ Not regenerating the SDKs from this platform's spec: its operationIds differ from the published SDKs' (docs/sdks.md). Set FC_SDK_REGEN_FROM_RUST_SPEC=1 to override."; exit 1)
     @echo "▸ Refreshing SDK OpenAPI snapshots from /q/openapi"
