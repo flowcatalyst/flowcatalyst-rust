@@ -57,6 +57,20 @@ pub struct TestApp {
 impl TestApp {
     /// Start a fresh container + migrated DB + full router.
     pub async fn setup() -> Self {
+        Self::setup_with_rate_limit_store(|_| {
+            Arc::new(fc_platform::shared::rate_limit_store::NoopRateLimitStore)
+        })
+        .await
+    }
+
+    /// [`TestApp::setup`] with the distributed rate-limit store `store`
+    /// builds from the test database (the default never limits).
+    #[allow(dead_code)]
+    pub async fn setup_with_rate_limit_store(
+        store: impl FnOnce(
+            &sqlx::PgPool,
+        ) -> Arc<dyn fc_platform::shared::rate_limit_store::RateLimitStore>,
+    ) -> Self {
         let container = Postgres::default()
             .with_db_name("flowcatalyst_test")
             .with_user("test")
@@ -122,9 +136,7 @@ impl TestApp {
             &auth_services,
             &unit_of_work,
             PlatformRoutesConfig {
-                rate_limit_store: Arc::new(
-                    fc_platform::shared::rate_limit_store::NoopRateLimitStore,
-                ),
+                rate_limit_store: store(&pool),
                 rate_limit_policies: Arc::new(
                     fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
                 ),

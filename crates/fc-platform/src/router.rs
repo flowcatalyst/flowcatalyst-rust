@@ -114,7 +114,8 @@ use crate::shared::rate_limit_middleware::{
     rate_limit_per_ip, IpRateLimiterState, RateLimitConfig,
 };
 use crate::shared::rate_limit_store::{
-    distributed_rate_limit_per_ip, Bucket, DistributedIpLimitState,
+    distributed_rate_limit_per_email, distributed_rate_limit_per_ip, Bucket,
+    DistributedEmailLimitState, DistributedIpLimitState,
 };
 use crate::usecase::UnitOfWork;
 use std::sync::Arc;
@@ -342,6 +343,19 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 policy: self.rate_limit_policies.password_reset_ip,
             },
             distributed_rate_limit_per_ip,
+        );
+        // S2.7: the reset request is budgeted per address too, and over
+        // budget it answers exactly as it always does, so the limit can't
+        // be used to tell a known address from an unknown one.
+        let distributed_password_reset_email_layer = axum::middleware::from_fn_with_state(
+            DistributedEmailLimitState {
+                store: self.rate_limit_store.clone(),
+                bucket: Bucket::PASSWORD_RESET_EMAIL,
+                policy: self.rate_limit_policies.password_reset_email,
+                path_suffix: "/request",
+                over_budget: password_reset_requested_response,
+            },
+            distributed_rate_limit_per_email,
         );
 
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
@@ -624,6 +638,7 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_AUTH_PASSWORD_RESET,
                 password_reset_router(self.password_reset)
+                    .layer(distributed_password_reset_email_layer)
                     .layer(distributed_password_reset_layer)
                     .layer(auth_layer.clone()),
             )
@@ -764,6 +779,16 @@ pub fn serve_spa(app: Router, static_dir: &str) -> Router {
         tracing::warn!(dir = %static_dir, "Static dir set but index.html not found");
         app
     }
+}
+
+/// `POST /auth/password-reset/request`'s one answer — for a known address,
+/// an unknown one, and one over its budget alike (the handler's silent
+/// success; `password_reset_email_budget_is_silent` pins the two equal).
+fn password_reset_requested_response() -> axum::response::Response {
+    Json(serde_json::json!({
+        "message": "If an account exists, a reset email has been sent."
+    }))
+    .into_response()
 }
 
 /// `Cache-Control` of every SPA shell response (index.html, whether asked
