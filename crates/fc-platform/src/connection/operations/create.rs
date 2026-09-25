@@ -175,14 +175,7 @@ impl<U: UnitOfWork> CreateConnectionUseCase<U> {
             connection.external_id = Some(ext_id.clone());
         }
 
-        let event = ConnectionCreated::new(
-            ctx,
-            &connection.id,
-            &connection.code,
-            &connection.name,
-            &connection.service_account_id,
-            connection.client_id.as_deref(),
-        );
+        let event = ConnectionCreated::new(ctx, &connection.id, &connection.code, &connection.name);
         Ok((connection, event))
     }
 }

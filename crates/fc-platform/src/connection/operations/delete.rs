@@ -106,12 +106,7 @@ impl<U: UnitOfWork> DeleteConnectionUseCase<U> {
             ));
         }
 
-        let event = ConnectionDeleted::new(
-            ctx,
-            &connection.id,
-            &connection.code,
-            connection.client_id.as_deref(),
-        );
+        let event = ConnectionDeleted::new(ctx, &connection.id, &connection.code);
         Ok((connection, event))
     }
 }

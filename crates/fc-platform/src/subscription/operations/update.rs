@@ -184,17 +184,11 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
         let connection_before = non_blank(subscription.connection_id.clone());
         let endpoint_before = subscription.endpoint.clone();
 
-        // Track changes
-        let mut updated_name: Option<&str> = None;
-        let mut event_types_added: Vec<String> = Vec::new();
-        let mut event_types_removed: Vec<String> = Vec::new();
-
         // Apply updates
         if let Some(ref name) = command.name {
             let name = name.trim();
             if name != subscription.name {
                 subscription.name = name.to_string();
-                updated_name = Some(name);
             }
         }
 
@@ -236,11 +230,7 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
                 .map(|b| b.event_type_code.clone())
                 .collect();
 
-            // Calculate diff
-            event_types_added = new_codes.difference(&old_codes).cloned().collect();
-            event_types_removed = old_codes.difference(&new_codes).cloned().collect();
-
-            if !event_types_added.is_empty() || !event_types_removed.is_empty() {
+            if new_codes != old_codes {
                 subscription.event_types = new_bindings;
             }
         }
@@ -296,13 +286,7 @@ impl<U: UnitOfWork> UpdateSubscriptionUseCase<U> {
         subscription.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = SubscriptionUpdated::new(
-            ctx,
-            &subscription.id,
-            updated_name,
-            event_types_added,
-            event_types_removed,
-        );
+        let event = SubscriptionUpdated::new(ctx, &subscription.id, &subscription.name);
         Ok((subscription, event))
     }
 }

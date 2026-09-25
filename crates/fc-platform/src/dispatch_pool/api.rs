@@ -177,7 +177,7 @@ pub async fn create_dispatch_pool<U: UnitOfWork>(
         Ok(event) => Ok((
             StatusCode::CREATED,
             Json(crate::shared::api_common::CreatedResponse::new(
-                event.dispatch_pool_id,
+                event.pool_id,
             )),
         )),
         Err(err) => Err(err.into()),

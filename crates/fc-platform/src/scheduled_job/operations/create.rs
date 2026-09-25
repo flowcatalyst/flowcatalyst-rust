@@ -150,17 +150,7 @@ impl<U: UnitOfWork> UseCase for CreateScheduledJobUseCase<U> {
             job = job.with_target_url(u);
         }
 
-        let event = ScheduledJobCreated {
-            metadata: ScheduledJobCreated::metadata_for(&ctx, &job.id),
-            scheduled_job_id: job.id.clone(),
-            client_id: job.client_id.clone(),
-            code: job.code.clone(),
-            name: job.name.clone(),
-            crons: job.crons.clone(),
-            timezone: job.timezone.clone(),
-            concurrent: job.concurrent,
-            tracks_completion: job.tracks_completion,
-        };
+        let event = ScheduledJobCreated::new(&ctx, &job.id, &job.code);
 
         self.unit_of_work
             .commit(&job, &*self.repo, event, &cmd)

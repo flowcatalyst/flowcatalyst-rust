@@ -129,7 +129,7 @@ impl<U: UnitOfWork> DeleteClientUseCase<U> {
             ));
         }
 
-        let event = ClientDeleted::new(ctx, &client.id, &client.name, &client.identifier);
+        let event = ClientDeleted::new(ctx, &client.id, &client.identifier);
         Ok((client, event))
     }
 }

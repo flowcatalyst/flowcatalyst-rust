@@ -60,7 +60,8 @@ async fn create_client_emits_event_and_audit_log() {
         client_id
     );
     assert_eq!(
-        app.event_count_by_type("platform:iam:client:created").await,
+        app.event_count_by_type("platform:admin:client:created")
+            .await,
         1,
         "expected one client:created event"
     );
@@ -109,7 +110,8 @@ async fn update_client_emits_second_event_and_audit_log() {
         "expected two aud_logs rows (created + updated)"
     );
     assert_eq!(
-        app.event_count_by_type("platform:iam:client:updated").await,
+        app.event_count_by_type("platform:admin:client:updated")
+            .await,
         1,
     );
 }
@@ -139,7 +141,7 @@ async fn create_anchor_domain_emits_event_and_audit_log() {
     assert_eq!(app.event_count_for(&anchor_id).await, 1);
     assert_eq!(app.audit_count_for(&anchor_id).await, 1);
     assert_eq!(
-        app.event_count_by_type("platform:iam:anchor-domain:created")
+        app.event_count_by_type("platform:admin:anchor-domain:created")
             .await,
         1
     );
@@ -176,7 +178,7 @@ async fn delete_anchor_domain_emits_event_and_audit_log() {
     assert_eq!(app.event_count_for(&id).await, 2);
     assert_eq!(app.audit_count_for(&id).await, 2);
     assert_eq!(
-        app.event_count_by_type("platform:iam:anchor-domain:deleted")
+        app.event_count_by_type("platform:admin:anchor-domain:deleted")
             .await,
         1
     );
@@ -329,7 +331,7 @@ async fn create_idp_role_mapping_emits_event_and_audit_log() {
     assert_eq!(app.event_count_for(&id).await, 1);
     assert_eq!(app.audit_count_for(&id).await, 1);
     assert_eq!(
-        app.event_count_by_type("platform:iam:idp-role-mapping:created")
+        app.event_count_by_type("platform:admin:idp-role-mapping:created")
             .await,
         1
     );

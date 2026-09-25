@@ -151,15 +151,7 @@ impl<U: UnitOfWork> UseCase for CreateRoleUseCase<U> {
 
         role.client_managed = command.client_managed;
         // Create domain event
-        let permissions_vec: Vec<String> = role.permissions.iter().cloned().collect();
-        let event = RoleCreated::new(
-            &ctx,
-            &role.id,
-            &role.name,
-            &role.display_name,
-            &role.application_code,
-            permissions_vec,
-        );
+        let event = RoleCreated::new(&ctx, &role.id, &role.name);
 
         // Atomic commit
         self.unit_of_work

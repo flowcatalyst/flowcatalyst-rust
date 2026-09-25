@@ -92,7 +92,7 @@ impl<U: UnitOfWork> ResumeScheduledJobUseCase<U> {
         }
 
         job.resume();
-        let event = ScheduledJobResumed::new(ctx, &job.id, job.client_id.as_deref(), &job.code);
+        let event = ScheduledJobResumed::new(ctx, &job.id, &job.code);
         Ok((job, event))
     }
 }

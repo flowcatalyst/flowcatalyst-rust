@@ -101,13 +101,11 @@ impl<U: UnitOfWork> ActivateClientUseCase<U> {
             ));
         }
 
-        let previous_status = client.status;
-
         // Activate the client
         client.activate();
 
         // Create domain event
-        let event = ClientActivated::new(ctx, &client.id, previous_status);
+        let event = ClientActivated::new(ctx, &client.id);
         Ok((client, event))
     }
 }

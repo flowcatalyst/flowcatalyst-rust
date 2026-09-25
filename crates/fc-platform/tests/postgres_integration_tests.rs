@@ -562,7 +562,7 @@ async fn test_unit_of_work_commit() {
     // Commit an event via UnitOfWork
     let uow = PgUnitOfWork::new(pool.clone());
     let ctx = ExecutionContext::create("test-principal-id");
-    let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier, None);
+    let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier);
 
     #[derive(serde::Serialize)]
     struct CreateClientCommand {
@@ -582,7 +582,7 @@ async fn test_unit_of_work_commit() {
     // Verify event was persisted (use find_by_type since find_all doesn't exist)
     let event_repo = EventRepository::new(&pool);
     let events = event_repo
-        .find_by_type("platform:iam:client:created", 10)
+        .find_by_type("platform:admin:client:created", 10)
         .await
         .expect("Failed to query events");
     assert!(!events.is_empty(), "At least one event should exist");
@@ -623,7 +623,7 @@ async fn test_unit_of_work_unique_violation_is_duplicate_key() {
         let repo = &client_repo;
         let ctx = &ctx;
         async move {
-            let event = ClientCreated::new(ctx, &client.id, &client.name, &client.identifier, None);
+            let event = ClientCreated::new(ctx, &client.id, &client.name, &client.identifier);
             let command = CreateClientCommand {
                 name: client.name.clone(),
             };
@@ -1595,7 +1595,9 @@ async fn test_postgres_rate_limit_store_allows_exactly_the_limit() {
                 .unwrap(),
         );
     }
-    assert!(decisions[..3].iter().all(|d| *d == RateLimitDecision::Allow));
+    assert!(decisions[..3]
+        .iter()
+        .all(|d| *d == RateLimitDecision::Allow));
     assert!(matches!(decisions[3], RateLimitDecision::Reject { .. }));
     assert_eq!(
         store

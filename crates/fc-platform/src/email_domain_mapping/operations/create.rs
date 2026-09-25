@@ -162,13 +162,7 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
             )));
         }
 
-        let event = EmailDomainMappingCreated::new(
-            ctx,
-            &mapping.id,
-            &mapping.email_domain,
-            &mapping.identity_provider_id,
-            scope_type.as_str(),
-        );
+        let event = EmailDomainMappingCreated::new(ctx, &mapping.id, &mapping.email_domain);
 
         Ok(event)
     }

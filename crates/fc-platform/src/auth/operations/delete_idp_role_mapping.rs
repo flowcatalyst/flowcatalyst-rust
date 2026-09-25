@@ -87,7 +87,7 @@ impl<U: UnitOfWork> DeleteIdpRoleMappingUseCase<U> {
                 format!("Mapping '{}' not found", command.mapping_id),
             )?;
 
-        let event = IdpRoleMappingDeleted::new(ctx, &mapping.id);
+        let event = IdpRoleMappingDeleted::new(ctx, &mapping.id, &mapping.idp_role_name);
         Ok((mapping, event))
     }
 }

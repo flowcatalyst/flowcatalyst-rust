@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorsOriginAdded {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
 
     pub origin_id: String,
@@ -43,7 +43,7 @@ impl CorsOriginAdded {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorsOriginDeleted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
 
     pub origin_id: String,

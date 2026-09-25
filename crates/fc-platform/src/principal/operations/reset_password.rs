@@ -139,19 +139,12 @@ impl<U: UnitOfWork> ResetPasswordUseCase<U> {
             .hash_password_with_complexity(&command.new_password, enforce)
             .map_err(|e| UseCaseError::validation("INVALID_PASSWORD", e.to_string()))?;
 
-        // Capture the email for the event before we mutate the identity.
-        let email = principal
-            .user_identity
-            .as_ref()
-            .map(|i| i.email.clone())
-            .unwrap_or_default();
-
         if let Some(identity) = principal.user_identity.as_mut() {
             identity.password_hash = Some(hash);
         }
         principal.updated_at = chrono::Utc::now();
 
-        let event = PasswordResetCompleted::from_ctx(ctx, &principal.id, &email);
+        let event = PasswordResetCompleted::from_ctx(ctx, &principal.id);
         Ok((principal, event))
     }
 }

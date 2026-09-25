@@ -40,9 +40,12 @@ use super::ExecutionContext;
 ///
 /// A domain event is a serializable struct carrying an [`EventMetadata`]. The
 /// envelope (id, type, subject, tracing ids, …) is read through
-/// [`metadata`](DomainEvent::metadata); the event's persisted JSON body is its
-/// `Serialize` output. Use [`impl_domain_event!`](crate::impl_domain_event) to
-/// implement it for a struct with a `metadata: EventMetadata` field.
+/// [`metadata`](DomainEvent::metadata); the event's persisted JSON body (the
+/// `msg_events.data` column) is its `Serialize` output, which holds the
+/// event's own fields only: the metadata field is `#[serde(skip)]`, as Go's
+/// `ToDataJSON` carries no envelope fields. Use
+/// [`impl_domain_event!`](crate::impl_domain_event) to implement it for a
+/// struct with a `metadata: EventMetadata` field.
 pub trait DomainEvent: Serialize + Send + Sync {
     /// The CloudEvents-style envelope fields of this event.
     fn metadata(&self) -> &EventMetadata;
@@ -53,8 +56,9 @@ pub trait DomainEvent: Serialize + Send + Sync {
 /// This struct holds the common CloudEvents fields and tracing context.
 /// Event implementations include it as a `metadata` field and implement
 /// [`DomainEvent`] with [`impl_domain_event!`](crate::impl_domain_event).
-/// Build it with [`EventMetadata::from_ctx`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Build it with [`EventMetadata::from_ctx`]. `Default` exists only so an
+/// event can derive `Deserialize` with its metadata `#[serde(skip)]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventMetadata {
     pub event_id: String,
     pub event_type: String,
@@ -99,6 +103,55 @@ impl EventMetadata {
     }
 }
 
+/// A domain event rendered to its envelope and `data` payload, so events of
+/// different types can travel in one list: the per-row events of a sync,
+/// written ahead of its rollup (Go's `usecaseop.Sync`). It persists exactly
+/// as the event it was taken from.
+#[derive(Debug, Clone)]
+pub struct RecordedEvent {
+    metadata: EventMetadata,
+    data: serde_json::Value,
+}
+
+impl RecordedEvent {
+    /// Render `event`. Fails only if the event does not serialize.
+    pub fn of<E: DomainEvent>(event: &E) -> Result<Self, super::UseCaseError> {
+        let data = serde_json::to_value(event).map_err(|e| {
+            super::UseCaseError::commit(format!("Failed to serialize domain event: {e}"))
+        })?;
+        Ok(Self {
+            metadata: event.metadata().clone(),
+            data,
+        })
+    }
+}
+
+impl Serialize for RecordedEvent {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.data.serialize(s)
+    }
+}
+
+impl DomainEvent for RecordedEvent {
+    fn metadata(&self) -> &EventMetadata {
+        &self.metadata
+    }
+}
+
+/// Serializes an empty list as JSON `null`, a non-empty one as the array.
+///
+/// Go marshals a nil slice as `null`; an event field Go builds by appending
+/// to a nil slice (never `make`) is `null` when nothing was appended. Use as
+/// `#[serde(serialize_with = "crate::usecase::domain_event::null_if_empty")]`
+/// on exactly those fields, so the persisted `data` matches Go's.
+pub fn null_if_empty<S: serde::Serializer>(v: &[String], s: S) -> Result<S::Ok, S::Error> {
+    if v.is_empty() {
+        s.serialize_none()
+    } else {
+        s.collect_seq(v)
+    }
+}
+
 /// Implements [`DomainEvent`] for a struct with a `metadata: EventMetadata` field.
 ///
 /// # Example
@@ -109,7 +162,7 @@ impl EventMetadata {
 ///
 /// #[derive(Serialize)]
 /// pub struct UserCreated {
-///     #[serde(flatten)]
+///     #[serde(skip)]
 ///     pub metadata: EventMetadata,
 ///     pub user_id: String,
 ///     pub email: String,
@@ -148,6 +201,7 @@ mod tests {
 
     #[derive(Debug, Clone, Serialize)]
     struct TestEvent {
+        #[serde(skip)]
         metadata: EventMetadata,
         pub test_field: String,
     }

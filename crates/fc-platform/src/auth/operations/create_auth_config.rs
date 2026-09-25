@@ -110,12 +110,7 @@ impl<U: UnitOfWork> UseCase for CreateAuthConfigUseCase<U> {
         config.oidc_issuer_pattern = command.oidc_issuer_pattern.clone();
         config.oidc_client_secret_ref = command.oidc_client_secret_ref.clone();
 
-        let event = AuthConfigCreated::new(
-            &ctx,
-            &config.id,
-            &config.email_domain,
-            config.config_type.as_str(),
-        );
+        let event = AuthConfigCreated::new(&ctx, &config.id, &config.email_domain);
 
         self.unit_of_work
             .commit(&config, &*self.auth_config_repo, event, &command)

@@ -102,7 +102,7 @@ impl<U: UnitOfWork> DeleteUserUseCase<U> {
             )?;
 
         // Create domain event
-        let event = UserDeleted::new(ctx, &principal.id);
+        let event = UserDeleted::new(ctx, &principal.id, principal.email().unwrap_or(""));
         Ok((principal, event))
     }
 }

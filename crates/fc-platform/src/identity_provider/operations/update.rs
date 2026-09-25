@@ -102,15 +102,11 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
                 format!("Identity provider with ID '{}' not found", command.idp_id),
             )?;
 
-        // Track name change for event
-        let mut updated_name: Option<&str> = None;
-
         // Selectively update fields that are Some
         if let Some(ref name) = command.name {
             let name = name.trim();
             if name != idp.name {
                 idp.name = name.to_string();
-                updated_name = Some(name);
             }
         }
 
@@ -158,7 +154,7 @@ impl<U: UnitOfWork> UpdateIdentityProviderUseCase<U> {
         }
 
         // Create domain event
-        let event = IdentityProviderUpdated::new(ctx, &idp.id, updated_name);
+        let event = IdentityProviderUpdated::new(ctx, &idp.id, &idp.code);
 
         // Update via repo
         if let Err(e) = self.idp_repo.update(&idp).await {

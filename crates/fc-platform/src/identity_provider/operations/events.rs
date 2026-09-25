@@ -1,119 +1,92 @@
 //! Identity Provider Domain Events
+//!
+//! Type, source, subject, message group and `data` are Go's
+//! (`internal/platform/identityprovider/operations/events.go`): type
+//! `platform:admin:identity-provider:*`, source `platform:admin`, subject
+//! `platform.identityprovider.{id}`, group `platform:identityprovider:{id}`,
+//! and each payload is Go's `{identityProviderId, code}`. No payload carries
+//! the client secret or its reference.
 
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
-/// Event emitted when a new identity provider is created.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IdentityProviderCreated {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
+const SPEC_VERSION: &str = "1.0";
+const SOURCE: &str = "platform:admin";
 
-    pub idp_id: String,
-    pub code: String,
-    pub name: String,
-    pub idp_type: String,
+fn metadata(ctx: &ExecutionContext, event_type: &str, idp_id: &str) -> EventMetadata {
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC_VERSION,
+        SOURCE,
+        format!("platform.identityprovider.{}", idp_id),
+        format!("platform:identityprovider:{}", idp_id),
+    )
 }
 
-impl_domain_event!(IdentityProviderCreated);
-
-impl IdentityProviderCreated {
-    const EVENT_TYPE: &'static str = "platform:admin:idp:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
-
-    pub fn new(
-        ctx: &ExecutionContext,
-        idp_id: &str,
-        code: &str,
-        name: &str,
-        idp_type: &str,
-    ) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.idp.{}", idp_id),
-                format!("platform:idp:{}", idp_id),
-            ),
-            idp_id: idp_id.to_string(),
-            code: code.to_string(),
-            name: name.to_string(),
-            idp_type: idp_type.to_string(),
+macro_rules! idp_event {
+    ($(#[$doc:meta])* $name:ident, $event_type:literal) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct $name {
+            #[serde(skip)]
+            pub metadata: EventMetadata,
+            pub identity_provider_id: String,
+            pub code: String,
         }
-    }
-}
 
-/// Event emitted when an identity provider is updated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IdentityProviderUpdated {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
+        impl_domain_event!($name);
 
-    pub idp_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
+        impl $name {
+            pub const EVENT_TYPE: &'static str = $event_type;
 
-impl_domain_event!(IdentityProviderUpdated);
-
-impl IdentityProviderUpdated {
-    const EVENT_TYPE: &'static str = "platform:admin:idp:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
-
-    pub fn new(ctx: &ExecutionContext, idp_id: &str, name: Option<&str>) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.idp.{}", idp_id),
-                format!("platform:idp:{}", idp_id),
-            ),
-            idp_id: idp_id.to_string(),
-            name: name.map(String::from),
+            pub fn new(ctx: &ExecutionContext, idp_id: &str, code: &str) -> Self {
+                Self {
+                    metadata: metadata(ctx, Self::EVENT_TYPE, idp_id),
+                    identity_provider_id: idp_id.to_string(),
+                    code: code.to_string(),
+                }
+            }
         }
-    }
+    };
 }
 
-/// Event emitted when an identity provider is deleted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IdentityProviderDeleted {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
+idp_event!(
+    /// `{identityProviderId, code}`.
+    IdentityProviderCreated,
+    "platform:admin:identity-provider:created"
+);
+idp_event!(
+    /// `{identityProviderId, code}`.
+    IdentityProviderUpdated,
+    "platform:admin:identity-provider:updated"
+);
+idp_event!(
+    /// `{identityProviderId, code}`.
+    IdentityProviderDeleted,
+    "platform:admin:identity-provider:deleted"
+);
 
-    pub idp_id: String,
-    pub code: String,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl_domain_event!(IdentityProviderDeleted);
-
-impl IdentityProviderDeleted {
-    const EVENT_TYPE: &'static str = "platform:admin:idp:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
-
-    pub fn new(ctx: &ExecutionContext, idp_id: &str, code: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.idp.{}", idp_id),
-                format!("platform:idp:{}", idp_id),
-            ),
-            idp_id: idp_id.to_string(),
-            code: code.to_string(),
-        }
+    #[test]
+    fn identity_provider_events_are_go_shaped() {
+        let ctx = ExecutionContext::create("prn_1");
+        let e = IdentityProviderCreated::new(&ctx, "idp_1", "okta");
+        assert_eq!(
+            e.metadata.event_type,
+            "platform:admin:identity-provider:created"
+        );
+        assert_eq!(e.metadata.subject, "platform.identityprovider.idp_1");
+        assert_eq!(e.metadata.message_group, "platform:identityprovider:idp_1");
+        assert_eq!(
+            serde_json::to_value(&e).unwrap(),
+            serde_json::json!({"identityProviderId": "idp_1", "code": "okta"})
+        );
     }
 }

@@ -202,14 +202,7 @@ impl<U: UnitOfWork> UpdateRoleUseCase<U> {
         role.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = RoleUpdated::new(
-            ctx,
-            &role.id,
-            updated_display_name,
-            updated_description,
-            permissions_added,
-            permissions_removed,
-        );
+        let event = RoleUpdated::new(ctx, &role.id, &role.name);
         Ok((role, event))
     }
 }

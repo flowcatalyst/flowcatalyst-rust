@@ -109,7 +109,7 @@ impl<U: UnitOfWork> DeactivateUserUseCase<U> {
         principal.deactivate();
 
         // Create domain event
-        let event = UserDeactivated::new(ctx, &principal.id, command.reason.as_deref());
+        let event = UserDeactivated::new(ctx, &principal.id);
         Ok((principal, event))
     }
 }

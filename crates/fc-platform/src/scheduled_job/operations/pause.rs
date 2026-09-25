@@ -93,7 +93,7 @@ impl<U: UnitOfWork> PauseScheduledJobUseCase<U> {
         }
 
         job.pause();
-        let event = ScheduledJobPaused::new(ctx, &job.id, job.client_id.as_deref(), &job.code);
+        let event = ScheduledJobPaused::new(ctx, &job.id, &job.code);
         Ok((job, event))
     }
 }

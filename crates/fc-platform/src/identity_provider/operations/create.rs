@@ -126,8 +126,7 @@ impl<U: UnitOfWork> CreateIdentityProviderUseCase<U> {
         idp.allowed_email_domains = command.allowed_email_domains.clone();
 
         // Create domain event
-        let event =
-            IdentityProviderCreated::new(ctx, &idp.id, &idp.code, &idp.name, idp_type.as_str());
+        let event = IdentityProviderCreated::new(ctx, &idp.id, &idp.code);
 
         // Insert via repo
         if let Err(e) = self.idp_repo.insert(&idp).await {

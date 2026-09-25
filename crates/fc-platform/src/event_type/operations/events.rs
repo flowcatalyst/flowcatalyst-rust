@@ -1,20 +1,39 @@
 //! Event Type Domain Events
+//!
+//! Type, source, subject, message group and `data` are Go's
+//! (`internal/platform/eventtype/operations/events.go`): type
+//! `platform:admin:eventtype:*` (no hyphen in the aggregate), source
+//! `platform:admin`, subject `platform.eventtype.{id}`, and each payload
+//! carries exactly Go's `ToDataJSON` fields. Go leaves these events' message
+//! group empty (the column is NULL); a schema version is `specVersion`.
 
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
-/// Event emitted when a new event type is created.
-///
-/// Event type: `platform:admin:eventtype:created`
+const SPEC_VERSION: &str = "1.0";
+const SOURCE: &str = "platform:admin";
+
+/// Metadata on subject `platform.eventtype.{id}` with no message group.
+fn metadata(ctx: &ExecutionContext, event_type: &str, event_type_id: &str) -> EventMetadata {
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC_VERSION,
+        SOURCE,
+        format!("platform.eventtype.{}", event_type_id),
+        String::new(),
+    )
+}
+
+/// `{eventTypeId, code, name, description?, application, subdomain,
+/// aggregate, eventName, clientId?}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypeCreated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
-    // Event-specific data
     pub event_type_id: String,
     pub code: String,
     pub name: String,
@@ -31,33 +50,23 @@ pub struct EventTypeCreated {
 impl_domain_event!(EventTypeCreated);
 
 impl EventTypeCreated {
-    const EVENT_TYPE: &'static str = "platform:admin:eventtype:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:eventtype:created";
 
     /// Metadata for this event, raised inside `ctx`.
     pub fn metadata_for(ctx: &ExecutionContext, event_type_id: &str) -> EventMetadata {
-        EventMetadata::from_ctx(
-            ctx,
-            Self::EVENT_TYPE,
-            Self::SPEC_VERSION,
-            Self::SOURCE,
-            format!("platform.eventtype.{}", event_type_id),
-            format!("platform:eventtype:{}", event_type_id),
-        )
+        metadata(ctx, Self::EVENT_TYPE, event_type_id)
     }
 }
 
-/// Event emitted when an event type is updated.
+/// `{eventTypeId, name, description?}`: the event type's name and
+/// description after the update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypeUpdated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub event_type_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
@@ -65,118 +74,96 @@ pub struct EventTypeUpdated {
 impl_domain_event!(EventTypeUpdated);
 
 impl EventTypeUpdated {
-    const EVENT_TYPE: &'static str = "platform:admin:eventtype:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:eventtype:updated";
 
     pub fn new(
         ctx: &ExecutionContext,
         event_type_id: &str,
-        name: Option<&str>,
+        name: &str,
         description: Option<&str>,
     ) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.eventtype.{}", event_type_id),
-                format!("platform:eventtype:{}", event_type_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
             event_type_id: event_type_id.to_string(),
-            name: name.map(String::from),
+            name: name.to_string(),
             description: description.map(String::from),
         }
     }
 }
 
-/// Event emitted when an event type is archived.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EventTypeArchived {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
-
-    pub event_type_id: String,
-    pub code: String,
-}
-
-impl_domain_event!(EventTypeArchived);
-
-impl EventTypeArchived {
-    const EVENT_TYPE: &'static str = "platform:admin:eventtype:archived";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
-
-    pub fn new(ctx: &ExecutionContext, event_type_id: &str, code: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.eventtype.{}", event_type_id),
-                format!("platform:eventtype:{}", event_type_id),
-            ),
-            event_type_id: event_type_id.to_string(),
-            code: code.to_string(),
+macro_rules! code_event {
+    ($(#[$doc:meta])* $name:ident, $event_type:literal) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct $name {
+            #[serde(skip)]
+            pub metadata: EventMetadata,
+            pub event_type_id: String,
+            pub code: String,
         }
-    }
+
+        impl_domain_event!($name);
+
+        impl $name {
+            pub const EVENT_TYPE: &'static str = $event_type;
+
+            pub fn new(ctx: &ExecutionContext, event_type_id: &str, code: &str) -> Self {
+                Self {
+                    metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
+                    event_type_id: event_type_id.to_string(),
+                    code: code.to_string(),
+                }
+            }
+        }
+    };
 }
 
-/// Event emitted when a schema version is added to an event type.
+code_event!(
+    /// `{eventTypeId, code}`.
+    EventTypeArchived,
+    "platform:admin:eventtype:archived"
+);
+code_event!(
+    /// `{eventTypeId, code}`.
+    EventTypeDeleted,
+    "platform:admin:eventtype:deleted"
+);
+
+/// `{eventTypeId, specVersion}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaAdded {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub event_type_id: String,
+    #[serde(rename = "specVersion")]
     pub version: String,
-    pub mime_type: String,
-    pub schema_type: String,
 }
 
 impl_domain_event!(SchemaAdded);
 
 impl SchemaAdded {
-    const EVENT_TYPE: &'static str = "platform:admin:eventtype:schema-added";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:eventtype:schema-added";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        event_type_id: &str,
-        version: &str,
-        mime_type: &str,
-        schema_type: &str,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, event_type_id: &str, version: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.eventtype.{}", event_type_id),
-                format!("platform:eventtype:{}", event_type_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
             event_type_id: event_type_id.to_string(),
             version: version.to_string(),
-            mime_type: mime_type.to_string(),
-            schema_type: schema_type.to_string(),
         }
     }
 }
 
-/// Event emitted when a schema version is finalised.
+/// `{eventTypeId, specVersion, deprecatedVersion?}`: `deprecatedVersion` is
+/// the version finalising forced from CURRENT to DEPRECATED, if any.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaFinalised {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub event_type_id: String,
+    #[serde(rename = "specVersion")]
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated_version: Option<String>,
@@ -185,9 +172,7 @@ pub struct SchemaFinalised {
 impl_domain_event!(SchemaFinalised);
 
 impl SchemaFinalised {
-    const EVENT_TYPE: &'static str = "platform:admin:eventtype:schema-finalised";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:eventtype:schema-finalised";
 
     pub fn new(
         ctx: &ExecutionContext,
@@ -196,14 +181,7 @@ impl SchemaFinalised {
         deprecated_version: Option<&str>,
     ) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.eventtype.{}", event_type_id),
-                format!("platform:eventtype:{}", event_type_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
             event_type_id: event_type_id.to_string(),
             version: version.to_string(),
             deprecated_version: deprecated_version.map(String::from),
@@ -211,110 +189,69 @@ impl SchemaFinalised {
     }
 }
 
-/// Event emitted when a schema version is deprecated.
+/// `{eventTypeId, specVersion}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaDeprecated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub event_type_id: String,
+    #[serde(rename = "specVersion")]
     pub version: String,
 }
 
 impl_domain_event!(SchemaDeprecated);
 
 impl SchemaDeprecated {
-    const EVENT_TYPE: &'static str = "platform:admin:eventtype:schema-deprecated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:eventtype:schema-deprecated";
 
     pub fn new(ctx: &ExecutionContext, event_type_id: &str, version: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.eventtype.{}", event_type_id),
-                format!("platform:eventtype:{}", event_type_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, event_type_id),
             event_type_id: event_type_id.to_string(),
             version: version.to_string(),
         }
     }
 }
 
-/// Event emitted when an event type is deleted.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EventTypeDeleted {
-    #[serde(flatten)]
-    pub metadata: EventMetadata,
-
-    pub event_type_id: String,
-    pub code: String,
-}
-
-impl_domain_event!(EventTypeDeleted);
-
-impl EventTypeDeleted {
-    const EVENT_TYPE: &'static str = "platform:admin:eventtype:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
-
-    pub fn new(ctx: &ExecutionContext, event_type_id: &str, code: &str) -> Self {
-        Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.eventtype.{}", event_type_id),
-                format!("platform:eventtype:{}", event_type_id),
-            ),
-            event_type_id: event_type_id.to_string(),
-            code: code.to_string(),
-        }
-    }
-}
-
-/// Event emitted when event types are synced from an application SDK.
+/// The rollup of an event-type sync:
+/// `{applicationCode, created, updated, deleted, syncedCodes}` on subject
+/// `platform.eventtypes.{applicationCode}` and group
+/// `platform:eventtypes:{applicationCode}`. The schema tallies are for the
+/// caller's response only; they are not part of the event's data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventTypesSynced {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub application_code: String,
     pub created: u32,
     pub updated: u32,
     pub deleted: u32,
     pub synced_codes: Vec<String>,
-    #[serde(default)]
+    #[serde(skip)]
     pub schemas_created: u32,
-    #[serde(default)]
+    #[serde(skip)]
     pub schemas_updated: u32,
-    #[serde(default)]
+    #[serde(skip)]
     pub schemas_unchanged: u32,
 }
 
 impl_domain_event!(EventTypesSynced);
 
 impl EventTypesSynced {
-    const EVENT_TYPE: &'static str = "platform:admin:eventtypes:synced";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:admin";
+    pub const EVENT_TYPE: &'static str = "platform:admin:eventtypes:synced";
 
-    /// Metadata for this event, raised inside `ctx`.
+    /// Metadata for this event, raised inside `ctx` for a sync of
+    /// `application_code`.
     pub fn metadata_for(ctx: &ExecutionContext, application_code: &str) -> EventMetadata {
         EventMetadata::from_ctx(
             ctx,
             Self::EVENT_TYPE,
-            Self::SPEC_VERSION,
-            Self::SOURCE,
-            format!("platform.application.{}", application_code),
-            format!("platform:application:{}", application_code),
+            SPEC_VERSION,
+            SOURCE,
+            format!("platform.eventtypes.{}", application_code),
+            format!("platform:eventtypes:{}", application_code),
         )
     }
 }
@@ -331,21 +268,41 @@ mod tests {
         assert_eq!(metadata.event_type, "platform:admin:eventtype:created");
         assert_eq!(metadata.principal_id, "user-123");
         assert_eq!(metadata.subject, "platform.eventtype.0HZXEQ5Y8JY5Z");
-        assert_eq!(metadata.message_group, "platform:eventtype:0HZXEQ5Y8JY5Z");
+        // Go leaves the event-type events' message group empty.
+        assert_eq!(metadata.message_group, "");
     }
 
     #[test]
     fn test_event_type_updated() {
         let ctx = ExecutionContext::create("user-123");
-        let event =
-            EventTypeUpdated::new(&ctx, "et-123", Some("New Name"), Some("New Description"));
+        let event = EventTypeUpdated::new(&ctx, "et-123", "New Name", Some("New Description"));
 
         assert_eq!(
             event.metadata.event_type,
             "platform:admin:eventtype:updated"
         );
-        assert_eq!(event.event_type_id, "et-123");
-        assert_eq!(event.name, Some("New Name".to_string()));
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "eventTypeId": "et-123",
+                "name": "New Name",
+                "description": "New Description"
+            })
+        );
+    }
+
+    #[test]
+    fn schema_events_carry_spec_version() {
+        let ctx = ExecutionContext::create("user-123");
+        let event = SchemaFinalised::new(&ctx, "et-123", "2.0", Some("1.0"));
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            serde_json::json!({
+                "eventTypeId": "et-123",
+                "specVersion": "2.0",
+                "deprecatedVersion": "1.0"
+            })
+        );
     }
 
     #[test]

@@ -185,7 +185,7 @@ async fn create_identity_provider(
     Ok((
         axum::http::StatusCode::CREATED,
         Json(crate::shared::api_common::CreatedResponse::new(
-            event.idp_id,
+            event.identity_provider_id,
         )),
     ))
 }

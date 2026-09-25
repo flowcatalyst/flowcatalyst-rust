@@ -1,114 +1,87 @@
 //! Service Account Domain Events
+//!
+//! Type, source, subject, message group and `data` are Go's
+//! (`internal/platform/serviceaccount/operations/events.go`): type
+//! `platform:iam:serviceaccount:*` (no hyphen in the aggregate), source
+//! `platform:iam`, subject `platform.serviceaccount.{id}`, group
+//! `platform:serviceaccount:{id}`, and each payload carries exactly Go's
+//! `ToDataJSON` fields. No payload ever carries a token or secret.
 
 use crate::impl_domain_event;
 use crate::usecase::domain_event::EventMetadata;
 use crate::usecase::ExecutionContext;
 use serde::{Deserialize, Serialize};
 
-/// Event emitted when a new service account is created.
+const SPEC_VERSION: &str = "1.0";
+const SOURCE: &str = "platform:iam";
+
+fn metadata(ctx: &ExecutionContext, event_type: &str, service_account_id: &str) -> EventMetadata {
+    EventMetadata::from_ctx(
+        ctx,
+        event_type,
+        SPEC_VERSION,
+        SOURCE,
+        format!("platform.serviceaccount.{}", service_account_id),
+        format!("platform:serviceaccount:{}", service_account_id),
+    )
+}
+
+/// `{serviceAccountId, code, name}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountCreated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub service_account_id: String,
     pub code: String,
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<String>,
-    pub client_ids: Vec<String>,
 }
 
 impl_domain_event!(ServiceAccountCreated);
 
 impl ServiceAccountCreated {
-    const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:created";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:serviceaccount";
+    pub const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:created";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        service_account_id: &str,
-        code: &str,
-        name: &str,
-        application_id: Option<&str>,
-        client_ids: Vec<String>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str, name: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.serviceaccount.{}", service_account_id),
-                format!("platform:serviceaccount:{}", service_account_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, service_account_id),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),
             name: name.to_string(),
-            application_id: application_id.map(String::from),
-            client_ids,
         }
     }
 }
 
-/// Event emitted when a service account is updated.
+/// `{serviceAccountId, name}`: the account's name after the update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountUpdated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub service_account_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub client_ids_added: Vec<String>,
-    pub client_ids_removed: Vec<String>,
+    pub name: String,
 }
 
 impl_domain_event!(ServiceAccountUpdated);
 
 impl ServiceAccountUpdated {
-    const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:updated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:serviceaccount";
+    pub const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:updated";
 
-    pub fn new(
-        ctx: &ExecutionContext,
-        service_account_id: &str,
-        name: Option<&str>,
-        description: Option<&str>,
-        client_ids_added: Vec<String>,
-        client_ids_removed: Vec<String>,
-    ) -> Self {
+    pub fn new(ctx: &ExecutionContext, service_account_id: &str, name: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.serviceaccount.{}", service_account_id),
-                format!("platform:serviceaccount:{}", service_account_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, service_account_id),
             service_account_id: service_account_id.to_string(),
-            name: name.map(String::from),
-            description: description.map(String::from),
-            client_ids_added,
-            client_ids_removed,
+            name: name.to_string(),
         }
     }
 }
 
-/// Event emitted when a service account is deleted.
+/// `{serviceAccountId, code}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountDeleted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub service_account_id: String,
     pub code: String,
 }
@@ -116,67 +89,46 @@ pub struct ServiceAccountDeleted {
 impl_domain_event!(ServiceAccountDeleted);
 
 impl ServiceAccountDeleted {
-    const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:deleted";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:serviceaccount";
+    pub const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:deleted";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.serviceaccount.{}", service_account_id),
-                format!("platform:serviceaccount:{}", service_account_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, service_account_id),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),
         }
     }
 }
 
-/// Event emitted when a service account is deactivated.
+/// `{serviceAccountId}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountDeactivated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub service_account_id: String,
-    pub code: String,
 }
 
 impl_domain_event!(ServiceAccountDeactivated);
 
 impl ServiceAccountDeactivated {
-    const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:deactivated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:serviceaccount";
+    pub const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:deactivated";
 
-    pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
+    pub fn new(ctx: &ExecutionContext, service_account_id: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.serviceaccount.{}", service_account_id),
-                format!("platform:serviceaccount:{}", service_account_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, service_account_id),
             service_account_id: service_account_id.to_string(),
-            code: code.to_string(),
         }
     }
 }
 
-/// Event emitted when roles are assigned to a service account.
+/// `{serviceAccountId, rolesAdded, rolesRemoved}`: empty lists are `[]`
+/// (Go's `defaultEmpty`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountRolesAssigned {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub service_account_id: String,
     pub roles_added: Vec<String>,
     pub roles_removed: Vec<String>,
@@ -185,9 +137,7 @@ pub struct ServiceAccountRolesAssigned {
 impl_domain_event!(ServiceAccountRolesAssigned);
 
 impl ServiceAccountRolesAssigned {
-    const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:roles-assigned";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:serviceaccount";
+    pub const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:roles-assigned";
 
     pub fn new(
         ctx: &ExecutionContext,
@@ -196,14 +146,7 @@ impl ServiceAccountRolesAssigned {
         roles_removed: Vec<String>,
     ) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.serviceaccount.{}", service_account_id),
-                format!("platform:serviceaccount:{}", service_account_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, service_account_id),
             service_account_id: service_account_id.to_string(),
             roles_added,
             roles_removed,
@@ -211,13 +154,12 @@ impl ServiceAccountRolesAssigned {
     }
 }
 
-/// Event emitted when a service account's auth token is regenerated.
+/// `{serviceAccountId, code}`. The new token goes back to the caller only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountTokenRegenerated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub service_account_id: String,
     pub code: String,
 }
@@ -225,33 +167,23 @@ pub struct ServiceAccountTokenRegenerated {
 impl_domain_event!(ServiceAccountTokenRegenerated);
 
 impl ServiceAccountTokenRegenerated {
-    const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:token-regenerated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:serviceaccount";
+    pub const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:token-regenerated";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.serviceaccount.{}", service_account_id),
-                format!("platform:serviceaccount:{}", service_account_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, service_account_id),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),
         }
     }
 }
 
-/// Event emitted when a service account's signing secret is regenerated.
+/// `{serviceAccountId, code}`. The new secret goes back to the caller only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccountSecretRegenerated {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
-
     pub service_account_id: String,
     pub code: String,
 }
@@ -259,20 +191,11 @@ pub struct ServiceAccountSecretRegenerated {
 impl_domain_event!(ServiceAccountSecretRegenerated);
 
 impl ServiceAccountSecretRegenerated {
-    const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:secret-regenerated";
-    const SPEC_VERSION: &'static str = "1.0";
-    const SOURCE: &'static str = "platform:serviceaccount";
+    pub const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:secret-regenerated";
 
     pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
         Self {
-            metadata: EventMetadata::from_ctx(
-                ctx,
-                Self::EVENT_TYPE,
-                Self::SPEC_VERSION,
-                Self::SOURCE,
-                format!("platform.serviceaccount.{}", service_account_id),
-                format!("platform:serviceaccount:{}", service_account_id),
-            ),
+            metadata: metadata(ctx, Self::EVENT_TYPE, service_account_id),
             service_account_id: service_account_id.to_string(),
             code: code.to_string(),
         }
@@ -286,19 +209,13 @@ mod tests {
     #[test]
     fn test_service_account_created_event() {
         let ctx = ExecutionContext::create("admin-123");
-        let event = ServiceAccountCreated::new(
-            &ctx,
-            "sa-1",
-            "my-service",
-            "My Service",
-            None,
-            vec!["client-1".to_string()],
-        );
+        let event = ServiceAccountCreated::new(&ctx, "sa-1", "my-service", "My Service");
 
         assert_eq!(
             event.metadata.event_type,
             "platform:iam:serviceaccount:created"
         );
+        assert_eq!(event.metadata.source, "platform:iam");
         assert_eq!(event.service_account_id, "sa-1");
         assert_eq!(event.code, "my-service");
     }

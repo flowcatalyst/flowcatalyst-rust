@@ -118,13 +118,7 @@ impl<U: UnitOfWork> UpdateConnectionUseCase<U> {
         }
         connection.updated_at = chrono::Utc::now();
 
-        let event = ConnectionUpdated::new(
-            ctx,
-            &connection.id,
-            &connection.code,
-            command.name.as_deref(),
-            command.status.map(|s| s.as_str()),
-        );
+        let event = ConnectionUpdated::new(ctx, &connection.id, &connection.name);
         Ok((connection, event))
     }
 }

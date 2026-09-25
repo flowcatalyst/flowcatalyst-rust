@@ -15,10 +15,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use super::events::ScheduledJobsSynced;
+use super::events::{
+    ScheduledJobArchived, ScheduledJobCreated, ScheduledJobUpdated, ScheduledJobsSynced,
+};
 use crate::scheduled_job::entity::{ScheduledJob, ScheduledJobStatus};
 use crate::scheduled_job::ScheduledJobRepository;
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,7 +121,7 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
         cmd: Self::Command,
         ctx: ExecutionContext,
     ) -> UseCaseResult<Self::Event> {
-        let (to_persist, event) = match self.prepare(&cmd, &ctx).await {
+        let (to_persist, rows, event) = match self.prepare(&cmd, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
@@ -128,8 +132,10 @@ impl<U: UnitOfWork> UseCase for SyncScheduledJobsUseCase<U> {
             return self.unit_of_work.emit_event(event, &cmd).await;
         }
 
+        // Go's usecaseop.Sync: a created/updated/archived event per written
+        // job, then the rollup, atomic with the writes.
         self.unit_of_work
-            .commit_all(&to_persist, &*self.repo, event, &cmd)
+            .commit_all_with_events(&to_persist, &*self.repo, rows, event, &cmd)
             .await
     }
 }
@@ -141,7 +147,7 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
         &self,
         cmd: &SyncScheduledJobsCommand,
         ctx: &ExecutionContext,
-    ) -> Result<(Vec<ScheduledJob>, ScheduledJobsSynced), UseCaseError> {
+    ) -> Result<(Vec<ScheduledJob>, Vec<RecordedEvent>, ScheduledJobsSynced), UseCaseError> {
         let existing = match cmd.client_id.as_deref() {
             Some(cid) => self.repo.find_by_client(cid).await,
             None => {
@@ -158,6 +164,7 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
         let mut created: Vec<String> = Vec::new();
         let mut updated: Vec<String> = Vec::new();
         let mut to_persist: Vec<ScheduledJob> = Vec::new();
+        let mut rows: Vec<RecordedEvent> = Vec::new();
 
         for entry in &cmd.jobs {
             match existing_by_code.remove(&entry.code) {
@@ -213,6 +220,9 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
                     if changed {
                         job.record_update(Some(ctx.principal_id.clone()));
                         updated.push(job.id.clone());
+                        rows.push(RecordedEvent::of(&ScheduledJobUpdated::new(
+                            ctx, &job.id, &job.code,
+                        ))?);
                         to_persist.push(job);
                     }
                 }
@@ -239,6 +249,9 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
                         job = job.with_target_url(u);
                     }
                     created.push(job.id.clone());
+                    rows.push(RecordedEvent::of(&ScheduledJobCreated::new(
+                        ctx, &job.id, &job.code,
+                    ))?);
                     to_persist.push(job);
                 }
             }
@@ -251,6 +264,9 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
                 {
                     job.archive();
                     archived.push(job.id.clone());
+                    rows.push(RecordedEvent::of(&ScheduledJobArchived::new(
+                        ctx, &job.id, &job.code,
+                    ))?);
                     to_persist.push(job);
                 }
             }
@@ -259,11 +275,10 @@ impl<U: UnitOfWork> SyncScheduledJobsUseCase<U> {
         let event = ScheduledJobsSynced::new(
             ctx,
             &cmd.scope,
-            cmd.client_id.as_deref(),
             created.clone(),
             updated.clone(),
             archived.clone(),
         );
-        Ok((to_persist, event))
+        Ok((to_persist, rows, event))
     }
 }
