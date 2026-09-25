@@ -272,15 +272,24 @@ impl CronSpec {
         self.zone
     }
 
-    /// robfig `dayMatches`.
-    fn day_matches(&self, local: &NaiveDateTime) -> bool {
-        let dom = bit(self.dom, local.day());
-        let dow = bit(self.dow, local.weekday().num_days_from_sunday());
+    /// The second, minute, hour and month values (bit `n` for value `n`).
+    pub(crate) fn time_bits(&self) -> [u64; 4] {
+        [self.second, self.minute, self.hour, self.month].map(|b| b & !STAR_BIT)
+    }
+
+    /// robfig `dayMatches` for a day of the month and a day of the week
+    /// (`0` = Sunday).
+    pub(crate) fn matches_day(&self, dom: u32, dow: u32) -> bool {
+        let (dom, dow) = (bit(self.dom, dom), bit(self.dow, dow));
         if self.dom & STAR_BIT != 0 || self.dow & STAR_BIT != 0 {
             dom && dow
         } else {
             dom || dow
         }
+    }
+
+    fn day_matches(&self, local: &NaiveDateTime) -> bool {
+        self.matches_day(local.day(), local.weekday().num_days_from_sunday())
     }
 
     /// Whether any instant can match: a field with no values (a list of

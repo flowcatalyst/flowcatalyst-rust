@@ -305,7 +305,8 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 >   otherwise an equivalent rendering (`function/cron_dialect.rs`). The poller also reads Java's
 >   fixed-offset zones now. The scheduled-job domain is otherwise unchanged.
 >   *Superseded 2026-09-25 (owner decision 1):* the poller now reads Java/Go's dialect itself
->   (`scheduled_job/cron.rs`), promote stores the cron as written, and the adapter is gone.
+>   (`scheduled_job/cron.rs`), promote stores the cron as written, and the adapter is gone; jobs the
+>   `cron` crate used to read are rewritten once at startup (`scheduled_job/cron_migration.rs`).
 > - **Signing.** Neither Rust delivery signed anything. Both now sign as Java does, with the
 >   application's outbound credentials: dispatch jobs through `DeliveryCredentials`, and scheduled jobs
 >   through their new `application_id` column (migration 035, Java's). Scheduled-job delivery accepts any
