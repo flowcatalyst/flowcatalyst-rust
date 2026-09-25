@@ -488,30 +488,50 @@ pub async fn delete_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_delete_applications(&auth.0)?;
+
+    delete_application_cascade(
+        &state.pg_unit_of_work,
+        &state.service_account_repo,
+        &state.application_repo,
+        &id,
+        &auth.0.principal_id,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete an application and every service account it owns, in one
+/// transaction. The body of `DELETE /api/applications/{id}` after its
+/// permission checks, shared with the server-rendered `fc-web` UI.
+pub async fn delete_application_cascade(
+    pg_unit_of_work: &crate::usecase::PgUnitOfWork,
+    service_account_repo: &Arc<ServiceAccountRepository>,
+    application_repo: &Arc<ApplicationRepository>,
+    id: &str,
+    principal_id: &str,
+) -> Result<(), PlatformError> {
     use crate::application::operations::{DeleteApplicationCommand, DeleteApplicationUseCase};
     use crate::service_account::operations::{
         DeleteServiceAccountCommand, DeleteServiceAccountUseCase,
     };
-
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
-    crate::shared::authorization_service::checks::can_delete_applications(&auth.0)?;
 
     // Pre-fetch the SAs owned by this application. The SA delete repo
     // (and migration 027 / 028) handles the rest of the cascade —
     // `oauth_clients` rows pointing at each SA's principal are deleted
     // via FK CASCADE, and `app_applications.service_account_id` is
     // cleared via FK SET NULL.
-    let sas = state.service_account_repo.find_by_application(&id).await?;
+    let sas = service_account_repo.find_by_application(id).await?;
 
-    let principal_id = auth.0.principal_id.clone();
-    let app_id_for_closure = id.clone();
-    let sa_repo = state.service_account_repo.clone();
-    let app_repo = state.application_repo.clone();
+    let principal_id = principal_id.to_owned();
+    let app_id_for_closure = id.to_owned();
+    let sa_repo = service_account_repo.clone();
+    let app_repo = application_repo.clone();
 
     // Single transaction: delete every SA then the application. If any
     // step fails, everything rolls back (no half-deleted state).
-    let result = state
-        .pg_unit_of_work
+    let result = pg_unit_of_work
         .run(|session| async move {
             let delete_sa_uc = DeleteServiceAccountUseCase::new(sa_repo, session.clone());
             let delete_app_uc = DeleteApplicationUseCase::new(app_repo, session);
@@ -542,10 +562,7 @@ pub async fn delete_application<U: UnitOfWork>(
         })
         .await;
 
-    match result.into_result() {
-        Ok(_event) => Ok(StatusCode::NO_CONTENT),
-        Err(err) => Err(err.into()),
-    }
+    result.into_result().map(|_| ()).map_err(Into::into)
 }
 
 /// Activate application
@@ -612,38 +629,65 @@ pub async fn deactivate_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
+    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
+    crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
+
+    deactivate_application_cascade(
+        &state.pg_unit_of_work,
+        &state.service_account_repo,
+        &state.oauth_client_repo,
+        &state.application_repo,
+        &id,
+        &auth.0.principal_id,
+    )
+    .await?;
+    let app = state
+        .application_repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+    Ok(Json(app.into()))
+}
+
+/// Deactivate an application with its service accounts and their OAuth
+/// clients, in one transaction. The body of `POST
+/// /api/applications/{id}/deactivate` after its permission checks, shared
+/// with the server-rendered `fc-web` UI.
+pub async fn deactivate_application_cascade(
+    pg_unit_of_work: &crate::usecase::PgUnitOfWork,
+    service_account_repo: &Arc<ServiceAccountRepository>,
+    oauth_client_repo: &Arc<OAuthClientRepository>,
+    application_repo: &Arc<ApplicationRepository>,
+    id: &str,
+    principal_id: &str,
+) -> Result<(), PlatformError> {
     use crate::auth::operations::{DeactivateOAuthClientCommand, DeactivateOAuthClientUseCase};
     use crate::service_account::operations::{
         DeactivateServiceAccountCommand, DeactivateServiceAccountUseCase,
     };
 
-    crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
-    crate::shared::authorization_service::checks::can_write_applications(&auth.0)?;
-
     // Pre-fetch the dependents we'll cascade-deactivate so the work
     // inside the tx closure stays small. Reads are tolerable outside
     // the tx — the worst case (someone provisions a new SA mid-call)
     // gets caught the next time the operator deactivates.
-    let sas = state.service_account_repo.find_by_application(&id).await?;
+    let sas = service_account_repo.find_by_application(id).await?;
     let mut oauth_clients_to_deactivate: Vec<String> = Vec::new();
     for sa in &sas {
-        let clients = state
-            .oauth_client_repo
+        let clients = oauth_client_repo
             .find_by_service_account_principal_id(&sa.id)
             .await?;
         oauth_clients_to_deactivate.extend(clients.into_iter().filter(|c| c.active).map(|c| c.id));
     }
 
-    let principal_id = auth.0.principal_id.clone();
-    let app_id_for_closure = id.clone();
-    let sa_repo = state.service_account_repo.clone();
-    let oauth_repo = state.oauth_client_repo.clone();
-    let app_repo = state.application_repo.clone();
+    let principal_id = principal_id.to_owned();
+    let app_id_for_closure = id.to_owned();
+    let sa_repo = service_account_repo.clone();
+    let oauth_repo = oauth_client_repo.clone();
+    let app_repo = application_repo.clone();
 
     // Single transaction: app + SAs + their oauth clients either all
     // flip to inactive or none do.
-    let result = state
-        .pg_unit_of_work
+    let result = pg_unit_of_work
         .run(|session| async move {
             let deactivate_sa_uc = DeactivateServiceAccountUseCase::new(sa_repo, session.clone());
             let deactivate_oauth_uc =
@@ -697,17 +741,7 @@ pub async fn deactivate_application<U: UnitOfWork>(
         })
         .await;
 
-    match result.into_result() {
-        Ok(_event) => {
-            let app = state
-                .application_repo
-                .find_by_id(&id)
-                .await?
-                .ok_or_else(|| PlatformError::not_found("Application", &id))?;
-            Ok(Json(app.into()))
-        }
-        Err(err) => Err(err.into()),
-    }
+    result.into_result().map(|_| ()).map_err(Into::into)
 }
 
 /// Get application by code
@@ -774,14 +808,6 @@ pub async fn provision_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<ProvisionServiceAccountResponse>), PlatformError> {
-    use crate::application::operations::{
-        AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
-    };
-    use crate::auth::operations::CreateOAuthClientCommand;
-    use crate::service_account::operations::{
-        CreateServiceAccountCommand, CreateServiceAccountUseCase,
-    };
-
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     // Java 6068fe6b S1.2: it mints a service account and binds it.
     crate::shared::authorization_service::checks::require_permission(
@@ -793,13 +819,55 @@ pub async fn provision_service_account<U: UnitOfWork>(
         crate::permissions::admin::APPLICATION_UPDATE,
     )?;
 
+    let service_account = provision_application_service_account(
+        &state.pg_unit_of_work,
+        &state.application_repo,
+        &state.service_account_repo,
+        &state.client_repo,
+        &state.oauth_client_repo,
+        &id,
+        &auth.0.principal_id,
+    )
+    .await?;
+
+    // 201, as Go answers (application/api/api.go:57).
+    Ok((
+        StatusCode::CREATED,
+        Json(ProvisionServiceAccountResponse {
+            message: "Service account provisioned".to_string(),
+            service_account,
+        }),
+    ))
+}
+
+/// Provision an application's service account: create it, attach it and
+/// mint its `client_credentials` OAuth client in one transaction. The body
+/// of `POST /api/applications/{id}/provision-service-account` after its
+/// permission checks, shared with the server-rendered `fc-web` UI. The
+/// plaintext secret in the result is the only chance to read it.
+pub async fn provision_application_service_account(
+    pg_unit_of_work: &crate::usecase::PgUnitOfWork,
+    application_repo: &Arc<ApplicationRepository>,
+    service_account_repo: &Arc<ServiceAccountRepository>,
+    client_repo: &Arc<ClientRepository>,
+    oauth_client_repo: &Arc<OAuthClientRepository>,
+    id: &str,
+    principal_id: &str,
+) -> Result<ServiceAccountCredentialsResponse, PlatformError> {
+    use crate::application::operations::{
+        AttachServiceAccountToApplicationCommand, AttachServiceAccountToApplicationUseCase,
+    };
+    use crate::auth::operations::CreateOAuthClientCommand;
+    use crate::service_account::operations::{
+        CreateServiceAccountCommand, CreateServiceAccountUseCase,
+    };
+
     // Pre-validate: fail early before opening a tx. Mirrors the business
     // rule inside AttachServiceAccountToApplicationUseCase.
-    let app = state
-        .application_repo
-        .find_by_id(&id)
+    let app = application_repo
+        .find_by_id(id)
         .await?
-        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
+        .ok_or_else(|| PlatformError::not_found("Application", id))?;
     if app.service_account_id.is_some() {
         return Err(PlatformError::conflict(
             "Application already has a service account provisioned",
@@ -819,11 +887,11 @@ pub async fn provision_service_account<U: UnitOfWork>(
     let oauth_client_name = format!("{} Service Account Client", app.name);
 
     let app_id = app.id.clone();
-    let principal_id = auth.0.principal_id.clone();
-    let sa_repo = state.service_account_repo.clone();
-    let client_repo = state.client_repo.clone();
-    let app_repo = state.application_repo.clone();
-    let oauth_client_repo = state.oauth_client_repo.clone();
+    let principal_id = principal_id.to_owned();
+    let sa_repo = service_account_repo.clone();
+    let client_repo = client_repo.clone();
+    let app_repo = application_repo.clone();
+    let oauth_client_repo = oauth_client_repo.clone();
     // The SA's webhook credentials are encrypted before storage.
     // `generate_client_secret` above already failed if no key
     // is configured.
@@ -834,8 +902,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
 
     // One DB tx for all three use cases. If any step fails, all rows
     // (SA insert, Application update, OAuth client insert) roll back.
-    let result = state
-        .pg_unit_of_work
+    let result = pg_unit_of_work
         .run(|session| async move {
             let create_sa_uc =
                 CreateServiceAccountUseCase::new(sa_repo, client_repo, session.clone(), encryption);
@@ -898,8 +965,6 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 allowed_origins: Vec::new(),
                 service_account_principal_id: Some(sa_id.clone()),
                 created_by: Some(principal_id.clone()),
-                portal_client_id: None,
-                portal_app_id: None,
             };
             create_oauth_uc
                 .run(oauth_cmd, ctx)
@@ -912,28 +977,20 @@ pub async fn provision_service_account<U: UnitOfWork>(
 
     // Fetch the SA for its display name. The OAuth client id + client_id
     // are the ones we minted above, so we don't need to re-read the row.
-    let service_account = state
-        .service_account_repo
+    let service_account = service_account_repo
         .find_by_id(&sa_id)
         .await?
         .ok_or_else(|| PlatformError::not_found("ServiceAccount", &sa_id))?;
 
-    // 201, as Go answers (application/api/api.go:57).
-    Ok((
-        StatusCode::CREATED,
-        Json(ProvisionServiceAccountResponse {
-            message: "Service account provisioned".to_string(),
-            service_account: ServiceAccountCredentialsResponse {
-                principal_id: service_account.id,
-                name: service_account.name,
-                oauth_client: OAuthClientCredentials {
-                    id: oauth_row_id,
-                    client_id: oauth_public_client_id,
-                    client_secret: Some(client_secret_plaintext),
-                },
-            },
-        }),
-    ))
+    Ok(ServiceAccountCredentialsResponse {
+        principal_id: service_account.id,
+        name: service_account.name,
+        oauth_client: OAuthClientCredentials {
+            id: oauth_row_id,
+            client_id: oauth_public_client_id,
+            client_secret: Some(client_secret_plaintext),
+        },
+    })
 }
 
 /// Provision an OAuth Login Client for an application.
@@ -975,8 +1032,6 @@ pub async fn provision_login_client<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<ProvisionLoginClientRequest>,
 ) -> Result<Json<ProvisionLoginClientResponse>, PlatformError> {
-    use crate::auth::operations::CreateOAuthClientCommand;
-
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
     // Java 6068fe6b S1.2: it mints an OAuth client for the application.
     crate::shared::authorization_service::checks::require_permission(
@@ -987,6 +1042,37 @@ pub async fn provision_login_client<U: UnitOfWork>(
         &auth.0,
         crate::permissions::admin::APPLICATION_UPDATE,
     )?;
+
+    let login_client = provision_application_login_client(
+        &state.create_oauth_client_use_case,
+        &state.application_repo,
+        &state.oauth_client_repo,
+        &id,
+        &auth.0.principal_id,
+        req,
+    )
+    .await?;
+
+    Ok(Json(ProvisionLoginClientResponse {
+        message: "Login client provisioned".to_string(),
+        login_client,
+    }))
+}
+
+/// Provision an application's login OAuth client (`authorization_code`).
+/// The body of `POST /api/applications/{id}/provision-login-client` after
+/// its permission checks, shared with the server-rendered `fc-web` UI. A
+/// CONFIDENTIAL client's plaintext secret in the result is the only chance
+/// to read it.
+pub async fn provision_application_login_client<U: UnitOfWork>(
+    create_oauth_client_use_case: &CreateOAuthClientUseCase<U>,
+    application_repo: &ApplicationRepository,
+    oauth_client_repo: &OAuthClientRepository,
+    id: &str,
+    principal_id: &str,
+    req: ProvisionLoginClientRequest,
+) -> Result<LoginClientCredentialsResponse, PlatformError> {
+    use crate::auth::operations::CreateOAuthClientCommand;
 
     // Validate the request body before we touch the DB.
     if req.redirect_uris.is_empty() {
@@ -1002,12 +1088,11 @@ pub async fn provision_login_client<U: UnitOfWork>(
     // Pre-validate: app must exist; reject if a login client already exists
     // (one per app — rotate or delete the existing one if you need fresh
     // credentials).
-    let app = state
-        .application_repo
-        .find_by_id(&id)
+    let app = application_repo
+        .find_by_id(id)
         .await?
-        .ok_or_else(|| PlatformError::not_found("Application", &id))?;
-    if app_has_login_client(&state.oauth_client_repo, &app.id).await? {
+        .ok_or_else(|| PlatformError::not_found("Application", id))?;
+    if app_has_login_client(oauth_client_repo, &app.id).await? {
         return Err(PlatformError::conflict(
             "Application already has a login OAuth client provisioned",
         ));
@@ -1045,36 +1130,30 @@ pub async fn provision_login_client<U: UnitOfWork>(
         application_ids: vec![app.id.clone()],
         allowed_origins: req.allowed_origins.clone(),
         service_account_principal_id: None,
-        created_by: Some(auth.0.principal_id.clone()),
-        portal_client_id: None,
-        portal_app_id: None,
+        created_by: Some(principal_id.to_owned()),
     };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
-    state
-        .create_oauth_client_use_case
+    let ctx = ExecutionContext::create(principal_id);
+    create_oauth_client_use_case
         .run(cmd, ctx)
         .await
         .into_result()?;
 
-    Ok(Json(ProvisionLoginClientResponse {
-        message: "Login client provisioned".to_string(),
-        login_client: LoginClientCredentialsResponse {
-            client_type: client_type.as_str().to_string(),
-            oauth_client: OAuthClientCredentials {
-                id: oauth_row_id,
-                client_id: oauth_public_client_id,
-                client_secret: client_secret_plaintext,
-            },
-            redirect_uris: req.redirect_uris,
+    Ok(LoginClientCredentialsResponse {
+        client_type: client_type.as_str().to_string(),
+        oauth_client: OAuthClientCredentials {
+            id: oauth_row_id,
+            client_id: oauth_public_client_id,
+            client_secret: client_secret_plaintext,
         },
-    }))
+        redirect_uris: req.redirect_uris,
+    })
 }
 
 /// Check whether the application already has an OAuth client provisioned
 /// for the user-login flow (authorization_code grant + NOT linked to a
 /// service account). Filters in-memory off `find_by_application` — the
 /// list is small per app, so no extra index needed.
-async fn app_has_login_client(
+pub async fn app_has_login_client(
     repo: &OAuthClientRepository,
     app_id: &str,
 ) -> Result<bool, PlatformError> {

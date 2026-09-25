@@ -56,6 +56,8 @@ pub struct WebDeps {
     pub(crate) service_account_repo: Arc<fc_platform::ServiceAccountRepository>,
     pub(crate) connection_repo: Arc<fc_platform::ConnectionRepository>,
     pub(crate) dispatch_pool_repo: Arc<fc_platform::DispatchPoolRepository>,
+    pub(crate) oauth_client_repo: Arc<fc_platform::OAuthClientRepository>,
+    pub(crate) application_client_config_repo: Arc<fc_platform::ApplicationClientConfigRepository>,
 }
 
 impl WebDeps {
@@ -101,6 +103,8 @@ impl WebDeps {
             service_account_repo: repos.service_account_repo.clone(),
             connection_repo: repos.connection_repo.clone(),
             dispatch_pool_repo: repos.dispatch_pool_repo.clone(),
+            oauth_client_repo: repos.oauth_client_repo.clone(),
+            application_client_config_repo: repos.application_client_config_repo.clone(),
         }
     }
 }
