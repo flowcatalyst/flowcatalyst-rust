@@ -27,6 +27,15 @@ pub struct CreateEmailDomainMappingRequest {
     pub required_oidc_tenant_id: Option<String>,
     pub allowed_role_ids: Option<Vec<String>>,
     pub sync_roles_from_idp: Option<bool>,
+    /// Go's per-domain 2FA policy (emaildomainmapping/api/dto.go:20-25).
+    #[serde(default, rename = "require2fa")]
+    pub require_2fa: Option<bool>,
+    #[serde(default, rename = "allowed2faMethods")]
+    pub allowed_2fa_methods: Option<Vec<String>>,
+    #[serde(default)]
+    pub remember_device_enabled: Option<bool>,
+    #[serde(default)]
+    pub remember_device_days: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -40,6 +49,14 @@ pub struct UpdateEmailDomainMappingRequest {
     pub required_oidc_tenant_id: Option<String>,
     pub allowed_role_ids: Option<Vec<String>>,
     pub sync_roles_from_idp: Option<bool>,
+    #[serde(default, rename = "require2fa")]
+    pub require_2fa: Option<bool>,
+    #[serde(default, rename = "allowed2faMethods")]
+    pub allowed_2fa_methods: Option<Vec<String>>,
+    #[serde(default)]
+    pub remember_device_enabled: Option<bool>,
+    #[serde(default)]
+    pub remember_device_days: Option<i32>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -56,6 +73,12 @@ pub struct EmailDomainMappingResponse {
     pub allowed_role_ids: Vec<String>,
     pub identity_provider_name: Option<String>,
     pub sync_roles_from_idp: bool,
+    #[serde(rename = "require2fa")]
+    pub require_2fa: bool,
+    #[serde(rename = "allowed2faMethods")]
+    pub allowed_2fa_methods: Vec<String>,
+    pub remember_device_enabled: bool,
+    pub remember_device_days: i32,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -74,6 +97,10 @@ impl EmailDomainMappingResponse {
             allowed_role_ids: m.allowed_role_ids,
             identity_provider_name,
             sync_roles_from_idp: m.sync_roles_from_idp,
+            require_2fa: m.require_2fa,
+            allowed_2fa_methods: m.allowed_2fa_methods,
+            remember_device_enabled: m.remember_device_enabled,
+            remember_device_days: m.remember_device_days,
             created_at: m.created_at.to_rfc3339(),
             updated_at: m.updated_at.to_rfc3339(),
         }
@@ -165,6 +192,12 @@ pub async fn create_email_domain_mapping(
         required_oidc_tenant_id: req.required_oidc_tenant_id,
         allowed_role_ids,
         sync_roles_from_idp: req.sync_roles_from_idp.unwrap_or(false),
+        two_factor: crate::email_domain_mapping::operations::TwoFactorPolicyInput {
+            require_2fa: req.require_2fa.unwrap_or(false),
+            allowed_2fa_methods: req.allowed_2fa_methods.unwrap_or_default(),
+            remember_device_enabled: req.remember_device_enabled.unwrap_or(false),
+            remember_device_days: req.remember_device_days.unwrap_or(0),
+        },
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     let event = state.create_use_case.run(cmd, ctx).await.into_result()?;
@@ -337,6 +370,12 @@ pub async fn update_email_domain_mapping(
         granted_client_ids: req.granted_client_ids,
         required_oidc_tenant_id: req.required_oidc_tenant_id,
         allowed_role_ids: req.allowed_role_ids,
+        two_factor: crate::email_domain_mapping::operations::TwoFactorPolicyUpdate {
+            require_2fa: req.require_2fa,
+            allowed_2fa_methods: req.allowed_2fa_methods,
+            remember_device_enabled: req.remember_device_enabled,
+            remember_device_days: req.remember_device_days,
+        },
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
     state.update_use_case.run(cmd, ctx).await.into_result()?;

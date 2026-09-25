@@ -31,6 +31,24 @@ pub struct CreateEmailDomainMappingCommand {
     pub allowed_role_ids: Vec<String>,
     #[serde(default)]
     pub sync_roles_from_idp: bool,
+    /// Go's 2FA policy (emaildomainmapping/operations/create.go:21-25).
+    #[serde(default, flatten)]
+    pub two_factor: TwoFactorPolicyInput,
+}
+
+/// The per-domain second-factor policy on create (Go `require2fa`,
+/// `allowed2faMethods`, `rememberDeviceEnabled`, `rememberDeviceDays`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TwoFactorPolicyInput {
+    #[serde(default, rename = "require2fa")]
+    pub require_2fa: bool,
+    #[serde(default, rename = "allowed2faMethods")]
+    pub allowed_2fa_methods: Vec<String>,
+    #[serde(default)]
+    pub remember_device_enabled: bool,
+    #[serde(default)]
+    pub remember_device_days: i32,
 }
 
 impl crate::usecase::AuditMasked for CreateEmailDomainMappingCommand {}
@@ -78,6 +96,11 @@ impl<U: UnitOfWork> UseCase for CreateEmailDomainMappingUseCase<U> {
                 "Identity provider ID is required",
             ));
         }
+
+        crate::email_domain_mapping::entity::validate_two_factor(
+            command.two_factor.require_2fa,
+            &command.two_factor.allowed_2fa_methods,
+        )?;
 
         Ok(())
     }
@@ -153,6 +176,12 @@ impl<U: UnitOfWork> CreateEmailDomainMappingUseCase<U> {
         mapping.required_oidc_tenant_id = command.required_oidc_tenant_id.clone();
         mapping.allowed_role_ids = command.allowed_role_ids.clone();
         mapping.sync_roles_from_idp = command.sync_roles_from_idp;
+        mapping.require_2fa = command.two_factor.require_2fa;
+        mapping.remember_device_enabled = command.two_factor.remember_device_enabled;
+        if command.two_factor.remember_device_days > 0 {
+            mapping.remember_device_days = command.two_factor.remember_device_days;
+        }
+        mapping.allowed_2fa_methods = command.two_factor.allowed_2fa_methods.clone();
         super::require_tenant_pin(idp.oidc_multi_tenant, &mapping)?;
 
         if let Err(e) = self.edm_repo.insert(&mapping).await {
@@ -190,6 +219,7 @@ mod tests {
             granted_client_ids: vec![],
             required_oidc_tenant_id: None,
             allowed_role_ids: vec![],
+            two_factor: Default::default(),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -224,6 +254,7 @@ mod tests {
             granted_client_ids: vec![],
             required_oidc_tenant_id: None,
             allowed_role_ids: vec![],
+            two_factor: Default::default(),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -244,6 +275,7 @@ mod tests {
             granted_client_ids: vec![],
             required_oidc_tenant_id: None,
             allowed_role_ids: vec![],
+            two_factor: Default::default(),
         };
         let trimmed = cmd.email_domain.trim().to_lowercase();
         assert!(
@@ -264,6 +296,7 @@ mod tests {
             granted_client_ids: vec![],
             required_oidc_tenant_id: None,
             allowed_role_ids: vec![],
+            two_factor: Default::default(),
         };
         assert!(
             cmd.identity_provider_id.trim().is_empty(),
@@ -283,6 +316,7 @@ mod tests {
             granted_client_ids: vec![],
             required_oidc_tenant_id: None,
             allowed_role_ids: vec![],
+            two_factor: Default::default(),
         };
         let trimmed = cmd.email_domain.trim().to_lowercase();
         assert!(!trimmed.is_empty());
@@ -301,6 +335,7 @@ mod tests {
             granted_client_ids: vec![],
             required_oidc_tenant_id: None,
             allowed_role_ids: vec![],
+            two_factor: Default::default(),
         };
         let normalized = cmd.email_domain.trim().to_lowercase();
         assert_eq!(normalized, "example.com");

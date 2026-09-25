@@ -7,10 +7,14 @@ pub mod delete;
 pub mod events;
 pub mod update;
 
-pub use create::{CreateEmailDomainMappingCommand, CreateEmailDomainMappingUseCase};
+pub use create::{
+    CreateEmailDomainMappingCommand, CreateEmailDomainMappingUseCase, TwoFactorPolicyInput,
+};
 pub use delete::{DeleteEmailDomainMappingCommand, DeleteEmailDomainMappingUseCase};
 pub use events::*;
-pub use update::{UpdateEmailDomainMappingCommand, UpdateEmailDomainMappingUseCase};
+pub use update::{
+    TwoFactorPolicyUpdate, UpdateEmailDomainMappingCommand, UpdateEmailDomainMappingUseCase,
+};
 
 use crate::usecase::UseCaseError;
 

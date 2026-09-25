@@ -33,6 +33,33 @@ pub struct UpdateEmailDomainMappingCommand {
     pub required_oidc_tenant_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_role_ids: Option<Vec<String>>,
+    /// Go's 2FA policy fields: absent = unchanged
+    /// (emaildomainmapping/operations/update.go:24-29).
+    #[serde(default, flatten)]
+    pub two_factor: TwoFactorPolicyUpdate,
+}
+
+/// The per-domain second-factor policy on update; `None` leaves a field as
+/// it is.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TwoFactorPolicyUpdate {
+    #[serde(
+        default,
+        rename = "require2fa",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub require_2fa: Option<bool>,
+    #[serde(
+        default,
+        rename = "allowed2faMethods",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub allowed_2fa_methods: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remember_device_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remember_device_days: Option<i32>,
 }
 
 impl crate::usecase::AuditMasked for UpdateEmailDomainMappingCommand {}
@@ -140,6 +167,24 @@ impl<U: UnitOfWork> UpdateEmailDomainMappingUseCase<U> {
         if let Some(ref roles) = command.allowed_role_ids {
             mapping.allowed_role_ids = roles.clone();
         }
+        let two_factor = &command.two_factor;
+        if let Some(require) = two_factor.require_2fa {
+            mapping.require_2fa = require;
+        }
+        if let Some(ref methods) = two_factor.allowed_2fa_methods {
+            mapping.allowed_2fa_methods = methods.clone();
+        }
+        if let Some(enabled) = two_factor.remember_device_enabled {
+            mapping.remember_device_enabled = enabled;
+        }
+        if let Some(days) = two_factor.remember_device_days {
+            mapping.remember_device_days = days;
+        }
+        // The resulting policy, not just the change, must hold.
+        crate::email_domain_mapping::entity::validate_two_factor(
+            mapping.require_2fa,
+            &mapping.allowed_2fa_methods,
+        )?;
         mapping.updated_at = chrono::Utc::now();
 
         // The mapping as saved, on the provider it now routes to (a move
@@ -189,6 +234,7 @@ mod tests {
             allowed_role_ids: Some(vec!["r1".to_string(), "r2".to_string()]),
             identity_provider_id: None,
             required_oidc_tenant_id: None,
+            two_factor: Default::default(),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -218,6 +264,7 @@ mod tests {
             allowed_role_ids: None,
             identity_provider_id: None,
             required_oidc_tenant_id: None,
+            two_factor: Default::default(),
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -242,6 +289,7 @@ mod tests {
             allowed_role_ids: None,
             identity_provider_id: None,
             required_oidc_tenant_id: None,
+            two_factor: Default::default(),
         };
         assert!(
             cmd.mapping_id.trim().is_empty(),
@@ -261,6 +309,7 @@ mod tests {
             allowed_role_ids: None,
             identity_provider_id: None,
             required_oidc_tenant_id: None,
+            two_factor: Default::default(),
         };
         assert!(!cmd.mapping_id.trim().is_empty());
     }

@@ -435,6 +435,17 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "038_aud_logs_entity_id_width",
             include_str!("../../../../migrations/038_aud_logs_entity_id_width.sql"),
         ),
+        // Go's 031: two-factor authentication (factors, recovery codes,
+        // email PINs, trusted devices, the per-domain policy).
+        (
+            "041_mfa_tables",
+            include_str!("../../../../migrations/041_mfa_tables.sql"),
+        ),
+        // The reset-token columns of Go's 031, 032, 033, 041 and 051.
+        (
+            "042_password_reset_token_purpose",
+            include_str!("../../../../migrations/042_password_reset_token_purpose.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -588,6 +599,25 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' AND table_name = 'aud_logs' \
                AND column_name = 'entity_id' \
                AND character_maximum_length >= 100)",
+        ),
+        // A database Go migrated has the last of the tables and the policy
+        // junction.
+        (
+            "041_mfa_tables",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'iam_mfa_trusted_devices') \
+             AND EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' \
+               AND table_name = 'tnt_email_domain_mapping_2fa_methods')",
+        ),
+        // Go's 051 CHECK is the last of the reset-token changes.
+        (
+            "042_password_reset_token_purpose",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_password_reset_tokens' \
+               AND column_name = 'redirect_uri') \
+             AND EXISTS (SELECT 1 FROM pg_constraint \
+             WHERE conname = 'chk_iam_password_reset_tokens_purpose')",
         ),
     ];
 
