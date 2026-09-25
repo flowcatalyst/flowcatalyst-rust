@@ -265,7 +265,6 @@ pub struct SdkSyncState {
     pub sync_event_types_use_case: Arc<SyncEventTypesUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_subscriptions_use_case: Arc<SyncSubscriptionsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_dispatch_pools_use_case: Arc<SyncDispatchPoolsUseCase<crate::usecase::PgUnitOfWork>>,
-    pub sync_principals_use_case: Arc<SyncPrincipalsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_processes_use_case: Arc<SyncProcessesUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_scheduled_jobs_use_case: Arc<SyncScheduledJobsUseCase<crate::usecase::PgUnitOfWork>>,
     pub sync_openapi_use_case: Arc<SyncOpenApiSpecUseCase<crate::usecase::PgUnitOfWork>>,
@@ -274,8 +273,13 @@ pub struct SdkSyncState {
     /// A function's own pool and jobs, which the pool and job syncs leave
     /// alone (`function-invocation.md` §4.2).
     pub trigger_objects: Arc<crate::function::trigger_object_repository::TriggerObjectRepository>,
-    /// Which synced emails already exist, for `passwordHashIgnored`.
+    /// The principal sync's users; also which synced emails already exist,
+    /// for `passwordHashIgnored`.
     pub principal_repo: Arc<crate::PrincipalRepository>,
+    pub application_repo: Arc<crate::ApplicationRepository>,
+    /// The principal sync runs its rows, events and audit entries in one
+    /// transaction.
+    pub unit_of_work: Arc<crate::usecase::PgUnitOfWork>,
 }
 
 // ---------------------------------------------------------------------------
@@ -689,10 +693,19 @@ async fn sync_principals(
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    let (principal_repo, application_repo, caller) = (
+        state.principal_repo.clone(),
+        state.application_repo.clone(),
+        auth.0.clone(),
+    );
 
     match state
-        .sync_principals_use_case
-        .run(command, ctx)
+        .unit_of_work
+        .run(|session| async move {
+            SyncPrincipalsUseCase::new(principal_repo, application_repo, caller, session)
+                .run(command, ctx)
+                .await
+        })
         .await
         .into_result()
     {

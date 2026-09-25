@@ -15,7 +15,9 @@
 //! - a new user is created CLIENT-tier with no home client, with the entry's
 //!   name, active flag, roles and hash. One `platform:iam:user:created` event.
 //!
-//! Roles are lower-cased and not prefixed. The role ceiling (owner ruling
+//! The caller touches only users within its reach (Java S1.3): a listed
+//! user it could not administer refuses the sync with 403
+//! `SYNC_TARGET_FORBIDDEN`. Roles are lower-cased and not prefixed. The role ceiling (owner ruling
 //! 14) bounds them: the caller may add or remove only roles whose every
 //! platform permission it holds, else 403 `ROLE_ABOVE_CALLER` and nothing is
 //! written. Nothing is removed for unlisted users. A `platform:iam:principals:synced` rollup
@@ -175,6 +177,14 @@ impl<U: UnitOfWork> SyncUsersUseCase<U> {
             .into_iter()
             .map(|p| (p.email().unwrap_or_default().to_lowercase(), p))
             .collect();
+
+        // Java S1.3: a listed user out of the caller's reach refuses the
+        // whole sync.
+        for (email, p) in &existing {
+            if !super::sync::administers(&self.caller, p) {
+                return Err(super::sync::sync_target_forbidden(email));
+            }
+        }
 
         // What each listed user holds now, for the role ceiling.
         let stored_roles: HashMap<String, Vec<String>> = existing

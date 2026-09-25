@@ -192,24 +192,34 @@ pub async fn require_role_ref_change(
     require_roles(Some(caller), &names, &definitions)
 }
 
+/// A caller for unit tests: the given tier, clients and permissions. The
+/// one place these IAM tests build an [`AuthContext`] by hand.
+#[cfg(test)]
+pub(crate) fn test_caller(
+    scope: crate::principal::entity::UserScope,
+    clients: &[&str],
+    perms: &[&str],
+) -> AuthContext {
+    AuthContext {
+        principal_id: "prn_caller".to_string(),
+        principal_type: crate::PrincipalType::User,
+        scope,
+        email: None,
+        name: "Caller".to_string(),
+        accessible_clients: clients.iter().map(|s| s.to_string()).collect(),
+        permissions: perms.iter().map(|s| s.to_string()).collect(),
+        roles: vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::principal::entity::UserScope;
     use crate::role::entity::roles;
-    use crate::PrincipalType;
 
     fn caller(perms: &[&str]) -> AuthContext {
-        AuthContext {
-            principal_id: "prn_caller".to_string(),
-            principal_type: PrincipalType::User,
-            scope: UserScope::Anchor,
-            email: None,
-            name: "Caller".to_string(),
-            accessible_clients: vec!["*".to_string()],
-            permissions: perms.iter().map(|s| s.to_string()).collect(),
-            roles: vec![],
-        }
+        test_caller(UserScope::Anchor, &["*"], perms)
     }
 
     fn defs(roles: Vec<AuthRole>) -> HashMap<String, AuthRole> {

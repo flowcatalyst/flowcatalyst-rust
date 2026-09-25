@@ -922,12 +922,6 @@ pub fn build_platform_routes(
         repos.application_repo.clone(),
         unit_of_work.clone(),
     ));
-    let sync_principals_use_case =
-        Arc::new(crate::principal::operations::SyncPrincipalsUseCase::new(
-            repos.principal_repo.clone(),
-            repos.application_repo.clone(),
-            unit_of_work.clone(),
-        ));
     let sync_scheduled_jobs_use_case = Arc::new(
         crate::scheduled_job::operations::SyncScheduledJobsUseCase::new(
             repos.scheduled_job_repo.clone(),
@@ -948,13 +942,14 @@ pub fn build_platform_routes(
         sync_event_types_use_case: sync_event_types_use_case.clone(),
         sync_subscriptions_use_case: sync_subscriptions_use_case.clone(),
         sync_dispatch_pools_use_case: sync_dispatch_pools_use_case.clone(),
-        sync_principals_use_case,
         sync_processes_use_case: sync_processes_use_case.clone(),
         sync_scheduled_jobs_use_case,
         sync_openapi_use_case: sync_openapi_use_case.clone(),
         app_access: app_access.clone(),
         trigger_objects: repos.function_trigger_object_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
+        application_repo: repos.application_repo.clone(),
+        unit_of_work: unit_of_work.clone(),
     };
 
     let sdk_audit_batch_state = SdkAuditBatchState {

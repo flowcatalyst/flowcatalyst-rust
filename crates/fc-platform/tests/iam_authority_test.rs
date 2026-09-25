@@ -1073,3 +1073,165 @@ async fn roles_hold_only_their_own_applications_permissions() {
         .unwrap()
         .is_none());
 }
+
+// ── Decision #23 + S1.3: the application-scoped principal sync ───────────
+
+async fn sdk_user(app: &TestApp, email: &str, client: Option<&str>, roles: &[&str]) -> String {
+    use fc_platform::service_account::entity::{AssignmentSource, RoleAssignment};
+    let mut p = Principal::new_user(email, UserScope::Client);
+    if let Some(c) = client {
+        p = p.with_client_id(c);
+    }
+    for r in roles {
+        p.roles
+            .push(RoleAssignment::with_source(*r, AssignmentSource::SdkSync));
+    }
+    app.repos.principal_repo.insert(&p).await.unwrap();
+    p.id
+}
+
+async fn application(app: &TestApp, code: &str) {
+    let a = fc_platform::application::entity::Application::new(code, code);
+    app.repos.application_repo.insert(&a).await.unwrap();
+}
+
+/// The sync replaces and sweeps only its own application's SDK roles, never
+/// takes another application's or a platform role name, and an anchor's
+/// sync reaches every user.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn application_sync_keeps_to_its_own_roles() {
+    let app = setup().await;
+    application(&app, "hr").await;
+    application(&app, "rfp").await;
+    let syncer = stored_caller(
+        &app,
+        "hr-syncer@iam.test",
+        UserScope::Anchor,
+        &[permissions::iam::USER_CREATE],
+    )
+    .await;
+    let named = sdk_user(&app, "named@iam.test", None, &["hr:employee", "rfp:buyer"]).await;
+    let mut kept = app
+        .repos
+        .principal_repo
+        .find_by_id(&named)
+        .await
+        .unwrap()
+        .unwrap();
+    kept.assign_role("platform:viewer");
+    app.repos.principal_repo.update(&kept).await.unwrap();
+    let swept = sdk_user(&app, "swept@iam.test", None, &["hr:employee", "rfp:buyer"]).await;
+
+    // Refused names: a platform role, another application's role.
+    for role in ["platform:super-admin", "RFP:Buyer"] {
+        let (status, resp) = read_json(
+            app.post(
+                "/api/applications/hr/principals/sync",
+                &syncer,
+                json!({ "principals": [{ "email": "new@iam.test", "name": "N", "roles": [role] }] }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{role}: {resp}");
+        assert_eq!(code(&resp), "ROLE_APP_FORBIDDEN", "{role}");
+    }
+    assert!(app
+        .repos
+        .principal_repo
+        .find_by_email("new@iam.test")
+        .await
+        .unwrap()
+        .is_none());
+
+    // Accepted: its own, an unprefixed name, an unknown prefix.
+    let (status, resp) = read_json(
+        app.post(
+            "/api/applications/hr/principals/sync?removeUnlisted=true",
+            &syncer,
+            json!({ "principals": [{
+                "email": "Named@iam.test", "name": "Named",
+                "roles": ["hr:manager", "employee", "legacy:thing"]
+            }] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(resp["updated"], 1);
+    assert_eq!(resp["deleted"], 1, "{resp}");
+    assert_eq!(
+        roles_of(&app, &named).await,
+        vec![
+            "employee",
+            "hr:manager",
+            "legacy:thing",
+            "platform:viewer",
+            "rfp:buyer"
+        ]
+    );
+    // The sweep stripped only hr's SDK role.
+    assert_eq!(roles_of(&app, &swept).await, vec!["rfp:buyer"]);
+    assert!(app.event_count_by_type("platform:iam:user:updated").await >= 2);
+}
+
+/// A non-anchor caller touches only its own client's users: a listed user
+/// outside its reach refuses the whole sync; the sweep skips such users.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn application_sync_stays_within_the_callers_reach() {
+    let app = setup().await;
+    application(&app, "hr").await;
+    let mine = create_client(&app, "reach-mine").await;
+    let theirs = create_client(&app, "reach-theirs").await;
+    // A client-tier syncer that reaches every application.
+    let p = Principal::new_user("reach-syncer@iam.test", UserScope::Client).with_client_id(&mine);
+    app.repos.principal_repo.insert(&p).await.unwrap();
+    let syncer = app
+        .auth_service
+        .generate_access_token_with_scope(&p, &[permissions::iam::USER_CREATE.to_string()], None)
+        .unwrap();
+    let own = sdk_user(&app, "own@iam.test", Some(&mine), &["hr:employee"]).await;
+    let foreign = sdk_user(&app, "foreign@iam.test", Some(&theirs), &["hr:employee"]).await;
+
+    let (status, resp) = read_json(
+        app.post(
+            "/api/applications/hr/principals/sync",
+            &syncer,
+            json!({ "principals": [
+                { "email": "brand-new@iam.test", "name": "New" },
+                { "email": "foreign@iam.test", "name": "Hijacked", "roles": ["hr:manager"] }
+            ] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "SYNC_TARGET_FORBIDDEN");
+    assert!(app
+        .repos
+        .principal_repo
+        .find_by_email("brand-new@iam.test")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(roles_of(&app, &foreign).await, vec!["hr:employee"]);
+
+    // The sweep: its own client's user loses hr's role; the other client's
+    // user is out of reach and keeps it.
+    let other_own = sdk_user(&app, "other-own@iam.test", Some(&mine), &["hr:employee"]).await;
+    let (status, resp) = read_json(
+        app.post(
+            "/api/applications/hr/principals/sync?removeUnlisted=true",
+            &syncer,
+            json!({ "principals": [{ "email": "own@iam.test", "name": "Own", "roles": ["hr:manager"] }] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    assert_eq!(roles_of(&app, &own).await, vec!["hr:manager"]);
+    assert!(roles_of(&app, &other_own).await.is_empty());
+    assert_eq!(roles_of(&app, &foreign).await, vec!["hr:employee"]);
+}
