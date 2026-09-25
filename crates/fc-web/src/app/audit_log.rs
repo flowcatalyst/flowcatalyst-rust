@@ -1,4 +1,4 @@
-//! `/ui/audit-log`: the platform audit log, newest first
+//! `/ui/platform/audit-log`: the platform audit log, newest first
 //! (`AuditLogListPage.vue`).
 //!
 //! Same data and rules as `GET /api/audit-logs` (`audit/api.rs`): anchor
@@ -26,17 +26,20 @@ use topcoat::{
 
 use crate::auth::{auth, permit, platform_error};
 use crate::ui::{
-    Btn, Severity, cursor_pager, empty_state, filter_select, json_block, local_time, page_header,
+    Btn, Severity, empty_state, filter_select, json_block, local_time, page_header, table_toolbar,
     tag,
 };
 
 const PAGE_SIZE: usize = 100;
+const LIST: &str = "/ui/platform/audit-log";
 
 #[query_params(error = bad_request)]
 struct AuditQuery {
     entity_type: Option<String>,
     operation: Option<String>,
     after: Option<String>,
+    /// The cursor page's number, for "Page N" (the cursor itself is opaque).
+    page: Option<usize>,
 }
 
 /// "EventTypeCreated" -> "Event Type Created" (`formatOperationName`).
@@ -61,7 +64,12 @@ fn entity_severity(entity_type: &str) -> Severity {
     }
 }
 
-fn list_href(entity_type: Option<&str>, operation: Option<&str>, after: Option<&str>) -> String {
+fn list_href(
+    entity_type: Option<&str>,
+    operation: Option<&str>,
+    after: Option<&str>,
+    page: usize,
+) -> String {
     let mut q = form_urlencoded::Serializer::new(String::new());
     if let Some(v) = entity_type {
         q.append_pair("entity_type", v);
@@ -71,6 +79,7 @@ fn list_href(entity_type: Option<&str>, operation: Option<&str>, after: Option<&
     }
     if let Some(v) = after {
         q.append_pair("after", v);
+        q.append_pair("page", &page.to_string());
     }
     let q = q.finish();
     if q.is_empty() {
@@ -149,16 +158,19 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
     client_ids.dedup();
     let (app_names, client_names) = names(cx, app_ids, client_ids).await?;
 
+    let page = if query.after.is_some() {
+        query.page.unwrap_or(2).max(2)
+    } else {
+        1
+    };
     let older_href = has_more
         .then(|| logs.last().map(|l| encode_cursor(l.performed_at, &l.id)))
         .flatten()
-        .map(|c| list_href(entity_type, operation, Some(&c)));
-    let newest_href = query
-        .after
-        .is_some()
-        .then(|| list_href(entity_type, operation, None));
-    let filtered = entity_type.is_some() || operation.is_some();
-    let summary = format!("{} entries", logs.len());
+        .map(|c| list_href(entity_type, operation, Some(&c), page + 1));
+    // Newer is the previous page: the browser's history when there is one
+    // (the cursor stack lives in the URLs), else the first page.
+    let newer_href = (page > 1).then(|| list_href(entity_type, operation, None, 1));
+    let active = usize::from(entity_type.is_some()) + usize::from(operation.is_some());
 
     let entity_options: Vec<(String, String)> =
         entity_types.into_iter().map(|t| (t.clone(), t)).collect();
@@ -177,8 +189,15 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         page_header(title: "Audit Log", subtitle: "View system activity and changes")
 
-        <form method="get" action="/ui/platform/audit-log" class="fc-card mb-6">
-            <div class="fc-filter-row">
+        <div class="fc-card-flush">
+            table_toolbar(
+                form_id: "audit-list",
+                action: LIST,
+                placeholder: "",
+                search: None,
+                active_filter_count: active,
+                has_active_filters: active > 0,
+                show_filters: true,
                 filter_select(
                     name: "entity_type",
                     label: "Entity Type",
@@ -193,31 +212,21 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
                     options: operation_options,
                     selected: operation.map(str::to_owned),
                 )
-                <noscript><button type="submit" class=(Btn::Secondary)>"Apply"</button></noscript>
-                if filtered {
-                    <a href="/ui/platform/audit-log" class="fc-btn fc-btn-text ml-auto">
-                        icon(data: iconify_icon!("lucide:funnel-x"), size: Length::rem(1.0))
-                        "Clear Filters"
-                    </a>
-                }
-            </div>
-        </form>
-
-        <div class="fc-card-flush">
+            )
             if logs.is_empty() {
-                empty_state(message: "No audit log entries found")
+                empty_state(message: "No audit logs found", clear_href: (active > 0).then(|| LIST.to_owned()))
             } else {
-                <table class="fc-table">
+                <table class="fc-table fc-table-sm">
                     <thead>
                         <tr>
-                            <th>"Time"</th>
-                            <th>"Entity Type"</th>
-                            <th>"Entity ID"</th>
-                            <th>"Operation"</th>
-                            <th>"Performed By"</th>
-                            <th>"Application"</th>
-                            <th>"Client"</th>
-                            <th class="w-12"></th>
+                            <th class="w-[15%]">"Time"</th>
+                            <th class="w-[13%]">"Entity Type"</th>
+                            <th class="w-[14%]">"Entity ID"</th>
+                            <th class="w-[18%]">"Operation"</th>
+                            <th class="w-[15%]">"Performed By"</th>
+                            <th class="w-[13%]">"Application"</th>
+                            <th class="w-[13%]">"Client"</th>
+                            <th class="w-[5%]"></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -249,7 +258,18 @@ async fn audit_log(cx: &Cx) -> Result<impl View> {
                     </tbody>
                 </table>
             }
-            cursor_pager(newest_href: newest_href, older_href: older_href, summary: summary)
+            // Cursor pager: aud_logs is unbounded, so there is no count.
+            <nav class="flex items-center justify-center gap-4 border-t border-border px-4 py-2" aria-label="Pagination">
+                match newer_href {
+                    Some(href) => <a href=(href) class=(Btn::Text) onclick="if (history.length > 1) { event.preventDefault(); history.back() }">icon(data: iconify_icon!("lucide:chevron-left"), size: Length::rem(1.0)) "Newer"</a>,
+                    None => <span class=(Btn::Text) aria-disabled="true">icon(data: iconify_icon!("lucide:chevron-left"), size: Length::rem(1.0)) "Newer"</span>,
+                }
+                <span class="text-[13px] text-[#64748b]">(format!("Page {page}"))</span>
+                match older_href {
+                    Some(href) => <a href=(href) class=(Btn::Text)>"Older" icon(data: iconify_icon!("lucide:chevron-right"), size: Length::rem(1.0))</a>,
+                    None => <span class=(Btn::Text) aria-disabled="true">"Older" icon(data: iconify_icon!("lucide:chevron-right"), size: Length::rem(1.0))</span>,
+                }
+            </nav>
         </div>
 
         // Detail dialog. The overlay closes on a backdrop click or the X.
