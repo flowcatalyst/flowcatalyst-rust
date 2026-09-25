@@ -12,8 +12,8 @@
 //! - Per-host HTTP/2 connection pool that grows under load and shrinks
 //!   when idle (the AWS ALB 128-stream cap). See [`crate::http_pool`].
 //!
-//! Circuit breaking is handled by the per-endpoint `CircuitBreakerRegistry`
-//! in `ProcessPool`, not here.
+//! Circuit breaking: [`Mediator::mediate`] on `HttpMediator` consults and
+//! records into the shared per-endpoint `CircuitBreakerRegistry`.
 
 mod inner;
 mod response;
@@ -297,7 +297,7 @@ impl HttpMediator {
             message_id = %message.id,
             target = %message.mediation_target,
             has_auth_token = message.auth_token.is_some(),
-            auth_token_preview = message.auth_token.as_ref().map(|t| if t.len() > 20 { format!("{}...", &t[..20]) } else { t.clone() }),
+            auth_token_preview = message.auth_token.as_deref().map(token_preview),
             "Mediating message"
         );
 
@@ -431,6 +431,42 @@ impl Mediator for HttpMediator {
 impl Default for HttpMediator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The first 20 characters of a bearer token, for a debug log line. Cut on
+/// a character boundary: slicing bytes (`&t[..20]`) panicked the delivery
+/// task whenever byte 20 fell inside a multi-byte character.
+fn token_preview(token: &str) -> String {
+    match token.char_indices().nth(20) {
+        Some((cut, _)) => format!("{}...", &token[..cut]),
+        None => token.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod token_preview_tests {
+    use super::token_preview;
+
+    #[test]
+    fn short_tokens_are_shown_whole() {
+        assert_eq!(token_preview("abc"), "abc");
+        assert_eq!(token_preview(&"a".repeat(20)), "a".repeat(20));
+    }
+
+    #[test]
+    fn long_tokens_are_cut_at_20_characters() {
+        assert_eq!(
+            token_preview(&"a".repeat(25)),
+            format!("{}...", "a".repeat(20))
+        );
+    }
+
+    #[test]
+    fn a_multibyte_character_across_byte_20_does_not_panic() {
+        // 19 ASCII bytes, then a 2-byte 'é' spanning bytes 19..21.
+        let token = format!("{}é{}", "a".repeat(19), "b".repeat(10));
+        assert_eq!(token_preview(&token), format!("{}é...", "a".repeat(19)));
     }
 }
 
