@@ -555,6 +555,7 @@ pub async fn create_user(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_principals(&auth.0)?;
 
     let domain = req
         .email
@@ -961,6 +962,10 @@ pub async fn update_principal(
     use crate::principal::operations::UpdateUserCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
+    // The permission before anything is loaded, as Go's `update`
+    // (principal/api/api.go:1026-1032): without it, nothing is touched.
+    crate::checks::can_write_principals(&auth.0)?;
+
     // Handler-level auth: target-resource access + high-trust gates on
     // scope/client_id changes. Field-level mutations happen inside the
     // use case so the write commits atomically with the UserUpdated event.
@@ -971,6 +976,13 @@ pub async fn update_principal(
         .or_not_found("Principal", &id)?;
 
     if !auth.0.is_anchor() {
+        // Go's `blockNonClientTarget`: a non-anchor administrator manages
+        // CLIENT-tier principals only, never a partner or an anchor.
+        if existing.scope != UserScope::Client {
+            return Err(PlatformError::forbidden(
+                "Client administrators can only manage client-scope users",
+            ));
+        }
         if let Some(ref cid) = existing.client_id {
             if !auth.0.can_access_client(cid) {
                 return Err(PlatformError::forbidden("No access to this principal"));
@@ -1424,6 +1436,7 @@ pub async fn delete_principal(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_principals(&auth.0)?;
 
     let cmd = DeleteUserCommand { principal_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -1483,6 +1496,9 @@ pub async fn sync_users(
     use crate::principal::operations::{SyncUsersCommand, SyncUsersUseCase};
     use crate::usecase::{ExecutionContext, UseCase};
 
+    // Anchor, as every other principal write here: the sync creates and
+    // updates users with no client, which only an anchor may manage.
+    crate::checks::require_anchor(&auth.0)?;
     crate::checks::can_sync_principals(&auth.0)?;
 
     let command = SyncUsersCommand {
@@ -1535,6 +1551,7 @@ pub async fn activate_principal(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_principals(&auth.0)?;
 
     let cmd = ActivateUserCommand {
         principal_id: id.clone(),
@@ -1576,6 +1593,7 @@ pub async fn deactivate_principal(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_principals(&auth.0)?;
 
     let cmd = DeactivateUserCommand {
         principal_id: id.clone(),
@@ -1625,6 +1643,7 @@ pub async fn reset_password(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_principals(&auth.0)?;
 
     let cmd = ResetPasswordCommand {
         principal_id: id.clone(),
@@ -1675,6 +1694,7 @@ pub async fn send_password_reset(
     Path(id): Path<String>,
 ) -> Result<Json<StatusChangeResponse>, PlatformError> {
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_principals(&auth.0)?;
 
     let emailer = &state.password_reset_emailer;
 
@@ -1956,6 +1976,7 @@ pub async fn set_application_access(
     use crate::usecase::{ExecutionContext, UseCase};
 
     crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_principals(&auth.0)?;
 
     let principal = state
         .principal_repo

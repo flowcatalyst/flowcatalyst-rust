@@ -519,6 +519,29 @@ pub mod checks {
         require_permission(context, permissions::admin::SERVICE_ACCOUNT_DELETE)
     }
 
+    /// Principals, the user-administration writes (create, update,
+    /// activate, deactivate, password reset, application access): any of the
+    /// user create/update/delete permissions, as Go's `CanWritePrincipals`
+    /// (shared/auth/auth.go, reached through `RequireUserAdmin`). Scope is
+    /// reach, never authority: an anchor needs the permission too. The
+    /// handler keeps its own tier check on top.
+    pub fn can_write_principals(context: &AuthContext) -> Result<()> {
+        require_any_permission(
+            context,
+            &[
+                permissions::iam::USER_CREATE,
+                permissions::iam::USER_UPDATE,
+                permissions::iam::USER_DELETE,
+            ],
+        )
+    }
+
+    /// Principals, delete: `platform:iam:user:delete`, as Go's
+    /// `CanDeletePrincipals`.
+    pub fn can_delete_principals(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::iam::USER_DELETE)
+    }
+
     /// Platform-config access grants, read: anchor plus
     /// `platform:admin:config:view` (Go's `CanReadPlatformConfig`,
     /// shared/auth/auth.go:784).

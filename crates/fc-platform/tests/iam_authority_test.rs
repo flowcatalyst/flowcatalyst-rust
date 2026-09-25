@@ -207,3 +207,225 @@ async fn service_account_all_applications_opt_in() {
         .unwrap()
         .is_none());
 }
+
+// ── Principals (fix S4) ──────────────────────────────────────────────────
+
+async fn stored_user(app: &TestApp, email: &str, scope: UserScope, client: Option<&str>) -> String {
+    let mut p = Principal::new_user(email, scope);
+    if let Some(c) = client {
+        p = p.with_client_id(c);
+    }
+    app.repos
+        .principal_repo
+        .insert(&p)
+        .await
+        .expect("insert user");
+    p.id
+}
+
+/// Every principal write needs a user permission on top of its tier check:
+/// an anchor with none is refused, whatever the route.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn principal_writes_need_a_user_permission_at_every_tier() {
+    let app = setup().await;
+    let target = stored_user(&app, "target@iam.test", UserScope::Client, None).await;
+    let bare_anchor = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::iam::USER_READ],
+    );
+
+    let posts = [
+        (
+            "/api/principals/users".to_string(),
+            json!({ "email": "new@iam.test", "name": "New" }),
+        ),
+        (format!("/api/principals/{target}/activate"), json!({})),
+        (format!("/api/principals/{target}/deactivate"), json!({})),
+        (
+            format!("/api/principals/{target}/reset-password"),
+            json!({ "newPassword": "An0ther-Passw0rd!" }),
+        ),
+        (
+            format!("/api/principals/{target}/send-password-reset"),
+            json!({}),
+        ),
+        (
+            "/api/principals/sync".to_string(),
+            json!({ "principals": [{ "email": "synced@iam.test", "name": "S" }] }),
+        ),
+    ];
+    for (path, body) in posts {
+        let (status, resp) = read_json(app.post(&path, &bare_anchor, body).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {resp}");
+        // The sync's own check answers with its older FORBIDDEN body.
+        if !path.ends_with("/sync") {
+            assert_eq!(code(&resp), "PERMISSION_REQUIRED", "{path}");
+        }
+    }
+    for (path, body) in [
+        (
+            format!("/api/principals/{target}"),
+            json!({ "name": "Renamed" }),
+        ),
+        (
+            format!("/api/principals/{target}/application-access"),
+            json!({ "applicationIds": [] }),
+        ),
+    ] {
+        let (status, resp) = read_json(app.put(&path, &bare_anchor, body).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {resp}");
+        assert_eq!(code(&resp), "PERMISSION_REQUIRED", "{path}");
+    }
+    let (status, resp) = read_json(
+        app.delete(&format!("/api/principals/{target}"), &bare_anchor)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_REQUIRED");
+
+    // Nothing was touched.
+    let p = app
+        .repos
+        .principal_repo
+        .find_by_id(&target)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(p.active);
+    assert_ne!(p.name, "Renamed");
+    assert!(app
+        .repos
+        .principal_repo
+        .find_by_email("synced@iam.test")
+        .await
+        .unwrap()
+        .is_none());
+
+    // Update and delete lands with their permissions; delete needs delete.
+    let updater = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::iam::USER_UPDATE],
+    );
+    let (status, resp) = read_json(
+        app.put(
+            &format!("/api/principals/{target}"),
+            &updater,
+            json!({ "name": "Renamed" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let (status, resp) = read_json(
+        app.delete(&format!("/api/principals/{target}"), &updater)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_REQUIRED");
+    let deleter = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::iam::USER_DELETE],
+    );
+    let resp = app
+        .delete(&format!("/api/principals/{target}"), &deleter)
+        .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+/// The platform-level user sync is anchor-only, as every other principal
+/// write here.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn platform_user_sync_needs_anchor() {
+    let app = setup().await;
+    let clt = create_client(&app, "sync-tier").await;
+    let client_admin = caller(
+        &app,
+        UserScope::Client,
+        Some(&clt),
+        &[permissions::iam::USER_CREATE],
+    );
+    let (status, resp) = read_json(
+        app.post(
+            "/api/principals/sync",
+            &client_admin,
+            json!({ "principals": [{ "email": "x@iam.test", "name": "X" }] }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert!(app
+        .repos
+        .principal_repo
+        .find_by_email("x@iam.test")
+        .await
+        .unwrap()
+        .is_none());
+}
+
+/// A client administrator may update its client's CLIENT-tier users only,
+/// never a partner homed at that client (Go's `blockNonClientTarget`).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn client_admin_updates_client_users_only() {
+    let app = setup().await;
+    let clt = create_client(&app, "upd-tier").await;
+    let member = stored_user(&app, "member@iam.test", UserScope::Client, Some(&clt)).await;
+    let partner = stored_user(&app, "partner@iam.test", UserScope::Partner, Some(&clt)).await;
+    let client_admin = caller(
+        &app,
+        UserScope::Client,
+        Some(&clt),
+        &[permissions::iam::USER_UPDATE],
+    );
+
+    let (status, resp) = read_json(
+        app.put(
+            &format!("/api/principals/{member}"),
+            &client_admin,
+            json!({ "name": "Member Renamed" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let (status, resp) = read_json(
+        app.put(
+            &format!("/api/principals/{partner}"),
+            &client_admin,
+            json!({ "name": "Partner Renamed" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+
+    // And without the permission, not even its own client's users.
+    let reader = caller(
+        &app,
+        UserScope::Client,
+        Some(&clt),
+        &[permissions::iam::USER_READ],
+    );
+    let (status, resp) = read_json(
+        app.put(
+            &format!("/api/principals/{member}"),
+            &reader,
+            json!({ "name": "Nope" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "PERMISSION_REQUIRED");
+}
