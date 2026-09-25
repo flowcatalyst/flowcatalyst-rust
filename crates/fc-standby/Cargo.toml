@@ -16,3 +16,5 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }

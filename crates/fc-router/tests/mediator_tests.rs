@@ -196,12 +196,10 @@ async fn test_success_flush_group() {
 
     Mock::given(method("POST"))
         .and(path("/webhook"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "ack": true,
-                "flushGroup": true,
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ack": true,
+            "flushGroup": true,
+        })))
         .expect(1)
         .mount(&mock_server)
         .await;
@@ -226,13 +224,11 @@ async fn test_success_flush_group_with_delay() {
 
     Mock::given(method("POST"))
         .and(path("/webhook"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "ack": true,
-                "flushGroup": true,
-                "delaySeconds": 20,
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ack": true,
+            "flushGroup": true,
+            "delaySeconds": 20,
+        })))
         .expect(1)
         .mount(&mock_server)
         .await;
@@ -280,7 +276,8 @@ async fn test_3xx_is_permanent_not_retried() {
         Mock::given(method("POST"))
             .and(path("/webhook"))
             .respond_with(
-                ResponseTemplate::new(status).insert_header("Location", "https://example.com/elsewhere"),
+                ResponseTemplate::new(status)
+                    .insert_header("Location", "https://example.com/elsewhere"),
             )
             .expect(1) // exactly one attempt — a retry would fail this expectation
             .mount(&mock_server)
@@ -301,7 +298,11 @@ async fn test_3xx_is_permanent_not_retried() {
             MediationResult::ErrorConfig,
             "status {status} should be a permanent ErrorConfig"
         );
-        assert_eq!(outcome.status_code, Some(status), "status {status} mismatch");
+        assert_eq!(
+            outcome.status_code,
+            Some(status),
+            "status {status} mismatch"
+        );
     }
 }
 

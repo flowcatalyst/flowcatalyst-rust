@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::{PgPool, Row};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::{debug, info, warn};
 
 /// Bound on the stored failure text (R-17). A pathological payload can
@@ -9,7 +9,10 @@ use tracing::{debug, info, warn};
 /// verbatim once per quarantined row.
 const MAX_QUARANTINE_ERROR_LEN: usize = 1000;
 
-use crate::{EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, Result};
+use crate::{
+    EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, RejectedLog,
+    RejectedMessage, Result,
+};
 use fc_common::{Message, QueuedMessage};
 
 /// Postgres-backed queue that mimics SQS FIFO semantics for local development.
@@ -21,6 +24,12 @@ pub struct PostgresQueue {
     queue_name: String,
     visibility_timeout_seconds: u32,
     running: AtomicBool,
+    total_polled: AtomicU64,
+    total_acked: AtomicU64,
+    total_nacked: AtomicU64,
+    total_deferred: AtomicU64,
+    /// Rows quarantined because their payload could not be decoded.
+    rejected: RejectedLog,
 }
 
 impl PostgresQueue {
@@ -30,7 +39,44 @@ impl PostgresQueue {
             queue_name,
             visibility_timeout_seconds,
             running: AtomicBool::new(true),
+            total_polled: AtomicU64::new(0),
+            total_acked: AtomicU64::new(0),
+            total_nacked: AtomicU64::new(0),
+            total_deferred: AtomicU64::new(0),
+            rejected: RejectedLog::default(),
         }
+    }
+
+    /// Make a claimed row visible again after `delay_seconds` and clear its
+    /// receipt handle (Go: `makeVisible`). A receipt handle that no longer
+    /// matches a row is not an error, as in Go: the row was already acked,
+    /// or its visibility lapsed and it was re-claimed under a new handle —
+    /// either way there is nothing left for this handle to release.
+    async fn make_visible(&self, receipt_handle: &str, delay_seconds: Option<u32>) -> Result<()> {
+        let delay = delay_seconds.unwrap_or(0) as i64;
+        let new_visible_at = Utc::now().timestamp() + delay;
+
+        let result = sqlx::query(
+            r#"
+            UPDATE queue_messages
+               SET visible_at = $1, receipt_handle = NULL
+             WHERE receipt_handle = $2 AND queue_name = $3
+            "#,
+        )
+        .bind(new_visible_at)
+        .bind(receipt_handle)
+        .bind(&self.queue_name)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            debug!(
+                receipt_handle = %receipt_handle,
+                queue = %self.queue_name,
+                "Release matched no row (already acked or re-claimed)"
+            );
+        }
+        Ok(())
     }
 
     /// Create the queue schema (idempotent).
@@ -201,39 +247,60 @@ impl QueueConsumer for PostgresQueue {
         // just below for why that distinction is load-bearing.
         let poll_uuid = self.generate_receipt_handle();
 
-        // Claim up to max_messages eligible rows atomically.
+        // Claim up to max_messages eligible rows atomically — Go's claim
+        // query (`internal/queue/postgres/postgres.go` Poll), column for
+        // column, so a Go and a Rust router can drain the same table.
         //
-        // For FIFO: within a message group, only the earliest visible
-        // message is eligible at a time (ROW_NUMBER over partition).
-        // `FOR UPDATE SKIP LOCKED` lets concurrent pollers grab different
-        // messages without contending on a global write lock the way
-        // SQLite has to.
+        // Eligible = visible now AND the earliest eligible row of its group
+        // (COALESCE(message_group_id, id), so a NULL group is a singleton).
+        // Two NOT EXISTS clauses, not a windowed CTE:
+        //   - `FOR UPDATE SKIP LOCKED` over a ROW_NUMBER() result locks
+        //     nothing once Postgres inlines the CTE, so two pollers could
+        //     claim the same rows and deliver them twice;
+        //   - an earlier row of the group that was RELEASED WITH A DELAY
+        //     (receipt_handle NULL, visible_at in the future) blocks its
+        //     successors (R4, owner ruling 2026-09-17). The window only saw
+        //     visible rows, so a delayed-nacked group head was overtaken by
+        //     its own successor on the next poll. A CLAIMED earlier row
+        //     (receipt_handle set) does not block, as in Go.
+        // Ties on created_at (same-second inserts) break on id, in both the
+        // group-head test and the claim order.
         let rows = sqlx::query(
             r#"
-            WITH eligible AS (
-                SELECT id, message_group_id, payload,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY COALESCE(message_group_id, id)
-                           ORDER BY created_at
-                       ) AS rn
-                FROM queue_messages
-                WHERE queue_name = $1 AND visible_at <= $2
-            ),
-            claimed AS (
-                SELECT id
-                FROM eligible
-                WHERE rn = 1
-                LIMIT $3
-                FOR UPDATE SKIP LOCKED
+            WITH claimed AS (
+              SELECT m.id
+                FROM queue_messages m
+               WHERE m.queue_name = $1
+                 AND m.visible_at <= $2
+                 AND NOT EXISTS (
+                       SELECT 1 FROM queue_messages e
+                        WHERE e.queue_name = m.queue_name
+                          AND COALESCE(e.message_group_id, e.id) = COALESCE(m.message_group_id, m.id)
+                          AND e.visible_at <= $2
+                          AND (e.created_at < m.created_at
+                               OR (e.created_at = m.created_at AND e.id < m.id))
+                     )
+                 AND NOT EXISTS (
+                       SELECT 1 FROM queue_messages e
+                        WHERE e.queue_name = m.queue_name
+                          AND COALESCE(e.message_group_id, e.id) = COALESCE(m.message_group_id, m.id)
+                          AND e.receipt_handle IS NULL
+                          AND e.visible_at > $2
+                          AND (e.created_at < m.created_at
+                               OR (e.created_at = m.created_at AND e.id < m.id))
+                     )
+               ORDER BY m.created_at, m.id
+               LIMIT $3
+               FOR UPDATE SKIP LOCKED
             )
-            UPDATE queue_messages m
-               SET receipt_handle = $4 || ':' || m.id,
-                   visible_at = $5,
-                   receive_count = m.receive_count + 1
+            UPDATE queue_messages t
+               SET receipt_handle = $4 || ':' || t.id,
+                   visible_at     = $5,
+                   receive_count  = t.receive_count + 1
               FROM claimed
-             WHERE m.queue_name = $1
-               AND m.id = claimed.id
-             RETURNING m.id, m.message_group_id, m.payload
+             WHERE t.queue_name = $1
+               AND t.id = claimed.id
+             RETURNING t.id, t.message_group_id, t.payload, t.created_at
             "#,
         )
         .bind(&self.queue_name)
@@ -243,6 +310,15 @@ impl QueueConsumer for PostgresQueue {
         .bind(new_visible_at)
         .fetch_all(&self.pool)
         .await?;
+
+        // UPDATE ... RETURNING carries no order; hand the batch back in claim
+        // order so a batch holding several groups' heads stays deterministic.
+        let mut rows = rows;
+        rows.sort_by(|a, b| {
+            let (ac, bc): (i64, i64) = (a.get("created_at"), b.get("created_at"));
+            let (ai, bi): (String, String) = (a.get("id"), b.get("id"));
+            ac.cmp(&bc).then(ai.cmp(&bi))
+        });
 
         let mut messages = Vec::with_capacity(rows.len());
         // Poison rows (payload failed to decode) are quarantined after the
@@ -297,6 +373,7 @@ impl QueueConsumer for PostgresQueue {
         for (id, reason) in poisoned {
             match self.quarantine(&id, &reason).await {
                 Ok(()) => {
+                    self.rejected.record(Some(id.clone()), reason.clone());
                     warn!(
                         queue = %self.queue_name,
                         message_id = %id,
@@ -321,6 +398,8 @@ impl QueueConsumer for PostgresQueue {
         }
 
         if !messages.is_empty() {
+            self.total_polled
+                .fetch_add(messages.len() as u64, Ordering::Relaxed);
             debug!(
                 queue = %self.queue_name,
                 count = messages.len(),
@@ -348,6 +427,7 @@ impl QueueConsumer for PostgresQueue {
             return Err(QueueError::NotFound(receipt_handle.to_string()));
         }
 
+        self.total_acked.fetch_add(1, Ordering::Relaxed);
         debug!(
             receipt_handle = %receipt_handle,
             queue = %self.queue_name,
@@ -357,37 +437,16 @@ impl QueueConsumer for PostgresQueue {
     }
 
     async fn nack(&self, receipt_handle: &str, delay_seconds: Option<u32>) -> Result<()> {
-        let delay = delay_seconds.unwrap_or(0) as i64;
-        let new_visible_at = Utc::now().timestamp() + delay;
+        self.make_visible(receipt_handle, delay_seconds).await?;
+        self.total_nacked.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
 
-        let result = sqlx::query(
-            r#"
-            UPDATE queue_messages
-               SET visible_at = $1, receipt_handle = NULL
-             WHERE receipt_handle = $2 AND queue_name = $3
-            "#,
-        )
-        .bind(new_visible_at)
-        .bind(receipt_handle)
-        .bind(&self.queue_name)
-        .execute(&self.pool)
-        .await?;
-
-        if result.rows_affected() == 0 {
-            warn!(
-                receipt_handle = %receipt_handle,
-                queue = %self.queue_name,
-                "NACK failed - message not found"
-            );
-            return Err(QueueError::NotFound(receipt_handle.to_string()));
-        }
-
-        debug!(
-            receipt_handle = %receipt_handle,
-            queue = %self.queue_name,
-            delay_seconds = delay,
-            "Message negative acknowledged"
-        );
+    /// Same release as `nack`, counted as a deferral rather than a failure
+    /// (Go: `Defer`).
+    async fn defer(&self, receipt_handle: &str, delay_seconds: Option<u32>) -> Result<()> {
+        self.make_visible(receipt_handle, delay_seconds).await?;
+        self.total_deferred.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -465,11 +524,26 @@ impl QueueConsumer for PostgresQueue {
             pending_messages: pending_messages as u64,
             in_flight_messages: in_flight_messages as u64,
             queue_identifier: self.queue_name.clone(),
-            total_polled: 0,
-            total_acked: 0,
-            total_nacked: 0,
-            total_deferred: 0,
+            total_polled: self.total_polled.load(Ordering::Relaxed),
+            total_acked: self.total_acked.load(Ordering::Relaxed),
+            total_nacked: self.total_nacked.load(Ordering::Relaxed),
+            total_deferred: self.total_deferred.load(Ordering::Relaxed),
         }))
+    }
+
+    fn take_rejected(&self) -> Vec<RejectedMessage> {
+        self.rejected.take()
+    }
+
+    fn get_counters(&self) -> Option<QueueMetrics> {
+        Some(QueueMetrics {
+            queue_identifier: self.queue_name.clone(),
+            total_polled: self.total_polled.load(Ordering::Relaxed),
+            total_acked: self.total_acked.load(Ordering::Relaxed),
+            total_nacked: self.total_nacked.load(Ordering::Relaxed),
+            total_deferred: self.total_deferred.load(Ordering::Relaxed),
+            ..QueueMetrics::default()
+        })
     }
 }
 

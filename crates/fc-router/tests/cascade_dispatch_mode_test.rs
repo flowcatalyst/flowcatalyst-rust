@@ -197,7 +197,10 @@ async fn block_on_error_acks_terminal_head_and_cascades_nack_to_successors() {
 
     let (a1, a2, a3) = (recv(r1).await, recv(r2).await, recv(r3).await);
 
-    assert!(matches!(a1, AckNack::Ack), "the failed head is still ACKed away");
+    assert!(
+        matches!(a1, AckNack::Ack),
+        "the failed head is still ACKed away"
+    );
     assert!(
         matches!(a2, AckNack::Nack { .. }),
         "BLOCK_ON_ERROR cascades: successors are NACKed, not delivered past the failure"

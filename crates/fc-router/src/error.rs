@@ -46,6 +46,12 @@ pub enum RouterError {
         #[source]
         source: fc_queue::QueueError,
     },
+
+    /// A reconcile could not build the consumer for one or more queues
+    /// (`queue: reason; ...`). The reload is reported failed so the caller
+    /// does not record the config as applied and retries it.
+    #[error("Failed to build consumer(s): {0}")]
+    ConsumerBuild(String),
 }
 
 impl RouterError {

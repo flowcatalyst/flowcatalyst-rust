@@ -8,13 +8,26 @@
 
 use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
+use crate::manager::ConsumerStat;
 use crate::warning::WarningService;
 use fc_common::{ConsumerHealth, HealthReport, HealthStatus, PoolStats};
 use fc_queue::QueueConsumer;
+
+/// The source of consumer liveness (Go: `ConsumerStatsProvider`). The
+/// `QueueManager` implements it: membership of its consumer set is what
+/// "running" means, and its per-consumer heartbeat is the one the restart
+/// watchdog judges consumers by. Reading it here, rather than keeping a
+/// second copy pushed from the poll loop, means health and the watchdog can
+/// never disagree about the same consumer — and a replaced consumer's old
+/// poll task exiting can no longer erase its replacement's entry, nor can a
+/// sweep keyed on the wrong name blind the watchdog.
+pub trait ConsumerStatsProvider: Send + Sync {
+    fn consumer_stats(&self) -> Vec<ConsumerStat>;
+}
 
 /// Configuration for health service
 #[derive(Debug, Clone)]
@@ -134,6 +147,11 @@ pub struct HealthService {
     /// while a poll is in flight. Empty for a backend that never overrides
     /// the trait default — this adds nothing for those.
     consumer_broker: RwLock<HashMap<String, Arc<dyn QueueConsumer>>>,
+
+    /// When set (and still alive), the source of every consumer answer —
+    /// see [`ConsumerStatsProvider`]. The push-fed maps above are only
+    /// consulted when no provider is wired (standalone use and tests).
+    consumer_stats_provider: RwLock<Option<Weak<dyn ConsumerStatsProvider>>>,
 }
 
 impl HealthService {
@@ -145,7 +163,33 @@ impl HealthService {
             consumer_last_poll: RwLock::new(HashMap::new()),
             consumer_running: RwLock::new(HashMap::new()),
             consumer_broker: RwLock::new(HashMap::new()),
+            consumer_stats_provider: RwLock::new(None),
         }
+    }
+
+    /// Wire the source of consumer liveness (Go: `SetConsumerStats`). Held
+    /// weakly: the manager owns the health service, not the reverse.
+    pub fn set_consumer_stats_provider(&self, provider: Weak<dyn ConsumerStatsProvider>) {
+        *self.consumer_stats_provider.write() = Some(provider);
+    }
+
+    /// The provider's snapshot, or `None` when no live provider is wired.
+    fn provided_stats(&self) -> Option<Vec<ConsumerStat>> {
+        let provider = self.consumer_stats_provider.read().as_ref()?.upgrade()?;
+        Some(provider.consumer_stats())
+    }
+
+    fn stat_healthy(&self, stat: &ConsumerStat) -> bool {
+        stat.running
+            && stat.last_poll.elapsed()
+                < Duration::from_secs(self.config.consumer_stall_threshold_secs)
+    }
+
+    fn find_stat<'a>(stats: &'a [ConsumerStat], consumer_id: &str) -> Option<&'a ConsumerStat> {
+        stats
+            .iter()
+            .find(|s| s.queue_name == consumer_id)
+            .or_else(|| stats.iter().find(|s| s.identifier == consumer_id))
     }
 
     /// Record a pool processing result
@@ -206,11 +250,7 @@ impl HealthService {
     /// can consult [`QueueConsumer::last_broker_activity`] while its poll
     /// task is running. Call in lockstep with `set_consumer_running(id,
     /// true)`; pair with [`Self::unregister_consumer`] on exit.
-    pub fn register_consumer(
-        &self,
-        consumer_id: &str,
-        consumer: Arc<dyn QueueConsumer>,
-    ) {
+    pub fn register_consumer(&self, consumer_id: &str, consumer: Arc<dyn QueueConsumer>) {
         self.consumer_broker
             .write()
             .insert(consumer_id.to_string(), consumer);
@@ -231,7 +271,11 @@ impl HealthService {
     /// `last_poll` value (rescuing a consumer the old check would call
     /// stale); it never makes it earlier, so a genuinely wedged consumer
     /// (broker override itself stale, or none registered) is never hidden.
-    fn last_alive(&self, consumer_id: &str, last_poll: &HashMap<String, Instant>) -> Option<Instant> {
+    fn last_alive(
+        &self,
+        consumer_id: &str,
+        last_poll: &HashMap<String, Instant>,
+    ) -> Option<Instant> {
         let by_poll = last_poll.get(consumer_id).copied();
         let by_broker = self
             .consumer_broker
@@ -249,6 +293,9 @@ impl HealthService {
     /// Check if a consumer is healthy (alive within the stall threshold —
     /// see `last_alive`)
     pub fn is_consumer_healthy(&self, consumer_id: &str) -> bool {
+        if let Some(stats) = self.provided_stats() {
+            return Self::find_stat(&stats, consumer_id).is_some_and(|s| self.stat_healthy(s));
+        }
         let threshold = Duration::from_secs(self.config.consumer_stall_threshold_secs);
 
         let is_running = self
@@ -270,6 +317,27 @@ impl HealthService {
 
     /// Get consumer health details
     pub fn get_consumer_health(&self, consumer_id: &str) -> ConsumerHealth {
+        if let Some(stats) = self.provided_stats() {
+            return match Self::find_stat(&stats, consumer_id) {
+                Some(stat) => {
+                    let since = stat.last_poll.elapsed().as_millis() as i64;
+                    ConsumerHealth {
+                        queue_identifier: consumer_id.to_string(),
+                        is_healthy: self.stat_healthy(stat),
+                        last_poll_time_ms: Some(since),
+                        time_since_last_poll_ms: Some(since),
+                        is_running: stat.running,
+                    }
+                }
+                None => ConsumerHealth {
+                    queue_identifier: consumer_id.to_string(),
+                    is_healthy: false,
+                    last_poll_time_ms: None,
+                    time_since_last_poll_ms: None,
+                    is_running: false,
+                },
+            };
+        }
         let last_poll = self.consumer_last_poll.read();
         let running = self.consumer_running.read();
 
@@ -311,6 +379,13 @@ impl HealthService {
     /// was never told is running in the first place — `is_running` already
     /// filters those out below regardless.
     pub fn get_stalled_consumers(&self) -> Vec<String> {
+        if let Some(stats) = self.provided_stats() {
+            return stats
+                .iter()
+                .filter(|s| s.running && !self.stat_healthy(s))
+                .map(|s| s.queue_name.clone())
+                .collect();
+        }
         let threshold = Duration::from_secs(self.config.consumer_stall_threshold_secs);
         let last_poll = self.consumer_last_poll.read();
         let running = self.consumer_running.read();
@@ -363,9 +438,15 @@ impl HealthService {
             }
         }
 
-        // Check consumer health
-        let running = self.consumer_running.read();
-        let consumers_total = running.len() as u32;
+        // Check consumer health. The `consumer_running` guard must be gone
+        // before `get_stalled_consumers` takes it again: parking_lot's
+        // RwLock is not re-entrant, and a writer queued between the two
+        // read acquisitions (any poll task starting or stopping) wedged the
+        // report — and the worker thread it ran on — for good.
+        let consumers_total = match self.provided_stats() {
+            Some(stats) => stats.len() as u32,
+            None => self.consumer_running.read().len() as u32,
+        };
         let stalled = self.get_stalled_consumers();
         let consumers_unhealthy = stalled.len() as u32;
         let consumers_healthy = consumers_total.saturating_sub(consumers_unhealthy);
@@ -524,6 +605,53 @@ mod tests {
 
         let rate = service.get_pool_success_rate("TEST");
         assert_eq!(rate, Some(1.0));
+    }
+
+    /// The health report must not re-take a read lock it already holds: with
+    /// a writer queued in between (a poll task starting/stopping flips
+    /// `set_consumer_running`), parking_lot's fair RwLock deadlocks the
+    /// reader. Hammer both from several threads; a deadlock shows up as the
+    /// reporting thread never finishing.
+    #[test]
+    fn health_report_does_not_deadlock_against_concurrent_consumer_updates() {
+        let service = Arc::new(create_test_service());
+        for i in 0..8 {
+            service.set_consumer_running(&format!("c{i}"), true);
+        }
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut writers = Vec::new();
+        for w in 0..3 {
+            let service = service.clone();
+            let stop = stop.clone();
+            writers.push(std::thread::spawn(move || {
+                let mut flip = false;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    flip = !flip;
+                    service.set_consumer_running(&format!("w{w}"), flip);
+                }
+            }));
+        }
+        let reporter = {
+            let service = service.clone();
+            std::thread::spawn(move || {
+                for _ in 0..20_000 {
+                    let _ = service.get_health_report(&[]);
+                }
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !reporter.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "get_health_report deadlocked against concurrent writers"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for w in writers {
+            w.join().unwrap();
+        }
+        reporter.join().unwrap();
     }
 
     #[test]
@@ -767,7 +895,9 @@ mod tests {
             "a consumer that just started, mid its first poll, must read healthy"
         );
         assert!(
-            !service.get_stalled_consumers().contains(&"consumer-1".to_string()),
+            !service
+                .get_stalled_consumers()
+                .contains(&"consumer-1".to_string()),
             "a consumer that just started must not be reported stalled before \
              it has ever had a chance to complete a poll"
         );
@@ -794,7 +924,9 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
 
         assert!(
-            service.get_stalled_consumers().contains(&"consumer-1".to_string()),
+            service
+                .get_stalled_consumers()
+                .contains(&"consumer-1".to_string()),
             "a consumer whose seeded start-time heartbeat has aged past the \
              threshold, with no poll ever completing and no broker-activity \
              override, must be reported stalled"
@@ -822,10 +954,10 @@ mod tests {
         service.set_consumer_running("consumer-1", true);
         // Force `consumer_last_poll` far into the past — simulates a poll
         // that has been in flight far longer than the threshold.
-        service
-            .consumer_last_poll
-            .write()
-            .insert("consumer-1".to_string(), Instant::now() - Duration::from_secs(60));
+        service.consumer_last_poll.write().insert(
+            "consumer-1".to_string(),
+            Instant::now() - Duration::from_secs(60),
+        );
 
         let consumer = FakeConsumer::with_activity(Some(Instant::now()));
         service.register_consumer("consumer-1", consumer);
@@ -835,9 +967,9 @@ mod tests {
             "recent broker activity must rescue a consumer whose poll-return \
              heartbeat alone would read as stale"
         );
-        assert!(
-            !service.get_stalled_consumers().contains(&"consumer-1".to_string())
-        );
+        assert!(!service
+            .get_stalled_consumers()
+            .contains(&"consumer-1".to_string()));
     }
 
     /// G13's other half — "never hides a real hang": stale `last_poll` AND
@@ -858,10 +990,10 @@ mod tests {
         let service = HealthService::new(cfg, Arc::new(WarningService::default()));
 
         service.set_consumer_running("consumer-1", true);
-        service
-            .consumer_last_poll
-            .write()
-            .insert("consumer-1".to_string(), Instant::now() - Duration::from_secs(60));
+        service.consumer_last_poll.write().insert(
+            "consumer-1".to_string(),
+            Instant::now() - Duration::from_secs(60),
+        );
 
         let consumer = FakeConsumer::with_activity(Some(Instant::now() - Duration::from_secs(60)));
         service.register_consumer("consumer-1", consumer);
@@ -871,7 +1003,9 @@ mod tests {
             "a consumer with stale broker activity too must still be flagged — \
              the broker signal must never permanently mask a real hang"
         );
-        assert!(service.get_stalled_consumers().contains(&"consumer-1".to_string()));
+        assert!(service
+            .get_stalled_consumers()
+            .contains(&"consumer-1".to_string()));
     }
 
     /// `unregister_consumer` must actually drop the registration — after
@@ -886,10 +1020,10 @@ mod tests {
         let service = HealthService::new(cfg, Arc::new(WarningService::default()));
 
         service.set_consumer_running("consumer-1", true);
-        service
-            .consumer_last_poll
-            .write()
-            .insert("consumer-1".to_string(), Instant::now() - Duration::from_secs(60));
+        service.consumer_last_poll.write().insert(
+            "consumer-1".to_string(),
+            Instant::now() - Duration::from_secs(60),
+        );
 
         let consumer = FakeConsumer::with_activity(Some(Instant::now()));
         service.register_consumer("consumer-1", consumer);

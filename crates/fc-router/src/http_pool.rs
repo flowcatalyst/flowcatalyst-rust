@@ -45,16 +45,9 @@ impl HostKey {
     pub fn from_url(target: &str) -> Result<Self, HostKeyError> {
         let u = url::Url::parse(target).map_err(HostKeyError::Parse)?;
         let scheme = u.scheme().to_string();
-        let host = u
-            .host_str()
-            .ok_or(HostKeyError::MissingHost)?
-            .to_string();
+        let host = u.host_str().ok_or(HostKeyError::MissingHost)?.to_string();
         let port = u.port_or_known_default().ok_or(HostKeyError::MissingPort)?;
-        Ok(Self {
-            scheme,
-            host,
-            port,
-        })
+        Ok(Self { scheme, host, port })
     }
 }
 
@@ -232,9 +225,7 @@ impl HostConnectionPool {
         }
 
         least_loaded.in_flight.fetch_add(1, Ordering::Relaxed);
-        SlotGuard {
-            slot: least_loaded,
-        }
+        SlotGuard { slot: least_loaded }
     }
 
     fn try_grow(&self) -> Option<Arc<ClientSlot>> {

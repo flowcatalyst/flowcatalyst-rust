@@ -130,8 +130,10 @@ mod tests {
         // — starts with "sqs." but does not contain ".amazonaws." — this
         // resolver correctly rejects it (dev mode wires SQS directly rather
         // than through scheme resolution, so this is deliberate, not a gap).
-        assert!(resolve_scheme("http://sqs.eu-west-1.localhost.localstack.cloud:4566/000000000000/q")
-            .is_err());
+        assert!(resolve_scheme(
+            "http://sqs.eu-west-1.localhost.localstack.cloud:4566/000000000000/q"
+        )
+        .is_err());
     }
 
     #[test]

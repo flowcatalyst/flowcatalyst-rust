@@ -337,6 +337,12 @@ async fn test_malformed_message_handling() {
     // Poll should return empty (malformed message is auto-acked)
     let messages = consumer.poll(10).await.expect("Poll failed");
     assert!(messages.is_empty());
+
+    // ...and reported once, so the router can raise a CONFIGURATION warning.
+    let rejected = consumer.take_rejected();
+    assert_eq!(rejected.len(), 1);
+    assert!(rejected[0].broker_message_id.is_some());
+    assert!(consumer.take_rejected().is_empty());
 }
 
 #[tokio::test]

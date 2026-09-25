@@ -8,13 +8,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use fc_common::PoolConfig;
-use fc_common::PoolStats;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use utoipa::ToSchema;
 
-/// Request to update pool configuration
+/// Request to update pool configuration. Omitting a field leaves that knob
+/// unchanged (Go: `PoolConfigUpdateRequest`).
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PoolConfigUpdateRequest {
     /// New concurrency limit
@@ -23,7 +22,8 @@ pub struct PoolConfigUpdateRequest {
     pub rate_limit_per_minute: Option<u32>,
 }
 
-/// Update pool configuration
+/// Update a pool's concurrency and/or rate limit in place (Go:
+/// `Manager.UpdatePool`). An unknown pool is a 404 — it is not created.
 #[utoipa::path(
     put,
     path = "/monitoring/pools/{poolCode}",
@@ -34,7 +34,7 @@ pub struct PoolConfigUpdateRequest {
     request_body = PoolConfigUpdateRequest,
     responses(
         (status = 200, description = "Pool updated"),
-        (status = 500, description = "Internal error")
+        (status = 404, description = "Pool not found or update rejected")
     )
 )]
 pub(crate) async fn update_pool_config(
@@ -42,57 +42,45 @@ pub(crate) async fn update_pool_config(
     Path(pool_code): Path<String>,
     Json(req): Json<PoolConfigUpdateRequest>,
 ) -> Response {
-    let existing_stats: Option<PoolStats> = state
+    if !state
         .queue_manager
-        .get_pool_stats()
-        .into_iter()
-        .find(|s| s.pool_code == pool_code);
-
-    let new_config = match existing_stats {
-        Some(stats) => PoolConfig {
-            code: pool_code.clone(),
-            concurrency: req.concurrency.unwrap_or(stats.concurrency),
-            rate_limit_per_minute: req.rate_limit_per_minute.or(stats.rate_limit_per_minute),
-        },
-        None => PoolConfig {
-            code: pool_code.clone(),
-            concurrency: req.concurrency.unwrap_or(10),
-            rate_limit_per_minute: req.rate_limit_per_minute,
-        },
-    };
-
-    match state
-        .queue_manager
-        .update_pool_config(&pool_code, new_config.clone())
+        .update_pool(&pool_code, req.concurrency, req.rate_limit_per_minute)
         .await
     {
-        Ok(_) => {
-            info!(pool_code = %pool_code, "Pool configuration updated via API");
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "success": true,
-                    "pool_code": pool_code,
-                    "new_config": {
-                        "concurrency": new_config.concurrency,
-                        "rate_limit_per_minute": new_config.rate_limit_per_minute,
-                    }
-                })),
-            )
-                .into_response()
-        }
-        Err(e) => {
-            error!(pool_code = %pool_code, error = %e, "Failed to update pool configuration");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": e.to_string(),
-                })),
-            )
-                .into_response()
-        }
+        warn!(pool_code = %pool_code, "Pool update rejected (unknown pool or invalid concurrency)");
+        return (
+            StatusCode::NOT_FOUND,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            Json(serde_json::json!({
+                "title": "Not Found",
+                "status": 404,
+                "detail": format!("pool not found or update rejected: {pool_code}"),
+            })),
+        )
+            .into_response();
     }
+    info!(
+        pool_code = %pool_code,
+        concurrency = ?req.concurrency,
+        rate_limit = ?req.rate_limit_per_minute,
+        "Pool configuration updated via API"
+    );
+    let mut new_config = serde_json::Map::new();
+    if let Some(c) = req.concurrency {
+        new_config.insert("concurrency".into(), c.into());
+    }
+    if let Some(r) = req.rate_limit_per_minute {
+        new_config.insert("rate_limit_per_minute".into(), r.into());
+    }
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "pool_code": pool_code,
+            "new_config": new_config,
+        })),
+    )
+        .into_response()
 }
 
 /// Refresh broker stats on demand (called when user clicks refresh in dashboard)

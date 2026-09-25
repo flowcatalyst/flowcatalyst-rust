@@ -32,6 +32,42 @@ impl QueueManager {
         !saw_active
     }
 
+    /// Whether consumer `rc` should poll (Go: `hasCapacityFor`): some pool
+    /// its last batch fed has room — judged by this queue's own traffic,
+    /// not "any pool anywhere has room", which let an idle pool elsewhere
+    /// keep a consumer polling into pools that were all full — or, when
+    /// they are all full, its outstanding capacity deferrals are still
+    /// under the deferral budget: the queue may have other pools' traffic
+    /// queued behind what it last saw, and the only way to reach it is to
+    /// poll and defer what is in the way. With no destinations known yet
+    /// (first poll) it falls back to any pool having room. With no pools at
+    /// all it polls: pools are created on demand here.
+    pub(super) fn has_capacity_for(&self, rc: &super::RunningConsumer) -> bool {
+        let dests = rc.dest_pools();
+        let dest_has_room = if dests.is_empty() {
+            self.has_pool_capacity()
+        } else {
+            let mut room = false;
+            for code in &dests {
+                match self.active_pool(code) {
+                    // The pool went away under a reconfigure: re-learn
+                    // where this queue's traffic goes.
+                    None => {
+                        room = self.has_pool_capacity();
+                        break;
+                    }
+                    Some(pool) if pool.available_capacity() > 0 => {
+                        room = true;
+                        break;
+                    }
+                    Some(_) => {}
+                }
+            }
+            room
+        };
+        dest_has_room || rc.deferrals_outstanding(std::time::Instant::now()) < self.deferral_budget
+    }
+
     /// Get statistics for all active pools.
     pub fn get_pool_stats(&self) -> Vec<PoolStats> {
         self.pools
@@ -130,18 +166,16 @@ impl QueueManager {
             .app_message_to_pipeline_key
             .get(message_id)
             .map(|e| e.value().clone())?;
-        let entry = self.in_pipeline.get(&pipeline_key).map(|e| e.value().clone())?;
+        let entry = self
+            .in_pipeline
+            .get(&pipeline_key)
+            .map(|e| e.value().clone())?;
 
         // G10: resolve by the consumer's own identifier(), not the config
         // queue name `consumers` is keyed by — `entry.queue_identifier` is
         // `Consumer::identifier()` (see `InFlightMessage::new`), which for
         // NATS differs from the operator-chosen queue name.
-        let consumer = self
-            .consumers_by_id
-            .read()
-            .await
-            .get(&entry.queue_identifier)
-            .cloned();
+        let consumer = self.consumers.resolve(&entry.queue_identifier, 0);
         let (broker_acked, broker_ack_error) = match consumer {
             Some(c) => match c.ack(&entry.receipt_handle).await {
                 Ok(()) => (true, None),
@@ -149,7 +183,10 @@ impl QueueManager {
             },
             None => (
                 false,
-                Some(format!("no consumer for queue {:?}", entry.queue_identifier)),
+                Some(format!(
+                    "no consumer for queue {:?}",
+                    entry.queue_identifier
+                )),
             ),
         };
 

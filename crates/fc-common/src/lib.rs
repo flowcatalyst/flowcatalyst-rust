@@ -278,6 +278,23 @@ pub struct QueuedMessage {
 /// no spawned task or channel needed.
 #[async_trait::async_trait]
 pub trait MessageCallback: Send + Sync {
+    /// The pool is about to dispatch this message (Go:
+    /// `InFlightTracker.EnsureTracked`). Restores the router's in-flight
+    /// entry if it was reaped while the message sat buffered, and answers
+    /// `false` when a DIFFERENT copy of the message now owns the pipeline —
+    /// the caller should then ack this copy and not deliver it. Defaults to
+    /// `true` (no tracking).
+    fn ensure_tracked(&self) -> bool {
+        true
+    }
+
+    /// The pool is retrying this message in place (Go:
+    /// `InFlightTracker.MarkRetrying`): bumps the attempt count and stamps
+    /// the retry time, so the in-flight reaper leaves a live retry alone and
+    /// the stall detector reports it as retrying and never force-NACKs it.
+    /// Defaults to a no-op.
+    fn mark_retrying(&self) {}
+
     /// Acknowledge — delete from queue, clean up tracking.
     async fn ack(&self);
     /// Negative acknowledge — make visible again after delay, clean up tracking.

@@ -250,7 +250,10 @@ mod tests {
             r.clear("g1"),
             "an active suppression existed to lift, so clear must report true"
         );
-        assert!(!r.suppressed("g1"), "clear must lift suppression immediately");
+        assert!(
+            !r.suppressed("g1"),
+            "clear must lift suppression immediately"
+        );
     }
 
     #[test]
