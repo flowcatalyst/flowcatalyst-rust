@@ -315,6 +315,74 @@ async fn only_unpublished_jobs_revert_and_only_while_queued() {
     assert_eq!(status(&pool, &a.id).await, "PROCESSING");
 }
 
+/// Publishes, then never returns: a worker killed in the middle of its
+/// publish.
+struct DiesMidPublish {
+    published: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl DispatchPublisher for DiesMidPublish {
+    async fn publish(&self, items: Vec<PublishItem>) -> PublishOutcome {
+        self.published
+            .lock()
+            .unwrap()
+            .extend(items.into_iter().map(|i| i.job_id));
+        std::future::pending().await
+    }
+    fn describe(&self) -> String {
+        "dies mid-publish".into()
+    }
+}
+
+/// Delivery run 3, `worker-restart`: a worker killed between claiming and
+/// finishing its publish must not strand its claim. Go commits the claim
+/// QUEUED before publishing and the unpublished rows wait 75 minutes for
+/// stale recovery; here the claim commits only after the publish, so the
+/// dead worker's claim rolls back to PENDING and the next poll publishes
+/// every job (the ones already sent a second time — `/process` delivers
+/// each once).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_worker_dying_mid_publish_leaves_its_claim_pending() {
+    let (pool, _c) = setup_db().await;
+    let jobs: Vec<Job> = (1..=3).map(job).collect();
+    for j in &jobs {
+        insert(&pool, j).await;
+    }
+    let dying = Arc::new(DiesMidPublish {
+        published: Mutex::new(Vec::new()),
+    });
+    let s = scheduler(&pool, dying.clone(), 100);
+    let poll = s.poller().poll_once();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), poll)
+            .await
+            .is_err(),
+        "the publish never returns"
+    );
+    assert_eq!(
+        dying.published.lock().unwrap().len(),
+        3,
+        "it got as far as the broker"
+    );
+    for j in &jobs {
+        assert_eq!(
+            status(&pool, &j.id).await,
+            "PENDING",
+            "nothing stranded QUEUED"
+        );
+    }
+
+    let publisher = Arc::new(RecordingPublisher::default());
+    let s = scheduler(&pool, publisher.clone(), 100);
+    let report = s.poller().poll_once().await.unwrap();
+    assert_eq!((report.claimed, report.published), (3, 3));
+    for j in &jobs {
+        assert_eq!(status(&pool, &j.id).await, "QUEUED");
+    }
+}
+
 /// Two schedulers polling the same table at once never claim the same job
 /// (`FOR UPDATE SKIP LOCKED`).
 #[tokio::test]

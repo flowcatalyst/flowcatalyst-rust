@@ -4,11 +4,26 @@
 //!
 //! 1. In one transaction, claim up to `batch_size` PENDING jobs that are due
 //!    (`scheduled_for` NULL or past) with `FOR UPDATE SKIP LOCKED`, in the
-//!    total order `(message_group NULLS LAST, sequence, created_at, id)`,
-//!    and mark them QUEUED. Concurrent schedulers therefore never claim the
-//!    same row, and a row is QUEUED before any broker sees it.
-//! 2. Commit, then publish the claim in one call and revert exactly what did
-//!    not publish (see [`MessageGroupDispatcher`]).
+//!    total order `(message_group NULLS LAST, sequence, created_at, id)`.
+//!    Concurrent schedulers therefore never claim the same row.
+//! 2. With the rows still locked, publish the claim in one call (see
+//!    [`MessageGroupDispatcher`]), mark exactly the published ids QUEUED, and
+//!    commit.
+//!
+//! **Deliberately not Go's order.** Go commits the claim QUEUED first and
+//! publishes after; a worker that dies between the two (a SIGKILL, an OOM, a
+//! deploy past its stop timeout) leaves the unpublished rows QUEUED with no
+//! queue message, and nothing looks at them again until stale recovery's
+//! 75 minutes are up (delivery run 3, `worker-restart`: Go stranded the last
+//! two jobs of its publish). Here the claim only commits once the publish is
+//! done, so a worker that dies mid-publish rolls the whole claim back to
+//! PENDING and the next poll (its own after a restart, or a standby's)
+//! publishes it again. The price is at-least-once at the queue: the jobs it
+//! did publish before dying are published a second time. That costs no
+//! second delivery — `/api/dispatch/process` claims a job before delivering
+//! it, and a copy that finds the job taken or finished never delivers it —
+//! only a second, redundant queue message. A `/process` call that arrives
+//! for a job before this commit waits on the row lock for it.
 //!
 //! Held and paused jobs are excluded **inside the claim query**, not after
 //! it (a deliberate improvement on Go, which filters after the `LIMIT`: a
@@ -166,22 +181,10 @@ impl PendingJobPoller {
             return Ok(PollReport::default());
         }
 
-        let ids: Vec<&str> = claimed.iter().map(|c| c.id.as_str()).collect();
-        let created: Vec<DateTime<Utc>> = claimed.iter().map(|c| c.created_at).collect();
-        sqlx::query(
-            "UPDATE msg_dispatch_jobs SET status = 'QUEUED', queued_at = NOW(), updated_at = NOW() \
-             FROM UNNEST($1::varchar[], $2::timestamptz[]) AS t(id, created_at) \
-             WHERE msg_dispatch_jobs.id = t.id AND msg_dispatch_jobs.created_at = t.created_at",
-        )
-        .bind(&ids)
-        .bind(&created)
-        .execute(&mut *tx)
-        .await?;
-        // QUEUED must be durable before any broker sees the job: a commit
-        // failure after a publish would re-claim a published job, and a
-        // revert of an uncommitted QUEUED would no-op.
-        tx.commit().await?;
-
+        let created: std::collections::HashMap<String, DateTime<Utc>> = claimed
+            .iter()
+            .map(|c| (c.id.clone(), c.created_at))
+            .collect();
         let mut tokens = Vec::with_capacity(claimed.len());
         for c in claimed {
             let pool_code = self
@@ -200,7 +203,44 @@ impl PendingJobPoller {
         }
         let claimed = tokens.len();
         metrics::gauge!("scheduler.pending_jobs").set(claimed as f64);
-        let published = self.dispatcher.submit_batch(tokens).await;
+
+        // Publish while the claim is still locked and uncommitted: see the
+        // module doc. What did not publish simply stays PENDING.
+        let outcome = self.dispatcher.publish_claim(&tokens).await;
+        let unpublished: std::collections::HashSet<&str> =
+            outcome.unpublished.iter().map(String::as_str).collect();
+        let (ids, created_ats): (Vec<&str>, Vec<DateTime<Utc>>) = tokens
+            .iter()
+            .map(|t| t.job_id.as_str())
+            .filter(|id| !unpublished.contains(id))
+            .map(|id| (id, created[id]))
+            .unzip();
+        let published = ids.len();
+        if published == 0 {
+            tx.rollback().await.ok();
+            debug!(claimed, published, "poll tick");
+            return Ok(PollReport { claimed, published });
+        }
+        let marked = async {
+            sqlx::query(
+                "UPDATE msg_dispatch_jobs SET status = 'QUEUED', queued_at = NOW(), updated_at = NOW() \
+                 FROM UNNEST($1::varchar[], $2::timestamptz[]) AS t(id, created_at) \
+                 WHERE msg_dispatch_jobs.id = t.id AND msg_dispatch_jobs.created_at = t.created_at",
+            )
+            .bind(&ids)
+            .bind(&created_ats)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        }
+        .await;
+        if let Err(e) = marked {
+            // Published but still PENDING: the next poll publishes them
+            // again, and `/process` delivers each once.
+            warn!(published, error = %e,
+                "marking published dispatch jobs QUEUED failed; they will be published again");
+            return Err(e.into());
+        }
         debug!(claimed, published, "poll tick");
         Ok(PollReport { claimed, published })
     }

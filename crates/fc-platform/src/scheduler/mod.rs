@@ -111,7 +111,6 @@ impl DispatchScheduler {
     ) -> Self {
         let publisher_description = publisher.describe();
         let dispatcher = Arc::new(MessageGroupDispatcher::new(
-            pool.clone(),
             publisher,
             auth,
             config.processing_endpoint.clone(),
