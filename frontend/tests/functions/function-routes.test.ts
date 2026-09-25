@@ -14,16 +14,25 @@ describe("function route permissions", () => {
 		expect(getRoutePermission("/functions")).toBe("platform:function:function:view");
 		expect(getRoutePermission("/functions/acme.orders.ship")).toBe("platform:function:function:view");
 		expect(getRoutePermission("/functions/new")).toBe("platform:function:function:manage");
-		expect(getRoutePermission("/function-domains")).toBe("platform:function:domain:manage");
-		expect(getRoutePermission("/function-domains/fn.acme.com")).toBe("platform:function:domain:manage");
+		// The domain list reads with function:view (domain:manage gates its actions).
+		expect(getRoutePermission("/function-domains")).toBe("platform:function:function:view");
+		expect(getRoutePermission("/function-domains/fn.acme.com")).toBe("platform:function:function:view");
 		expect(getRoutePermission("/function-policies")).toBe("platform:function:policy:manage");
 		expect(getRoutePermission("/function-policies/platform")).toBe("platform:function:policy:manage");
 	});
 
 	it("gates in-page actions as the route guard does", () => {
-		const base = { clientId: null, permissions: [] as string[] };
+		// A backend without `permissions` (null): the admin-role fallback.
+		const base = { clientId: null, permissions: null };
 		expect(userHasPermission({ ...base, roles: ["platform:super-admin"] }, "platform:function:alias:promote")).toBe(true);
 		expect(userHasPermission({ ...base, roles: ["acme:viewer"] }, "platform:function:alias:promote")).toBe(false);
+		// With permissions, they decide, wildcards included.
+		expect(
+			userHasPermission(
+				{ ...base, roles: ["platform:super-admin"], permissions: ["platform:*:*:*"] },
+				"platform:function:alias:promote",
+			),
+		).toBe(true);
 		expect(
 			userHasPermission(
 				{ ...base, roles: ["acme:viewer"], permissions: ["platform:function:alias:promote"] },

@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
-import { NAVIGATION_CONFIG, type NavItem } from "@/config/navigation";
+import {
+	NAVIGATION_CONFIG,
+	visibleNavigation,
+	type NavItem,
+} from "@/config/navigation";
+import { useAuthStore } from "@/stores/auth";
 import { usePlatformConfigStore } from "@/stores/platformConfig";
 import { useAppThemeStore } from "@/stores/appTheme";
 
@@ -16,6 +21,7 @@ const emit = defineEmits<{
 const route = useRoute();
 const platformConfigStore = usePlatformConfigStore();
 const appThemeStore = useAppThemeStore();
+const authStore = useAuthStore();
 const expandedItems = ref<Record<string, boolean>>({});
 
 // Load app theme on mount
@@ -23,9 +29,10 @@ onMounted(() => {
 	appThemeStore.loadTheme();
 });
 
-// Filter navigation based on platform configuration
+// Filter navigation based on the user's permissions (items they cannot open
+// are hidden) and the platform configuration
 const filteredNavigation = computed(() => {
-	return NAVIGATION_CONFIG.filter((group) => {
+	return visibleNavigation(NAVIGATION_CONFIG, authStore.user).filter((group) => {
 		// Hide Messaging group when messaging is disabled
 		if (group.label === "Messaging" && !platformConfigStore.messagingEnabled) {
 			return false;

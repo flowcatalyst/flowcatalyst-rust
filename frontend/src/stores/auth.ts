@@ -7,7 +7,13 @@ export interface User {
 	name: string;
 	clientId: string | null;
 	roles: string[];
-	permissions: string[];
+	/**
+	 * The caller's effective permission codes from `/auth/me` (patterns such
+	 * as `platform:*:*:*` included; match them with `@/utils/permissions`).
+	 * `null` when the backend predates the field: the SPA then falls back to
+	 * its old rule, a platform admin role reaches everything.
+	 */
+	permissions: string[] | null;
 }
 
 export const useAuthStore = defineStore("auth", () => {

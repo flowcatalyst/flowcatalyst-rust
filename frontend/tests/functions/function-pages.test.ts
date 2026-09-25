@@ -79,7 +79,7 @@ beforeEach(() => {
 		name: "Admin",
 		clientId: null,
 		roles: ["platform:super-admin"],
-		permissions: [],
+		permissions: ["platform:*:*:*"],
 	});
 	for (const fn of Object.values(api)) fn.mockReset();
 });

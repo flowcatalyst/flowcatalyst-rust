@@ -6,7 +6,7 @@ import { toTypedSchema } from "@vee-validate/zod";
 import { z } from "zod";
 import { useAuthStore } from "@/stores/auth";
 import { useLoginThemeStore } from "@/stores/loginTheme";
-import { checkEmailDomain, login } from "@/api/auth";
+import { checkEmailDomain, loadPermissions, login } from "@/api/auth";
 import { authenticateWithPasskey, isWebauthnSupported } from "@/api/webauthn";
 import router from "@/router";
 import { getErrorMessage } from "@/utils/errors";
@@ -159,8 +159,9 @@ async function onPasskeyLogin() {
 			name: result.name,
 			clientId: null,
 			roles: result.roles,
-			permissions: [],
+			permissions: null,
 		});
+		await loadPermissions();
 
 		const urlParams = new URLSearchParams(window.location.search);
 		const interactionUid = urlParams.get("interaction");
