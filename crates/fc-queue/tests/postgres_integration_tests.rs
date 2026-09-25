@@ -127,14 +127,15 @@ async fn test_poison_row_quarantined_healthy_row_still_delivers() {
     );
 
     // Gone from queue_messages, so it can never re-claim forever.
-    let remaining: i64 =
-        sqlx::query("SELECT COUNT(*) as count FROM queue_messages WHERE queue_name = $1 AND id = $2")
-            .bind("pg-test-queue")
-            .bind("poison-1")
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-            .get("count");
+    let remaining: i64 = sqlx::query(
+        "SELECT COUNT(*) as count FROM queue_messages WHERE queue_name = $1 AND id = $2",
+    )
+    .bind("pg-test-queue")
+    .bind("poison-1")
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .get("count");
     assert_eq!(remaining, 0);
 
     // A second poll never sees the poison row again.
@@ -211,12 +212,14 @@ async fn test_batch_claim_gives_each_row_its_own_receipt_handle() {
     }
 
     let messages = queue.poll(10).await.expect("poll must succeed");
-    assert_eq!(messages.len(), 3, "all three published messages must be claimed");
+    assert_eq!(
+        messages.len(),
+        3,
+        "all three published messages must be claimed"
+    );
 
-    let handles: std::collections::HashSet<&str> = messages
-        .iter()
-        .map(|m| m.receipt_handle.as_str())
-        .collect();
+    let handles: std::collections::HashSet<&str> =
+        messages.iter().map(|m| m.receipt_handle.as_str()).collect();
     assert_eq!(
         handles.len(),
         3,
@@ -260,4 +263,162 @@ async fn test_batch_claim_gives_each_row_its_own_receipt_handle() {
         .unwrap()
         .get(0);
     assert_eq!(remaining, 0, "all three rows must now be gone");
+}
+
+fn grouped_message(id: &str, group: &str) -> Message {
+    Message {
+        message_group_id: Some(group.to_string()),
+        dispatch_mode: DispatchMode::BlockOnError,
+        ..healthy_message(id)
+    }
+}
+
+async fn insert_row(pool: &PgPool, queue_name: &str, msg: &Message, created_at: i64) {
+    sqlx::query(
+        "INSERT INTO queue_messages (id, queue_name, message_group_id, visible_at, payload, created_at) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(&msg.id)
+    .bind(queue_name)
+    .bind(&msg.message_group_id)
+    .bind(created_at)
+    .bind(serde_json::to_string(msg).unwrap())
+    .bind(created_at)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// R4 (Go's claim query): a group head released with a delay blocks its
+/// successors until it is visible again. The old windowed query only
+/// ranked VISIBLE rows, so the successor became the "head" and overtook it
+/// on the very next poll.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn delayed_nack_of_group_head_blocks_its_successor() {
+    let (pool, _container) = setup_pool().await;
+    let queue = PostgresQueue::new(pool.clone(), "pg-test-r4".to_string(), 30);
+    queue.init_schema().await.unwrap();
+
+    let now = chrono::Utc::now().timestamp() - 10;
+    insert_row(&pool, "pg-test-r4", &grouped_message("head", "g1"), now).await;
+    insert_row(&pool, "pg-test-r4", &grouped_message("next", "g1"), now + 1).await;
+
+    let first = queue.poll(10).await.unwrap();
+    assert_eq!(
+        first
+            .iter()
+            .map(|m| m.message.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["head"],
+        "only the group head is eligible"
+    );
+    queue
+        .nack(&first[0].receipt_handle, Some(30))
+        .await
+        .unwrap();
+
+    let second = queue.poll(10).await.unwrap();
+    assert!(
+        second.is_empty(),
+        "a delayed-nacked head must hold its successor back, got {:?}",
+        second.iter().map(|m| &m.message.id).collect::<Vec<_>>()
+    );
+}
+
+/// Same-second rows of one group break the tie on id, deterministically,
+/// as Go's query does. The windowed query ordered by created_at alone, so
+/// which of two same-second rows was the "head" was arbitrary.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn same_second_group_rows_break_the_tie_on_id() {
+    let (pool, _container) = setup_pool().await;
+    let queue = PostgresQueue::new(pool.clone(), "pg-test-tie".to_string(), 30);
+    queue.init_schema().await.unwrap();
+
+    let now = chrono::Utc::now().timestamp() - 10;
+    // Inserted in reverse id order, same created_at.
+    for id in ["m-9", "m-5", "m-1"] {
+        insert_row(&pool, "pg-test-tie", &grouped_message(id, "g"), now).await;
+    }
+    for expected in ["m-1", "m-5", "m-9"] {
+        let batch = queue.poll(10).await.unwrap();
+        assert_eq!(batch.len(), 1, "one head per group per poll");
+        assert_eq!(batch[0].message.id, expected);
+        queue.ack(&batch[0].receipt_handle).await.unwrap();
+    }
+}
+
+/// Concurrent pollers on one queue never claim the same row twice
+/// (`FOR UPDATE SKIP LOCKED` over the claim set, as Go does).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn concurrent_pollers_never_claim_the_same_row() {
+    let (pool, _container) = setup_pool().await;
+    let queue_name = "pg-test-concurrent".to_string();
+    let setup = PostgresQueue::new(pool.clone(), queue_name.clone(), 30);
+    setup.init_schema().await.unwrap();
+    let now = chrono::Utc::now().timestamp() - 10;
+    for i in 0..300 {
+        insert_row(
+            &pool,
+            &queue_name,
+            &healthy_message(&format!("c-{i:03}")),
+            now,
+        )
+        .await;
+    }
+
+    let mut handles = Vec::new();
+    for _ in 0..6 {
+        let q = PostgresQueue::new(pool.clone(), queue_name.clone(), 30);
+        handles.push(tokio::spawn(async move {
+            let mut ids = Vec::new();
+            loop {
+                let batch = q.poll(10).await.unwrap();
+                if batch.is_empty() {
+                    break;
+                }
+                ids.extend(batch.into_iter().map(|m| m.message.id));
+            }
+            ids
+        }));
+    }
+    let mut all = Vec::new();
+    for h in handles {
+        all.extend(h.await.unwrap());
+    }
+    let unique: std::collections::HashSet<_> = all.iter().cloned().collect();
+    assert_eq!(all.len(), unique.len(), "a row was claimed twice");
+    assert_eq!(unique.len(), 300, "every row must be claimed exactly once");
+}
+
+/// Go parity: a release (nack/defer) whose receipt no longer matches a row
+/// is not an error, and the counters Go keeps are kept.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn stale_release_is_not_an_error_and_counters_track() {
+    let (pool, _container) = setup_pool().await;
+    let queue = PostgresQueue::new(pool.clone(), "pg-test-counters".to_string(), 30);
+    queue.init_schema().await.unwrap();
+    queue.publish(healthy_message("k1")).await.unwrap();
+    queue.publish(healthy_message("k2")).await.unwrap();
+
+    let batch = queue.poll(10).await.unwrap();
+    assert_eq!(batch.len(), 2);
+    queue.ack(&batch[0].receipt_handle).await.unwrap();
+    queue
+        .defer(&batch[1].receipt_handle, Some(0))
+        .await
+        .unwrap();
+    queue
+        .nack("no-such-handle", Some(5))
+        .await
+        .expect("a stale release is not an error (Go: makeVisible)");
+
+    let c = queue.get_counters().expect("counters");
+    assert_eq!(c.total_polled, 2);
+    assert_eq!(c.total_acked, 1);
+    assert_eq!(c.total_deferred, 1);
+    assert_eq!(c.total_nacked, 1);
 }
