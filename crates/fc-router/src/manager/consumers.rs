@@ -27,26 +27,40 @@ async fn sleep_or_cancel(token: &CancellationToken, d: Duration) -> bool {
     }
 }
 
-/// Park untimed on the manager's capacity-freed gate (G12,
-/// `docs/go-mirror/2026-09-06-go-fix-list.md`) until either it fires or
-/// `token` is cancelled. Returns `true` if cancelled first (caller should
-/// stop looping).
+/// Park untimed on the manager's capacity-freed gate (G12) until consumer
+/// `rc` has capacity again (Go: `awaitCapacity`) or `token` is cancelled.
+/// Returns `true` if cancelled first.
+///
+/// Wakes on the gate (a pool crossing back under capacity, a reconfigure, a
+/// new pool) and on the earliest of this consumer's deferrals coming due —
+/// nothing signals the gate when budget frees up that way.
 ///
 /// **Race-free by construction.** The `Notified` future is created (which
-/// captures the gate's current `notify_waiters()` call count) *before*
-/// `has_pool_capacity` is checked, and `tokio::sync::Notify` guarantees a
-/// `notify_waiters()` call is observed by a `Notified` as long as it
-/// happens after that `Notified` was created — whether or not it has been
-/// polled yet.
-async fn wait_for_capacity_or_cancel(manager: &QueueManager, token: &CancellationToken) -> bool {
-    let notified = manager.capacity_notify().notified();
-    if manager.has_pool_capacity() {
-        // Freed between the caller's check and here — don't wait at all.
-        return false;
-    }
-    tokio::select! {
-        _ = notified => false,
-        _ = token.cancelled() => true,
+/// captures the gate's current `notify_waiters()` call count) *before* the
+/// capacity check, and `tokio::sync::Notify` guarantees a `notify_waiters()`
+/// call is observed by a `Notified` created before it, whether or not it has
+/// been polled yet.
+async fn wait_for_capacity_or_cancel(
+    manager: &QueueManager,
+    rc: &RunningConsumer,
+    token: &CancellationToken,
+) -> bool {
+    loop {
+        let notified = manager.capacity_notify().notified();
+        if manager.has_capacity_for(rc) {
+            return false;
+        }
+        let due = rc.earliest_deferral();
+        tokio::select! {
+            _ = notified => {}
+            _ = async {
+                match due {
+                    Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {}
+            _ = token.cancelled() => return true,
+        }
     }
 }
 
@@ -155,19 +169,24 @@ impl QueueManager {
                 // heartbeat stays fresh (Go: the watchdog must not rebuild
                 // it — a rebuild used to strand the very buffers it waited
                 // on).
-                if !manager.has_pool_capacity() {
+                if !manager.has_capacity_for(&rc) {
                     if !capacity_paused {
                         capacity_paused = true;
-                        warn!(consumer = %id, "All pools at capacity — pausing poll");
+                        warn!(consumer = %id, "Destination pools at capacity and deferral budget spent — pausing poll");
                         manager.warning_service.add_warning(
-                            WarningCategory::QueueHealth,
+                            WarningCategory::PoolHealth,
                             WarningSeverity::Warn,
-                            format!("Consumer [{}] paused — all pools at capacity", id),
+                            format!(
+                                "Consumer [{}] paused — its destination pools are at capacity and {} deferrals are outstanding (budget {})",
+                                id,
+                                rc.deferrals_outstanding(Instant::now()),
+                                manager.deferral_budget
+                            ),
                             "ConsumerLoop".to_string(),
                         );
                     }
                     rc.beat();
-                    if wait_for_capacity_or_cancel(&manager, &token).await {
+                    if wait_for_capacity_or_cancel(&manager, &rc, &token).await {
                         break;
                     }
                     continue;
@@ -944,7 +963,9 @@ mod g12_capacity_gate_tests {
     /// and race-free.
     async fn manager_with_saturated_pool() -> Arc<QueueManager> {
         let manager = Arc::new(
-            QueueManager::builder_with_shared_mediator(Arc::new(InstantSuccessMediator)).build(),
+            QueueManager::builder_with_shared_mediator(Arc::new(InstantSuccessMediator))
+                .deferral_budget(1)
+                .build(),
         );
         let pool_config = PoolConfig {
             code: "TEST".to_string(),
@@ -965,6 +986,76 @@ mod g12_capacity_gate_tests {
             "pool must read as full immediately after saturating it"
         );
         manager
+    }
+
+    /// A consumer whose last batch fed the saturated "TEST" pool and whose
+    /// deferral budget (1) is spent — so it must park.
+    fn parked_consumer(manager: &QueueManager) -> Arc<RunningConsumer> {
+        struct Nop;
+        #[async_trait]
+        impl QueueConsumer for Nop {
+            fn identifier(&self) -> &str {
+                "parked"
+            }
+            async fn poll(&self, _: u32) -> fc_queue::Result<Vec<fc_common::QueuedMessage>> {
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            async fn stop(&self) {}
+        }
+        let rc = manager.new_running_consumer(Arc::new(Nop), "parked".into(), None);
+        rc.set_dest_pools(vec!["TEST".to_string()]);
+        rc.note_deferral(Instant::now() + Duration::from_secs(60));
+        assert!(!manager.has_capacity_for(&rc));
+        rc
+    }
+
+    /// Go's hasCapacityFor: with its destination pools full, a consumer
+    /// keeps polling (deferring what doesn't fit) while its deferral budget
+    /// lasts, parks once it is spent, and wakes when a deferral comes due.
+    #[tokio::test]
+    async fn capacity_gate_uses_destination_pools_and_the_deferral_budget() {
+        let manager = manager_with_saturated_pool().await;
+        let rc = manager.new_running_consumer(
+            Arc::new(PartialThenEmptyConsumer {
+                call_times: parking_lot::Mutex::new(vec![]),
+                second_call: Arc::new(tokio::sync::Notify::new()),
+            }),
+            "q".into(),
+            None,
+        );
+        rc.set_dest_pools(vec!["TEST".to_string()]);
+        assert!(
+            manager.has_capacity_for(&rc),
+            "budget not spent: keep polling"
+        );
+        rc.note_deferral(Instant::now() + Duration::from_millis(150));
+        assert!(
+            !manager.has_capacity_for(&rc),
+            "full and budget spent: park"
+        );
+
+        // Another pool with room elsewhere does not unpark it (Go judges by
+        // this queue's destinations, not "any pool has room").
+        manager.get_or_create_pool("OTHER", None).await.unwrap();
+        assert!(!manager.has_capacity_for(&rc));
+
+        // The deferral coming due frees budget and wakes the wait.
+        let token = CancellationToken::new();
+        let start = Instant::now();
+        assert!(!wait_for_capacity_or_cancel(&manager, &rc, &token).await);
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 
     /// G12: `wait_for_capacity_or_cancel` must resolve within 100ms of the
@@ -990,8 +1081,9 @@ mod g12_capacity_gate_tests {
         let manager = manager_with_saturated_pool().await;
         let token = CancellationToken::new();
 
+        let rc = parked_consumer(&manager);
         let start = Instant::now();
-        let cancelled = wait_for_capacity_or_cancel(&manager, &token).await;
+        let cancelled = wait_for_capacity_or_cancel(&manager, &rc, &token).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -1015,9 +1107,10 @@ mod g12_capacity_gate_tests {
         let manager = manager_with_saturated_pool().await;
         let token = CancellationToken::new();
         token.cancel();
+        let rc = parked_consumer(&manager);
 
         let start = Instant::now();
-        let cancelled = wait_for_capacity_or_cancel(&manager, &token).await;
+        let cancelled = wait_for_capacity_or_cancel(&manager, &rc, &token).await;
         let elapsed = start.elapsed();
 
         assert!(

@@ -264,6 +264,11 @@ pub struct QueueManager {
     /// Bound on a single `poll()` (Go: `consumerPollTimeout`, 30s).
     poll_timeout: std::time::Duration,
 
+    /// How many capacity deferrals one consumer may have outstanding before
+    /// it stops polling into pools that are all full (Go:
+    /// `defaultDeferralBudget`, 5000; `FC_ROUTER_DEFERRAL_BUDGET`).
+    deferral_budget: usize,
+
     /// Bound on building a replacement consumer (Go:
     /// `consumerRebuildTimeout`, 20s).
     rebuild_timeout: std::time::Duration,
@@ -413,6 +418,7 @@ pub struct QueueManagerBuilder {
     strict_routing: bool,
     poll_timeout: std::time::Duration,
     rebuild_timeout: std::time::Duration,
+    deferral_budget: usize,
 }
 
 impl QueueManagerBuilder {
@@ -430,7 +436,18 @@ impl QueueManagerBuilder {
             strict_routing: false,
             poll_timeout: QueueManager::DEFAULT_POLL_TIMEOUT,
             rebuild_timeout: QueueManager::DEFAULT_REBUILD_TIMEOUT,
+            deferral_budget: QueueManager::DEFAULT_DEFERRAL_BUDGET,
         }
+    }
+
+    /// Capacity deferrals one consumer may have outstanding before it stops
+    /// polling into pools that are all full (default 5000, Go's
+    /// `defaultDeferralBudget`). Zero keeps the default.
+    pub fn deferral_budget(mut self, budget: usize) -> Self {
+        if budget > 0 {
+            self.deferral_budget = budget;
+        }
+        self
     }
 
     /// Bound on a single consumer `poll()` (default 30s, Go's
@@ -522,6 +539,7 @@ impl QueueManagerBuilder {
             polling_stopped: AtomicBool::new(false),
             restart_attempts: Mutex::new(HashMap::new()),
             poll_timeout: self.poll_timeout,
+            deferral_budget: self.deferral_budget,
             rebuild_timeout: self.rebuild_timeout,
             consumer_factory: self.consumer_factory,
             mediator_factory: self.mediator_factory,
@@ -549,6 +567,8 @@ impl QueueManager {
     pub const DEFAULT_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     /// Go: `consumerRebuildTimeout`.
     pub const DEFAULT_REBUILD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+    /// Go: `defaultDeferralBudget`.
+    pub const DEFAULT_DEFERRAL_BUDGET: usize = 5000;
     /// Go: `consumerRestartCriticalAfter`.
     const CONSUMER_RESTART_CRITICAL_AFTER: u32 = 10;
 

@@ -62,6 +62,7 @@ impl QueueManager {
             pool_configs.insert(code.clone(), pool_config.clone());
             self.get_or_create_pool(&code, Some(pool_config)).await?;
         }
+        self.capacity_notify().notify_waiters();
         Ok(())
     }
 
@@ -279,7 +280,14 @@ impl QueueManager {
         // been reconciled), so the caller does not record this config as
         // applied and retries it (Go: Reconfigure errors, the watcher
         // forgets the config).
-        let (queues_created, queues_removed) = self.sync_queue_consumers(&config).await?;
+        let synced = self.sync_queue_consumers(&config).await;
+
+        // A reconfigure can add, remove, resize or repoint any pool a parked
+        // consumer's capacity check depends on — wake every waiter so it
+        // re-evaluates against the new topology (Go: Reconfigure signals
+        // the capacity gate). Parked consumers used to stay parked.
+        self.capacity_notify().notify_waiters();
+        let (queues_created, queues_removed) = synced?;
 
         let total_active_consumers = self.consumers.len();
 
@@ -407,10 +415,6 @@ impl QueueManager {
                 }
             }
         }
-
-        // A reconfigure can add, remove or repoint what a parked consumer's
-        // capacity check depends on — wake every waiter.
-        self.capacity_notify().notify_waiters();
 
         if !failures.is_empty() {
             return Err(crate::error::RouterError::ConsumerBuild(

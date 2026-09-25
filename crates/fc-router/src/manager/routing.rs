@@ -329,25 +329,42 @@ impl QueueManager {
         messages: Vec<QueuedMessage>,
         consumer: Arc<dyn QueueConsumer>,
     ) -> Result<()> {
-        self.route_batch_inner(messages, consumer, 0).await
+        self.route_batch_inner(messages, consumer, 0)
+            .await
+            .map(|_| ())
     }
 
-    /// Route a batch polled by the registered consumer `rc`.
+    /// Route a batch polled by the registered consumer `rc`, recording on it
+    /// the pools the batch fed and the messages deferred for capacity — the
+    /// inputs to its own capacity gate (Go: `setPools`, the deferral
+    /// ledger).
     pub(super) async fn route_batch_from(
         &self,
         messages: Vec<QueuedMessage>,
         rc: &RunningConsumer,
     ) -> Result<()> {
-        self.route_batch_inner(messages, rc.consumer.clone(), rc.generation)
-            .await
+        let outcome = self
+            .route_batch_inner(messages, rc.consumer.clone(), rc.generation)
+            .await?;
+        rc.set_dest_pools(outcome.fed_pools);
+        let due =
+            Instant::now() + std::time::Duration::from_secs(Self::CAPACITY_DEFER_SECONDS as u64);
+        for _ in 0..outcome.deferred {
+            rc.note_deferral(due);
+        }
+        Ok(())
     }
+
+    /// Delay on a message handed back because its pool was full.
+    const CAPACITY_DEFER_SECONDS: u32 = 5;
 
     async fn route_batch_inner(
         &self,
         messages: Vec<QueuedMessage>,
         consumer: Arc<dyn QueueConsumer>,
         origin_generation: u64,
-    ) -> Result<()> {
+    ) -> Result<RouteOutcome> {
+        let mut outcome = RouteOutcome::default();
         if !self.running.load(Ordering::SeqCst) {
             // NACK all messages concurrently on shutdown
             let nack_futs: Vec<_> = messages
@@ -365,7 +382,7 @@ impl QueueManager {
         }
 
         if messages.is_empty() {
-            return Ok(());
+            return Ok(outcome);
         }
 
         let batch_id: Arc<str> = Arc::from(
@@ -424,7 +441,7 @@ impl QueueManager {
         }
 
         if messages_to_process.is_empty() {
-            return Ok(());
+            return Ok(outcome);
         }
 
         // Phase 1: Filter duplicates (takes ownership to avoid cloning payloads)
@@ -520,6 +537,7 @@ impl QueueManager {
 
         // Phase 2: Group by pool and route
         let by_pool = self.group_by_pool(well_formed).await;
+        let fed_pools = &mut outcome.fed_pools;
 
         for (pool_code, pool_messages) in by_pool {
             let pool = match self.get_or_create_pool(&pool_code, None).await {
@@ -534,63 +552,17 @@ impl QueueManager {
                 }
             };
 
-            // Check pool capacity for ALL messages in this pool
-            let available = pool.available_capacity();
-            if available < pool_messages.len() {
-                // Item 3 (router bench rig, 2026-09-07): WARN + a
-                // WarningService entry only on the transition into "this
-                // pool can't take a whole batch" (`note_capacity_full`
-                // does the check-and-set); every subsequent batch that
-                // finds it still full logs at debug instead. Under
-                // sustained saturation (8 NATS queues sharing one pool)
-                // the old unconditional warn!+add_warning fired once per
-                // deferred batch — 883 times in one bench run — which is
-                // exactly the kind of warning-volume flood
-                // `HealthService::get_health_report` uses to degrade
-                // status, so an expected, self-resolving backpressure
-                // condition was pushing the router toward Warning/Degraded
-                // on log noise alone. The actual defer (below) is
-                // unconditional either way — this only changes how loudly
-                // it's reported.
-                if pool.note_capacity_full() {
-                    warn!(
-                        pool_code = %pool_code,
-                        available = available,
-                        requested = pool_messages.len(),
-                        "Pool at capacity, deferring all messages for this pool"
-                    );
-                    self.warning_service.add_warning(
-                        WarningCategory::QueueHealth,
-                        WarningSeverity::Warn,
-                        format!(
-                            "Pool [{}] queue full, deferring {} messages from batch",
-                            pool_code,
-                            pool_messages.len()
-                        ),
-                        "QueueManager".to_string(),
-                    );
-                } else {
-                    debug!(
-                        pool_code = %pool_code,
-                        available = available,
-                        requested = pool_messages.len(),
-                        "Pool at capacity, deferring all messages for this pool"
-                    );
-                }
-                // Defer concurrently - capacity limits are not errors
-                let defer_futs: Vec<_> = pool_messages
-                    .iter()
-                    .map(|msg| {
-                        let consumer = consumer.clone();
-                        let handle = msg.receipt_handle.clone();
-                        async move {
-                            let _ = consumer.defer(&handle, Some(5)).await;
-                        }
-                    })
-                    .collect();
-                future::join_all(defer_futs).await;
-                continue;
-            } else if pool.note_capacity_recovered() {
+            fed_pools.push(pool_code.clone());
+
+            // Capacity is admitted message by message (Go: each message is
+            // submitted and a full pool defers just that one). The whole
+            // batch for a pool used to be deferred whenever it did not fit
+            // entirely, so a pool with room for 9 of 10 took none, and the
+            // consumer re-polled the same batch in a hot loop that inflated
+            // SQS receive counts toward the DLQ. Within an ordered group,
+            // once one message is deferred its successors are too.
+            let fits_whole_batch = pool.available_capacity() >= pool_messages.len();
+            if fits_whole_batch && pool.note_capacity_recovered() {
                 info!(pool_code = %pool_code, "Pool capacity returned; resuming normal routing");
             }
 
@@ -603,8 +575,33 @@ impl QueueManager {
 
             for (group_id, group_messages) in messages_by_group {
                 let mut nack_remaining = false;
+                let mut defer_remaining = false;
 
                 for msg in group_messages {
+                    if defer_remaining || pool.available_capacity() == 0 {
+                        defer_remaining = true;
+                        if pool.note_capacity_full() {
+                            warn!(
+                                pool_code = %pool_code,
+                                "Pool at capacity, deferring what does not fit"
+                            );
+                            self.warning_service.add_warning(
+                                WarningCategory::QueueHealth,
+                                WarningSeverity::Warn,
+                                format!(
+                                    "Pool [{}] queue full, deferring messages that do not fit",
+                                    pool_code
+                                ),
+                                "QueueManager".to_string(),
+                            );
+                        }
+                        let _ = consumer
+                            .defer(&msg.receipt_handle, Some(Self::CAPACITY_DEFER_SECONDS))
+                            .await;
+                        outcome.deferred += 1;
+                        continue;
+                    }
+
                     // If previous message in group failed, NACK all remaining in this group
                     // This enforces FIFO ordering - if message A fails, message B (which depends on A) must also fail
                     if nack_remaining {
@@ -706,7 +703,7 @@ impl QueueManager {
             }
         }
 
-        Ok(())
+        Ok(outcome)
     }
 
     /// Filter duplicates from a batch.
@@ -921,6 +918,15 @@ impl QueueManager {
 
         by_group
     }
+}
+
+/// What routing one batch did, for the consumer's capacity gate.
+#[derive(Default)]
+struct RouteOutcome {
+    /// Pools the batch was routed to.
+    fed_pools: Vec<String>,
+    /// Messages handed back to the broker because their pool was full.
+    deferred: usize,
 }
 
 /// Result of filtering duplicates from a message batch

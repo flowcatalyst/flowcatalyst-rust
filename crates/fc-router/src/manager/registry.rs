@@ -9,7 +9,7 @@
 //! and every health answer read the same `last_poll`, so the two can never
 //! disagree about whether one consumer is alive (Go: `ConsumerStats`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -49,6 +49,12 @@ pub(crate) struct RunningConsumer {
     /// stall can say whether the loop is inside a hung poll or not polling.
     pub(crate) polls_started: AtomicU64,
     pub(crate) polls_returned: AtomicU64,
+    /// Pool codes the most recent routed batch went to — the pools whose
+    /// capacity gates this consumer's next poll (Go: `runningConsumer.pools`).
+    dest_pools: Mutex<Vec<String>>,
+    /// When the messages this consumer deferred for capacity are due back
+    /// from the broker (Go: `deferralLedger`).
+    deferrals: Mutex<VecDeque<Instant>>,
     /// Stamped when the consumer is detached; `None` while active.
     detached_at: Mutex<Option<Instant>>,
 }
@@ -71,6 +77,8 @@ impl RunningConsumer {
             last_poll: Mutex::new(Instant::now()),
             polls_started: AtomicU64::new(0),
             polls_returned: AtomicU64::new(0),
+            dest_pools: Mutex::new(Vec::new()),
+            deferrals: Mutex::new(VecDeque::new()),
             detached_at: Mutex::new(None),
         }
     }
@@ -91,6 +99,40 @@ impl RunningConsumer {
     #[cfg(test)]
     pub(crate) fn set_last_poll(&self, at: Instant) {
         *self.last_poll.lock() = at;
+    }
+
+    /// Record the destination pools of the batch just routed. An empty
+    /// batch leaves the previous set in place — a quiet poll says nothing
+    /// about where this queue's traffic goes.
+    pub(crate) fn set_dest_pools(&self, codes: Vec<String>) {
+        if !codes.is_empty() {
+            *self.dest_pools.lock() = codes;
+        }
+    }
+
+    pub(crate) fn dest_pools(&self) -> Vec<String> {
+        self.dest_pools.lock().clone()
+    }
+
+    /// Book a deferral the broker will hand back at `due`.
+    pub(crate) fn note_deferral(&self, due: Instant) {
+        let mut d = self.deferrals.lock();
+        let pos = d.iter().rposition(|t| *t <= due).map_or(0, |i| i + 1);
+        d.insert(pos, due);
+    }
+
+    /// How many deferred messages are still out on the broker.
+    pub(crate) fn deferrals_outstanding(&self, now: Instant) -> usize {
+        let mut d = self.deferrals.lock();
+        while d.front().is_some_and(|t| *t <= now) {
+            d.pop_front();
+        }
+        d.len()
+    }
+
+    /// When the next deferred message is due back, if any.
+    pub(crate) fn earliest_deferral(&self) -> Option<Instant> {
+        self.deferrals.lock().front().copied()
     }
 
     pub(crate) fn detached_at(&self) -> Option<Instant> {
@@ -373,6 +415,17 @@ mod tests {
         let detached = reg.resolve("Q/id", 99).unwrap();
         assert!(Arc::ptr_eq(&detached, &old.consumer));
         assert!(reg.resolve("other", 1).is_none());
+    }
+
+    #[test]
+    fn deferral_ledger_counts_only_outstanding() {
+        let r = rc("q", "Q", 1);
+        let now = Instant::now();
+        r.note_deferral(now - Duration::from_secs(1));
+        r.note_deferral(now + Duration::from_secs(5));
+        r.note_deferral(now + Duration::from_secs(3));
+        assert_eq!(r.deferrals_outstanding(now), 2);
+        assert_eq!(r.earliest_deferral(), Some(now + Duration::from_secs(3)));
     }
 
     /// A replacement is only swapped in over the instance it was built to

@@ -2458,3 +2458,116 @@ async fn update_pool_config_is_in_place() {
         "0 is rejected, as Go"
     );
 }
+
+/// Capacity is admitted per message: a pool with room for 3 of a 5-message
+/// batch takes 3 and defers 2 (Go defers only what does not fit). The
+/// whole batch used to be deferred whenever it did not fit entirely, so the
+/// consumer re-polled the same batch in a hot loop.
+#[tokio::test]
+async fn route_batch_admits_what_fits_and_defers_the_rest() {
+    let mediator = Arc::new(MockMediator::new());
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "NEARLY".to_string(),
+                concurrency: 1, // capacity 50
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+    let pool = manager.get_pool("NEARLY").unwrap();
+    for i in 0..47 {
+        pool.submit(filler_batch_message(&format!("filler-{i}"), "NEARLY"))
+            .await
+            .unwrap();
+    }
+    assert_eq!(pool.available_capacity(), 3);
+
+    let messages: Vec<_> = (0..5)
+        .map(|i| create_queued_message(&format!("m{i}"), "NEARLY", "q"))
+        .collect();
+    let consumer = Arc::new(MockQueueConsumer::with_messages("q", messages));
+    let batch = consumer.poll(10).await.unwrap();
+    manager.route_batch(batch, consumer.clone()).await.unwrap();
+
+    let deferred = consumer.nacked.lock().clone();
+    assert_eq!(deferred.len(), 2, "only what did not fit is deferred");
+    assert!(deferred.iter().all(|(_, d)| *d == Some(5)));
+    assert_eq!(manager.in_flight_count(), 3, "three were admitted");
+}
+
+/// A reconfigure wakes consumers parked on the capacity gate (Go:
+/// Reconfigure signals it): here a parked consumer resumes polling once a
+/// reload removes the full pool it was waiting on.
+#[tokio::test]
+async fn reload_wakes_consumers_parked_for_capacity() {
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(Arc::new(SlowMockMediator::new(
+            Duration::from_secs(30),
+        )))
+        .deferral_budget(1)
+        .build(),
+    );
+    let cfg = |concurrency| RouterConfig {
+        processing_pools: vec![PoolConfig {
+            code: "FULL".to_string(),
+            concurrency,
+            rate_limit_per_minute: None,
+        }],
+        queues: vec![],
+    };
+    manager.apply_config(cfg(1)).await.unwrap();
+    let pool = manager.get_pool("FULL").unwrap();
+    for i in 0..50 {
+        pool.submit(filler_batch_message(&format!("f{i}"), "FULL"))
+            .await
+            .unwrap();
+    }
+    // Two messages: with the pool full both are deferred, spending the
+    // budget of 1, so the consumer parks.
+    let consumer = Arc::new(MockQueueConsumer::with_messages(
+        "q",
+        vec![
+            create_queued_message("a", "FULL", "q"),
+            create_queued_message("b", "FULL", "q"),
+        ],
+    ));
+    manager.add_consumer(consumer.clone()).await;
+    let start_task = tokio::spawn(manager.clone().start());
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while consumer.nacked.lock().len() < 2 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let parked_polls = consumer.poll_count();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(consumer.poll_count(), parked_polls, "parked: not polling");
+
+    // A reload that drops FULL (the only pool this queue fed) must wake
+    // it: its next capacity check falls back to "any pool has room".
+    // Nothing else would wake it before its deferrals come due (5s).
+    manager
+        .reload_config(RouterConfig {
+            processing_pools: vec![],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while consumer.poll_count() == parked_polls && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        consumer.poll_count() > parked_polls,
+        "a reconfigure must wake a consumer parked for capacity"
+    );
+    manager
+        .shutdown_with_timeout(Duration::from_millis(100))
+        .await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), start_task).await;
+}

@@ -110,6 +110,12 @@ async fn main() -> Result<()> {
                 sqs_client: sqs_client.clone(),
             }))
             .strict_routing(strict_routing)
+            // FC_ROUTER_DEFERRAL_BUDGET (Go): capacity deferrals one queue
+            // may have outstanding before it stops polling into full pools.
+            .deferral_budget(fc_common::config::env_first_parse(
+                &["FC_ROUTER_DEFERRAL_BUDGET"],
+                0usize,
+            ))
             .build(),
     );
 
