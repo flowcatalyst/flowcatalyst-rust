@@ -1317,6 +1317,12 @@ mod drain_tests {
         )
     }
 
+    /// A client that never goes through a system proxy (a machine proxy can
+    /// otherwise intercept even loopback requests and reset them).
+    fn local_client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
     async fn serve(
         app: Router,
     ) -> (
@@ -1342,7 +1348,7 @@ mod drain_tests {
     #[tokio::test]
     async fn shutdown_finishes_the_request_in_flight() {
         let (url, stop, task) = serve(slow(Duration::from_millis(300)).await).await;
-        let call = tokio::spawn(async move { reqwest::Client::new().post(url).send().await });
+        let call = tokio::spawn(async move { local_client().post(url).send().await });
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         assert!(drain_http(&stop, vec![task], Duration::from_secs(5)).await);
@@ -1354,7 +1360,7 @@ mod drain_tests {
     #[tokio::test]
     async fn the_drain_gives_up_at_its_timeout() {
         let (url, stop, task) = serve(slow(Duration::from_secs(30)).await).await;
-        tokio::spawn(async move { reqwest::Client::new().post(url).send().await });
+        tokio::spawn(async move { local_client().post(url).send().await });
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let started = std::time::Instant::now();
