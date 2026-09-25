@@ -47,6 +47,13 @@ The binding record for the work that follows. It supersedes anything in older do
 | 17 | Flaky tests | Fix the fc-router end-to-end tests that fail under parallel load, and the function example test that hits 429. |
 | 19 | Service-account writes | Keep requiring **anchor** scope for service-account create, update and delete, on top of Go's permission check. This is a deliberate deviation from Go, which lets a non-anchor admin mint an ANCHOR-tier account (an escalation path worth fixing in Go too). |
 | 20 | JWT (revisited) | Rust issues **Go's** token shape (see #3). This supersedes the earlier "keep Rust's shape". |
+| 21 | Java rulings of 2026-09-25 | The owner's rulings recorded in the Java repo (`docs/backlog.md` @ f6e10994, items 2–17) apply to Rust too. Triage: `docs/parity/java-2026-09-25-triage.md`. |
+| 22 | Sync `passwordHash` | **Ruling 4:** used only when the sync creates the principal, never applied to an existing one (any caller); the result reports it ignored. Supersedes the overwrite in #4(c); hr/rfp re-runs no longer rotate existing users' passwords. The app-scoped sync must still carry the hash for creates. |
+| 23 | App-sync role names | Refuse names prefixed `platform:` or another application's code; other names are accepted as today. |
+| 24 | Ingest tenancy and ids | A non-anchor caller must name a client it can access: a client-less or unknown-client event is refused (Java S3.2a). Supplied ids are honoured, as Go: a duplicate dispatch-job id refuses the whole batch with 409 `DUPLICATE_ID` (live table); events stay idempotent (#18). |
+| 25 | Anchor is reach, never authority | `/api/roles` writes and client-access grants need anchor **and** the permission (stricter than Go, as #19). |
+| 26 | Session cookie | Adopt Go's design: the cookie carries the subject only and the principal is reloaded per request (immediate deactivation; Go-issued cookies survive cutover; cookie-only routes are distinguishable). |
+| 27 | JS functions | `runtime: js` with a JS bundle artifact, and a **Rust-shaped JS API** modelled on the WIT interfaces (not Java's `@flowcatalyst/function`). |
 | 18 | Housekeeping | Keep the fc-router dev-only `hyper` 1.9.0 pin. Make Rust's event ingest idempotent (`ON CONFLICT DO NOTHING`), as Go and Java do. |
 
 ## Re-check needed
