@@ -234,7 +234,7 @@ fn non_blank(s: Option<&str>) -> Option<&str> {
 }
 
 /// The code up to its first `:`, when there is one and it is non-empty.
-fn leading_segment(code: &str) -> Option<String> {
+pub fn leading_segment(code: &str) -> Option<String> {
     let (segment, _) = code.split_once(':')?;
     (!segment.is_empty()).then(|| segment.to_string())
 }

@@ -93,16 +93,19 @@ pub fn build_platform_routes(
     platform_application_id: String,
 ) -> PlatformRoutes<PgUnitOfWork> {
     // ── Simple states ─────────────────────────────────────────────────────
-    let events_state = EventsState {
-        event_repo: repos.event_repo.clone(),
-    };
-    // The one ingest signing guard (S5): dispatch-job ingest on every route.
+    // The one ingest signing guard: dispatch-job (S5) and event (S6) ingest
+    // on every route.
     let signing_guard = Arc::new(crate::dispatch_job::signing_guard::SigningGuard::new(
         repos.subscription_repo.clone(),
         repos.connection_repo.clone(),
         repos.service_account_repo.clone(),
         repos.application_repo.clone(),
+        repos.principal_repo.clone(),
     ));
+    let events_state = EventsState {
+        event_repo: repos.event_repo.clone(),
+        signing: signing_guard.clone(),
+    };
     let dispatch_jobs_state = DispatchJobsState {
         dispatch_job_repo: repos.dispatch_job_repo.clone(),
         signing: signing_guard.clone(),
@@ -972,6 +975,7 @@ pub fn build_platform_routes(
     let sdk_events_state = SdkEventsState {
         event_repo: repos.event_repo.clone(),
         client_repo: repos.client_repo.clone(),
+        signing: signing_guard.clone(),
     };
     let debug_state = DebugState {
         event_repo: repos.event_repo.clone(),

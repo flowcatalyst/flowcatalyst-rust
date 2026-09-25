@@ -237,6 +237,9 @@ fn split_csv(input: Option<&str>) -> Vec<String> {
 #[derive(Clone)]
 pub struct EventsState {
     pub event_repo: Arc<EventRepository>,
+    /// Refuses an application's event types from a caller that may not
+    /// sign as that application (S6, ruling 17a).
+    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
 
 /// Create a new event
@@ -284,6 +287,13 @@ pub async fn create_event(
         }
     });
     let client_id = crate::shared::caller_reach::require_writable_client(&auth.0, client_id)?;
+
+    // An application's event type only from a caller that may sign as it
+    // (owner ruling 17a).
+    state
+        .signing
+        .check_event_types(&auth.0, [req.event_type.as_str()])
+        .await?;
 
     // Check for duplicate deduplication ID
     if let Some(ref dedup_id) = req.deduplication_id {
@@ -537,6 +547,12 @@ pub async fn batch_create_events(
         .iter()
         .map(|e| crate::shared::caller_reach::require_writable_client(&auth.0, e.client_id.clone()))
         .collect::<Result<Vec<_>, PlatformError>>()?;
+    // And every item's type from a caller that may sign as its application
+    // (owner ruling 17a).
+    state
+        .signing
+        .check_event_types(&auth.0, req.events.iter().map(|e| e.event_type.as_str()))
+        .await?;
 
     for (event_req, client_id) in req.events.into_iter().zip(client_ids) {
         if let Some(existing) = event_req

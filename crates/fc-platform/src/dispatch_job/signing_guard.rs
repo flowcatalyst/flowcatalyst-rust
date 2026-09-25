@@ -21,19 +21,28 @@
 //!    account or application that does not exist signs nothing, so it is
 //!    not refused.
 //!
+//! An ingested **event** of application X's type fans out to X's
+//! subscriptions, and one with no account or connection of its own is signed
+//! with X's account, so ingesting it causes X's signature on a payload the
+//! caller chose (Java `DeliverySigningGuard.checkEvent`, d0f7eb20; owner
+//! ruling 17a). It is accepted only from X's own account, a super-admin, or
+//! an anchor whose application access covers X (the operator's staff). A
+//! type naming no known application signs nothing and passes.
+//!
 //! Every lookup is batched: a batch of a thousand jobs costs a fixed handful
 //! of queries.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use super::delivery_credentials::{connection_to_load, signer_of, Signer};
+use super::delivery_credentials::{connection_to_load, leading_segment, signer_of, Signer};
 use super::entity::DispatchJob;
 use crate::connection::entity::Connection;
 use crate::connection::repository::ConnectionRepository;
 use crate::service_account::signing_reach::SigningReach;
-use crate::shared::authorization_service::AuthContext;
+use crate::shared::authorization_service::{ApplicationScope, AuthContext};
 use crate::shared::error::{PlatformError, Result};
+use crate::PrincipalRepository;
 use crate::{
     ApplicationRepository, ServiceAccountRepository, Subscription, SubscriptionRepository,
 };
@@ -43,6 +52,7 @@ pub struct SigningGuard {
     connections: Arc<ConnectionRepository>,
     accounts: Arc<ServiceAccountRepository>,
     applications: Arc<ApplicationRepository>,
+    principals: Arc<PrincipalRepository>,
 }
 
 impl SigningGuard {
@@ -51,13 +61,67 @@ impl SigningGuard {
         connections: Arc<ConnectionRepository>,
         accounts: Arc<ServiceAccountRepository>,
         applications: Arc<ApplicationRepository>,
+        principals: Arc<PrincipalRepository>,
     ) -> Self {
         Self {
             subscriptions,
             connections,
             accounts,
             applications,
+            principals,
         }
+    }
+
+    /// `Ok` when `caller` may ingest events of every one of `event_types`;
+    /// otherwise a 403 for the whole request, naming the first type refused.
+    pub async fn check_event_types<'a>(
+        &self,
+        caller: &AuthContext,
+        event_types: impl IntoIterator<Item = &'a str>,
+    ) -> Result<()> {
+        let typed: Vec<(&str, String)> = event_types
+            .into_iter()
+            .filter_map(|t| leading_segment(t).map(|code| (t, code)))
+            .collect();
+        let codes: Vec<String> = distinct(typed.iter().map(|(_, code)| code.as_str()));
+        let application_ids = self.applications.find_ids_by_codes(&codes).await?;
+        if application_ids.is_empty() {
+            return Ok(());
+        }
+        let reach = SigningReach::for_caller(caller, &self.accounts).await?;
+        if reach.is_super_admin() {
+            return Ok(());
+        }
+        let anchor_scope = if caller.is_anchor() {
+            Some(ApplicationScope::from_binding(
+                self.principals
+                    .find_application_binding(&caller.principal_id)
+                    .await?,
+            ))
+        } else {
+            None
+        };
+        for (event_type, code) in &typed {
+            let Some(application_id) = application_ids.get(code) else {
+                continue;
+            };
+            if anchor_scope
+                .as_ref()
+                .is_some_and(|scope| scope.allows(application_id))
+            {
+                continue;
+            }
+            if let Err(refusal) = reach.may_use_application(application_id, code) {
+                return Err(PlatformError::forbidden_code(
+                    "FORBIDDEN",
+                    format!(
+                        "an event of type '{event_type}' may be delivered signed by its application, \
+                         which the caller may not sign as: {refusal}"
+                    ),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// `Ok` when `caller` may cause every job's signed delivery; otherwise a

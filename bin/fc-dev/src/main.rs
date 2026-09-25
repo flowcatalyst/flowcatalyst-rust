@@ -923,6 +923,7 @@ async fn main() -> Result<()> {
             repos.connection_repo.clone(),
             repos.service_account_repo.clone(),
             repos.application_repo.clone(),
+            repos.principal_repo.clone(),
         )),
     };
     let filter_options_state = fc_platform::api::FilterOptionsState {

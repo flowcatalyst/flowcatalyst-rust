@@ -176,6 +176,9 @@ pub struct SdkEventsState {
     pub event_repo: Arc<EventRepository>,
     /// Resolves `clientCode` to a client id
     pub client_repo: Arc<ClientRepository>,
+    /// Refuses an application's event types from a caller that may not
+    /// sign as that application (S6, ruling 17a).
+    pub signing: Arc<crate::dispatch_job::signing_guard::SigningGuard>,
 }
 
 async fn batch_events(
@@ -282,6 +285,17 @@ async fn batch_events(
         });
         inserted_events.push(event);
     }
+
+    // An event of application X's type may be delivered signed by X: only a
+    // caller that may sign as X ingests it (owner ruling 17a). The whole
+    // batch is refused 403 before anything is written.
+    state
+        .signing
+        .check_event_types(
+            &auth.0,
+            inserted_events.iter().map(|e| e.event_type.as_str()),
+        )
+        .await?;
 
     // Idempotent on the deduplication id (EventRepository::insert_many): a
     // duplicate is dropped and still reported SUCCESS, the outcome the

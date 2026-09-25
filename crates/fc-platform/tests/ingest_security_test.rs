@@ -706,3 +706,113 @@ async fn a_job_signs_only_with_an_account_the_caller_may_use() {
     let (status, body) = post_job(&app, &anchor, job).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
+
+// ── S6: event ingest reach (ruling 17a) ─────────────────────────────────────
+
+/// An event of application X's type is ingested only by a caller that may
+/// sign as X: X's own account, a super-admin, or an anchor whose application
+/// access covers X. Everyone else is refused 403 on every event route, and
+/// nothing is written. A type naming no known application passes.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn only_a_caller_that_may_sign_as_the_application_ingests_its_events() {
+    let app = TestApp::setup().await;
+    let acme = create_client(&app, "acme").await;
+    let billing = create_application(&app, "billing").await;
+    let (_, billing_prn) = seed_account(&app, "billing-svc", Some(&billing), &[]).await;
+
+    // An anchor user granted access to billing.
+    let staff = anchor_user();
+    sqlx::query(
+        "INSERT INTO iam_principals (id, type, scope, name, active) VALUES ($1, 'USER', 'ANCHOR', 'staff', true)",
+    )
+    .bind(&staff.id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO iam_principal_application_access (principal_id, application_id) VALUES ($1, $2)",
+    )
+    .bind(&staff.id)
+    .bind(&billing)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    let client_admin = token_for(&app, &client_user(&acme, "acme"), &[EVENTS_WRITE]);
+    let plain_anchor = token_for(&app, &anchor_user(), &[EVENTS_WRITE]);
+    let billing_type = "billing:invoices:invoice:paid";
+
+    for token in [&client_admin, &plain_anchor] {
+        for (path, body) in [
+            (
+                "/api/events/batch",
+                json!({"items": [event_item("zzz:a:b:c"), event_item(billing_type)]}),
+            ),
+            (
+                "/api/events",
+                json!({"eventType": billing_type, "source": "t", "data": {}}),
+            ),
+            (
+                "/bff/events/batch",
+                json!({"events": [{"eventType": billing_type, "source": "t", "data": {}}]}),
+            ),
+        ] {
+            let (status, body) = post(&app, path, token, body).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
+            assert_eq!(
+                body["message"],
+                format!(
+                    "an event of type '{billing_type}' may be delivered signed by its application, \
+                     which the caller may not sign as: application billing signs only its own jobs; \
+                     the caller is not that application"
+                ),
+                "{path}"
+            );
+        }
+    }
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM msg_events").await, 0);
+
+    // The application's own account, an anchor with access to it, and a
+    // super-admin are admitted.
+    for token in [
+        token_for(
+            &app,
+            &service_caller(&billing_prn, UserScope::Anchor),
+            &[EVENTS_WRITE],
+        ),
+        token_for(&app, &staff, &[EVENTS_WRITE]),
+        token_for(
+            &app,
+            &anchor_user(),
+            &[EVENTS_WRITE, permissions::ADMIN_ALL],
+        ),
+    ] {
+        let (status, body) = post(
+            &app,
+            "/api/events/batch",
+            &token,
+            json!({"items": [event_item(billing_type)]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM msg_events WHERE type = 'billing:invoices:invoice:paid'"
+        )
+        .await,
+        3
+    );
+
+    // A type naming no known application signs nothing and passes.
+    let (status, body) = post(
+        &app,
+        "/api/events/batch",
+        &client_admin,
+        json!({"items": [event_item("zzz:a:b:c")]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}

@@ -81,6 +81,19 @@ fn test_auth_service() -> AuthService {
     })
 }
 
+/// The ingest signing guard over the test database.
+fn ingest_signing_guard(
+    pool: &sqlx::PgPool,
+) -> Arc<fc_platform::dispatch_job::signing_guard::SigningGuard> {
+    Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
+        Arc::new(fc_platform::SubscriptionRepository::new(pool)),
+        Arc::new(fc_platform::ConnectionRepository::new(pool)),
+        Arc::new(fc_platform::ServiceAccountRepository::new(pool)),
+        Arc::new(ApplicationRepository::new(pool)),
+        Arc::new(fc_platform::PrincipalRepository::new(pool)),
+    ))
+}
+
 /// Build a minimal Axum router wired to the test database, returning the
 /// router and the AuthService (for token generation).
 fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
@@ -152,16 +165,12 @@ fn build_test_router(pool: &sqlx::PgPool) -> (Router, Arc<AuthService>) {
     let sdk_events_state = SdkEventsState {
         event_repo: Arc::new(EventRepository::new(pool)),
         client_repo: Arc::new(fc_platform::ClientRepository::new(pool)),
+        signing: ingest_signing_guard(pool),
     };
 
     let sdk_dispatch_jobs_state = SdkDispatchJobsState {
         dispatch_job_repo: Arc::new(DispatchJobRepository::new(pool)),
-        signing: Arc::new(fc_platform::dispatch_job::signing_guard::SigningGuard::new(
-            Arc::new(fc_platform::SubscriptionRepository::new(pool)),
-            Arc::new(fc_platform::ConnectionRepository::new(pool)),
-            Arc::new(fc_platform::ServiceAccountRepository::new(pool)),
-            application_repo.clone(),
-        )),
+        signing: ingest_signing_guard(pool),
     };
 
     let router: Router = Router::new()
