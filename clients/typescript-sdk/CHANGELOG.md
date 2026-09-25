@@ -24,8 +24,17 @@ incompatibly.
   fields. Both outbox units of work (plain and Effect) honour it.
 - A test showing that a `FUNCTION`-sourced subscription round-trips.
   `source` is already typed `string`, so no code change was needed.
+- `FlowCatalystClient.accessToken()`: the platform bearer token the client
+  authenticates with (the caller's token in user-token mode, else the
+  client-credentials token).
 
 ### Changed
+- `client.router().inPipeline()` / `inPipelineBatch()` send the platform
+  bearer token to the router (`Authorization: Bearer …`). Today's routers
+  ignore it; a router that enforces platform tokens (owner ruling 2 of
+  2026-09-25) requires it, with `platform:messaging:router:view`, which the
+  built-in `platform:application-service` role holds. Ship this release to
+  apps **before** any router enforces auth.
 - `OutboxManager.createDispatchJob` / `createDispatchJobs`: the outbox
   payload now carries `id`, the outbox row's own id (the id the method
   returns). The platform honours a supplied dispatch-job id, so a batch the
