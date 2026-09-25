@@ -56,6 +56,15 @@ impl Bucket {
     pub const PASSWORD_RESET_IP: Self = Bucket("password_reset_ip");
     pub const PASSWORD_RESET_EMAIL: Self = Bucket("password_reset_email");
     pub const CHECK_DOMAIN_IP: Self = Bucket("check_domain_ip");
+    /// `/auth/password-setup/request` spends the password-reset policies
+    /// under its own buckets, so it and the reset route never spend each
+    /// other's budget (Java dbe3ad9c).
+    pub const PASSWORD_SETUP_IP: Self = Bucket("password_setup_ip");
+    pub const PASSWORD_SETUP_EMAIL: Self = Bucket("password_setup_email");
+    /// `/auth/2fa/challenge/email`: the same shared limits, its own buckets
+    /// (Java owner ruling 7, 2026-09-25).
+    pub const TWO_FACTOR_EMAIL_IP: Self = Bucket("two_factor_email_ip");
+    pub const TWO_FACTOR_EMAIL: Self = Bucket("two_factor_email");
 
     pub fn as_str(&self) -> &'static str {
         self.0
@@ -143,6 +152,40 @@ impl RateLimitPolicies {
     }
 }
 
+/// Spend one request of an IP bucket and an address bucket, the budget of
+/// an unauthenticated route that mails an address its caller names. `false`
+/// when either is over budget: the caller then does nothing and answers
+/// exactly as it would have. The IP is checked first, so an IP already over
+/// budget doesn't also spend the address's. Fails open on a backend error,
+/// like the middleware.
+pub async fn within_mail_budget(
+    store: &dyn RateLimitStore,
+    buckets: (Bucket, Bucket),
+    policies: (RateLimitPolicy, RateLimitPolicy),
+    ip: Option<&str>,
+    email: &str,
+) -> bool {
+    let (ip_bucket, email_bucket) = buckets;
+    let (ip_policy, email_policy) = policies;
+    if let Some(ip) = ip.filter(|ip| !ip.is_empty()) {
+        if let Ok(RateLimitDecision::Reject { .. }) =
+            store.check_and_record(ip_bucket, ip, ip_policy).await
+        {
+            return false;
+        }
+    }
+    let key = email.trim().to_lowercase();
+    if key.is_empty() {
+        return true;
+    }
+    !matches!(
+        store
+            .check_and_record(email_bucket, &key, email_policy)
+            .await,
+        Ok(RateLimitDecision::Reject { .. })
+    )
+}
+
 fn parse_env_u32(name: &str, default: u32) -> u32 {
     std::env::var(name)
         .ok()
@@ -155,7 +198,9 @@ pub enum RateLimitDecision {
     Allow,
     /// Caller is over the limit. `retry_after_secs` is a worst-case
     /// estimate (≤ window) of when the bucket will have room again.
-    Reject { retry_after_secs: u32 },
+    Reject {
+        retry_after_secs: u32,
+    },
 }
 
 #[derive(Debug, Error)]

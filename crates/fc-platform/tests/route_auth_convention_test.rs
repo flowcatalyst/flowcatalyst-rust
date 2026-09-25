@@ -31,6 +31,18 @@ use std::path::{Path, PathBuf};
 /// Routes that authenticate no one, or only optionally: `"METHOD /path"`.
 const PUBLIC_ROUTES: &[(&str, &str)] = &[
     (
+        "GET /api/openapi.json",
+        "the published OpenAPI document; Go serves it outside the auth group (wire_spec.go)",
+    ),
+    (
+        "GET /api/openapi.yaml",
+        "the published OpenAPI document, YAML; Go serves it outside the auth group (wire_spec.go)",
+    ),
+    (
+        "GET /api/email-domain-mappings/lookup",
+        "the login page's domain lookup (`{found:false}` when unmapped); Go's lookup checks no caller",
+    ),
+    (
         "GET /api/platform/cors/allowed",
         "the browser-facing CORS origin list; Go's publicAllowedOrigins is unauthenticated",
     ),
@@ -71,6 +83,10 @@ const WRITES_WITHOUT_PERMISSION: &[(&str, &str)] = &[];
 /// `"METHOD /path"`. The profile-only gate still refuses them to a USER with
 /// no role.
 const READS_WITHOUT_PERMISSION: &[(&str, &str)] = &[
+    (
+        "GET /api/reset-approvals",
+        "Go gates the queue on the user-write permission (CanWritePrincipals), which the handler checks",
+    ),
     ("GET /api/me", "the caller's own identity (Go me.whoami)"),
     (
         "GET /api/me/applications",

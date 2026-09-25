@@ -129,6 +129,18 @@ pub struct OAuthClient {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+
+    /// Portal identity plane (Go `OAuthClient.PortalClientID`): when set,
+    /// this client is a portal entry point owned by that tenant client — it
+    /// must enter through `/portal/authorize` and its codes carry portal
+    /// identity subjects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_client_id: Option<String>,
+
+    /// The portal app this portal client fronts (Go `PortalAppID`); `None`
+    /// on a portal client is a legacy client-wide portal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portal_app_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -160,6 +172,8 @@ impl OAuthClient {
             created_at: now,
             updated_at: now,
             created_by: None,
+            portal_client_id: None,
+            portal_app_id: None,
         }
     }
 

@@ -1194,3 +1194,201 @@ impl crate::usecase::Persist<Principal> for PrincipalRepository {
         Ok(())
     }
 }
+
+// ── Developer API credential (Go's dev_client_secret_ref) ──────────────────
+
+impl HasId for crate::developer_credential::DeveloperCredential {
+    fn id(&self) -> &str {
+        &self.principal_id
+    }
+}
+
+/// A USER principal's self-service client_credentials secret lives on its
+/// `iam_principals` row, so the principal repository writes it: set or
+/// rotate stamps `dev_client_secret_updated_at`, revoke clears both columns
+/// (Go `SetDevClientSecretRef` / `ClearDevClientSecretRef`).
+#[async_trait::async_trait]
+impl crate::usecase::Persist<crate::developer_credential::DeveloperCredential>
+    for PrincipalRepository
+{
+    async fn persist(
+        &self,
+        c: &crate::developer_credential::DeveloperCredential,
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE iam_principals SET dev_client_secret_ref = $2, \
+             dev_client_secret_updated_at = CASE WHEN $2::text IS NULL THEN NULL ELSE NOW() END, \
+             updated_at = NOW() WHERE id = $1",
+        )
+        .bind(&c.principal_id)
+        .bind(&c.secret_ref)
+        .execute(&mut **tx.inner)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete(
+        &self,
+        c: &crate::developer_credential::DeveloperCredential,
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE iam_principals SET dev_client_secret_ref = NULL, \
+             dev_client_secret_updated_at = NULL, updated_at = NOW() WHERE id = $1",
+        )
+        .bind(&c.principal_id)
+        .execute(&mut **tx.inner)
+        .await?;
+        Ok(())
+    }
+}
+
+impl PrincipalRepository {
+    /// A principal's developer secret ref and when it was last set.
+    pub async fn find_developer_secret(
+        &self,
+        principal_id: &str,
+    ) -> Result<Option<(Option<String>, Option<chrono::DateTime<chrono::Utc>>)>> {
+        let row = sqlx::query_as::<_, (Option<String>, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT dev_client_secret_ref, dev_client_secret_updated_at FROM iam_principals \
+             WHERE id = $1",
+        )
+        .bind(principal_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// When each of `ids` last set a developer secret (absent: none set).
+    pub async fn find_developer_secret_times(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>> {
+        let rows = sqlx::query_as::<_, (String, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT id, dev_client_secret_updated_at FROM iam_principals \
+             WHERE id = ANY($1) AND dev_client_secret_ref IS NOT NULL",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, at)| (id, at.unwrap_or_default()))
+            .collect())
+    }
+
+    /// Rewrite only the developer secret ref: the lazy at-rest format upgrade
+    /// after `/oauth/token` verified an older shape. Like the password
+    /// rehash, a storage-format change, not a credential change, so no
+    /// event (Go `RewriteDevClientSecretRef`). Callers treat errors as
+    /// non-fatal.
+    pub async fn rewrite_developer_secret_ref(&self, principal_id: &str, new_ref: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE iam_principals SET dev_client_secret_ref = $2, \
+             dev_client_secret_updated_at = NOW(), updated_at = NOW() WHERE id = $1",
+        )
+        .bind(principal_id)
+        .bind(new_ref)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+}
+
+impl PrincipalRepository {
+    /// Batch-lookup `(name, email)` by id (email empty for a service
+    /// account): the shallow read list pages need.
+    pub async fn find_names_and_emails_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, String)>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows: Vec<(String, String, Option<String>)> =
+            sqlx::query_as("SELECT id, name, email FROM iam_principals WHERE id = ANY($1)")
+                .bind(ids)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, email)| (id, (name, email.unwrap_or_default())))
+            .collect())
+    }
+}
+
+impl PrincipalRepository {
+    /// The OIDC-federated users of an email domain (Go
+    /// `FindUsersByEmailDomain` filtered to `idp_type = 'OIDC'`), for an
+    /// email-domain mapping moving to an internal provider.
+    pub async fn find_oidc_user_ids_by_email_domain(&self, domain: &str) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM iam_principals \
+             WHERE type = 'USER' AND email_domain = lower($1) AND idp_type = 'OIDC' \
+             ORDER BY id",
+        )
+        .bind(domain)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Hand federated users back to the internal provider inside `tx` (Go
+    /// `MoveMappingTx`): provider INTERNAL, no external identity, and the
+    /// roles their IdP synced dropped.
+    pub async fn reset_to_internal_in_tx(
+        &self,
+        ids: &[String],
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE iam_principals SET idp_type = 'INTERNAL', external_idp_id = NULL, \
+             updated_at = NOW() WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .execute(&mut **tx.inner)
+        .await?;
+        sqlx::query(
+            "DELETE FROM iam_principal_roles \
+             WHERE principal_id = ANY($1) AND assignment_source = 'IDP_SYNC'",
+        )
+        .bind(ids)
+        .execute(&mut **tx.inner)
+        .await?;
+        Ok(())
+    }
+}
+
+impl PrincipalRepository {
+    /// Go `LookupVersion` (principal/repository.go:74): the later of the
+    /// principal's own `updated_at` and its roles' newest `updated_at`.
+    pub async fn lookup_version(&self, id: &str) -> Result<Option<DateTime<Utc>>> {
+        let row: Option<(Option<DateTime<Utc>>,)> = sqlx::query_as(
+            "SELECT GREATEST(p.updated_at, COALESCE((SELECT MAX(r.updated_at) \
+                 FROM iam_principal_roles pr JOIN iam_roles r ON r.name = pr.role_name \
+                 WHERE pr.principal_id = p.id), p.updated_at)) \
+             FROM iam_principals p WHERE p.id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
+    /// The emails of `emails` that already belong to a principal (lower-cased).
+    pub async fn existing_emails(&self, emails: &[String]) -> Result<Vec<String>> {
+        if emails.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT lower(email) FROM iam_principals WHERE lower(email) = ANY($1)")
+                .bind(emails)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(e,)| e).collect())
+    }
+}

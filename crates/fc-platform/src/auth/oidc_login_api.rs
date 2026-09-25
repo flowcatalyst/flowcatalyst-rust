@@ -65,6 +65,52 @@ pub struct OidcLoginApiState {
     /// or a secret-manager reference such as `aws-sm://…`
     /// (see [`crate::shared::secret_ref`]).
     pub secret_resolver: Arc<SecretResolver>,
+    /// Answers `passwordSetupRequired` on an internal check-domain (Go
+    /// `withPasswordSetupRequired`). None: never set.
+    pub password_setup_hint: Option<PasswordSetupHint>,
+}
+
+/// What `/auth/check-domain` needs to tell a passwordless internal user to
+/// create a password.
+#[derive(Clone)]
+pub struct PasswordSetupHint {
+    pub principal_repo: Arc<crate::PrincipalRepository>,
+    pub login_attempt_repo: Arc<crate::LoginAttemptRepository>,
+    pub backoff_policy: Arc<crate::auth::login_backoff::BackoffPolicy>,
+}
+
+/// Go `withPasswordSetupRequired` (auth/login/endpoint.go:230-254): true when
+/// `email` is an internal USER who has never set a password. A UX hint, not
+/// a security decision: a lookup error, or the address being throttled by
+/// the login backoff, reads as false (the ordinary password prompt).
+async fn password_setup_required(state: &OidcLoginApiState, email: &str, ip: Option<&str>) -> bool {
+    let Some(hint) = &state.password_setup_hint else {
+        return false;
+    };
+    if email.is_empty() {
+        return false;
+    }
+    match crate::auth::login_backoff::check(&hint.login_attempt_repo, &hint.backoff_policy, email, ip)
+        .await
+    {
+        Ok(crate::auth::login_backoff::BackoffDecision::Allow) => {}
+        _ => return false,
+    }
+    matches!(
+        hint.principal_repo.find_by_email(email).await,
+        Ok(Some(p)) if crate::auth::password_reset_api::password_setup_eligible(&p)
+    )
+}
+
+/// An `internal` check-domain answer, with the password-setup hint.
+async fn internal_domain_answer(state: &OidcLoginApiState, email: &str, ip: Option<&str>) -> Response {
+    Json(DomainCheckResponse {
+        auth_method: "internal".to_string(),
+        login_url: None,
+        idp_issuer: None,
+        password_setup_required: password_setup_required(state, email, ip).await,
+    })
+    .into_response()
 }
 
 // ==================== Request/Response Types ====================
@@ -88,6 +134,10 @@ pub struct DomainCheckResponse {
     /// External IDP issuer URL (informational)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idp_issuer: Option<String>,
+    /// An internal user who has never set a password: the SPA offers
+    /// "Create your password" (`POST /auth/password-setup/request`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub password_setup_required: bool,
 }
 
 /// OIDC login query parameters
@@ -175,8 +225,10 @@ fn tenant_not_pinned(
 )]
 pub async fn check_domain(
     State(state): State<OidcLoginApiState>,
+    crate::shared::middleware::ClientIp(ip): crate::shared::middleware::ClientIp,
     Json(body): Json<DomainCheckRequest>,
 ) -> Response {
+    let ip = ip.as_deref();
     let email = body.email.trim().to_lowercase();
 
     // Validate email format
@@ -200,12 +252,7 @@ pub async fn check_domain(
     match state.anchor_domain_repo.is_anchor_domain(domain).await {
         Ok(true) => {
             // Anchor domains can use internal auth
-            return Json(DomainCheckResponse {
-                auth_method: "internal".to_string(),
-                login_url: None,
-                idp_issuer: None,
-            })
-            .into_response();
+            return internal_domain_answer(&state, &email, ip).await;
         }
         Ok(false) => {}
         Err(e) => {
@@ -230,12 +277,7 @@ pub async fn check_domain(
         Ok(None) => {
             // Default to internal auth if no mapping
             debug!(domain = %domain, "No email domain mapping, defaulting to internal");
-            return Json(DomainCheckResponse {
-                auth_method: "internal".to_string(),
-                login_url: None,
-                idp_issuer: None,
-            })
-            .into_response();
+            return internal_domain_answer(&state, &email, ip).await;
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup email domain mapping");
@@ -258,12 +300,7 @@ pub async fn check_domain(
         Ok(Some(idp)) => idp,
         Ok(None) => {
             debug!(domain = %domain, "Identity provider not found, defaulting to internal");
-            return Json(DomainCheckResponse {
-                auth_method: "internal".to_string(),
-                login_url: None,
-                idp_issuer: None,
-            })
-            .into_response();
+            return internal_domain_answer(&state, &email, ip).await;
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup identity provider");
@@ -284,15 +321,11 @@ pub async fn check_domain(
             auth_method: "external".to_string(),
             login_url: Some(login_url),
             idp_issuer: idp.oidc_issuer_url,
+            password_setup_required: false,
         })
         .into_response()
     } else {
-        Json(DomainCheckResponse {
-            auth_method: "internal".to_string(),
-            login_url: None,
-            idp_issuer: None,
-        })
-        .into_response()
+        internal_domain_answer(&state, &email, ip).await
     }
 }
 
@@ -1725,6 +1758,101 @@ pub fn oidc_login_router(state: OidcLoginApiState) -> Router {
         )
         .route("/oidc/session/end", get(session_end))
         .with_state(state)
+}
+
+// ==================== Portal identity plane hooks ====================
+//
+// Go's bridge serves the portal SSO start (`/portal/auth/oidc/login`) and the
+// portal branch of this callback through the same IdP machinery. The portal
+// flow itself lives in `crate::portal::oidc`; these two functions expose the
+// IdP plumbing it needs, so this file only gains this section.
+
+/// The secrets and IdP authorize URL of a portal-plane handshake.
+pub(crate) struct PortalHandshake {
+    pub state: String,
+    pub nonce: String,
+    pub code_verifier: String,
+    pub authorize_url: String,
+}
+
+/// Start a provider-direct handshake with `idp` (Go `handlePortalOIDCLogin`
+/// after the flow is consumed): fresh state, nonce and PKCE verifier, and
+/// the IdP's authorize URL for this platform's callback.
+pub(crate) fn portal_handshake(
+    state: &OidcLoginApiState,
+    host: &str,
+    uri: &Uri,
+    idp: &IdentityProvider,
+) -> PortalHandshake {
+    let oidc_state = generate_random_string(32);
+    let nonce = generate_random_string(32);
+    let code_verifier = generate_code_verifier();
+    let challenge = generate_code_challenge(&code_verifier);
+    let callback_url = get_callback_url(state, host, uri);
+    let authorize_url =
+        build_authorization_url_from_idp(idp, &oidc_state, &nonce, &challenge, &callback_url);
+    PortalHandshake {
+        state: oidc_state,
+        nonce,
+        code_verifier,
+        authorize_url,
+    }
+}
+
+/// Exchange a portal handshake's code and verify the ID token (signature,
+/// issuer, audience, nonce, guest accounts). Returns the verified email and
+/// name, or Go's error code and message.
+pub(crate) async fn portal_verify_callback(
+    state: &OidcLoginApiState,
+    host: &str,
+    uri: &Uri,
+    idp: &IdentityProvider,
+    code: &str,
+    code_verifier: &str,
+    nonce: &str,
+) -> Result<(String, Option<String>), (StatusCode, &'static str, String)> {
+    let callback_url = get_callback_url(state, host, uri);
+    let tokens = exchange_code_for_tokens_from_idp(
+        idp,
+        code,
+        code_verifier,
+        &callback_url,
+        &state.secret_resolver,
+    )
+    .await
+    .map_err(|e| {
+        error!(error = %e, "portal OIDC code exchange failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OIDC_EXCHANGE",
+            "code exchange failed".to_string(),
+        )
+    })?;
+    let claims = validate_id_token_with_jwks(&tokens.id_token, idp, nonce, &state.jwks_cache)
+        .await
+        .map_err(|e| match e {
+            IdTokenError::NonceMismatch => (
+                StatusCode::FORBIDDEN,
+                "NONCE_MISMATCH",
+                "nonce did not match".to_string(),
+            ),
+            IdTokenError::MissingEmail => (
+                StatusCode::FORBIDDEN,
+                "NO_EMAIL",
+                "id_token has no email / preferred_username claim".to_string(),
+            ),
+            IdTokenError::ExternalGuest => (
+                StatusCode::FORBIDDEN,
+                "EXTERNAL_GUEST",
+                "external guest accounts are not supported".to_string(),
+            ),
+            other => (
+                StatusCode::FORBIDDEN,
+                "OIDC_VERIFY",
+                format!("id_token verification failed: {other}"),
+            ),
+        })?;
+    Ok((claims.email, claims.name))
 }
 
 #[cfg(test)]

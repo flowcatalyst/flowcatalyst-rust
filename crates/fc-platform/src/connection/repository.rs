@@ -279,3 +279,126 @@ impl crate::usecase::Persist<Connection> for ConnectionRepository {
         Ok(())
     }
 }
+
+// ── Application-scoped connections (Go 056 / SyncConnections) ────────────
+
+#[derive(sqlx::FromRow)]
+struct ScopedConnectionRow {
+    #[sqlx(flatten)]
+    row: ConnectionRow,
+    source: String,
+}
+
+impl ConnectionRepository {
+    /// An application's connections in one client scope, with their source
+    /// (Go `FindByApplicationAndClient`).
+    pub async fn find_by_application_and_client(
+        &self,
+        application_code: &str,
+        client_id: Option<&str>,
+    ) -> Result<Vec<(Connection, String)>> {
+        let rows = sqlx::query_as::<_, ScopedConnectionRow>(
+            "SELECT id, code, name, description, external_id, status, service_account_id, \
+                    client_id, client_identifier, created_at, updated_at, source \
+             FROM msg_connections \
+             WHERE application_code = $1 AND client_id IS NOT DISTINCT FROM $2 ORDER BY code",
+        )
+        .bind(application_code)
+        .bind(client_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|r| Ok((Connection::try_from(r.row)?, r.source)))
+            .collect()
+    }
+}
+
+#[async_trait]
+impl crate::usecase::Persist<crate::connection::sync_plan::ConnectionSyncPlan>
+    for ConnectionRepository
+{
+    /// One upsert for every saved connection (with its application and
+    /// source) and one delete for the removed ones.
+    async fn persist(
+        &self,
+        plan: &crate::connection::sync_plan::ConnectionSyncPlan,
+        tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        if !plan.saves.is_empty() {
+            let now = Utc::now();
+            let mut ids = Vec::new();
+            let mut codes = Vec::new();
+            let mut names = Vec::new();
+            let mut descriptions: Vec<Option<String>> = Vec::new();
+            let mut external_ids: Vec<Option<String>> = Vec::new();
+            let mut statuses = Vec::new();
+            let mut service_accounts = Vec::new();
+            let mut client_ids: Vec<Option<String>> = Vec::new();
+            let mut identifiers: Vec<Option<String>> = Vec::new();
+            let mut created = Vec::new();
+            let mut sources = Vec::new();
+            for (c, source) in &plan.saves {
+                ids.push(c.id.clone());
+                codes.push(c.code.clone());
+                names.push(c.name.clone());
+                descriptions.push(c.description.clone());
+                external_ids.push(c.external_id.clone());
+                statuses.push(c.status.as_str().to_string());
+                service_accounts.push(c.service_account_id.clone());
+                client_ids.push(c.client_id.clone());
+                identifiers.push(c.client_identifier.clone());
+                created.push(c.created_at);
+                sources.push(source.clone());
+            }
+            sqlx::query(
+                "INSERT INTO msg_connections (id, code, name, description, external_id, status, \
+                     service_account_id, client_id, client_identifier, created_at, updated_at, \
+                     application_code, source) \
+                 SELECT u.id, u.code, u.name, u.description, u.external_id, u.status, u.sa, \
+                        u.client_id, u.identifier, u.created_at, $11, $12, u.source \
+                 FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], \
+                             $6::text[], $7::text[], $8::text[], $9::text[], $10::timestamptz[], \
+                             $13::text[]) \
+                   AS u(id, code, name, description, external_id, status, sa, client_id, \
+                        identifier, created_at, source) \
+                 ON CONFLICT (id) DO UPDATE SET \
+                     code = EXCLUDED.code, name = EXCLUDED.name, \
+                     description = EXCLUDED.description, external_id = EXCLUDED.external_id, \
+                     status = EXCLUDED.status, service_account_id = EXCLUDED.service_account_id, \
+                     client_id = EXCLUDED.client_id, client_identifier = EXCLUDED.client_identifier, \
+                     updated_at = EXCLUDED.updated_at, application_code = EXCLUDED.application_code, \
+                     source = EXCLUDED.source",
+            )
+            .bind(&ids)
+            .bind(&codes)
+            .bind(&names)
+            .bind(&descriptions)
+            .bind(&external_ids)
+            .bind(&statuses)
+            .bind(&service_accounts)
+            .bind(&client_ids)
+            .bind(&identifiers)
+            .bind(&created)
+            .bind(now)
+            .bind(&plan.application_code)
+            .bind(&sources)
+            .execute(&mut **tx.inner)
+            .await?;
+        }
+        if !plan.deletes.is_empty() {
+            sqlx::query("DELETE FROM msg_connections WHERE id = ANY($1)")
+                .bind(&plan.deletes)
+                .execute(&mut **tx.inner)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn delete(
+        &self,
+        _plan: &crate::connection::sync_plan::ConnectionSyncPlan,
+        _tx: &mut crate::usecase::DbTx<'_>,
+    ) -> Result<()> {
+        Err(PlatformError::internal("a connection sync is not deleted"))
+    }
+}

@@ -197,6 +197,8 @@ pub struct CreateServiceAccountResponse {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RegenerateTokenResponse {
+    /// The service account's id (Go `RegenerateTokenResponse.id`)
+    pub id: String,
     /// New auth token (shown only once)
     pub auth_token: String,
 }
@@ -205,6 +207,8 @@ pub struct RegenerateTokenResponse {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RegenerateSecretResponse {
+    /// The service account's id (Go `RegenerateSecretResponse.id`)
+    pub id: String,
     /// New signing secret (shown only once)
     pub signing_secret: String,
 }
@@ -474,6 +478,8 @@ pub async fn create_service_account<U: UnitOfWork>(
                 allowed_origins: vec![],
                 service_account_principal_id: Some(result.event.service_account_id.clone()),
                 created_by: Some(auth.0.principal_id.clone()),
+                portal_client_id: None,
+                portal_app_id: None,
             };
             let oauth_ctx = ExecutionContext::create(auth.0.principal_id.clone());
             state
@@ -595,7 +601,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
     crate::checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
-        service_account_id: id,
+        service_account_id: id.clone(),
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -607,6 +613,7 @@ pub async fn update_auth_token<U: UnitOfWork>(
         .into_result()
     {
         Ok(result) => Ok(Json(RegenerateTokenResponse {
+            id,
             auth_token: result.auth_token,
         })),
         Err(err) => Err(err.into()),
@@ -635,7 +642,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
     crate::checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
-        service_account_id: id,
+        service_account_id: id.clone(),
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -647,6 +654,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
         .into_result()
     {
         Ok(result) => Ok(Json(RegenerateTokenResponse {
+            id,
             auth_token: result.auth_token,
         })),
         Err(err) => Err(err.into()),
@@ -675,7 +683,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
     crate::checks::can_update_service_accounts(&auth.0)?;
     let command = RegenerateSigningSecretCommand {
-        service_account_id: id,
+        service_account_id: id.clone(),
     };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -687,6 +695,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
         .into_result()
     {
         Ok(result) => Ok(Json(RegenerateSecretResponse {
+            id,
             signing_secret: result.signing_secret,
         })),
         Err(err) => Err(err.into()),
@@ -832,6 +841,12 @@ pub fn service_accounts_router<U: UnitOfWork + Clone>(state: ServiceAccountsStat
         )
         .route(
             "/{id}/regenerate-signing-secret",
+            post(regenerate_signing_secret::<U>),
+        )
+        // Go's shorter spellings of the two (serviceaccount/api/api.go:71-82).
+        .route("/{id}/regenerate-token", post(regenerate_auth_token::<U>))
+        .route(
+            "/{id}/regenerate-secret",
             post(regenerate_signing_secret::<U>),
         )
         .route("/{id}/roles", get(get_roles::<U>).put(assign_roles::<U>))

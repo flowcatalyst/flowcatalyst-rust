@@ -193,6 +193,12 @@ pub const PATH_API_ME: &str = "/api/me";
 pub const PATH_AUTH_CLIENT: &str = "/auth/client";
 pub const PATH_AUTH_PASSWORD_RESET: &str = "/auth/password-reset";
 
+// Portal identity plane (Go portalidentity/api + portalauth): the admin
+// surface and the public portal login surface.
+pub const PATH_API_PORTAL_USERS: &str = "/api/portal-users";
+pub const PATH_API_PORTAL_APPS: &str = "/api/portal-apps";
+pub const PATH_PORTAL: &str = "/portal";
+
 // OAuth / OIDC
 pub const PATH_OAUTH: &str = "/oauth";
 pub const PATH_WELL_KNOWN: &str = "/.well-known";
@@ -282,7 +288,18 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub sdk_audit_batch: SdkAuditBatchState,
     pub public: PublicApiState,
     pub password_reset: PasswordResetApiState,
+    /// The portal identity plane (`/api/portal-users`, `/api/portal-apps`,
+    /// `/portal/*`, and its hooks on the reset-token and OIDC routes).
+    pub portal: crate::portal::PortalState,
     pub webauthn: crate::webauthn::WebauthnApiState,
+    /// Two-factor sign-in and self-service (`/auth/2fa/*`).
+    pub two_factor: Arc<crate::mfa::TwoFactorLogin>,
+    /// `/api/principals/developer-users`, `…/{id}/developer-credential`.
+    pub developer_credentials: crate::developer_credential::api::DeveloperCredentialsState,
+    /// `/api/reset-approvals`.
+    pub reset_approvals: crate::mfa::reset_approval_api::ResetApprovalsState,
+    /// `/auth/change-password*`, `/auth/login-history`.
+    pub account: Arc<crate::mfa::AccountState>,
     /// Dependencies for the Developer portal BFF. The final `BffDeveloperState`
     /// is constructed inside `build()` so the platform's own OpenAPI document
     /// (returned by `build()` itself) can be stored against the seeded
@@ -291,6 +308,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     /// Optional — dispatch processing endpoint state. None when dispatch processing
     /// is not needed (e.g., tests or standalone platform server without router).
     pub dispatch_process: Option<DispatchProcessState>,
+    /// Routes Go serves that Rust lacked (`shared::go_routes`).
+    pub go_routes: crate::shared::go_routes::GoRoutesState,
 
     /// Optional static directory for SPA serving. When set, serves:
     /// - `/assets/*` with immutable cache headers (Vite hashed assets)
@@ -358,6 +377,28 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             distributed_rate_limit_per_email,
         );
 
+        // Portal identity plane (Go wire_routes.go:261-291): the portal
+        // routes sit behind the OIDC bridge's per-IP governor
+        // (FC_OIDC_RATE_PER_MIN / FC_OIDC_BURST), and its hooks answer the
+        // portal-subject requests of the shared reset-token and OIDC
+        // callback routes.
+        let portal_login = crate::portal::login_api::PortalLoginState {
+            portal: self.portal.clone(),
+            oidc: self.oidc_login.clone(),
+        };
+        let portal_ip_layer = axum::middleware::from_fn_with_state(
+            IpRateLimiterState::new(&crate::portal::login_api::portal_ip_rate_config()),
+            rate_limit_per_ip,
+        );
+        let portal_reset_hook = axum::middleware::from_fn_with_state(
+            self.portal.passwords.clone(),
+            crate::portal::password::intercept,
+        );
+        let portal_oidc_hook = axum::middleware::from_fn_with_state(
+            portal_login.clone(),
+            crate::portal::oidc::intercept,
+        );
+
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
         let (router, mut openapi) = OpenApiRouter::new()
             // Same cursor-paginated read handlers serve both /api/events
@@ -396,6 +437,20 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(PATH_API_CLIENTS, clients_router(self.clients))
             .nest(PATH_API_PRINCIPALS, principals_router(self.principals))
+            .nest(
+                PATH_API_PRINCIPALS,
+                crate::mfa::two_factor_admin_router(self.two_factor.clone()),
+            )
+            .nest(
+                "/api/reset-approvals",
+                crate::mfa::reset_approval_api::reset_approvals_router(self.reset_approvals),
+            )
+            .nest(
+                PATH_API_PRINCIPALS,
+                crate::developer_credential::developer_credentials_router(
+                    self.developer_credentials,
+                ),
+            )
             .nest(PATH_API_ROLES, roles_router(self.roles))
             .nest(
                 PATH_API_SUBSCRIPTIONS,
@@ -412,6 +467,8 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
             // The function API: full paths under five prefixes, so merged.
             .merge(crate::function::api::functions_router(self.functions))
+            // Go-parity routes, at their full paths (`shared::go_routes`).
+            .merge(crate::shared::go_routes::go_routes_router(self.go_routes))
             .nest(PATH_AUTH, auth_router(self.auth).layer(auth_layer.clone()))
             .nest(
                 PATH_AUTH,
@@ -622,7 +679,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_API_ME, me_router(self.me))
             .nest(
                 PATH_AUTH,
-                oidc_login_router(self.oidc_login).layer(auth_layer.clone()),
+                oidc_login_router(self.oidc_login)
+                    .layer(portal_oidc_hook)
+                    .layer(auth_layer.clone()),
             )
             .nest(
                 PATH_OAUTH,
@@ -634,16 +693,49 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                     .layer(oauth_layer.clone()),
             )
             .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
+            // Two-factor: the step-token routes are public and rate-limited
+            // like `/auth/login`; the self-service ones need a session.
+            .nest(
+                PATH_AUTH,
+                crate::mfa::two_factor_login_router(self.two_factor.clone())
+                    .layer(auth_layer.clone()),
+            )
+            .nest(
+                PATH_AUTH,
+                crate::mfa::two_factor_self_service_router(self.two_factor),
+            )
+            .nest(PATH_AUTH, crate::mfa::account_router(self.account))
             .nest(
                 PATH_AUTH_CLIENT,
                 client_selection_router(self.client_selection).layer(auth_layer.clone()),
             )
+            // `/auth/password-setup/request` spends the reset budgets in its
+            // own buckets inside the handler (silent over budget).
+            .nest(
+                "/auth/password-setup",
+                crate::api::password_setup_router(self.password_reset.clone())
+                    .layer(auth_layer.clone()),
+            )
             .nest(
                 PATH_AUTH_PASSWORD_RESET,
                 password_reset_router(self.password_reset)
+                    .layer(portal_reset_hook)
                     .layer(distributed_password_reset_email_layer)
                     .layer(distributed_password_reset_layer)
                     .layer(auth_layer.clone()),
+            )
+            // Portal identity plane.
+            .nest(
+                PATH_API_PORTAL_USERS,
+                crate::portal::api::portal_users_router(self.portal.clone()),
+            )
+            .nest(
+                PATH_API_PORTAL_APPS,
+                crate::portal::api::portal_apps_router(self.portal),
+            )
+            .nest(
+                PATH_PORTAL,
+                crate::portal::login_api::portal_login_router(portal_login).layer(portal_ip_layer),
             )
             // Batch ingest endpoints (merged into resource routers)
             .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))
@@ -677,6 +769,10 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         } else {
             app
         };
+
+        // Go's spec routes (internal/server/wire_spec.go): the programmable
+        // document (BFF-stripped, as /q/openapi) as JSON and YAML, no auth.
+        let app = app.merge(crate::shared::openapi_api::openapi_router(&openapi));
 
         let app = app
             // Health
@@ -788,7 +884,9 @@ pub fn serve_spa(app: Router, static_dir: &str) -> Router {
 
         app.route("/auth/login", spa_handler.clone())
             .route("/auth/forgot-password", spa_handler.clone())
-            .route("/auth/reset-password", spa_handler)
+            .route("/auth/reset-password", spa_handler.clone())
+            // Invites land on the set-password framing of the same page.
+            .route("/auth/set-password", spa_handler)
             .nest_service("/assets", assets_service)
             .fallback_service(fallback_service)
     } else {

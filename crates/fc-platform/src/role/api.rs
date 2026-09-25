@@ -144,10 +144,6 @@ pub struct RolesState {
         Arc<crate::role::operations::UpdateRoleUseCase<crate::usecase::PgUnitOfWork>>,
     pub delete_use_case:
         Arc<crate::role::operations::DeleteRoleUseCase<crate::usecase::PgUnitOfWork>>,
-    pub grant_permission_use_case:
-        Arc<crate::role::operations::GrantRolePermissionUseCase<crate::usecase::PgUnitOfWork>>,
-    pub revoke_permission_use_case:
-        Arc<crate::role::operations::RevokeRolePermissionUseCase<crate::usecase::PgUnitOfWork>>,
 }
 
 /// Application option for filter dropdown
@@ -405,126 +401,6 @@ pub async fn update_role(
     state.update_use_case.run(cmd, ctx).await.into_result()?;
 
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Grant permission to role
-#[utoipa::path(
-    post,
-    path = "/{roleName}/permissions",
-    tag = "roles",
-    operation_id = "postApiRolesByNamePermissions",
-    params(
-        ("roleName" = String, Path, description = "Role name (code) or ID")
-    ),
-    request_body = GrantPermissionRequest,
-    responses(
-        (status = 200, description = "Permission granted", body = RoleResponse),
-        (status = 404, description = "Role not found")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn grant_permission(
-    State(state): State<RolesState>,
-    auth: Authenticated,
-    Path(role_name): Path<String>,
-    Json(req): Json<GrantPermissionRequest>,
-) -> Result<Json<RoleResponse>, PlatformError> {
-    use crate::usecase::{ExecutionContext, UseCase};
-
-    crate::shared::authorization_service::checks::can_administer_roles(
-        &auth.0,
-        crate::permissions::iam::ROLE_UPDATE,
-    )?;
-
-    let role = if role_name.contains(':') {
-        state.role_repo.find_by_name(&role_name).await?
-    } else {
-        state.role_repo.find_by_id(&role_name).await?
-    }
-    .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
-
-    if !role.permissions.contains(&req.permission) {
-        // Owner ruling 14: only a permission the caller holds.
-        crate::role::ceiling::require_permissions(Some(&auth.0), [req.permission.as_str()])?;
-    }
-    // Go's GrantPermission: platform:admin:role:permission-granted.
-    let cmd = crate::role::operations::GrantRolePermissionCommand {
-        role_name: role.name.clone(),
-        permission: req.permission,
-        cross_application: auth.0.has_permission(crate::permissions::ADMIN_ALL),
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .grant_permission_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    let refreshed = state
-        .role_repo
-        .find_by_id(&role.id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Role", &role.id))?;
-    Ok(Json(refreshed.into()))
-}
-
-/// Revoke permission from role
-#[utoipa::path(
-    delete,
-    path = "/{roleName}/permissions/{permission}",
-    tag = "roles",
-    operation_id = "deleteApiRolesByNamePermissionsByPermission",
-    params(
-        ("roleName" = String, Path, description = "Role name (code) or ID"),
-        ("permission" = String, Path, description = "Permission to revoke")
-    ),
-    responses(
-        (status = 200, description = "Permission revoked", body = RoleResponse),
-        (status = 404, description = "Role not found")
-    ),
-    security(("bearer_auth" = []))
-)]
-pub async fn revoke_permission(
-    State(state): State<RolesState>,
-    auth: Authenticated,
-    Path((role_name, permission)): Path<(String, String)>,
-) -> Result<Json<RoleResponse>, PlatformError> {
-    use crate::usecase::{ExecutionContext, UseCase};
-
-    crate::shared::authorization_service::checks::can_administer_roles(
-        &auth.0,
-        crate::permissions::iam::ROLE_UPDATE,
-    )?;
-
-    let role = if role_name.contains(':') {
-        state.role_repo.find_by_name(&role_name).await?
-    } else {
-        state.role_repo.find_by_id(&role_name).await?
-    }
-    .ok_or_else(|| PlatformError::not_found("Role", &role_name))?;
-
-    if role.permissions.contains(&permission) {
-        // Owner ruling 14: removal counts too.
-        crate::role::ceiling::require_permissions(Some(&auth.0), [permission.as_str()])?;
-    }
-    // Go's RevokePermission: platform:admin:role:permission-revoked.
-    let cmd = crate::role::operations::RevokeRolePermissionCommand {
-        role_name: role.name.clone(),
-        permission,
-    };
-    let ctx = ExecutionContext::create(&auth.0.principal_id);
-    state
-        .revoke_permission_use_case
-        .run(cmd, ctx)
-        .await
-        .into_result()?;
-
-    let refreshed = state
-        .role_repo
-        .find_by_id(&role.id)
-        .await?
-        .ok_or_else(|| PlatformError::not_found("Role", &role.id))?;
-    Ok(Json(refreshed.into()))
 }
 
 /// Delete role
@@ -954,7 +830,6 @@ pub fn roles_router(state: RolesState) -> OpenApiRouter {
         .routes(routes!(get_roles_by_source))
         .routes(routes!(get_roles_by_application_id))
         .routes(routes!(get_role, update_role, delete_role))
-        .routes(routes!(grant_permission))
-        .routes(routes!(revoke_permission))
+        // Grant/revoke by role name: `role::permission_api` (Go's operations).
         .with_state(state)
 }

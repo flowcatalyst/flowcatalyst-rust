@@ -18,6 +18,7 @@
 //! - `operations` - Use case operations (where applicable)
 
 // Core aggregates
+pub mod app_docs;
 pub mod application;
 pub mod application_openapi_spec;
 pub mod client;
@@ -27,6 +28,7 @@ pub mod service_account;
 
 // Event platform aggregates
 pub mod dispatch_job;
+pub mod dispatch_job_actions;
 pub mod function;
 pub mod dispatch_pool;
 pub mod event;
@@ -38,6 +40,8 @@ pub mod subscription;
 // Authentication & authorization
 pub mod audit;
 pub mod auth;
+pub mod developer_credential;
+pub mod mfa;
 pub mod webauthn;
 
 // New domains (TS alignment)
@@ -48,6 +52,7 @@ pub mod identity_provider;
 pub mod login_attempt;
 pub mod password_reset;
 pub mod platform_config;
+pub mod portal;
 
 // Shared infrastructure
 pub mod shared;
@@ -354,7 +359,9 @@ pub mod api {
     pub use crate::auth::oauth_api::{oauth_router, OAuthState};
     pub use crate::auth::oauth_clients_api::{oauth_clients_router, OAuthClientsState};
     pub use crate::auth::oidc_login_api::{oidc_login_router, OidcLoginApiState};
-    pub use crate::auth::password_reset_api::{password_reset_router, PasswordResetApiState};
+    pub use crate::auth::password_reset_api::{
+        password_reset_router, password_setup_router, PasswordResetApiState,
+    };
     pub use crate::auth::{
         anchor_domains_router, client_auth_configs_router, idp_role_mappings_router,
         AuthConfigState,

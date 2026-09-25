@@ -30,8 +30,45 @@ pub struct EmailDomainMapping {
     pub required_oidc_tenant_id: Option<String>,
     pub allowed_role_ids: Vec<String>,
     pub sync_roles_from_idp: bool,
+    /// Internal (password) users of this domain must pass a second factor
+    /// (Go's `require_2fa`; inert for a domain mapped to an OIDC provider).
+    pub require_2fa: bool,
+    /// The second factors the domain allows (`TOTP`, `EMAIL_PIN`); at least
+    /// one when `require_2fa` is set.
+    pub allowed_2fa_methods: Vec<String>,
+    /// A browser may be remembered to skip the challenge.
+    pub remember_device_enabled: bool,
+    /// How long a remembered browser skips it, in days.
+    pub remember_device_days: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// The second-factor methods a domain may allow (Go `mfa.ValidMethodType`).
+pub const TWO_FACTOR_METHODS: [&str; 2] = ["TOTP", "EMAIL_PIN"];
+
+/// Go `validate2FA` (emaildomainmapping/operations/create.go:28-42): every
+/// method is known, and a domain requiring 2FA allows at least one.
+pub fn validate_two_factor(
+    require_2fa: bool,
+    methods: &[String],
+) -> Result<(), crate::usecase::UseCaseError> {
+    if methods
+        .iter()
+        .any(|m| !TWO_FACTOR_METHODS.contains(&m.as_str()))
+    {
+        return Err(crate::usecase::UseCaseError::validation(
+            "INVALID_2FA_METHOD",
+            "allowed2faMethods entries must be TOTP or EMAIL_PIN",
+        ));
+    }
+    if require_2fa && methods.is_empty() {
+        return Err(crate::usecase::UseCaseError::validation(
+            "2FA_METHOD_REQUIRED",
+            "at least one 2FA method must be allowed when require2fa is set",
+        ));
+    }
+    Ok(())
 }
 
 impl EmailDomainMapping {
@@ -52,6 +89,10 @@ impl EmailDomainMapping {
             required_oidc_tenant_id: None,
             allowed_role_ids: Vec::new(),
             sync_roles_from_idp: false,
+            require_2fa: false,
+            allowed_2fa_methods: Vec::new(),
+            remember_device_enabled: false,
+            remember_device_days: 30,
             created_at: now,
             updated_at: now,
         }

@@ -37,7 +37,7 @@ axum = { workspace = true }
 axum-extra = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
-utoipa = { workspace = true }
+utoipa = { workspace = true, features = ["yaml"] }
 utoipa-swagger-ui = { workspace = true }
 utoipa-axum = { workspace = true }
 
@@ -45,6 +45,13 @@ utoipa-axum = { workspace = true }
 jsonwebtoken = { workspace = true }
 hmac = "0.12"
 sha2 = "0.10"
+# Two-factor authentication (TOTP, RFC 6238, as Go's pquerna/otp): SHA-1
+# HOTP, the base32 shared secret, and the enrolment QR code rendered as a PNG.
+sha1 = "0.10"
+data-encoding = "2"
+qrcodegen = "1.8"
+flate2 = "1"
+crc32fast = "1"
 # Streams an artifact from the blob store to the host (control plane).
 tokio-util = { workspace = true, features = ["io"] }
 base64 = "0.22"

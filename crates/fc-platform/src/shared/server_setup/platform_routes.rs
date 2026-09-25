@@ -372,6 +372,12 @@ pub fn build_platform_routes(
         application_repo: repos.application_repo.clone(),
         app_client_config_repo: repos.application_client_config_repo.clone(),
         password_reset_emailer: password_reset_emailer.clone(),
+        new_user_notifier: Some(crate::mfa::notify::Notifier {
+            email: email_service.clone(),
+            name: crate::mfa::notify::PlatformName {
+                configs: Some(repos.platform_config_repo.clone()),
+            },
+        }),
         create_user_use_case,
         grant_client_access_use_case,
         reset_password_use_case: reset_password_use_case.clone(),
@@ -403,18 +409,6 @@ pub fn build_platform_routes(
         create_use_case: create_role_use_case,
         update_use_case: update_role_use_case,
         delete_use_case: delete_role_use_case,
-        grant_permission_use_case: Arc::new(
-            crate::role::operations::GrantRolePermissionUseCase::new(
-                repos.role_repo.clone(),
-                unit_of_work.clone(),
-            ),
-        ),
-        revoke_permission_use_case: Arc::new(
-            crate::role::operations::RevokeRolePermissionUseCase::new(
-                repos.role_repo.clone(),
-                unit_of_work.clone(),
-            ),
-        ),
     };
 
     let sync_subscriptions_use_case = Arc::new(
@@ -507,6 +501,9 @@ pub fn build_platform_routes(
     );
     let oauth_clients_state = OAuthClientsState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
+        portal_apps: Arc::new(crate::portal::repository::PortalAppRepository::new(
+            &repos.pool,
+        )),
         create_oauth_client_use_case,
         update_oauth_client_use_case,
         delete_oauth_client_use_case,
@@ -603,9 +600,53 @@ pub fn build_platform_routes(
         external_base_url: config.oidc_login_external_base_url,
         session_cookie: session_cookie.clone(),
         secret_resolver: secret_resolver.clone(),
+        password_setup_hint: Some(crate::auth::oidc_login_api::PasswordSetupHint {
+            principal_repo: repos.principal_repo.clone(),
+            login_attempt_repo: repos.login_attempt_repo.clone(),
+            backoff_policy: Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env()),
+        }),
     };
 
     let backoff_policy = Arc::new(crate::auth::login_backoff::BackoffPolicy::from_env());
+
+    // Two-factor authentication (Go's mfa + twofa + mfatoken + notify).
+    let platform_name = crate::mfa::notify::PlatformName {
+        configs: Some(repos.platform_config_repo.clone()),
+    };
+    let two_factor = Arc::new(crate::mfa::TwoFactorLogin {
+        mfa: Arc::new(crate::mfa::MfaService {
+            repo: Arc::new(crate::mfa::MfaRepository::new(&repos.pool)),
+            encryption: encryption_service.clone(),
+            email: email_service.clone(),
+            issuer: platform_name.clone(),
+        }),
+        tokens: Arc::new(crate::mfa::MfaTokenIssuer::new(
+            &auth.auth,
+            auth.auth.issuer(),
+        )),
+        policy: crate::mfa::TwoFactorPolicy {
+            mappings: repos.edm_repo.clone(),
+            identity_providers: repos.idp_repo.clone(),
+        },
+        notifier: crate::mfa::notify::Notifier {
+            email: email_service.clone(),
+            name: platform_name,
+        },
+        auth_service: auth.auth.clone(),
+        principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
+        login_attempt_repo: repos.login_attempt_repo.clone(),
+        audit_log_repo: repos.audit_log_repo.clone(),
+        backoff_policy: backoff_policy.clone(),
+        session_cookie: SessionCookieConfig {
+            name: "fc_session".to_string(),
+            secure: config.session_cookie_secure,
+            same_site: SameSite::Lax,
+            ttl: time::Duration::seconds(86400),
+        },
+        rate_limit_store: config.rate_limit_store.clone(),
+        rate_limit_policies: config.rate_limit_policies.clone(),
+    });
     let embedded_auth_state = AuthState {
         auth_service: auth.auth.clone(),
         principal_repo: repos.principal_repo.clone(),
@@ -624,7 +665,24 @@ pub fn build_platform_routes(
             same_site: SameSite::Lax,
             ttl: time::Duration::seconds(86400),
         },
+        two_factor: Some(two_factor.clone()),
     };
+    // Portal identity plane (Go wire_routes.go: portalusersapi.State,
+    // portalauth.State, bridge.PortalBridge and the token endpoint's portal
+    // repos).
+    let portal_state = crate::portal::PortalState::new(crate::portal::PortalDeps {
+        pool: repos.pool.clone(),
+        clients: repos.client_repo.clone(),
+        oauth_clients: repos.oauth_client_repo.clone(),
+        identity_providers: repos.idp_repo.clone(),
+        auth_codes: repos.auth_code_repo.clone(),
+        password_service: auth.password.clone(),
+        unit_of_work: unit_of_work.clone(),
+        email_service: email_service.clone(),
+        encryption_service: encryption_service.clone(),
+        rate_limit_store: config.rate_limit_store.clone(),
+        external_base_url: config.password_reset_external_base_url.clone(),
+    });
     let oauth_state = OAuthState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
@@ -642,6 +700,7 @@ pub fn build_platform_routes(
         rate_limit_store: config.rate_limit_store.clone(),
         rate_limit_policies: config.rate_limit_policies.clone(),
         encryption_service: encryption_service.clone(),
+        portal: Some(portal_state.clone()),
     };
 
     let audit_logs_state = AuditLogsState {
@@ -899,13 +958,24 @@ pub fn build_platform_routes(
         delete_use_case: delete_role_use_case,
     };
 
+    let reset_approvals_state = crate::mfa::reset_approval_api::ResetApprovalsState {
+        approvals: Arc::new(crate::mfa::reset_approval::ResetApprovalRepository::new(
+            &repos.pool,
+        )),
+        principal_repo: repos.principal_repo.clone(),
+        emailer: password_reset_emailer.clone(),
+    };
     let password_reset_state = PasswordResetApiState {
         principal_repo: repos.principal_repo.clone(),
         password_service: auth.password.clone(),
         unit_of_work: unit_of_work.clone(),
-        emailer: password_reset_emailer,
+        emailer: password_reset_emailer.clone(),
         password_reset_repo: repos.password_reset_repo.clone(),
         reset_password_use_case: reset_password_use_case.clone(),
+        two_factor: Some(two_factor.clone()),
+        refresh_token_repo: repos.refresh_token_repo.clone(),
+        rate_limit_store: config.rate_limit_store.clone(),
+        rate_limit_policies: config.rate_limit_policies.clone(),
     };
 
     let applications_state = ApplicationsState {
@@ -1224,7 +1294,31 @@ pub fn build_platform_routes(
         sdk_audit_batch: sdk_audit_batch_state,
         public: public_api_state,
         password_reset: password_reset_state,
+        portal: portal_state,
         webauthn: webauthn_state,
+        reset_approvals: reset_approvals_state,
+        developer_credentials: crate::developer_credential::api::DeveloperCredentialsState {
+            principal_repo: repos.principal_repo.clone(),
+            set_use_case: Arc::new(
+                crate::developer_credential::operations::SetDeveloperCredentialUseCase {
+                    principal_repo: repos.principal_repo.clone(),
+                    unit_of_work: unit_of_work.clone(),
+                },
+            ),
+            revoke_use_case: Arc::new(
+                crate::developer_credential::operations::RevokeDeveloperCredentialUseCase {
+                    principal_repo: repos.principal_repo.clone(),
+                    unit_of_work: unit_of_work.clone(),
+                },
+            ),
+            encryption: encryption_service.clone(),
+        },
+        account: Arc::new(crate::mfa::AccountState {
+            two_factor: two_factor.clone(),
+            password_service: auth.password.clone(),
+            refresh_token_repo: repos.refresh_token_repo.clone(),
+        }),
+        two_factor,
         // The router's delivery callback. Fail closed as Go does: without
         // FLOWCATALYST_APP_KEY no token can be verified, so it is not mounted.
         dispatch_process: match crate::scheduler::DispatchAuthService::from_env() {
@@ -1262,6 +1356,13 @@ pub fn build_platform_routes(
             sync_openapi_use_case,
             platform_application_id,
         },
+        go_routes: crate::shared::go_routes::GoRoutesState::build(
+            repos,
+            auth,
+            unit_of_work,
+            password_reset_emailer,
+            app_access.clone(),
+        ),
         static_dir: config.static_dir,
         rate_limit_store: config.rate_limit_store,
         rate_limit_policies: config.rate_limit_policies,

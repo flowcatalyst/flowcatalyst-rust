@@ -3021,8 +3021,10 @@ dependencies = [
  "bcrypt",
  "chrono",
  "chrono-tz",
+ "crc32fast",
  "cron",
  "dashmap",
+ "data-encoding",
  "fc-common",
  "fc-fnhost-core",
  "fc-function-abi",
@@ -3031,6 +3033,7 @@ dependencies = [
  "fc-http-listener",
  "fc-queue",
  "fc-stream",
+ "flate2",
  "futures",
  "governor",
  "hex",
@@ -3044,6 +3047,7 @@ dependencies = [
  "nonzero_ext",
  "openssl",
  "parking_lot 0.12.5",
+ "qrcodegen",
  "rand 0.9.2",
  "redis",
  "regex",
@@ -3051,6 +3055,7 @@ dependencies = [
  "rsa",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "sqlx",
  "subtle",
@@ -5820,6 +5825,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcodegen"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
+
+[[package]]
 name = "quanta"
 version = "0.12.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6937,6 +6948,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a93142f0367a4cc53ae0fead1bcda39e85beccfad3dcd717656cacab94b12985"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "serde_norway"
+version = "0.9.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e408f29489b5fd500fab51ff1484fc859bb655f32c671f307dcd733b72e8168c"
+dependencies = [
+ "indexmap 2.14.2",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml-norway",
 ]
 
 [[package]]
@@ -8157,6 +8181,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unsafe-libyaml-norway"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104"
+
+[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8235,6 +8265,7 @@ dependencies = [
  "indexmap 2.14.2",
  "serde",
  "serde_json",
+ "serde_norway",
  "utoipa-gen",
 ]
 

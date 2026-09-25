@@ -3,14 +3,20 @@
 //! Use cases for managing email domain mappings.
 
 pub mod create;
+pub mod create_rules;
 pub mod delete;
 pub mod events;
+pub mod move_provider;
 pub mod update;
 
-pub use create::{CreateEmailDomainMappingCommand, CreateEmailDomainMappingUseCase};
+pub use create::{
+    CreateEmailDomainMappingCommand, CreateEmailDomainMappingUseCase, TwoFactorPolicyInput,
+};
 pub use delete::{DeleteEmailDomainMappingCommand, DeleteEmailDomainMappingUseCase};
 pub use events::*;
-pub use update::{UpdateEmailDomainMappingCommand, UpdateEmailDomainMappingUseCase};
+pub use update::{
+    TwoFactorPolicyUpdate, UpdateEmailDomainMappingCommand, UpdateEmailDomainMappingUseCase,
+};
 
 use crate::usecase::UseCaseError;
 

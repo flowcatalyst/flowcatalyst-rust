@@ -12,6 +12,7 @@ pub mod events;
 pub mod grant_client_access;
 pub mod reset_password;
 pub mod revoke_client_access;
+pub mod set_client_association;
 pub mod sync;
 pub mod sync_users;
 pub mod update;

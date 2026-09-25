@@ -877,6 +877,38 @@ impl AuthService {
         self.config.access_token_expiry_secs
     }
 
+    /// The `iss` this service stamps on its tokens.
+    pub fn issuer(&self) -> &str {
+        &self.config.issuer
+    }
+
+    /// A stable HMAC secret derived from the signing key:
+    /// `SHA-256(label || D)`, `D` the RSA private exponent's big-endian
+    /// bytes (Go `mfatoken.NewIssuer`, which derives the 2FA step token
+    /// secret the same way), so every instance sharing the key derives the
+    /// same secret, and Go- and Rust-minted tokens agree. Without an RSA key
+    /// the HS256 secret stands in for `D`.
+    pub fn derived_secret(&self, label: &[u8]) -> [u8; 32] {
+        use rsa::pkcs1::DecodeRsaPrivateKey;
+        use rsa::pkcs8::DecodePrivateKey;
+        use rsa::traits::PrivateKeyParts;
+        use sha2::{Digest, Sha256};
+
+        let d = self.config.rsa_private_key.as_deref().and_then(|pem| {
+            rsa::RsaPrivateKey::from_pkcs8_pem(pem)
+                .or_else(|_| rsa::RsaPrivateKey::from_pkcs1_pem(pem))
+                .ok()
+                .map(|k| k.d().to_bytes_be())
+        });
+        let mut hasher = Sha256::new();
+        hasher.update(label);
+        match d {
+            Some(d) => hasher.update(&d),
+            None => hasher.update(self.config.secret_key.as_bytes()),
+        }
+        hasher.finalize().into()
+    }
+
     /// A short-lived, authority-bearing access token (`token_use: api`, no
     /// `scope`). Go `GenerateAccessToken` (authservice.go:416).
     pub fn generate_access_token(&self, principal: &Principal) -> Result<String> {
@@ -1040,6 +1072,50 @@ impl AuthService {
         let mut header = Header::new(self.algorithm);
         header.kid = self.key_id.clone();
         encode(&header, &claims, &self.encoding_key).map_err(|e| PlatformError::Internal {
+            message: format!("Failed to encode ID token: {}", e),
+        })
+    }
+
+    /// The ID token of a PORTAL identity login (Go `GeneratePortalIDToken`,
+    /// authservice.go:542-552): the identity's own claims (sub = its `ptu_`
+    /// id) with no authority — empty `roles`, `applications` and `clients`,
+    /// an empty `tier`, no `client_id` — plus `portal_client_id` and, for an
+    /// app-linked portal OAuth client, `portal_app_id` / `portal_app_code`.
+    /// `identity` is a transient principal-shaped view of the portal
+    /// identity; it never touches the principal store.
+    pub fn generate_portal_id_token(
+        &self,
+        identity: &Principal,
+        client_id: &str,
+        nonce: Option<String>,
+        portal_client_id: &str,
+        portal_app: Option<(&str, &str)>,
+    ) -> Result<String> {
+        let claims = self.id_token_claims(identity, client_id, nonce, Vec::new(), Utc::now());
+        let mut value = serde_json::to_value(&claims).map_err(|e| PlatformError::Internal {
+            message: format!("Failed to encode ID token: {}", e),
+        })?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("tier".into(), serde_json::json!(""));
+            obj.insert("roles".into(), serde_json::json!([]));
+            obj.insert("applications".into(), serde_json::json!([]));
+            obj.insert("all_applications".into(), serde_json::json!(false));
+            obj.insert("clients".into(), serde_json::json!([]));
+            obj.remove("client_id");
+            if !portal_client_id.is_empty() {
+                obj.insert(
+                    "portal_client_id".into(),
+                    serde_json::json!(portal_client_id),
+                );
+            }
+            if let Some((app_id, app_code)) = portal_app.filter(|(_, code)| !code.is_empty()) {
+                obj.insert("portal_app_code".into(), serde_json::json!(app_code));
+                obj.insert("portal_app_id".into(), serde_json::json!(app_id));
+            }
+        }
+        let mut header = Header::new(self.algorithm);
+        header.kid = self.key_id.clone();
+        encode(&header, &value, &self.encoding_key).map_err(|e| PlatformError::Internal {
             message: format!("Failed to encode ID token: {}", e),
         })
     }

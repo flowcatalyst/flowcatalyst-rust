@@ -173,3 +173,16 @@ impl crate::usecase::Persist<PlatformConfigAccess> for PlatformConfigAccessRepos
         Ok(())
     }
 }
+
+impl PlatformConfigAccessRepository {
+    /// One grant by id (Go `FindAccessByID`).
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<PlatformConfigAccess>> {
+        let row = sqlx::query_as::<_, PlatformConfigAccessRow>(
+            "SELECT * FROM app_platform_config_access WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(PlatformConfigAccess::from))
+    }
+}

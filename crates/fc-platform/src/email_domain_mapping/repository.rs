@@ -19,6 +19,9 @@ struct EmailDomainMappingRow {
     primary_client_id: Option<String>,
     required_oidc_tenant_id: Option<String>,
     sync_roles_from_idp: bool,
+    require_2fa: bool,
+    remember_device_enabled: bool,
+    remember_device_days: i32,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -43,6 +46,10 @@ impl TryFrom<EmailDomainMappingRow> for EmailDomainMapping {
             required_oidc_tenant_id: r.required_oidc_tenant_id,
             allowed_role_ids: Vec::new(), // loaded separately
             sync_roles_from_idp: r.sync_roles_from_idp,
+            require_2fa: r.require_2fa,
+            allowed_2fa_methods: Vec::new(), // loaded separately
+            remember_device_enabled: r.remember_device_enabled,
+            remember_device_days: r.remember_device_days,
             created_at: r.created_at,
             updated_at: r.updated_at,
         })
@@ -59,7 +66,7 @@ impl EmailDomainMappingRepository {
     }
 
     async fn hydrate(&self, mut edm: EmailDomainMapping) -> Result<EmailDomainMapping> {
-        let (additional, granted, roles) = tokio::try_join!(
+        let (additional, granted, roles, methods) = tokio::try_join!(
             sqlx::query_scalar::<_, String>(
                 "SELECT client_id FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = $1"
             ).bind(&edm.id).fetch_all(&self.pool),
@@ -69,10 +76,14 @@ impl EmailDomainMappingRepository {
             sqlx::query_scalar::<_, String>(
                 "SELECT role_id FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = $1"
             ).bind(&edm.id).fetch_all(&self.pool),
+            sqlx::query_scalar::<_, String>(
+                "SELECT method FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = $1 ORDER BY id"
+            ).bind(&edm.id).fetch_all(&self.pool),
         )?;
         edm.additional_client_ids = additional;
         edm.granted_client_ids = granted;
         edm.allowed_role_ids = roles;
+        edm.allowed_2fa_methods = methods;
         Ok(edm)
     }
 
@@ -97,8 +108,13 @@ impl EmailDomainMappingRepository {
             email_domain_mapping_id: String,
             role_id: String,
         }
+        #[derive(sqlx::FromRow)]
+        struct MethodRow {
+            email_domain_mapping_id: String,
+            method: String,
+        }
 
-        let (additional_rows, granted_rows, role_rows) = tokio::try_join!(
+        let (additional_rows, granted_rows, role_rows, method_rows) = tokio::try_join!(
             sqlx::query_as::<_, ClientRow>(
                 "SELECT email_domain_mapping_id, client_id FROM tnt_email_domain_mapping_additional_clients WHERE email_domain_mapping_id = ANY($1)"
             ).bind(&ids).fetch_all(&self.pool),
@@ -108,7 +124,18 @@ impl EmailDomainMappingRepository {
             sqlx::query_as::<_, RoleRow>(
                 "SELECT email_domain_mapping_id, role_id FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = ANY($1)"
             ).bind(&ids).fetch_all(&self.pool),
+            sqlx::query_as::<_, MethodRow>(
+                "SELECT email_domain_mapping_id, method FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = ANY($1) ORDER BY id"
+            ).bind(&ids).fetch_all(&self.pool),
         )?;
+
+        let mut methods_map: HashMap<String, Vec<String>> = HashMap::new();
+        for r in method_rows {
+            methods_map
+                .entry(r.email_domain_mapping_id)
+                .or_default()
+                .push(r.method);
+        }
 
         let mut additional_map: HashMap<String, Vec<String>> = HashMap::new();
         for r in additional_rows {
@@ -143,6 +170,9 @@ impl EmailDomainMappingRepository {
             }
             if let Some(v) = roles_map.remove(&edm.id) {
                 edm.allowed_role_ids = v;
+            }
+            if let Some(v) = methods_map.remove(&edm.id) {
+                edm.allowed_2fa_methods = v;
             }
         }
 
@@ -226,8 +256,9 @@ impl EmailDomainMappingRepository {
             r#"INSERT INTO tnt_email_domain_mappings
                 (id, email_domain, identity_provider_id, scope_type,
                  primary_client_id, required_oidc_tenant_id, sync_roles_from_idp,
+                 require_2fa, remember_device_enabled, remember_device_days,
                  created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())"#,
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())"#,
         )
         .bind(&edm.id)
         .bind(&edm.email_domain)
@@ -236,6 +267,9 @@ impl EmailDomainMappingRepository {
         .bind(&edm.primary_client_id)
         .bind(&edm.required_oidc_tenant_id)
         .bind(edm.sync_roles_from_idp)
+        .bind(edm.require_2fa)
+        .bind(edm.remember_device_enabled)
+        .bind(edm.remember_device_days)
         .execute(&self.pool)
         .await?;
         self.save_junctions(&edm.id, edm).await?;
@@ -247,7 +281,9 @@ impl EmailDomainMappingRepository {
             r#"UPDATE tnt_email_domain_mappings SET
                 email_domain = $2, identity_provider_id = $3, scope_type = $4,
                 primary_client_id = $5, required_oidc_tenant_id = $6,
-                sync_roles_from_idp = $7, updated_at = NOW()
+                sync_roles_from_idp = $7, require_2fa = $8,
+                remember_device_enabled = $9, remember_device_days = $10,
+                updated_at = NOW()
             WHERE id = $1"#,
         )
         .bind(&edm.id)
@@ -257,6 +293,9 @@ impl EmailDomainMappingRepository {
         .bind(&edm.primary_client_id)
         .bind(&edm.required_oidc_tenant_id)
         .bind(edm.sync_roles_from_idp)
+        .bind(edm.require_2fa)
+        .bind(edm.remember_device_enabled)
+        .bind(edm.remember_device_days)
         .execute(&self.pool)
         .await?;
         self.delete_junctions(&edm.id).await?;
@@ -292,6 +331,16 @@ impl EmailDomainMappingRepository {
             .execute(&self.pool)
             .await?;
         }
+        if !edm.allowed_2fa_methods.is_empty() {
+            sqlx::query(
+                "INSERT INTO tnt_email_domain_mapping_2fa_methods (email_domain_mapping_id, method) \
+                 SELECT $1, m FROM UNNEST($2::text[]) WITH ORDINALITY AS t(m, n) ORDER BY n",
+            )
+            .bind(id)
+            .bind(&edm.allowed_2fa_methods)
+            .execute(&self.pool)
+            .await?;
+        }
         for rid in &edm.allowed_role_ids {
             sqlx::query(
                 "INSERT INTO tnt_email_domain_mapping_allowed_roles (email_domain_mapping_id, role_id) VALUES ($1, $2)"
@@ -311,6 +360,12 @@ impl EmailDomainMappingRepository {
             .bind(id).execute(&self.pool).await?;
         sqlx::query(
             "DELETE FROM tnt_email_domain_mapping_allowed_roles WHERE email_domain_mapping_id = $1",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "DELETE FROM tnt_email_domain_mapping_2fa_methods WHERE email_domain_mapping_id = $1",
         )
         .bind(id)
         .execute(&self.pool)

@@ -446,6 +446,6 @@ pub fn admin_platform_config_router(state: PlatformConfigState) -> OpenApiRouter
     OpenApiRouter::new()
         .routes(routes!(list_configs))
         .routes(routes!(get_section))
-        .routes(routes!(get_property, set_property, delete_property))
+        // The property routes are Go's: `platform_config::go_api`.
         .with_state(state)
 }

@@ -2,10 +2,34 @@
 
 use chrono::{DateTime, Utc};
 
+/// What a token is for (Go `passwordreset.Purpose`): a reset (forgot
+/// password, admin reset; 15 minutes) or a first-time invite ("set your
+/// password"; 72 hours).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TokenPurpose {
+    #[default]
+    Reset,
+    Invite,
+}
+
+crate::shared::enum_str::str_enum!(TokenPurpose, "password reset token purpose", {
+    Reset => "reset",
+    Invite => "invite",
+});
+
 pub struct PasswordResetToken {
     pub id: String,
     pub principal_id: String,
     pub token_hash: String,
+    pub purpose: TokenPurpose,
+    /// The confirm also clears the user's second factors (lost device).
+    pub reset_2fa: bool,
+    /// The confirm also needs a current authenticator (TOTP) code.
+    pub requires_factor: bool,
+    /// Wrong authenticator codes presented against this token.
+    pub factor_attempts: i32,
+    /// Where the SPA goes once the flow completes.
+    pub redirect_uri: Option<String>,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }
@@ -20,6 +44,11 @@ impl PasswordResetToken {
             id: crate::shared::tsid::generate(crate::EntityType::PasswordResetToken),
             principal_id: principal_id.into(),
             token_hash: token_hash.into(),
+            purpose: TokenPurpose::Reset,
+            reset_2fa: false,
+            requires_factor: false,
+            factor_attempts: 0,
+            redirect_uri: None,
             expires_at,
             created_at: Utc::now(),
         }
@@ -46,6 +75,11 @@ mod tests {
             id: "prt_test123".to_string(),
             principal_id: "prn_abc".to_string(),
             token_hash: "deadbeef".to_string(),
+            purpose: TokenPurpose::Reset,
+            reset_2fa: false,
+            requires_factor: false,
+            factor_attempts: 0,
+            redirect_uri: None,
             expires_at,
             created_at: Utc::now(),
         }

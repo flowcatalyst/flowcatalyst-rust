@@ -578,11 +578,55 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "039_dispatch_job_queue_and_attempt_request",
             include_str!("../../../../migrations/039_dispatch_job_queue_and_attempt_request.sql"),
         ),
+        // Go's 031: two-factor authentication (factors, recovery codes,
+        // email PINs, trusted devices, the per-domain policy).
+        (
+            "041_mfa_tables",
+            include_str!("../../../../migrations/041_mfa_tables.sql"),
+        ),
+        // The reset-token columns of Go's 031, 032, 033, 041 and 051.
+        (
+            "042_password_reset_token_purpose",
+            include_str!("../../../../migrations/042_password_reset_token_purpose.sql"),
+        ),
         // Go's 042: the OAuth client flag that makes an interactive login's
         // access token authority-bearing (owner decisions #3/#20).
         (
             "043_oauth_client_api_access",
             include_str!("../../../../migrations/043_oauth_client_api_access.sql"),
+        ),
+        // Go's 032: the lost-device reset approval queue.
+        (
+            "044_reset_approval_requests",
+            include_str!("../../../../migrations/044_reset_approval_requests.sql"),
+        ),
+        // Go's 041 + 043: the portal identity plane (portal_identities,
+        // portal_login_flows, the portal flags on OAuth clients and OIDC
+        // login states, the reset-token redirect).
+        (
+            "046_portal_identities",
+            include_str!("../../../../migrations/046_portal_identities.sql"),
+        ),
+        // Go's 053: portal apps and per-app grants.
+        (
+            "047_portal_apps",
+            include_str!("../../../../migrations/047_portal_apps.sql"),
+        ),
+        // Go's 056: application-scoped connections (application_code,
+        // source) and the (application_code, client_id, code) uniqueness.
+        (
+            "050_connection_application_scope",
+            include_str!("../../../../migrations/050_connection_application_scope.sql"),
+        ),
+        // Go's 044: application-synced documentation.
+        (
+            "051_app_docs",
+            include_str!("../../../../migrations/051_app_docs.sql"),
+        ),
+        // Go's 039: the self-service developer API credential.
+        (
+            "052_developer_api_credentials",
+            include_str!("../../../../migrations/052_developer_api_credentials.sql"),
         ),
     ];
 
@@ -748,12 +792,78 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' AND table_name = 'msg_dispatch_job_attempts' \
                AND column_name = 'request_info')",
         ),
+        // A database Go migrated has the last of the tables and the policy
+        // junction.
+        (
+            "041_mfa_tables",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'iam_mfa_trusted_devices') \
+             AND EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' \
+               AND table_name = 'tnt_email_domain_mapping_2fa_methods')",
+        ),
+        // Go's 051 CHECK is the last of the reset-token changes.
+        (
+            "042_password_reset_token_purpose",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_password_reset_tokens' \
+               AND column_name = 'redirect_uri') \
+             AND EXISTS (SELECT 1 FROM pg_constraint \
+             WHERE conname = 'chk_iam_password_reset_tokens_purpose')",
+        ),
         // A database Go migrated (its 042) already has the column.
         (
             "043_oauth_client_api_access",
             "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
              WHERE table_schema = 'public' AND table_name = 'oauth_clients' \
                AND column_name = 'api_access')",
+        ),
+        (
+            "044_reset_approval_requests",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'iam_reset_approval_requests')",
+        ),
+        // A database Go migrated past its 041 has both the flow table and
+        // the reset-token redirect column.
+        (
+            "046_portal_identities",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'portal_login_flows') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_password_reset_tokens' \
+               AND column_name = 'redirect_uri')",
+        ),
+        // Go's 053 adds the invite columns last-but-one; with the grants
+        // table they mean it ran.
+        (
+            "047_portal_apps",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'portal_identity_apps') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'portal_identities' \
+               AND column_name = 'invite_expires_at')",
+        ),
+        // A database Go migrated to 056 has the column and the new index.
+        (
+            "050_connection_application_scope",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'msg_connections' \
+               AND column_name = 'source') \
+             AND EXISTS (SELECT 1 FROM pg_indexes \
+             WHERE schemaname = 'public' \
+               AND indexname = 'uq_msg_subscriptions_app_client_code')",
+        ),
+        // A database Go migrated to 044 has the table.
+        (
+            "051_app_docs",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'app_docs')",
+        ),
+        (
+            "052_developer_api_credentials",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'iam_principals' \
+               AND column_name = 'dev_client_secret_updated_at')",
         ),
     ];
 

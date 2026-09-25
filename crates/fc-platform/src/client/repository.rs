@@ -319,3 +319,19 @@ impl crate::usecase::Persist<Client> for ClientRepository {
         Ok(())
     }
 }
+
+impl ClientRepository {
+    /// Go's `ClientSearch` (sqlc/queries/client.sql:17): name or identifier
+    /// `ILIKE %term%`, by identifier, at most 50. The term is not escaped,
+    /// so `%` and `_` in it are wildcards, as in Go.
+    pub async fn search_top(&self, term: &str) -> Result<Vec<Client>> {
+        let rows = sqlx::query_as::<_, ClientRow>(
+            "SELECT * FROM tnt_clients WHERE name ILIKE $1 OR identifier ILIKE $1 \
+             ORDER BY identifier LIMIT 50",
+        )
+        .bind(format!("%{term}%"))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(Client::try_from).collect()
+    }
+}
