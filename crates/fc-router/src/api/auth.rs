@@ -117,10 +117,11 @@ impl AuthConfig {
         let basic_password =
             fc_common::config::env_first_opt(&["FC_ROUTER_AUTH_PASS", "AUTH_BASIC_PASSWORD"]);
 
+        // Trimmed and case-insensitive, as Go's `resolveRouterAuth` reads it.
         let mode = match std::env::var("AUTH_MODE")
             .ok()
             .as_deref()
-            .map(str::to_uppercase)
+            .map(|m| m.trim().to_uppercase())
         {
             Some(ref m) if m == "NONE" => AuthMode::None,
             Some(ref m) if m == "BASIC" => AuthMode::Basic,

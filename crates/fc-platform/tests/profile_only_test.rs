@@ -64,7 +64,9 @@ async fn a_roleless_user_reaches_only_its_profile() {
     let (status, body) = read_json(app.get("/api/clients", &service).await).await;
     assert_ne!(body["error"], "NO_PLATFORM_ROLE", "{status} {body}");
 
-    // No credential: the route's own 401.
-    let (status, _) = read_json(app.get_unauth("/api/clients").await).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // No credential: the route's own refusal, Go's 403 UNAUTHENTICATED —
+    // not the profile-only gate's NO_PLATFORM_ROLE.
+    let (status, body) = read_json(app.get_unauth("/api/clients").await).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"], "UNAUTHENTICATED", "{body}");
 }

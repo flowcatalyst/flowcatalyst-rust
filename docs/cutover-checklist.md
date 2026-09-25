@@ -70,12 +70,36 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
 - Batch ingest statuses and limits
 - Listener timeouts (ruling 10)
 
+## Deployment contract (the Rust images must run with the production task definitions unchanged)
+- [ ] Router: production runs **Go's `fc-server` in router-only role** (`inhance/iac/compute/fc-router.ts`).
+      Rust must honour the same env: role toggles, comma-separated `FLOWCATALYST_CONFIG_URL` (the
+      platform's router-config plus integral's `/api/config`), `FC_ROUTER_PLATFORM_URL` with
+      client-credentials, settle reporting, notifications (`feat/router-env`)
+- [ ] Platform and worker tasks (`flowcatalyst.ts`): DB secret provider and ARN, JWT current and
+      previous keys, app key, SMTP, WebAuthn, OIDC TTLs, Redis, subsystem toggles, health checks
+      (`feat/platform-env`)
+- [ ] integral's create-user invite flags on `/api/principals/users` (`--invite-link`,
+      `--invite-redirect-uri`) (`feat/go-routes` follow-up)
+- [ ] IaC hygiene (owner): the router task definition holds the Teams webhook `sig=` in plain text;
+      move it to SSM
+
+## Known inherited defects (same in Go; not cutover blockers)
+- Go's SPA redirects an already-signed-in OIDC interaction to `/oidc/interaction/{uid}/login`, which no
+  backend serves (Go or Rust): `frontend/src/api/auth.ts`, `router/guards.ts`. Fix in the SPA (point it at
+  `/auth/oidc/interaction/{uid}/…`) once the interaction flow is exercised.
+
 ## Before deploy (owner)
 - [ ] Run `docs/fc-predeploy-checks.sql` (tenant pins, cross-app role permissions, OAuth clients on non-service
       principals, service accounts' batch permissions, service accounts not tied to an application)
 - [ ] Same RSA signing key, issuer and `FLOWCATALYST_APP_KEY` as Go
 - [ ] App service accounts hold `platform:messaging:batch:events-write` (and `dispatch-jobs-write`)
-- [ ] Prod env names read by Rust (see `inhance/iac/compute/flowcatalyst.ts`, `fc-router.ts`); platform and worker
-      tasks: `feat/platform-env`, `docs/parity/platform-env-vs-go.md` (no IaC change needed)
+- [x] Prod env names read by Rust: all three task definitions run unchanged, no IaC change.
+      - Platform and worker tasks (`flowcatalyst.ts`): `feat/platform-env`, `docs/parity/platform-env-vs-go.md`.
+        Key continuity: keep the SSM `jwt-private-key`, `jwt-previous-public-key` and `app-key` and
+        `EXTERNAL_BASE_URL` as they are. Rust derives Go's public key and `kid`, so Go-issued tokens and stored
+        secrets keep working.
+      - Router task (`fc-router.ts`): `feat/router-env`, `docs/parity/router-env-vs-go.md`. Deploy the main
+        `Dockerfile` image (`fc-server`, linux/arm64) to `inhance/fc-router`. Confirm note 1 there (Teams alerts
+        start arriving).
 - [ ] Rotate the leaked passwords; click Redact after the deploy
 - [ ] SDK cutover steps in `docs/sdks.md`

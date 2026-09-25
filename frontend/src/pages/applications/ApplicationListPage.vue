@@ -1,66 +1,55 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
 	applicationsApi,
 	type Application,
 } from "@/api/applications";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 const applications = ref<Application[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-const { filters } = useListState({
+const listState = useListState({
 	filters: {
 		q: { type: "string" as const, key: "q" },
 		type: { type: "string" as const, key: "type" },
 		active: { type: "string" as const, key: "active" },
 	},
 });
+const { filters } = listState;
+
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[
+		{ field: "type", param: "type" },
+		{ field: "status", param: "active" },
+	],
+);
 
 const typeOptions = [
-	{ label: "All Types", value: "" },
 	{ label: "Application", value: "APPLICATION" },
 	{ label: "Integration", value: "INTEGRATION" },
 ];
 
 const activeOptions = [
-	{ label: "All Status", value: "" },
 	{ label: "Active", value: "ACTIVE" },
 	{ label: "Inactive", value: "INACTIVE" },
 ];
 
-const filteredApplications = computed(() => {
-	let result = applications.value;
-
-	// Filter by type
-	if (filters.type.value) {
-		result = result.filter((app) => app.type === filters.type.value);
-	}
-
-	// Filter by active status
-	if (filters.active.value) {
-		const isActive = filters.active.value === "ACTIVE";
-		result = result.filter((app) => app.active === isActive);
-	}
-
-	// Filter by search query
-	if (filters.q.value) {
-		const query = filters.q.value.toLowerCase();
-		result = result.filter(
-			(app) =>
-				app.code.toLowerCase().includes(query) ||
-				app.name.toLowerCase().includes(query) ||
-				(app.description?.toLowerCase().includes(query) ?? false),
-		);
-	}
-
-	return result;
-});
+// The wire row carries `active: boolean` while the filter value is the
+// "ACTIVE"/"INACTIVE" string (same ?active= URL param as before), so derive a
+// string `status` field for the EQUALS constraint to match against.
+const rows = computed(() =>
+	applications.value.map((app) => ({
+		...app,
+		status: app.active ? "ACTIVE" : "INACTIVE",
+	})),
+);
 
 onMounted(async () => {
 	await loadApplications();
@@ -80,6 +69,17 @@ async function loadApplications() {
 	}
 }
 
+function openDetail(id: string, edit = false) {
+	void router.push({
+		path: `/applications/${id}`,
+		query: edit ? { ...route.query, edit: "true" } : route.query,
+	});
+}
+
+function openCreate() {
+	void router.push({ path: "/applications/new", query: route.query });
+}
+
 function formatDate(dateString: string) {
 	return new Date(dateString).toLocaleDateString();
 }
@@ -92,54 +92,67 @@ function formatDate(dateString: string) {
         <h1 class="page-title">Applications</h1>
         <p class="page-subtitle">Manage applications in the platform ecosystem</p>
       </div>
-      <Button
-        label="Create Application"
-        icon="pi pi-plus"
-        @click="router.push('/applications/new')"
-      />
+      <Button label="Create Application" icon="pi pi-plus" @click="openCreate" />
     </header>
 
     <Message v-if="error" severity="error" class="error-message">{{ error }}</Message>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <IconField class="search-wrapper">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="filters.q.value" placeholder="Search applications..." />
-        </IconField>
-        <div class="filter-group">
-          <Select
-            v-model="filters.type.value"
-            :options="typeOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Type"
-            class="filter-select"
-          />
-          <Select
-            v-model="filters.active.value"
-            :options="activeOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Status"
-            class="filter-select"
-          />
-        </div>
-      </div>
-
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredApplications"
+        :value="rows"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['code', 'name', 'description']"
         paginator
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
         stripedRows
-        emptyMessage="No applications found"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => openDetail(e.data.id)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search applications..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Type">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.type.value"
+                    :options="typeOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All types"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.active.value"
+                    :options="activeOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+        <template #empty>No applications found</template>
+
         <Column field="code" header="Code" sortable>
           <template #body="{ data }">
             <code class="app-code">{{ data.code }}</code>
@@ -172,63 +185,28 @@ function formatDate(dateString: string) {
             {{ formatDate(data.createdAt) }}
           </template>
         </Column>
-        <Column header="Actions" style="width: 120px">
+        <Column header="Actions" style="width: 80px">
           <template #body="{ data }">
             <Button
-              icon="pi pi-eye"
-              text
-              rounded
-              v-tooltip="'View'"
-              @click="navigateToDetail(`/applications/${data.id}`)"
-            />
-            <Button
+              v-tooltip="'Edit'"
               icon="pi pi-pencil"
               text
               rounded
-              v-tooltip="'Edit'"
-              @click="navigateToDetail(`/applications/${data.id}`)"
+              @click.stop="openDetail(data.id, true)"
             />
           </template>
         </Column>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadApplications" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
-
-.search-wrapper {
-  flex: 1;
-  min-width: 200px;
-}
-
-.search-wrapper :deep(.pi-search) {
-  color: #94a3b8;
-}
-
-.filter-group {
-  display: flex;
-  gap: 12px;
-}
-
-.filter-select {
-  min-width: 140px;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  padding: 60px;
-}
-
 .error-message {
   margin-bottom: 16px;
 }

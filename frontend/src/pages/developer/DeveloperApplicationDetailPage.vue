@@ -24,6 +24,9 @@ const ApiDocsTab = defineAsyncComponent(
 const EventTypesTab = defineAsyncComponent(
   () => import("./DeveloperEventTypesTab.vue"),
 );
+const ProcessesTab = defineAsyncComponent(
+  () => import("./DeveloperProcessesTab.vue"),
+);
 
 async function load() {
   loading.value = true;
@@ -93,6 +96,7 @@ onMounted(load);
         <TabList>
           <Tab value="api-docs"><i class="pi pi-book"></i>&nbsp;API Docs</Tab>
           <Tab value="event-types"><i class="pi pi-bolt"></i>&nbsp;Event Types</Tab>
+          <Tab value="processes"><i class="pi pi-sitemap"></i>&nbsp;Processes</Tab>
         </TabList>
         <TabPanels>
           <TabPanel value="api-docs">
@@ -100,6 +104,9 @@ onMounted(load);
           </TabPanel>
           <TabPanel value="event-types">
             <EventTypesTab :application-id="appId" />
+          </TabPanel>
+          <TabPanel value="processes">
+            <ProcessesTab :application-code="app.code" />
           </TabPanel>
         </TabPanels>
       </Tabs>

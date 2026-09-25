@@ -1,0 +1,39 @@
+{
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+
+	// Codifies the style already in the tree rather than imposing a new one.
+	// Without this file oxfmt falls back to its defaults (two spaces, width
+	// 100) and `pnpm run format` rewrites every file it touches from tabs to
+	// spaces — a whole-repo reflow disguised as a formatting run.
+	//
+	// Verified empirically against src/ (166 files): tabs at width 80 leaves
+	// 38 of 62 .ts files already byte-identical; spaces, or width 100, leaves
+	// almost none. Everything else oxfmt defaults to (double quotes,
+	// semicolons, trailing commas, LF) already matches the tree.
+	"useTabs": true,
+	"printWidth": 80,
+
+	"ignorePatterns": [
+		// openapi-ts output. `make frontend-types-verify` regenerates this
+		// directory and fails on any git diff, so formatting it would break CI
+		// permanently: the generator would keep un-formatting what oxfmt just
+		// formatted.
+		"src/api/generated/**",
+
+		// A dumped OpenAPI spec, refreshed wholesale from the Go server. Not
+		// hand-edited, and not this formatter's to reflow.
+		"openapi/**",
+
+		// Owned by the package manager, which rewrites it on every add/remove.
+		"package.json",
+
+		// Markup indents with spaces, script with tabs — including inside a
+		// single .vue file, where <script setup> is tabs and <template> /
+		// <style> are two spaces. `useTabs` is per-file, so no setting
+		// expresses that split, and formatting these would retab every
+		// template in the repo. Left to hand-authoring until the convention is
+		// unified deliberately.
+		"**/*.vue",
+		"index.html"
+	]
+}

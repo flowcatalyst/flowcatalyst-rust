@@ -1,28 +1,21 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 
-/** The principal's tenancy tier, as `/auth/me` reports it. */
-export type UserScope = "ANCHOR" | "PARTNER" | "CLIENT";
-
 export interface User {
 	id: string;
 	email: string;
 	name: string;
 	clientId: string | null;
 	roles: string[];
+	permissions: string[];
+	/** Account authenticates via a federated IdP — password self-service is hidden. */
+	ssoManaged: boolean;
 	/**
-	 * The caller's effective permission codes from `/auth/me` (patterns such
-	 * as `platform:*:*:*` included; match them with `@/utils/permissions`).
-	 * `null` when the backend predates the field: the SPA then falls back to
-	 * its old rule, a platform admin role reaches everything.
+	 * Tenancy tier (ANCHOR / PARTNER / CLIENT) from /auth/me's `scope` — a
+	 * Rust addition to Go's body (owner decision #8) that gates anchor-only
+	 * pages. Absent (null) from a backend that doesn't send it.
 	 */
-	permissions: string[] | null;
-	/**
-	 * The tenancy tier from `/auth/me`: anchor-only pages need `ANCHOR`.
-	 * Absent (`undefined`/`null`) from a backend that predates it; the SPA
-	 * then gates on permissions alone.
-	 */
-	scope?: UserScope | null;
+	scope?: string | null;
 }
 
 export const useAuthStore = defineStore("auth", () => {

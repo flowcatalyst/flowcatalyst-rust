@@ -1,12 +1,15 @@
 /**
- * HTTP client configuration for Hey API generated SDK.
- * This sets up the base URL and any default headers.
+ * The app's HTTP transport: thin fetch wrappers with the platform error
+ * envelope decoded once — global toasts, 401/403 events, and per-field
+ * validation detail extraction live here so feature modules don't
+ * reimplement them.
  */
 
 import { toast } from "@/utils/errorBus";
 
 export const API_BASE_URL = "/api";
 export const BFF_BASE_URL = "/bff";
+export const AUTH_BASE_URL = "/auth";
 
 /**
  * Custom error class for API errors that includes status code
@@ -15,10 +18,10 @@ export class ApiError extends Error {
 	status: number;
 	code?: string;
 	/**
-	 * The platform envelope's raw `details` object, when present (e.g.
-	 * `{ errors: [{ message, location }] }` for a validation failure). Kept
-	 * as structured data for a caller that renders its own per-field errors
-	 * (the function publish dialog and create page).
+	 * The envelope's raw `details` object, when present (e.g.
+	 * `{ errors: [{ message, location }] }` for a validation failure), for a
+	 * caller that renders its own per-field errors (the function publish
+	 * dialog and create form).
 	 */
 	details?: Record<string, unknown>;
 
@@ -77,6 +80,12 @@ export interface FetchOptions extends RequestInit {
 	 * inline form message). The error is still thrown as an `ApiError`.
 	 */
 	suppressGlobalErrorToast?: boolean;
+	/**
+	 * If true, suppress the global 401/403 event (the "session expired" /
+	 * permission-denied modal). The auth surface sets this: a wrong password
+	 * or expired reset token is a form-level error, not an expired session.
+	 */
+	suppressAuthErrorEvent?: boolean;
 }
 
 /**
@@ -100,19 +109,36 @@ export async function bffFetch<T>(
 	return baseFetch<T>(`${BFF_BASE_URL}${path}`, options);
 }
 
+/**
+ * Fetch from the /auth/* surface (login, 2FA, passkeys, password reset).
+ * Same envelope decoding as apiFetch, but errors stay inline by default:
+ * no global toast, and no 401/403 modal — a failed credential is the
+ * form's problem, not a session expiry.
+ */
+export async function authFetch<T>(
+	path: string,
+	options: FetchOptions = {},
+): Promise<T> {
+	return baseFetch<T>(`${AUTH_BASE_URL}${path}`, {
+		suppressGlobalErrorToast: true,
+		suppressAuthErrorEvent: true,
+		...options,
+	});
+}
+
 async function baseFetch<T>(
 	url: string,
 	options: FetchOptions = {},
 ): Promise<T> {
-	const { suppressGlobalErrorToast, ...init } = options;
+	const { suppressGlobalErrorToast, suppressAuthErrorEvent, ...init } =
+		options;
 
 	const headers: Record<string, string> = {
 		...(init.headers as Record<string, string>),
 	};
-	// Default to JSON only when the caller hasn't set a Content-Type. Every
-	// JSON call site sends a string body and sets none, so they are
-	// unchanged; the function artifact upload sends raw bytes as
-	// `application/octet-stream` and sets its own.
+	// Default to JSON only when the caller hasn't set a Content-Type: every
+	// JSON call site sends a string body and sets none; the function
+	// artifact upload sends raw bytes as application/octet-stream.
 	if (init.body && !headers["Content-Type"]) {
 		headers["Content-Type"] = "application/json";
 	}
@@ -127,31 +153,42 @@ async function baseFetch<T>(
 		const error = await response
 			.json()
 			.catch(() => ({ message: "Request failed" }));
-		// Platform JSON: { error: "<CODE>", message: "<human text>" }
+		// Platform JSON: { error: "<CODE>", message: "<human text>",
+		//   details?: { errors?: [{ message, location, value }] } }
 		// Prefer the human message; fall back to the code, then a generic.
-		const message =
+		let message =
 			(typeof error.message === "string" && error.message) ||
 			(typeof error.error === "string" && error.error) ||
 			"Request failed";
+		// Surface per-field validation details so the caller sees WHICH field
+		// failed (e.g. "body.redirectUris: ...") rather than a bare
+		// "validation failed".
+		const fieldErrors = (error?.details?.errors ?? []) as Array<{
+			message?: string;
+			location?: string;
+		}>;
+		if (Array.isArray(fieldErrors) && fieldErrors.length > 0) {
+			const parts = fieldErrors
+				.map((fe) =>
+					fe.location ? `${fe.location}: ${fe.message ?? ""}`.trim() : fe.message,
+				)
+				.filter((p): p is string => !!p);
+			if (parts.length > 0) message = `${message} (${parts.join("; ")})`;
+		}
 		const code =
 			(typeof error.error === "string" && error.error) || error.code;
 
-		// No session at all is a 403 `UNAUTHENTICATED` (Go's answer, which
-		// the platform matches); it means what a 401 means here: sign in
-		// again. A 403 with any other code is a permission refusal.
-		const sessionEnded =
-			response.status === 401 ||
-			(response.status === 403 && code === "UNAUTHENTICATED");
-
-		// Emit error event for 401/403
-		if (sessionEnded) {
-			emitApiError(401, message);
-		} else if (response.status === 403) {
+		// Emit error event for 401/403 (session-expired / permission modal)
+		// unless the caller opted out (auth surface).
+		if (
+			(response.status === 401 || response.status === 403) &&
+			!suppressAuthErrorEvent
+		) {
 			emitApiError(response.status, message);
 		}
 
 		// Show error banner for non-auth errors unless the caller opted out.
-		if (!sessionEnded && !suppressGlobalErrorToast) {
+		if (response.status !== 401 && !suppressGlobalErrorToast) {
 			toast.error(summaryForStatus(response.status), message);
 		}
 
@@ -167,5 +204,8 @@ async function baseFetch<T>(
 		return undefined as T;
 	}
 
-	return response.json();
+	// Tolerate empty 200 bodies (some auth endpoints reply 200 with no
+	// payload) — response.json() would throw on them.
+	const text = await response.text();
+	return (text ? JSON.parse(text) : undefined) as T;
 }

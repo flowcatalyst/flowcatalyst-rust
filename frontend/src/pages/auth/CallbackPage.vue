@@ -2,7 +2,6 @@
 import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
-import { mapLoginResponseToUser, type LoginResponse } from "@/api/auth";
 import { getErrorMessage } from "@/utils/errors";
 
 const router = useRouter();
@@ -66,8 +65,16 @@ onMounted(async () => {
 			throw new Error("Failed to fetch user info");
 		}
 
-		const userData: LoginResponse = await meResponse.json();
-		authStore.setUser(mapLoginResponseToUser(userData));
+		const userData = await meResponse.json();
+		authStore.setUser({
+			id: userData.principalId,
+			email: userData.email,
+			name: userData.name,
+			clientId: userData.clientId,
+			roles: Array.from(userData.roles || []),
+			permissions: [],
+			ssoManaged: userData.ssoManaged ?? false,
+		});
 
 		// Redirect to intended destination
 		const redirectPath =

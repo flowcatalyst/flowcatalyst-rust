@@ -517,10 +517,119 @@ async fn concurrent_copies_deliver_once() {
     });
     let (r1, r2) = tokio::join!(f.process(&j.id), f.process(&j.id));
     assert_eq!(f.calls(), 1);
-    let messages: Vec<Value> = vec![r1.1["message"].clone(), r2.1["message"].clone()];
-    assert!(messages.contains(&json!("already claimed")), "{messages:?}");
     assert_eq!((r1.0, r2.0), (StatusCode::OK, StatusCode::OK));
+    // The copy that lost the claim to the live attempt keeps its message:
+    // deferred until that attempt's lease ends, not acked away.
+    let lost = if r1.1["ack"] == json!(true) {
+        &r2.1
+    } else {
+        &r1.1
+    };
+    assert_eq!(lost["ack"], json!(false), "{lost}");
+    assert_eq!(lost["message"], json!("delivery in progress"));
+    let delay = lost["delaySeconds"].as_u64().expect("delaySeconds");
+    assert!((1..=60).contains(&delay), "{delay}");
     assert_eq!(f.row(&j.id).await.status, "COMPLETED");
+
+    // Its retry, once the job is finished, is acked without delivering.
+    assert_eq!(
+        f.process(&j.id).await,
+        (StatusCode::OK, json!({"ack": true}))
+    );
+    assert_eq!(f.calls(), 1);
+}
+
+impl Fixture {
+    /// Leave `id` PROCESSING as a claim made `ago` would.
+    async fn claimed(&self, id: &str, ago: chrono::Duration) {
+        sqlx::query(
+            "UPDATE msg_dispatch_jobs SET status = 'PROCESSING', last_attempt_at = $2, updated_at = $2 \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(Utc::now() - ago)
+        .execute(&self.pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// Delivery run 3, `platform-down`: the platform died mid-delivery, so the
+/// job is PROCESSING with nobody working on it. The router's next copy,
+/// once the attempt's lease has run out, delivers it (at-least-once) and the
+/// job completes. Go acks that copy and the job stays PROCESSING for good.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_claim_left_by_a_dead_attempt_is_taken_over_after_its_lease() {
+    let f = fixture().await;
+    let j = job(1);
+    f.insert(&j).await;
+    // Default timeout: 30 s delivery + 30 s margin.
+    f.claimed(&j.id, chrono::Duration::seconds(61)).await;
+
+    assert_eq!(
+        f.process(&j.id).await,
+        (StatusCode::OK, json!({"ack": true}))
+    );
+    assert_eq!(f.calls(), 1);
+    let row = f.row(&j.id).await;
+    assert_eq!(row.status, "COMPLETED");
+    // The dead attempt recorded nothing; this one is attempt 1.
+    let attempts = f.attempts(&j.id).await;
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].attempt_number, Some(1));
+}
+
+/// Delivered, but the outcome write fails: the job is still PROCESSING, so
+/// the message is kept (503 `ack:false`) for a later copy to recover,
+/// rather than acked away with the job stranded.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn an_unwritten_outcome_keeps_the_message() {
+    let f = fixture().await;
+    let j = job(1);
+    f.insert(&j).await;
+    for stmt in [
+        "CREATE FUNCTION refuse_completed() RETURNS trigger AS $$ \
+         BEGIN IF NEW.status = 'COMPLETED' THEN RAISE EXCEPTION 'refused'; END IF; RETURN NEW; END \
+         $$ LANGUAGE plpgsql",
+        "CREATE TRIGGER refuse_completed AFTER UPDATE ON msg_dispatch_jobs \
+         FOR EACH ROW EXECUTE FUNCTION refuse_completed()",
+    ] {
+        sqlx::query(stmt).execute(&f.pool).await.unwrap();
+    }
+
+    let (status, body) = f.process(&j.id).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["ack"], json!(false));
+    assert_eq!(f.calls(), 1);
+    assert_eq!(f.row(&j.id).await.status, "PROCESSING");
+}
+
+/// A claim still inside its lease may be a live attempt: the copy is
+/// deferred for what is left of the lease and nothing is delivered.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_live_claim_defers_the_copy_for_the_rest_of_its_lease() {
+    let f = fixture().await;
+    let mut j = job(1);
+    j.status = "QUEUED";
+    f.insert(&j).await;
+    sqlx::query("UPDATE msg_dispatch_jobs SET timeout_seconds = 10 WHERE id = $1")
+        .bind(&j.id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    // 10 s delivery + 30 s margin = 40 s lease, 15 s of it used.
+    f.claimed(&j.id, chrono::Duration::seconds(15)).await;
+
+    let (status, body) = f.process(&j.id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ack"], json!(false));
+    let delay = body["delaySeconds"].as_u64().unwrap();
+    assert!((24..=26).contains(&delay), "{delay}");
+    assert_eq!(f.calls(), 0);
+    assert_eq!(f.row(&j.id).await.status, "PROCESSING");
 }
 
 /// A BLOCK_ON_ERROR job whose group has an earlier failure goes back to

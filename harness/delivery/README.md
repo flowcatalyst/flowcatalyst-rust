@@ -26,7 +26,7 @@ Per run: **one Postgres** container (`postgres:17`, a database per side) and **o
 |---|---|---|
 | platform: API + stream processor, scheduler **off** | `fc-server` | `fc-server` |
 | worker: dispatch scheduler **on**, platform off | `fc-server` | `fc-server` |
-| router | `fc-server` with `MESSAGE_ROUTER_ENABLED=true`, `PLATFORM_ENABLED=false` | `fc-router-bin` |
+| router | `fc-server` with `MESSAGE_ROUTER_ENABLED=true`, `PLATFORM_ENABLED=false` | `fc-server`, the same |
 | outbox processor (SDK outbox table in the platform DB) | `fc-server` with `FC_OUTBOX_ENABLED=true` | `fc-outbox-processor` |
 
 Each side has its **own recording receiver** (an axum server on a random loopback port) so the two
@@ -62,10 +62,10 @@ shell leaks into either side.
 - The Rust binaries:
 
   ```sh
-  cargo build -p fc-server -p fc-router-bin -p fc-outbox-processor
+  cargo build -p fc-server -p fc-outbox-processor
   ```
 
-  or `--rust-bin-dir <dir>` holding `fc-server`, `fc-router-bin` (or `fc-router`) and
+  or `--rust-bin-dir <dir>` holding `fc-server` and
   `fc-outbox-processor` — e.g. built from a branch with fixes.
 
 ### Building Go
@@ -200,7 +200,7 @@ directory beside `go/*.log` and `rust/*.log` — one log per process.
   flips a bucket), the most requests in
   flight at the target at once, signature verdicts, outbox rows left, the queue depth, settle time
   and disruptions.
-- **Invariants broken**, per side, checked on that side alone: no loss, no duplicate acceptance,
+- **Invariants broken**, per side (with the entry citing it, if any), checked on that side alone: no loss, no duplicate acceptance,
   group order (default for BLOCK_ON_ERROR targets), retry budget, minimum retry gap, pool
   concurrency, valid signatures, and "everything accepted but jobs not terminal". A **Go**
   invariant failure means the scenario asks for something Go does not guarantee (fix the
@@ -228,6 +228,15 @@ Deliberate deviations from Go. Each entry must cite a ruling:
 `scenario` and `field` match exactly or by a prefix ending in `*` (`groupOrder/*`). On a full
 two-sided run an entry that matched nothing is **stale** and fails the run, so a fix that removes
 a difference must remove its excuse too. No `ruling`, no entry.
+
+A side's broken invariant is cited the same way, under the field `invariant/<side>/<kind>` —
+`kind` is the violation's prefix: `loss`, `duplicates`, `group-order`, `fifo`, `retry-budget`,
+`backoff`, `pool-concurrency`, `signature`, `status` (e.g. `invariant/go/loss`). A scenario whose
+only differences and broken invariants are all cited is ACCEPTED; an uncited broken invariant is
+still a FAIL. Citations are per side, so a Go defect's entry never excuses the same failure on Rust.
+
+`"intermittent": true` marks a difference that only shows when a disruption lands in a narrow
+window (a timing-dependent Go defect): such an entry is never reported stale.
 
 ## Things that made Go (and Rust) awkward to run
 

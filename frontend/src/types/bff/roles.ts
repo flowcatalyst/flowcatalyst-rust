@@ -1,7 +1,7 @@
 /**
  * BFF Role & Permission contracts — local type stubs.
  *
- * These mirror the shapes returned by the Rust BFF endpoints.
+ * These mirror the shapes returned by the BFF endpoints.
  */
 
 export interface BffRole {
@@ -63,6 +63,16 @@ export interface BffPermissionListResponse {
 	total: number;
 }
 
+// Body for POST /bff/roles/permissions — the four segments form the canonical
+// "application:context:aggregate:action" code; description is optional.
+export interface BffCreatePermissionRequest {
+	application: string;
+	context: string;
+	aggregate: string;
+	action: string;
+	description?: string;
+}
+
 // Re-export with aliases
 export type {
 	BffRole as Role,
@@ -73,6 +83,7 @@ export type {
 	BffCreateRoleRequest as CreateRoleRequest,
 	BffUpdateRoleRequest as UpdateRoleRequest,
 	BffPermissionListResponse as PermissionListResponse,
+	BffCreatePermissionRequest as CreatePermissionRequest,
 };
 
 // Derived enum type

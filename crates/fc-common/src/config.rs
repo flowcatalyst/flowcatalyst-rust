@@ -110,6 +110,34 @@ pub fn env_first_bool(keys: &[&str], default: bool) -> bool {
     default
 }
 
+/// Go's `envBool` truth table: `1/true/yes/on` and `0/false/no/off`,
+/// case-insensitive and trimmed; anything else is `None` (the caller's
+/// default stands).
+pub fn parse_go_bool(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Go's `envBoolAlias` generalised to N names: the first **non-empty**
+/// name decides, parsed with [`parse_go_bool`]; an unrecognised value there
+/// yields `default` — it does not fall through to the next name, exactly as
+/// Go's `envBoolAlias(key, alias, def)` returns `envBool(key, def)` whenever
+/// `key` is set. Use for the subsystem toggles a Go task definition sets
+/// (`PLATFORM_ENABLED`, `MESSAGE_ROUTER_ENABLED`, …).
+pub fn env_first_bool_go(keys: &[&str], default: bool) -> bool {
+    for key in keys {
+        if let Ok(v) = std::env::var(key) {
+            if !v.is_empty() {
+                return parse_go_bool(&v).unwrap_or(default);
+            }
+        }
+    }
+    default
+}
+
 /// [`env_first`] + numeric/typed parsing. An unparseable non-empty value
 /// is treated as unset and falls through to the next key, matching Go's
 /// `envIntAlias` (a malformed value doesn't win over a good one further
@@ -126,4 +154,22 @@ pub fn env_first_parse<T: FromStr>(keys: &[&str], default: T) -> T {
         }
     }
     default
+}
+
+#[cfg(test)]
+mod go_bool_tests {
+    use super::parse_go_bool;
+
+    #[test]
+    fn go_truth_table() {
+        for t in ["1", "true", "TRUE", " yes ", "On"] {
+            assert_eq!(parse_go_bool(t), Some(true), "{t}");
+        }
+        for f in ["0", "false", "False", "no", "OFF"] {
+            assert_eq!(parse_go_bool(f), Some(false), "{f}");
+        }
+        for u in ["", "maybe", "2", "enabled"] {
+            assert_eq!(parse_go_bool(u), None, "{u}");
+        }
+    }
 }

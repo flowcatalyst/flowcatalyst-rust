@@ -41,7 +41,7 @@ pub struct Options {
     pub go_src: PathBuf,
     /// Prebuilt Go `fc-server`; skips the Go build.
     pub go_bin_dir: Option<PathBuf>,
-    /// Directory holding `fc-server`, `fc-router-bin` (or `fc-router`) and
+    /// Directory holding `fc-server` (every role, the router included) and
     /// `fc-outbox-processor`.
     pub rust_bin_dir: PathBuf,
     pub keep_infra: bool,
@@ -134,7 +134,7 @@ fn rust_binaries(dir: &Path) -> anyhow::Result<Binaries> {
             .find(|p| p.exists())
             .with_context(|| {
                 format!(
-                    "none of {names:?} in {} — build with `cargo build -p fc-server -p fc-router-bin -p fc-outbox-processor` or pass --rust-bin-dir",
+                    "none of {names:?} in {} — build with `cargo build -p fc-server -p fc-outbox-processor` or pass --rust-bin-dir",
                     dir.display()
                 )
             })
@@ -142,8 +142,10 @@ fn rust_binaries(dir: &Path) -> anyhow::Result<Binaries> {
     let server = pick(&["fc-server"])?;
     Ok(Binaries {
         platform: server.clone(),
-        worker: server,
-        router: pick(&["fc-router-bin", "fc-router"])?,
+        worker: server.clone(),
+        // Production runs the router as fc-server in its router role
+        // (MESSAGE_ROUTER_ENABLED=true, PLATFORM_ENABLED=false), as Go does.
+        router: server,
         outbox: pick(&["fc-outbox-processor"])?,
     })
 }
@@ -180,6 +182,22 @@ pub fn select(scenarios: Vec<Scenario>, only: &Option<String>) -> Vec<Scenario> 
     }
 }
 
+/// Create the run directory and return it **absolute**. Every path derived
+/// from it (the JWT key pair, each side's log directory) is handed to
+/// processes that run with their side's directory as the working directory,
+/// so a relative one resolves somewhere else there. Run 3 was started with
+/// a relative `--report`: Go's platform could not read
+/// `FC_JWT_SIGNING_KEY_PATH`, signed with an ephemeral key, and every bearer
+/// the harness held died with the platform restart of `platform-down` —
+/// Go's `outbox-events` and `slow-target-timeout` then failed on 401
+/// `invalid_token` (Rust generated a key pair at the relative path under its
+/// own directory and reloaded it, so it survived).
+fn create_report_dir(dir: PathBuf) -> anyhow::Result<PathBuf> {
+    std::fs::create_dir_all(&dir)?;
+    dir.canonicalize()
+        .with_context(|| format!("resolve {}", dir.display()))
+}
+
 /// Run the harness; returns the report (already written to disk).
 pub async fn run(opts: Options) -> anyhow::Result<Report> {
     let scenarios = select(scenario::load_dir(&opts.scenarios_dir)?, &opts.only);
@@ -189,11 +207,11 @@ pub async fn run(opts: Options) -> anyhow::Result<Report> {
     let expected: Vec<ExpectedDiff> = compare::load_expected(&opts.expected_diffs)?;
     let id = run_id();
     let root = workspace_root();
-    let report_dir = opts
-        .report_dir
-        .clone()
-        .unwrap_or_else(|| root.join("target/delivery-harness").join(&id));
-    std::fs::create_dir_all(&report_dir)?;
+    let report_dir = create_report_dir(
+        opts.report_dir
+            .clone()
+            .unwrap_or_else(|| root.join("target/delivery-harness").join(&id)),
+    )?;
     eprintln!("delivery harness run {id} → {}", report_dir.display());
 
     // Binaries first: a missing binary is a side error, not a crash.
@@ -316,4 +334,24 @@ pub async fn run(opts: Options) -> anyhow::Result<Report> {
     report.write(&report_dir)?;
     eprintln!("report: {}", report_dir.join("report.md").display());
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A relative `--report` comes back absolute, so the key pair and log
+    /// paths handed to the side processes resolve from any working
+    /// directory.
+    #[test]
+    fn the_report_dir_is_made_absolute() {
+        let rel = PathBuf::from(format!(
+            "target/delivery-harness-test-{}",
+            std::process::id()
+        ));
+        let abs = create_report_dir(rel.clone()).unwrap();
+        assert!(abs.is_absolute(), "{}", abs.display());
+        assert!(abs.ends_with(&rel));
+        std::fs::remove_dir_all(&abs).unwrap();
+    }
 }

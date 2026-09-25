@@ -1,17 +1,18 @@
 import { apiFetch } from "./client";
+import type {
+	AllowedOriginResponse,
+	CorsOriginListResponse as GenCorsOriginListResponse,
+	CreatedResponse,
+	PublicAllowedResponse,
+} from "./generated";
 
-export interface CorsOrigin {
-	id: string;
-	origin: string;
-	description: string | null;
-	createdBy: string;
-	createdAt: string;
-}
-
-export interface CorsOriginListResponse {
-	corsOrigins: CorsOrigin[];
-	total: number;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports. (`description`/`createdBy` are optional on the
+// wire — not `| null` / required as the old hand-rolled type claimed — and
+// the wire also carries `updatedAt`.)
+export type CorsOrigin = AllowedOriginResponse;
+export type CorsOriginListResponse = GenCorsOriginListResponse;
 
 export interface CreateCorsOriginRequest {
 	origin: string;
@@ -27,11 +28,14 @@ export const corsApi = {
 		return apiFetch(`/platform/cors/${id}`);
 	},
 
-	getAllowed(): Promise<{ origins: string[] }> {
+	getAllowed(): Promise<PublicAllowedResponse> {
 		return apiFetch("/platform/cors/allowed");
 	},
 
-	create(data: CreateCorsOriginRequest): Promise<CorsOrigin> {
+	// POST returns the standard created envelope `{ id }` (201), not the full
+	// origin as the old hand-rolled type claimed. Re-fetch the list to show
+	// the new row.
+	create(data: CreateCorsOriginRequest): Promise<CreatedResponse> {
 		return apiFetch("/platform/cors", {
 			method: "POST",
 			body: JSON.stringify(data),

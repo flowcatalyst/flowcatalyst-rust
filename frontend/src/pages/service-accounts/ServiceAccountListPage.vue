@@ -1,52 +1,52 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { FilterMatchMode } from "@primevue/core/api";
 import {
 	serviceAccountsApi,
 	type ServiceAccount,
 } from "@/api/service-accounts";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 import { useClientOptions } from "@/composables/useClientOptions";
 import ClientFilter from "@/components/ClientFilter.vue";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 const { ensureLoaded: ensureClients, getLabel: getClientLabel } = useClientOptions();
 
 const serviceAccounts = ref<ServiceAccount[]>([]);
 const loading = ref(true);
 
-const { filters, hasActiveFilters, clearFilters: clearListFilters } = useListState({
-	filters: {
-		q: { type: "string" as const, key: "q" },
-		clientId: { type: "string" as const, key: "clientId" },
-		active: { type: "string" as const, key: "active" },
+const listState = useListState(
+	{
+		filters: {
+			q: { type: "string", key: "q" },
+			clientId: { type: "string", key: "clientId" },
+			active: { type: "boolean", key: "active" },
+		},
 	},
-}, () => {
-	loadServiceAccounts();
-});
+	() => loadServiceAccounts(),
+);
+const { filters } = listState;
 
-const statusOptions = [
-	{ label: "Active", value: "active" },
-	{ label: "Inactive", value: "inactive" },
+// Hybrid table: clientId + active go to the API (listState onChange →
+// loadServiceAccounts) while `q` filters client-side via the global filter.
+// Rows carry `clientIds` (an array, no scalar clientId), so the client filter
+// re-applies by membership via CONTAINS — the server-filtered rows already
+// match, keeping it a no-op; `active` is an idempotent EQUALS.
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[
+		{ field: "clientIds", param: "clientId", matchMode: FilterMatchMode.CONTAINS },
+		{ field: "active", param: "active" },
+	],
+);
+
+const statusFilterOptions = [
+	{ label: "Active", value: true },
+	{ label: "Inactive", value: false },
 ];
-
-const filteredServiceAccounts = computed(() => {
-	let result = serviceAccounts.value;
-
-	// Client-side search filter (name/code)
-	if (filters.q.value) {
-		const query = filters.q.value.toLowerCase();
-		result = result.filter(
-			(sa) =>
-				sa.name?.toLowerCase().includes(query) ||
-				sa.code?.toLowerCase().includes(query),
-		);
-	}
-
-	return result;
-});
 
 onMounted(async () => {
 	await Promise.all([loadServiceAccounts(), ensureClients()]);
@@ -57,12 +57,7 @@ async function loadServiceAccounts() {
 	try {
 		const response = await serviceAccountsApi.list({
 			clientId: filters.clientId.value || undefined,
-			active:
-				filters.active.value === "active"
-					? true
-					: filters.active.value === "inactive"
-						? false
-						: undefined,
+			active: filters.active.value !== null ? filters.active.value : undefined,
 		});
 		serviceAccounts.value = response.serviceAccounts;
 	} catch (error) {
@@ -72,20 +67,22 @@ async function loadServiceAccounts() {
 	}
 }
 
-function clearFilters() {
-	clearListFilters();
-}
-
 function addServiceAccount() {
-	router.push("/identity/service-accounts/new");
+	void router.push({ path: "/identity/service-accounts/new", query: route.query });
 }
 
 function viewServiceAccount(sa: ServiceAccount) {
-	navigateToDetail(`/identity/service-accounts/${sa.id}`);
+	void router.push({
+		path: `/identity/service-accounts/${sa.id}`,
+		query: route.query,
+	});
 }
 
 function editServiceAccount(sa: ServiceAccount) {
-	navigateToDetail(`/identity/service-accounts/${sa.id}`, { edit: "true" });
+	void router.push({
+		path: `/identity/service-accounts/${sa.id}`,
+		query: { ...route.query, edit: "true" },
+	});
 }
 
 function getClientName(clientId: string): string {
@@ -93,8 +90,8 @@ function getClientName(clientId: string): string {
 }
 
 function getClientNames(clientIds: string[]): string {
-	// The tier follows the links: no links is ANCHOR, which reaches every client.
-	const first = clientIds?.[0];
+	if (!clientIds || clientIds.length === 0) return "All";
+	const first = clientIds[0];
 	if (first === undefined) return "All";
 	if (clientIds.length === 1) return getClientName(first);
 	if (clientIds.length <= 2)
@@ -118,65 +115,13 @@ function formatDate(dateStr: string | undefined | null) {
       <Button label="Add Service Account" icon="pi pi-plus" @click="addServiceAccount" />
     </header>
 
-    <!-- Filters -->
-    <div class="fc-card filter-card">
-      <div class="filter-row">
-        <div class="filter-group">
-          <label>Search</label>
-          <IconField>
-            <InputIcon class="pi pi-search" />
-            <InputText
-              v-model="filters.q.value"
-              placeholder="Search by name or code..."
-              class="filter-input"
-            />
-          </IconField>
-        </div>
-
-        <div class="filter-group">
-          <label>Client</label>
-          <ClientFilter
-            v-model="filters.clientId.value"
-            :multiple="false"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-group">
-          <label>Status</label>
-          <Select
-            v-model="filters.active.value"
-            :options="statusOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All Statuses"
-            :showClear="true"
-            class="filter-input"
-          />
-        </div>
-
-        <div class="filter-actions">
-          <Button
-            v-if="hasActiveFilters"
-            label="Clear Filters"
-            icon="pi pi-filter-slash"
-            text
-            severity="secondary"
-            @click="clearFilters"
-          />
-        </div>
-      </div>
-    </div>
-
     <!-- Data Table -->
     <div class="fc-card table-card">
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredServiceAccounts"
+        :value="serviceAccounts"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['name', 'code']"
         :paginator="true"
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
@@ -184,7 +129,44 @@ function formatDate(dateStr: string | undefined | null) {
         currentPageReportTemplate="Showing {first} to {last} of {totalRecords} service accounts"
         stripedRows
         size="small"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => viewServiceAccount(e.data)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search by name or code..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Client">
+                <ClientFilter
+                  v-model="filters.clientId.value"
+                  :multiple="false"
+                  appendTo="self"
+                />
+              </FcFormField>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.active.value"
+                    :options="statusFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+
         <Column field="name" header="Name" sortable style="width: 20%">
           <template #body="{ data }">
             <span class="sa-name">{{ data.name }}</span>
@@ -248,20 +230,12 @@ function formatDate(dateStr: string | undefined | null) {
           <template #body="{ data }">
             <div class="action-buttons">
               <Button
-                icon="pi pi-eye"
-                text
-                rounded
-                severity="secondary"
-                @click="viewServiceAccount(data)"
-                v-tooltip.top="'View'"
-              />
-              <Button
+                v-tooltip.top="'Edit'"
                 icon="pi pi-pencil"
                 text
                 rounded
                 severity="secondary"
-                @click="editServiceAccount(data)"
-                v-tooltip.top="'Edit'"
+                @click.stop="editServiceAccount(data)"
               />
             </div>
           </template>
@@ -271,57 +245,28 @@ function formatDate(dateStr: string | undefined | null) {
           <div class="empty-message">
             <i class="pi pi-server"></i>
             <span>No service accounts found</span>
-            <Button v-if="hasActiveFilters" label="Clear filters" link @click="clearFilters" />
+            <Button
+              v-if="listState.hasActiveFilters.value"
+              label="Clear filters"
+              link
+              @click="clearAll"
+            />
           </div>
         </template>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadServiceAccounts" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.filter-card {
-  margin-bottom: 24px;
-}
-
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 200px;
-}
-
-.filter-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #475569;
-}
-
-.filter-input {
-  width: 100%;
-}
-
-.filter-actions {
-  margin-left: auto;
-}
-
 .table-card {
   padding: 0;
   overflow: hidden;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 60px;
 }
 
 .sa-name {
@@ -393,21 +338,5 @@ function formatDate(dateStr: string | undefined | null) {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-@media (max-width: 1024px) {
-  .filter-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .filter-group {
-    min-width: 100%;
-  }
-
-  .filter-actions {
-    margin-left: 0;
-    margin-top: 8px;
-  }
 }
 </style>

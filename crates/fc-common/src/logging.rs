@@ -21,7 +21,7 @@
 //! # Environment Variables
 //!
 //! - `LOG_FORMAT`: Set to "json" for JSON output, anything else for text (default: text)
-//! - `RUST_LOG`: Standard log level filter (default: info)
+//! - `RUST_LOG`: Standard log level filter (default: Go's `FC_LOG_LEVEL`, else info)
 //!   Examples: `RUST_LOG=debug`, `RUST_LOG=fc_router=trace,tower_http=info`
 //!
 //! # Adding Context to Requests
@@ -60,11 +60,13 @@ use tracing_subscriber::{
 /// - "json" -> JSON output (for production/log aggregation)
 /// - anything else -> human-readable text (for development)
 ///
-/// Reads RUST_LOG env var for log level filtering (defaults to INFO).
+/// Reads RUST_LOG env var for log level filtering; when it is unset, Go's
+/// FC_LOG_LEVEL (debug/warn/error, default info).
 pub fn init_logging(_service_name: &str) {
     let log_format = std::env::var("LOG_FORMAT").unwrap_or_default();
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(go_log_level(std::env::var("FC_LOG_LEVEL").ok())));
 
     if log_format.eq_ignore_ascii_case("json") {
         init_json_logging(env_filter);
@@ -75,27 +77,28 @@ pub fn init_logging(_service_name: &str) {
 
 /// Initialize logging for a production server, as Go's fc-server logs:
 /// JSON unless `LOG_FORMAT` says otherwise (`text`), and the level from
-/// `RUST_LOG`, else Go's `FC_LOG_LEVEL` (`debug`/`info`/`warn`/`error`), else
-/// info.
+/// `RUST_LOG`, else Go's `FC_LOG_LEVEL`, else info.
 pub fn init_production_logging(_service_name: &str) {
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        let level = match std::env::var("FC_LOG_LEVEL")
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "debug" => "debug",
-            "warn" | "warning" => "warn",
-            "error" => "error",
-            _ => "info",
-        };
-        EnvFilter::new(level)
-    });
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(go_log_level(std::env::var("FC_LOG_LEVEL").ok())));
     let format = std::env::var("LOG_FORMAT").unwrap_or_default();
     if format.is_empty() || format.eq_ignore_ascii_case("json") {
         init_json_logging(env_filter);
     } else {
         init_text_logging(env_filter);
+    }
+}
+
+/// Go's `FC_LOG_LEVEL` (`internal/logging`), the fallback when `RUST_LOG`
+/// is unset: `debug`, `warn`/`warning` and `error`; anything else is
+/// `info`. Case-insensitive (Go matches the all-lower and all-upper
+/// spellings; a mixed-case value here is read, not dropped to `info`).
+fn go_log_level(raw: Option<String>) -> &'static str {
+    match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("debug") => "debug",
+        Some("warn" | "warning") => "warn",
+        Some("error") => "error",
+        _ => "info",
     }
 }
 
@@ -147,5 +150,15 @@ mod tests {
         // Just verify the filter can be created
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
         drop(filter);
+    }
+
+    #[test]
+    fn go_log_level_names() {
+        assert_eq!(go_log_level(None), "info");
+        assert_eq!(go_log_level(Some("DEBUG".into())), "debug");
+        assert_eq!(go_log_level(Some("warning".into())), "warn");
+        assert_eq!(go_log_level(Some("ERROR".into())), "error");
+        assert_eq!(go_log_level(Some("Debug".into())), "debug");
+        assert_eq!(go_log_level(Some("verbose".into())), "info");
     }
 }

@@ -6,29 +6,20 @@
  */
 
 import { apiFetch } from "./client";
+import type {
+	EventFilterOptionsResponse,
+	EventRead as GenEventRead,
+	EventResponse,
+} from "./generated";
 
-export interface EventRead {
-	id: string;
-	type: string;
-	source: string;
-	subject?: string | null;
-	time: string;
-	application?: string | null;
-	subdomain?: string | null;
-	aggregate?: string | null;
-	messageGroup?: string | null;
-	correlationId?: string | null;
-	clientId?: string | null;
-	projectedAt: string;
-}
-
-export interface EventDetail extends EventRead {
-	specVersion?: string;
-	deduplicationId?: string;
-	causationId?: string;
-	data?: unknown;
-	contextData?: { key: string; value: string }[];
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports. Absent fields are `undefined` (not `null`) on
+// the wire; GET /events/{id} returns the full EventResponse, which is not
+// a strict superset of the list row (e.g. `projectedAt` is optional there).
+export type EventRead = GenEventRead;
+export type EventDetail = EventResponse;
+export type EventFilterOptions = EventFilterOptionsResponse;
 
 export interface EventsListParams {
 	size?: number;
@@ -39,12 +30,6 @@ export interface EventsListParams {
 	types?: string[] | undefined;
 	correlationId?: string | undefined;
 	source?: string | undefined;
-}
-
-export interface EventFilterOptions {
-	applications: { value: string; label: string }[];
-	subdomains: { value: string; label: string }[];
-	eventTypes: { value: string; label: string }[];
 }
 
 function buildQuery(params: EventsListParams): string {

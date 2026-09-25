@@ -1,51 +1,26 @@
 import { apiFetch } from "./client";
+import type {
+	ConfigEntryDto,
+	CreatedResponse,
+	EventTypeBindingDto,
+	SubscriptionListResponse as GenSubscriptionListResponse,
+	SubscriptionResponse,
+} from "./generated";
 
+// Request-side string unions the forms rely on. The generated response
+// types deliberately stay `string` (the spec doesn't carry enums — see
+// docs/frontend-api-types-adoption.md on SDK coordination).
 export type SubscriptionStatus = "ACTIVE" | "PAUSED";
 export type SubscriptionSource = "API" | "UI";
 export type SubscriptionMode = "IMMEDIATE" | "NEXT_ON_ERROR" | "BLOCK_ON_ERROR";
 
-export interface EventTypeBinding {
-	eventTypeId: string;
-	eventTypeCode: string;
-	specVersion: string;
-}
-
-export interface ConfigEntry {
-	key: string;
-	value: string;
-}
-
-export interface Subscription {
-	id: string;
-	code: string;
-	applicationCode?: string;
-	name: string;
-	description?: string;
-	endpoint: string;
-	clientScoped: boolean;
-	clientId?: string;
-	clientIdentifier?: string;
-	eventTypes: EventTypeBinding[];
-	connectionId?: string;
-	queue: string;
-	customConfig?: ConfigEntry[];
-	source: SubscriptionSource;
-	status: SubscriptionStatus;
-	maxAgeSeconds: number;
-	dispatchPoolId: string;
-	dispatchPoolCode: string;
-	delaySeconds: number;
-	sequence: number;
-	mode: SubscriptionMode;
-	timeoutSeconds: number;
-	createdAt: string;
-	updatedAt: string;
-}
-
-export interface SubscriptionListResponse {
-	subscriptions: Subscription[];
-	total: number;
-}
+// Response types alias the generated contract (api/openapi.lock.json) so
+// `vue-tsc` fails on backend drift. Aliased under the historical names so
+// pages keep their imports.
+export type Subscription = SubscriptionResponse;
+export type SubscriptionListResponse = GenSubscriptionListResponse;
+export type EventTypeBinding = EventTypeBindingDto;
+export type ConfigEntry = ConfigEntryDto;
 
 export interface CreateSubscriptionRequest {
 	code: string;
@@ -94,11 +69,6 @@ export interface SubscriptionFilters {
 	anchorLevel?: boolean;
 }
 
-export interface StatusResponse {
-	message: string;
-	subscriptionId: string;
-}
-
 export const subscriptionsApi = {
 	list(filters: SubscriptionFilters = {}): Promise<SubscriptionListResponse> {
 		const params = new URLSearchParams();
@@ -120,7 +90,8 @@ export const subscriptionsApi = {
 		return apiFetch(`/subscriptions/${id}`);
 	},
 
-	create(data: CreateSubscriptionRequest): Promise<Subscription> {
+	/** POST /subscriptions returns the standard created envelope `{ id }`, not the full subscription. */
+	create(data: CreateSubscriptionRequest): Promise<CreatedResponse> {
 		return apiFetch("/subscriptions", {
 			method: "POST",
 			body: JSON.stringify(data),
@@ -134,19 +105,21 @@ export const subscriptionsApi = {
 		});
 	},
 
-	delete(id: string): Promise<StatusResponse> {
+	// delete/pause/resume return 204 No Content on the wire; the old
+	// `{ message, subscriptionId }` envelope never existed.
+	delete(id: string): Promise<void> {
 		return apiFetch(`/subscriptions/${id}`, {
 			method: "DELETE",
 		});
 	},
 
-	pause(id: string): Promise<StatusResponse> {
+	pause(id: string): Promise<void> {
 		return apiFetch(`/subscriptions/${id}/pause`, {
 			method: "POST",
 		});
 	},
 
-	resume(id: string): Promise<StatusResponse> {
+	resume(id: string): Promise<void> {
 		return apiFetch(`/subscriptions/${id}/resume`, {
 			method: "POST",
 		});

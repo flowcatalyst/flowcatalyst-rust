@@ -74,13 +74,15 @@ use tower_http::trace::TraceLayer;
 use anyhow::Result;
 use axum::http::{header as http_header, HeaderValue, Method};
 use tokio::{net::TcpListener, sync::watch};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
 use fc_platform::usecase::PgUnitOfWork;
 
-use fc_common::config::{env_bool, env_first, env_first_parse, env_or, env_or_parse};
+use fc_common::config::{
+    env_bool, env_first, env_first_bool_go, env_first_parse, env_or, env_or_parse,
+};
 
 /// Resolve database URL and (optionally) the live `SecretProvider` it came from.
 ///
@@ -122,21 +124,6 @@ async fn resolve_database_url() -> Result<(
             );
             Ok((url, Some(provider as Arc<dyn SecretProvider>)))
         }
-    }
-}
-
-/// A subsystem toggle read as Go's `envBoolAlias` reads it: the primary
-/// name when it is set (non-empty), else the alias; `1`/`true`/`yes`/`on`
-/// and `0`/`false`/`no`/`off` (any case), anything else the default.
-fn toggle(primary: &str, alias: &str, default: bool) -> bool {
-    let raw = std::env::var(primary)
-        .ok()
-        .filter(|v| !v.is_empty())
-        .or_else(|| std::env::var(alias).ok().filter(|v| !v.is_empty()));
-    match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-        Some("1" | "true" | "yes" | "on") => true,
-        Some("0" | "false" | "no" | "off") => false,
-        _ => default,
     }
 }
 
@@ -214,13 +201,13 @@ async fn main() -> Result<()> {
     info!("Starting FlowCatalyst Unified Server");
 
     // ── Configuration ────────────────────────────────────────────────────────
-    // Each env var supports both the Rust name (FC_ prefix) and the TS name for
-    // compatibility with existing ECS task definitions.
-    // Go's defaults: the API on 8080 (the port the ECS task maps and the
-    // worker task, which sets no PORT, listens on), metrics on 9090.
+    // Go's names first (internal/server/envcfg.go LoadEnv), then the aliases
+    // the ECS task definitions set. Toggles use Go's envBool truth table.
+    // API port: FC_API_PORT, then PORT, default 8080 — Go's. (The router
+    // task definition's API_PORT is not read, exactly as Go ignores it; its
+    // value is Go's default anyway.)
     let api_port: u16 = env_first_parse(&["FC_API_PORT", "PORT"], 8080);
     let metrics_port: u16 = env_or_parse("FC_METRICS_PORT", 9090);
-    let (database_url, secret_provider) = resolve_database_url().await?;
     // JWT issuer should be the external base URL per OIDC spec
     let jwt_issuer = env_first(
         &["FC_JWT_ISSUER", "FC_EXTERNAL_BASE_URL", "EXTERNAL_BASE_URL"],
@@ -228,25 +215,30 @@ async fn main() -> Result<()> {
     );
 
     // Subsystem toggles (TS names: PLATFORM_ENABLED, MESSAGE_ROUTER_ENABLED, etc.)
-    let platform_enabled = toggle("FC_PLATFORM_ENABLED", "PLATFORM_ENABLED", true);
-    let router_enabled = toggle("FC_ROUTER_ENABLED", "MESSAGE_ROUTER_ENABLED", false);
-    let scheduler_enabled = toggle("FC_SCHEDULER_ENABLED", "DISPATCH_SCHEDULER_ENABLED", false);
+    let platform_enabled = env_first_bool_go(&["FC_PLATFORM_ENABLED", "PLATFORM_ENABLED"], true);
+    let router_enabled = env_first_bool_go(&["FC_ROUTER_ENABLED", "MESSAGE_ROUTER_ENABLED"], false);
+    let scheduler_enabled = env_first_bool_go(
+        &["FC_SCHEDULER_ENABLED", "DISPATCH_SCHEDULER_ENABLED"],
+        false,
+    );
     // The scheduled-job cron engine has its own toggle, as in Go (the worker
     // task sets FC_SCHEDULED_JOB_ENABLED=true beside the dispatch scheduler).
-    let scheduled_job_enabled = toggle(
-        "FC_SCHEDULED_JOB_ENABLED",
-        "SCHEDULED_JOB_SCHEDULER_ENABLED",
+    let scheduled_job_enabled = env_first_bool_go(
+        &[
+            "FC_SCHEDULED_JOB_ENABLED",
+            "SCHEDULED_JOB_SCHEDULER_ENABLED",
+        ],
         false,
     );
-    let stream_enabled = toggle(
-        "FC_STREAM_PROCESSOR_ENABLED",
-        "STREAM_PROCESSOR_ENABLED",
+    let stream_enabled = env_first_bool_go(
+        &["FC_STREAM_PROCESSOR_ENABLED", "STREAM_PROCESSOR_ENABLED"],
         false,
     );
-    let outbox_enabled = toggle("FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED", false);
+    let outbox_enabled =
+        env_first_bool_go(&["FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED"], false);
 
     // Standby / HA
-    let standby_enabled = toggle("FC_STANDBY_ENABLED", "STANDBY_ENABLED", false);
+    let standby_enabled = env_first_bool_go(&["FC_STANDBY_ENABLED", "STANDBY_ENABLED"], false);
     let standby_redis_url = env_first(
         &["FC_STANDBY_REDIS_URL", "REDIS_URL"],
         "redis://127.0.0.1:6379",
@@ -261,8 +253,19 @@ async fn main() -> Result<()> {
         stream = stream_enabled,
         outbox = outbox_enabled,
         standby = standby_enabled,
+        api_port,
+        metrics_port,
         "Subsystem configuration"
     );
+
+    // The router's environment is validated before anything connects: a
+    // half-configured platform credential refuses to start, as Go's
+    // newRouterServer does.
+    let router_env = if router_enabled {
+        Some(fc_router::bootstrap::RouterEnv::from_env()?)
+    } else {
+        None
+    };
 
     // A malformed FLOWCATALYST_APP_KEY is fatal at boot, as in Go (an unset
     // one is the documented "encryption disabled" state).
@@ -270,6 +273,282 @@ async fn main() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("FLOWCATALYST_APP_KEY: {e}"))?;
 
     // ── Database ─────────────────────────────────────────────────────────────
+    // Only the subsystems that read or write Postgres need it (Go:
+    // `needsDB`). A router-only instance (MESSAGE_ROUTER_ENABLED=true,
+    // PLATFORM_ENABLED=false) reads its configuration from the platform API
+    // and connects to no database at all.
+    let needs_db = platform_enabled
+        || stream_enabled
+        || scheduler_enabled
+        || scheduled_job_enabled
+        || outbox_enabled;
+    let db = if needs_db {
+        Some(connect_database().await?)
+    } else {
+        info!(
+            router = router_enabled,
+            "no database-backed subsystem enabled; skipping postgres connect/migrate/seed"
+        );
+        None
+    };
+
+    // ── Leader Election ──────────────────────────────────────────────────────
+    // Shared watch channel: true = active (process), false = standby (pause)
+    let (active_tx, active_rx) = watch::channel(!standby_enabled); // if standby disabled, always active
+
+    let leader_election: Option<Arc<fc_standby::LeaderElection>> = if standby_enabled {
+        info!(redis_url = %standby_redis_url, lock_key = %standby_lock_key, "Initializing leader election");
+        let config = fc_standby::LeaderElectionConfig::new(standby_redis_url)
+            .with_lock_key(standby_lock_key);
+        let election = Arc::new(
+            fc_standby::LeaderElection::new(config)
+                .await
+                .map_err(|e| anyhow::anyhow!("Leader election init failed: {}", e))?,
+        );
+        election
+            .clone()
+            .start()
+            .await
+            .map_err(|e| anyhow::anyhow!("Leader election start failed: {}", e))?;
+
+        // Bridge leadership status changes to the active watch channel
+        let mut status_rx = election.subscribe();
+        let active_tx_clone = active_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                if status_rx.changed().await.is_err() {
+                    break;
+                }
+                let is_leader = *status_rx.borrow() == fc_standby::LeadershipStatus::Leader;
+                let _ = active_tx_clone.send(is_leader);
+            }
+        });
+
+        Some(election)
+    } else {
+        None
+    };
+
+    let is_leader = move || leader_election.as_ref().is_none_or(|e| e.is_leader());
+
+    // ── Platform ─────────────────────────────────────────────────────────────
+    let (app, repos) = match db.as_ref() {
+        Some(db) => {
+            let (app, repos) =
+                init_platform(db, platform_enabled, api_port, jwt_issuer, standby_enabled).await?;
+            (app, Some(repos))
+        }
+        None => (minimal_app(), None),
+    };
+
+    // ── Router ───────────────────────────────────────────────────────────────
+    // Go mounts the router's HTTP surface under FC_ROUTER_HTTP_PREFIX
+    // (default /router) on the API listener; `/health` at the root stays the
+    // plain liveness answer the load balancer probes.
+    let (app, router_runtime) = match router_env {
+        Some(env) => {
+            info!("Starting message router subsystem...");
+            let (runtime, router_app) = start_router(&env, active_rx.clone()).await?;
+            let prefix = env
+                .http_prefix
+                .clone()
+                .filter(|p| !p.trim().is_empty() && p.trim() != "/")
+                .map(|p| format!("/{}", p.trim().trim_matches('/')))
+                .unwrap_or_else(|| "/router".to_string());
+            info!(prefix = %prefix, "router HTTP mounted");
+            (app.nest(&prefix, router_app), Some(runtime))
+        }
+        None => (app, None),
+    };
+
+    // ── Background Processors ────────────────────────────────────────────────
+
+    // Scheduler (dispatch job polling)
+    if scheduler_enabled {
+        let db = db.as_ref().expect("scheduler needs the database");
+        info!("Starting scheduler subsystem...");
+        spawn_scheduler(&db.pool, active_rx.clone(), api_port).await?;
+    }
+
+    // Scheduled-job cron engine (its own toggle, as Go)
+    if scheduled_job_enabled {
+        let repos = repos
+            .as_ref()
+            .expect("the scheduled-job scheduler needs the repositories");
+        info!("Starting scheduled-job scheduler subsystem...");
+        spawn_scheduled_job_scheduler(repos, active_rx.clone()).await?;
+    }
+
+    // Stream processor (CQRS projections)
+    let _stream_handle = if stream_enabled {
+        let db = db.as_ref().expect("stream processor needs the database");
+        info!("Starting stream processor subsystem...");
+        Some(
+            spawn_stream_processor(
+                &db.url,
+                db.secret_provider.clone(),
+                db.secret_refresh_interval,
+                active_rx.clone(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
+    // Outbox processor
+    if outbox_enabled {
+        info!("Starting outbox processor subsystem...");
+        spawn_outbox_processor(active_rx.clone()).await?;
+    }
+
+    // ── ALB Traffic Watcher ──────────────────────────────────────────────────
+    #[cfg(feature = "alb")]
+    if env_bool("FC_ALB_ENABLED", false) && router_enabled {
+        if let Some(ref election) = leader_election {
+            let status_rx = election.subscribe();
+            let alb_config = fc_router::AlbTrafficConfig {
+                target_group_arn: std::env::var("FC_ALB_TARGET_GROUP_ARN")
+                    .expect("FC_ALB_TARGET_GROUP_ARN required when FC_ALB_ENABLED=true"),
+                target_id: std::env::var("FC_ALB_TARGET_ID")
+                    .expect("FC_ALB_TARGET_ID required when FC_ALB_ENABLED=true"),
+                target_port: env_or_parse("FC_ALB_TARGET_PORT", 8080),
+            };
+            let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+            let strategy = Arc::new(fc_router::AwsAlbTrafficStrategy::new(
+                alb_config,
+                &aws_config,
+            ));
+            fc_router::spawn_traffic_watcher(strategy, status_rx);
+            info!("ALB traffic watcher started");
+        } else {
+            warn!("FC_ALB_ENABLED=true but FC_STANDBY_ENABLED=false — ALB watcher requires standby mode");
+        }
+    }
+
+    // ── Start HTTP Servers ───────────────────────────────────────────────────
+    let api_addr = format!("0.0.0.0:{}", api_port);
+    info!("API server listening on http://{}", api_addr);
+    let api_listener = TcpListener::bind(&api_addr).await?;
+    // Stops both listeners at shutdown; see `drain_http`.
+    let http_stop = tokio_util::sync::CancellationToken::new();
+    // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
+    let api_task = {
+        let stop = http_stop.clone();
+        tokio::spawn(async move {
+            fc_platform::router::serve_api(api_listener, app, stop.cancelled_owned()).await;
+        })
+    };
+
+    let metrics_addr = format!("0.0.0.0:{}", metrics_port);
+    info!(
+        "Metrics server listening on http://{}/metrics",
+        metrics_addr
+    );
+
+    let is_leader_for_health = is_leader.clone();
+    let health_state = HealthState {
+        platform_enabled,
+        router_enabled,
+        scheduler_enabled,
+        scheduled_job_enabled,
+        stream_enabled,
+        outbox_enabled,
+        is_leader: Arc::new(is_leader_for_health),
+    };
+
+    let metrics_app = Router::new()
+        .route("/metrics", get(metrics_handler))
+        .route(
+            "/health",
+            get({
+                let state = health_state.clone();
+                move || combined_health_handler(state.clone())
+            }),
+        )
+        .route(
+            "/ready",
+            get({
+                let state = health_state.clone();
+                move || ready_handler(state.clone())
+            }),
+        );
+
+    let metrics_listener = TcpListener::bind(&metrics_addr).await?;
+    let metrics_task = {
+        let stop = http_stop.clone();
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(metrics_listener, metrics_app)
+                .with_graceful_shutdown(stop.cancelled_owned())
+                .await
+            {
+                warn!(error = %e, "metrics server stopped with an error");
+            }
+        })
+    };
+
+    // ── Startup Summary ──────────────────────────────────────────────────────
+    let state = |on: bool| if on { "ENABLED" } else { "DISABLED" };
+    info!("=== FlowCatalyst Unified Server Started ===");
+    info!("  Platform API: {}", state(platform_enabled));
+    info!("  Router:       {}", state(router_enabled));
+    info!("  Scheduler:    {}", state(scheduler_enabled));
+    info!("  Scheduled jobs: {}", state(scheduled_job_enabled));
+    info!("  Stream:       {}", state(stream_enabled));
+    info!("  Outbox:       {}", state(outbox_enabled));
+    info!(
+        "  Database:     {}",
+        if needs_db { "CONNECTED" } else { "NONE" }
+    );
+    if standby_enabled {
+        info!("  HA Mode:      STANDBY (Redis leader election)");
+        info!("  Leader:       {}", is_leader());
+    } else {
+        info!("  HA Mode:      DISABLED (always active)");
+    }
+    info!("=============================================");
+
+    // ── Shutdown ─────────────────────────────────────────────────────────────
+    fc_platform::shared::server_setup::wait_for_shutdown_signal().await;
+    info!("Shutdown signal received...");
+
+    // Signal all background processors to stop via the active channel
+    let _ = active_tx.send(false);
+
+    // The router drains its pools before the listeners go (Go: Run cancels
+    // the subsystems, then waits for them).
+    if let Some(runtime) = router_runtime {
+        runtime.shutdown().await;
+    }
+
+    // Then let the HTTP servers drain, as Go's `server.Run` does
+    // (`apiSrv.Shutdown` with 30 s): stop accepting, finish the requests in
+    // flight. A `/api/dispatch/process` call in flight has already sent its
+    // webhook; aborting it lost the outcome and left the job PROCESSING
+    // (delivery run 3, `platform-down`).
+    drain_http(&http_stop, vec![api_task, metrics_task], HTTP_DRAIN_TIMEOUT).await;
+
+    // Shutdown stream processor if running
+    if let Some(handle) = _stream_handle {
+        handle.stop().await;
+    }
+
+    info!("FlowCatalyst Unified Server shutdown complete");
+    Ok(())
+}
+
+/// The platform database, connected, migrated and seeded.
+struct Database {
+    pool: sqlx::PgPool,
+    url: String,
+    secret_provider: Option<Arc<dyn fc_platform::shared::database::SecretProvider>>,
+    secret_refresh_interval: Duration,
+}
+
+/// Connect, migrate and seed the platform database (Go: connect, migrate,
+/// seed — only when a database-backed subsystem runs).
+async fn connect_database() -> Result<Database> {
+    let (database_url, secret_provider) = resolve_database_url().await?;
     info!("Connecting to PostgreSQL...");
     let pg_pool = fc_platform::shared::database::create_pool(&database_url)
         .await
@@ -331,50 +610,28 @@ async fn main() -> Result<()> {
         );
     }
 
-    // ── Leader Election ──────────────────────────────────────────────────────
-    // Shared watch channel: true = active (process), false = standby (pause)
-    let (active_tx, active_rx) = watch::channel(!standby_enabled); // if standby disabled, always active
+    Ok(Database {
+        pool: pg_pool,
+        url: database_url,
+        secret_provider,
+        secret_refresh_interval,
+    })
+}
 
-    let leader_election: Option<Arc<fc_standby::LeaderElection>> = if standby_enabled {
-        info!(redis_url = %standby_redis_url, lock_key = %standby_lock_key, "Initializing leader election");
-        let config = fc_standby::LeaderElectionConfig::new(standby_redis_url)
-            .with_lock_key(standby_lock_key);
-        let election = Arc::new(
-            fc_standby::LeaderElection::new(config)
-                .await
-                .map_err(|e| anyhow::anyhow!("Leader election init failed: {}", e))?,
-        );
-        election
-            .clone()
-            .start()
-            .await
-            .map_err(|e| anyhow::anyhow!("Leader election start failed: {}", e))?;
-
-        // Bridge leadership status changes to the active watch channel
-        let mut status_rx = election.subscribe();
-        let active_tx_clone = active_tx.clone();
-        tokio::spawn(async move {
-            loop {
-                if status_rx.changed().await.is_err() {
-                    break;
-                }
-                let is_leader = *status_rx.borrow() == fc_standby::LeadershipStatus::Leader;
-                let _ = active_tx_clone.send(is_leader);
-            }
-        });
-
-        Some(election)
-    } else {
-        None
-    };
-
-    let is_leader = move || leader_election.as_ref().is_none_or(|e| e.is_leader());
-
-    // ── Platform API ─────────────────────────────────────────────────────────
+/// Platform wiring over the database: repositories, auth, housekeeping,
+/// and the HTTP app (the platform API when enabled, else just `/health`).
+async fn init_platform(
+    db: &Database,
+    platform_enabled: bool,
+    api_port: u16,
+    jwt_issuer: String,
+    standby_enabled: bool,
+) -> Result<(Router, Repositories)> {
+    let pg_pool = &db.pool;
     // Repositories and auth are always initialized (needed by health checks and
     // potentially by background processors).
 
-    let repos = Repositories::new(&pg_pool);
+    let repos = Repositories::new(pg_pool);
     info!("Repositories initialized");
 
     // Event fan-out runs inside the stream processor (fc-stream). See
@@ -397,7 +654,7 @@ async fn main() -> Result<()> {
     }
     {
         let cache = cors_origins_cache.clone();
-        let cors_repo_bg = CorsOriginRepository::new(&pg_pool);
+        let cors_repo_bg = CorsOriginRepository::new(pg_pool);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
             interval.tick().await;
@@ -420,7 +677,7 @@ async fn main() -> Result<()> {
     // Sync code-defined roles
     {
         let role_sync = fc_platform::service::RoleSyncService::new(std::sync::Arc::new(
-            fc_platform::repository::RoleRepository::new(&pg_pool),
+            fc_platform::repository::RoleRepository::new(pg_pool),
         ));
         if let Err(e) = role_sync.sync_code_defined_roles().await {
             warn!("Role sync failed: {}", e);
@@ -511,208 +768,50 @@ async fn main() -> Result<()> {
             session_ttl_secs,
         )
     } else {
-        // Minimal app with just health + metrics
-        Router::new()
-            .route("/health", get(health_handler))
-            .layer(TraceLayer::new_for_http())
+        minimal_app()
     };
+    Ok((app, repos))
+}
 
-    // Collect handles for graceful shutdown
-    let mut shutdown_handles: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
+/// The API listener's app when the platform is off: Go's `/health`
+/// (`{"status":"UP","version":…}`, always 200 — the load balancer's probe).
+fn minimal_app() -> Router {
+    Router::new()
+        .route("/health", get(health_handler))
+        .layer(TraceLayer::new_for_http())
+}
 
-    // ── Background Processors ────────────────────────────────────────────────
+/// How long the HTTP servers get to finish their in-flight requests at
+/// shutdown (Go `server.Run`: `context.WithTimeout(…, 30*time.Second)` around
+/// `apiSrv.Shutdown`).
+const HTTP_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-    // Router (SQS message processing)
-    if router_enabled {
-        info!("Starting message router subsystem...");
-        let router_active_rx = active_rx.clone();
-        let router_handle = spawn_router(router_active_rx).await;
-        if let Some(handle) = router_handle {
-            shutdown_handles.push(Box::new(handle));
+/// Stop the HTTP servers gracefully: `stop` makes each stop accepting and
+/// finish what it is serving; wait up to `timeout` for all of them, then
+/// abort whatever is left.
+async fn drain_http(
+    stop: &tokio_util::sync::CancellationToken,
+    mut servers: Vec<tokio::task::JoinHandle<()>>,
+    timeout: std::time::Duration,
+) -> bool {
+    stop.cancel();
+    let all = async {
+        for s in servers.iter_mut() {
+            let _ = s.await;
         }
-    }
-
-    // Scheduler (dispatch job polling)
-    if scheduler_enabled {
-        info!("Starting scheduler subsystem...");
-        spawn_scheduler(&pg_pool, active_rx.clone(), api_port).await?;
-    }
-
-    // Scheduled-job cron engine (its own toggle, as Go)
-    if scheduled_job_enabled {
-        info!("Starting scheduled-job scheduler subsystem...");
-        spawn_scheduled_job_scheduler(&repos, active_rx.clone()).await?;
-    }
-
-    // Stream processor (CQRS projections)
-    let _stream_handle = if stream_enabled {
-        info!("Starting stream processor subsystem...");
-        Some(
-            spawn_stream_processor(
-                &database_url,
-                secret_provider.clone(),
-                secret_refresh_interval,
-                active_rx.clone(),
-            )
-            .await?,
-        )
-    } else {
-        None
     };
-
-    // Outbox processor
-    if outbox_enabled {
-        info!("Starting outbox processor subsystem...");
-        spawn_outbox_processor(active_rx.clone()).await?;
+    if tokio::time::timeout(timeout, all).await.is_ok() {
+        info!("HTTP servers drained");
+        return true;
     }
-
-    // ── ALB Traffic Watcher ──────────────────────────────────────────────────
-    #[cfg(feature = "alb")]
-    if env_bool("FC_ALB_ENABLED", false) && router_enabled {
-        if let Some(ref election) = leader_election {
-            let status_rx = election.subscribe();
-            let alb_config = fc_router::AlbTrafficConfig {
-                target_group_arn: std::env::var("FC_ALB_TARGET_GROUP_ARN")
-                    .expect("FC_ALB_TARGET_GROUP_ARN required when FC_ALB_ENABLED=true"),
-                target_id: std::env::var("FC_ALB_TARGET_ID")
-                    .expect("FC_ALB_TARGET_ID required when FC_ALB_ENABLED=true"),
-                target_port: env_or_parse("FC_ALB_TARGET_PORT", 8080),
-            };
-            let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-            let strategy = Arc::new(fc_router::AwsAlbTrafficStrategy::new(
-                alb_config,
-                &aws_config,
-            ));
-            fc_router::spawn_traffic_watcher(strategy, status_rx);
-            info!("ALB traffic watcher started");
-        } else {
-            warn!("FC_ALB_ENABLED=true but FC_STANDBY_ENABLED=false — ALB watcher requires standby mode");
-        }
+    warn!(
+        timeout_secs = timeout.as_secs(),
+        "HTTP drain timed out; aborting the requests still in flight"
+    );
+    for s in &servers {
+        s.abort();
     }
-
-    // ── Start HTTP Servers ───────────────────────────────────────────────────
-    let api_addr = format!("0.0.0.0:{}", api_port);
-    info!("API server listening on http://{}", api_addr);
-    let api_listener = TcpListener::bind(&api_addr).await?;
-    // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
-    let api_task = tokio::spawn(async move {
-        fc_platform::router::serve_api(api_listener, app, std::future::pending()).await;
-    });
-
-    let metrics_addr = format!("0.0.0.0:{}", metrics_port);
-    info!(
-        "Metrics server listening on http://{}/metrics",
-        metrics_addr
-    );
-
-    let is_leader_for_health = is_leader.clone();
-    let health_state = HealthState {
-        platform_enabled,
-        router_enabled,
-        scheduler_enabled,
-        scheduled_job_enabled,
-        stream_enabled,
-        outbox_enabled,
-        is_leader: Arc::new(is_leader_for_health),
-    };
-
-    let metrics_app = Router::new()
-        .route("/metrics", get(metrics_handler))
-        .route(
-            "/health",
-            get({
-                let state = health_state.clone();
-                move || combined_health_handler(state.clone())
-            }),
-        )
-        .route(
-            "/ready",
-            get({
-                let state = health_state.clone();
-                move || ready_handler(state.clone())
-            }),
-        );
-
-    let metrics_listener = TcpListener::bind(&metrics_addr).await?;
-    let metrics_task = tokio::spawn(async move {
-        axum::serve(metrics_listener, metrics_app).await.unwrap();
-    });
-
-    // ── Startup Summary ──────────────────────────────────────────────────────
-    info!("=== FlowCatalyst Unified Server Started ===");
-    info!(
-        "  Platform API: {}",
-        if platform_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Router:       {}",
-        if router_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Scheduler:    {}",
-        if scheduler_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Scheduled jobs: {}",
-        if scheduled_job_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Stream:       {}",
-        if stream_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    info!(
-        "  Outbox:       {}",
-        if outbox_enabled {
-            "ENABLED"
-        } else {
-            "DISABLED"
-        }
-    );
-    if standby_enabled {
-        info!("  HA Mode:      STANDBY (Redis leader election)");
-        info!("  Leader:       {}", is_leader());
-    } else {
-        info!("  HA Mode:      DISABLED (always active)");
-    }
-    info!("=============================================");
-
-    // ── Shutdown ─────────────────────────────────────────────────────────────
-    fc_platform::shared::server_setup::wait_for_shutdown_signal().await;
-    info!("Shutdown signal received...");
-
-    // Signal all background processors to stop via the active channel
-    let _ = active_tx.send(false);
-
-    api_task.abort();
-    metrics_task.abort();
-
-    // Shutdown stream processor if running
-    if let Some(handle) = _stream_handle {
-        handle.stop().await;
-    }
-
-    info!("FlowCatalyst Unified Server shutdown complete");
-    Ok(())
+    false
 }
 
 // ── Platform App Builder ─────────────────────────────────────────────────────
@@ -826,140 +925,39 @@ fn build_platform_app(
 
 // ── Background Processor Spawners ────────────────────────────────────────────
 
-/// Spawn the message router, gated on leadership.
-async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::task::JoinHandle<()>> {
-    use fc_router::{
-        ConsumerFactory, HealthService, HealthServiceConfig, HttpMediatorConfig, QueueManager,
-        WarningService, WarningServiceConfig,
+/// Start the message router (Go `newRouterServer` + `Server.Run`): the
+/// same runtime as the standalone `fc-router` binary, polling only while
+/// this instance leads. Returns the runtime and its HTTP surface.
+async fn start_router(
+    env: &fc_router::bootstrap::RouterEnv,
+    active_rx: watch::Receiver<bool>,
+) -> Result<(fc_router::bootstrap::RouterRuntime, Router)> {
+    use fc_router::bootstrap::{
+        dev_router_config, sqs_client, RouterRuntime, RouterRuntimeOptions, SchemeConsumerFactory,
+        SqsPublisher,
     };
 
-    let dev_mode = env_bool("FLOWCATALYST_DEV_MODE", false);
-
-    let sqs_client = if dev_mode {
-        let endpoint_url = env_or("LOCALSTACK_ENDPOINT", "http://localhost:4566");
-        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .endpoint_url(&endpoint_url)
-            .load()
-            .await;
-        aws_sdk_sqs::Client::new(&config)
-    } else {
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        aws_sdk_sqs::Client::new(&config)
-    };
-
-    let config_url = std::env::var("FLOWCATALYST_CONFIG_URL").ok();
-    if config_url.is_none() && !dev_mode {
-        error!("FC_ROUTER_ENABLED=true but FLOWCATALYST_CONFIG_URL not set and not in dev mode");
-        return None;
-    }
-
-    let warning_service = Arc::new(WarningService::new(WarningServiceConfig::default()));
-    let health_service = Arc::new(HealthService::new(
-        HealthServiceConfig::default(),
-        warning_service.clone(),
+    let metrics_handle = fc_router::init_prometheus_recorder();
+    let sqs = sqs_client(env.dev_mode).await;
+    let runtime = RouterRuntime::start(
+        env,
+        RouterRuntimeOptions {
+            consumer_factory: Arc::new(SchemeConsumerFactory::new(sqs.clone())),
+            standby: None,
+            leadership: Some(active_rx),
+        },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("router init: {e}"))?;
+    let publisher = Arc::new(SqsPublisher::new(
+        sqs,
+        runtime.queue_manager.clone(),
+        env.dev_mode
+            .then(dev_router_config)
+            .and_then(|c| c.queues.first().map(|q| q.uri.clone())),
     ));
-    // Pass mediator *config* (not a singleton instance) — QueueManager builds
-    // a fresh HttpMediator per pool so each pool has its own HTTP connection
-    // pool, sidestepping AWS's 128-stream cap per H/2 connection.
-    let queue_manager = Arc::new(
-        QueueManager::builder(HttpMediatorConfig::production())
-            .warning_service(warning_service.clone())
-            .health_service(health_service.clone())
-            .consumer_factory(Arc::new(SchemeConsumerFactory {
-                sqs_client: sqs_client.clone(),
-            }))
-            .build(),
-    );
-
-    // Load configuration
-    let router_config = if dev_mode {
-        use fc_common::{PoolConfig, QueueConfig, RouterConfig};
-        let sqs_host = env_or(
-            "LOCALSTACK_SQS_HOST",
-            "http://sqs.eu-west-1.localhost.localstack.cloud:4566",
-        );
-        RouterConfig {
-            processing_pools: vec![PoolConfig {
-                code: "DEFAULT".to_string(),
-                concurrency: 10,
-                rate_limit_per_minute: None,
-            }],
-            queues: vec![QueueConfig {
-                name: "fc-default.fifo".to_string(),
-                uri: format!("{}/000000000000/fc-default.fifo", sqs_host),
-                connections: 2,
-                visibility_timeout: 120,
-            }],
-        }
-    } else {
-        let config_url = config_url.unwrap();
-        let config_sync_config = fc_router::ConfigSyncConfig::new(config_url);
-        let sync_service = Arc::new(fc_router::ConfigSyncService::new(
-            config_sync_config,
-            queue_manager.clone(),
-            warning_service.clone(),
-        ));
-        match sync_service.initial_sync().await {
-            Ok(config) => config,
-            Err(e) => {
-                error!("Router config sync failed: {}", e);
-                return None;
-            }
-        }
-    };
-
-    // Add consumers, dispatching on each queue URI's scheme (item 1 — every
-    // queue used to be handed to the SQS consumer regardless of scheme).
-    //
-    // Item 1 (router bench rig, 2026-09-07; identical fix to
-    // `bin/fc-router/src/main.rs` — see that file's doc comment for the
-    // full mechanism): when `!dev_mode`, `sync_service.initial_sync()`
-    // above already created AND spawned a poll task for every one of these
-    // queues via `QueueManager::reload_config` -> `sync_queue_consumers`
-    // (the manager was built with a `consumer_factory` specifically so
-    // that path could do this). Running this loop unconditionally used to
-    // create a SECOND, independent consumer per queue here too and
-    // `add_consumer` it — orphaning the first poll task and racing it with
-    // a second one spawned later by `QueueManager::start()`. Dev mode
-    // synthesises `router_config` inline above with no config-sync
-    // service involved at all, so this loop is still the only thing that
-    // ever creates a consumer there.
-    if dev_mode {
-        let scheme_factory = SchemeConsumerFactory {
-            sqs_client: sqs_client.clone(),
-        };
-        for queue_config in &router_config.queues {
-            match scheme_factory.create_consumer(queue_config).await {
-                Ok(consumer) => queue_manager.add_consumer(consumer).await,
-                Err(e) => {
-                    error!(queue = %queue_config.name, error = %e, "Failed to create queue consumer");
-                    return None;
-                }
-            }
-        }
-    }
-
-    // Losing leadership only pauses polling (owner ruling; as `fc-router`):
-    // the manager starts once and follows the leadership watch, so in-flight
-    // work finishes and a regained lead resumes the same consumers. Shutting
-    // the manager down on a lost lead and calling `start()` again never
-    // recovered a shut-down manager.
-    queue_manager.set_leader(*active_rx.borrow());
-    let follower = queue_manager.clone();
-    tokio::spawn(async move {
-        while active_rx.changed().await.is_ok() {
-            let leader = *active_rx.borrow();
-            follower.set_leader(leader);
-        }
-    });
-    let manager = queue_manager.clone();
-    let handle = tokio::spawn(async move {
-        if let Err(e) = manager.start().await {
-            error!("QueueManager error: {}", e);
-        }
-    });
-
-    Some(handle)
+    let app = runtime.api_router(publisher, Some(metrics_handle), None);
+    Ok((runtime, app))
 }
 
 /// Spawn the dispatch scheduler, gated on leadership.
@@ -1363,115 +1361,63 @@ async fn ready_handler(state: HealthState) -> Json<serde_json::Value> {
     }))
 }
 
-// ── Consumer factory: dispatch by queue URI scheme (item 1) ─────────────────
-//
-// Mirrors the identical factory in `bin/fc-router/src/main.rs` — kept as a
-// separate copy per binary (same pattern the pre-existing SQS-only wiring
-// used) rather than shared, since `fc-server` is a single monolithic
-// `main.rs` with no internal module split today.
+#[cfg(test)]
+mod drain_tests {
+    use super::*;
+    use std::time::Duration;
 
-struct SchemeConsumerFactory {
-    sqs_client: aws_sdk_sqs::Client,
-}
-
-#[async_trait::async_trait]
-impl fc_router::ConsumerFactory for SchemeConsumerFactory {
-    async fn create_consumer(
-        &self,
-        config: &fc_common::QueueConfig,
-    ) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-        let scheme = fc_queue::resolve_scheme(&config.uri).map_err(
-            fc_router::RouterError::consumer(&config.name, "resolve queue scheme"),
-        )?;
-
-        match scheme {
-            fc_queue::QueueScheme::Sqs => {
-                info!(
-                    queue_name = %config.name,
-                    queue_uri = %config.uri,
-                    visibility_timeout = config.visibility_timeout,
-                    "Creating SQS consumer from config"
-                );
-                let consumer = fc_queue::sqs::SqsQueueConsumer::from_queue_url(
-                    self.sqs_client.clone(),
-                    config.uri.clone(),
-                    config.visibility_timeout as i32,
-                )
-                .await;
-                Ok(Arc::new(consumer))
-            }
-            fc_queue::QueueScheme::Nats => build_nats_consumer(config).await,
-            fc_queue::QueueScheme::Postgres => build_postgres_consumer(config).await,
-        }
+    async fn slow(delay: Duration) -> Router {
+        Router::new().route(
+            "/slow",
+            axum::routing::post(move || async move {
+                tokio::time::sleep(delay).await;
+                "done"
+            }),
+        )
     }
-}
 
-/// Build a NATS JetStream consumer from a `nats://` queue URI — see the
-/// identical helper's doc comment in `bin/fc-router/src/main.rs`.
-async fn build_nats_consumer(
-    config: &fc_common::QueueConfig,
-) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-    let nats_config = fc_queue::nats::NatsConfig::from_uri(&config.uri).map_err(
-        fc_router::RouterError::consumer(&config.name, "invalid NATS URI"),
-    )?;
-    info!(
-        queue_name = %config.name,
-        stream = %nats_config.stream_name,
-        consumer = %nats_config.consumer_name,
-        subject = %nats_config.subject,
-        "Creating NATS JetStream consumer from config"
-    );
-    let consumer = fc_queue::nats::NatsQueueConsumer::new(nats_config)
-        .await
-        .map_err(fc_router::RouterError::consumer(
-            &config.name,
-            "NATS consumer setup failed",
-        ))?;
-    Ok(Arc::new(consumer))
-}
+    async fn serve(
+        app: Router,
+    ) -> (
+        String,
+        tokio_util::sync::CancellationToken,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stop = tokio_util::sync::CancellationToken::new();
+        let task = {
+            let stop = stop.clone();
+            tokio::spawn(async move {
+                fc_platform::router::serve_api(listener, app, stop.cancelled_owned()).await;
+            })
+        };
+        (format!("http://{addr}/slow"), stop, task)
+    }
 
-/// Build a Postgres queue consumer from a `postgres://` queue URI — connects
-/// from the URI itself (a dedicated pool per queue), matching the other
-/// routers per `docs/spec/router.md` §7.3. See the identical helper's doc
-/// comment in `bin/fc-router/src/main.rs`.
-async fn build_postgres_consumer(
-    config: &fc_common::QueueConfig,
-) -> std::result::Result<Arc<dyn fc_queue::QueueConsumer>, fc_router::RouterError> {
-    // Item 1 (router bench rig, 2026-09-07) — see the identical fix's doc
-    // comment on `fc_queue::postgres::default_max_connections` and on the
-    // sibling helper in `bin/fc-router/src/main.rs`: a hardcoded
-    // max_connections(4) starved this queue's acks under load.
-    let max_connections = fc_queue::postgres::default_max_connections();
-    info!(
-        queue_name = %config.name,
-        max_connections,
-        "Creating Postgres queue consumer from config"
-    );
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(max_connections)
-        .acquire_timeout(Duration::from_secs(10))
-        .connect(&config.uri)
-        .await
-        .map_err(fc_router::RouterError::consumer(
-            &config.name,
-            "Postgres pool connect failed",
-        ))?;
+    /// Delivery run 3, `platform-down`: a request in flight at shutdown (a
+    /// `/api/dispatch/process` call whose webhook is already out) is
+    /// finished and answered, not cut, as Go's `apiSrv.Shutdown` does.
+    #[tokio::test]
+    async fn shutdown_finishes_the_request_in_flight() {
+        let (url, stop, task) = serve(slow(Duration::from_millis(300)).await).await;
+        let call = tokio::spawn(async move { reqwest::Client::new().post(url).send().await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let visibility = if config.visibility_timeout == 0 {
-        30
-    } else {
-        config.visibility_timeout
-    };
-    let consumer = fc_queue::postgres::PostgresQueue::new(pool, config.name.clone(), visibility);
+        assert!(drain_http(&stop, vec![task], Duration::from_secs(5)).await);
+        let resp = call.await.unwrap().expect("answered, not reset");
+        assert_eq!(resp.text().await.unwrap(), "done");
+    }
 
-    use fc_queue::EmbeddedQueue;
-    consumer
-        .init_schema()
-        .await
-        .map_err(fc_router::RouterError::consumer(
-            &config.name,
-            "Postgres schema init failed",
-        ))?;
+    /// The drain is bounded: past the timeout what is left is aborted.
+    #[tokio::test]
+    async fn the_drain_gives_up_at_its_timeout() {
+        let (url, stop, task) = serve(slow(Duration::from_secs(30)).await).await;
+        tokio::spawn(async move { reqwest::Client::new().post(url).send().await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-    Ok(Arc::new(consumer))
+        let started = std::time::Instant::now();
+        assert!(!drain_http(&stop, vec![task], Duration::from_millis(200)).await);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 }

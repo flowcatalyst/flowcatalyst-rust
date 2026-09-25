@@ -18,9 +18,12 @@
 	},
 	"dependencies": {
 		"@primeuix/themes": "^2.0.3",
+		"@primevue/core": "^4.5.4",
 		"@simplewebauthn/browser": "^13.3.0",
 		"@vee-validate/zod": "^4.15.1",
+		"dompurify": "^3.4.14",
 		"fflate": "^0.8.2",
+		"marked": "^18.0.10",
 		"mermaid": "^11.4.0",
 		"pinia": "^3.0.0",
 		"primeicons": "^7.0.0",

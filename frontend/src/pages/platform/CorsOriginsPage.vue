@@ -73,13 +73,15 @@ async function addOrigin() {
 	addError.value = null;
 
 	try {
-		const created = await corsApi.create({
+		// POST returns `{ id }` only (CreatedResponse) — re-fetch the list to
+		// show the new row with its server-side fields.
+		await corsApi.create({
 			origin: origin,
 			description: newDescription.value.trim() || undefined,
 		});
-		origins.value.push(created);
+		await loadOrigins();
 		showAddDialog.value = false;
-		toast.success("Success", `CORS origin "${created.origin}" added successfully`);
+		toast.success("Success", `CORS origin "${origin}" added successfully`);
 	} catch (e: unknown) {
 		addError.value = getErrorMessage(e, "Failed to add CORS origin");
 	} finally {

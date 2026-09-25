@@ -1,38 +1,34 @@
 <script setup lang="ts">
 import { toast } from "@/utils/errorBus";
-import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { oauthClientsApi, type OAuthClient } from "@/api/oauth-clients";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
+
+// Row shape: PrimeVue's global filter can't dive into the applications
+// array, so the searchable app names are pre-joined onto each row at load.
+type OAuthClientRow = OAuthClient & { applicationNames: string };
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
-const clients = ref<OAuthClient[]>([]);
+const route = useRoute();
+const clients = ref<OAuthClientRow[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-const { filters } = useListState({
+const listState = useListState({
 	filters: {
 		q: { type: "string", key: "q" },
 	},
 });
+const { filters } = listState;
+
+const { filters: tableFilters, clearAll } = useTableFilters(listState, []);
 
 // Delete dialog state
 const showDeleteDialog = ref(false);
 const clientToDelete = ref<OAuthClient | null>(null);
 const deleteLoading = ref(false);
-
-const filteredClients = computed(() => {
-	if (!filters.q.value) return clients.value;
-	const query = filters.q.value.toLowerCase();
-	return clients.value.filter(
-		(client) =>
-			client.clientName.toLowerCase().includes(query) ||
-			client.clientId.toLowerCase().includes(query) ||
-			(client.applications?.some((app) => app.name.toLowerCase().includes(query)) ?? false),
-	);
-});
 
 onMounted(async () => {
 	await loadClients();
@@ -43,13 +39,32 @@ async function loadClients() {
 	error.value = null;
 	try {
 		const response = await oauthClientsApi.list();
-		clients.value = response.clients;
+		clients.value = response.clients.map((client) => ({
+			...client,
+			applicationNames: (client.applications ?? [])
+				.map((app) => app.name)
+				.join(" "),
+		}));
 	} catch (e) {
 		error.value =
 			e instanceof Error ? e.message : "Failed to load OAuth clients";
 	} finally {
 		loading.value = false;
 	}
+}
+
+function openDetail(id: string, edit = false) {
+	void router.push({
+		path: `/authentication/oauth-clients/${id}`,
+		query: edit ? { ...route.query, edit: "true" } : route.query,
+	});
+}
+
+function openCreate() {
+	void router.push({
+		path: "/authentication/oauth-clients/new",
+		query: route.query,
+	});
 }
 
 function confirmDelete(client: OAuthClient) {
@@ -110,36 +125,35 @@ function formatDate(dateString: string) {
           identity provider.
         </p>
       </div>
-      <Button
-        label="Add OAuth Client"
-        icon="pi pi-plus"
-        @click="router.push('/authentication/oauth-clients/new')"
-      />
+      <Button label="Add OAuth Client" icon="pi pi-plus" @click="openCreate" />
     </header>
 
     <Message v-if="error" severity="error" class="error-message">{{ error }}</Message>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <IconField class="search-wrapper">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="filters.q.value" placeholder="Search clients..." />
-        </IconField>
-      </div>
-
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredClients"
+        :value="clients"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['clientName', 'clientId', 'applicationNames']"
         paginator
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
         stripedRows
-        emptyMessage="No OAuth clients found"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => openDetail(e.data.id)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search clients..."
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          />
+        </template>
+        <template #empty>No OAuth clients found</template>
+
         <Column field="clientName" header="Name" sortable>
           <template #body="{ data }">
             <span class="client-name">{{ data.clientName }}</span>
@@ -189,11 +203,11 @@ function formatDate(dateString: string) {
           <template #body="{ data }">
             <div class="action-buttons">
               <Button
-                icon="pi pi-eye"
+                icon="pi pi-pencil"
                 text
                 rounded
-                v-tooltip="'View Details'"
-                @click="navigateToDetail(`/authentication/oauth-clients/${data.id}`)"
+                v-tooltip="'Edit'"
+                @click.stop="openDetail(data.id, true)"
               />
               <Button
                 :icon="data.active ? 'pi pi-ban' : 'pi pi-check-circle'"
@@ -201,7 +215,7 @@ function formatDate(dateString: string) {
                 rounded
                 :severity="data.active ? 'warn' : 'success'"
                 v-tooltip="data.active ? 'Deactivate' : 'Activate'"
-                @click="toggleActive(data)"
+                @click.stop="toggleActive(data)"
               />
               <Button
                 icon="pi pi-trash"
@@ -209,7 +223,7 @@ function formatDate(dateString: string) {
                 rounded
                 severity="danger"
                 v-tooltip="'Delete'"
-                @click="confirmDelete(data)"
+                @click.stop="confirmDelete(data)"
               />
             </div>
           </template>
@@ -247,24 +261,15 @@ function formatDate(dateString: string) {
         />
       </template>
     </Dialog>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadClients" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  margin-bottom: 16px;
-}
-
-.search-wrapper :deep(.pi-search) {
-  color: #94a3b8;
-}
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  padding: 60px;
-}
-
 .error-message {
   margin-bottom: 16px;
 }

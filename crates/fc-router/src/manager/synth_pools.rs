@@ -127,7 +127,8 @@ impl QueueManager {
             rate_limit_per_minute: None,
         };
         let pool = ProcessPool::new(pool_config.clone(), self.build_mediator())
-            .with_capacity_notify(self.capacity_notify().clone());
+            .with_capacity_notify(self.capacity_notify().clone())
+            .with_settled_reporter(self.settled_reporter.clone());
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;
 

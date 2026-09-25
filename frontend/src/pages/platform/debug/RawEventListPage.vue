@@ -43,14 +43,14 @@ const showDetailDialog = ref(false);
 
 onMounted(load);
 
-async function viewEventDetail(event: RawEvent) {
+function viewEventDetail(event: RawEvent) {
+	// No re-fetch: /bff/debug/events returns the complete raw record — data,
+	// contextData and every optional field — so GET /bff/debug/events/{id}
+	// answered with byte-identical content to the row we already hold, and
+	// the catch fell back to exactly this row anyway. The endpoint still
+	// exists for other callers; this page has no reason to ask twice.
+	selectedEvent.value = event;
 	showDetailDialog.value = true;
-	try {
-		const full = await bffFetch<RawEvent>(`/debug/events/${event.id}`);
-		selectedEvent.value = full;
-	} catch {
-		selectedEvent.value = event;
-	}
 }
 
 function formatDate(dateStr: string | undefined): string {

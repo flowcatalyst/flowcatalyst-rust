@@ -11,7 +11,10 @@
 import { watch } from "fs";
 import { spawn } from "child_process";
 
-const JAVA_SOURCE_DIR = "../../core/flowcatalyst-platform/src/main/java";
+// This script only ever looks at `.java` filenames (below), so it is
+// inherently Java-backend-specific — there is no Go source tree to fall
+// back to the way openapi-ts.config.ts falls back to the Go lockfile path.
+const JAVA_SOURCE_DIR = "../server/src/main/java";
 const DEBOUNCE_MS = 3000;
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;

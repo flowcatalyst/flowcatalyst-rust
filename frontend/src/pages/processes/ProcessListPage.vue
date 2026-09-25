@@ -1,21 +1,36 @@
 <script setup lang="ts">
 import { toast } from "@/utils/errorBus";
 import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useRoute, useRouter } from "vue-router";
 import { processesApi } from "@/api/processes";
-import type { Process, ProcessStatus } from "@/api/processes";
+import type { Process } from "@/api/processes";
+import { useListState } from "@/composables/useListState";
+import { useTableFilters } from "@/composables/useTableFilters";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 
 const processes = ref<Process[]>([]);
 const loading = ref(true);
 
-const selectedApplication = ref<string | null>(null);
-const selectedSubdomain = ref<string | null>(null);
-const selectedStatus = ref<ProcessStatus | null>(null);
-const search = ref("");
+const listState = useListState({
+	filters: {
+		q: { type: "string" as const, key: "q" },
+		application: { type: "string" as const, key: "app" },
+		subdomain: { type: "string" as const, key: "subdomain" },
+		status: { type: "string" as const, key: "status" },
+	},
+});
+const { filters } = listState;
+
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[
+		{ field: "application", param: "application" },
+		{ field: "subdomain", param: "subdomain" },
+		{ field: "status", param: "status" },
+	],
+);
 
 const applicationOptions = computed(() => {
 	const set = new Set(processes.value.map((p) => p.application));
@@ -24,7 +39,7 @@ const applicationOptions = computed(() => {
 const subdomainOptions = computed(() => {
 	const set = new Set(
 		processes.value
-			.filter((p) => !selectedApplication.value || p.application === selectedApplication.value)
+			.filter((p) => !filters.application.value || p.application === filters.application.value)
 			.map((p) => p.subdomain),
 	);
 	return Array.from(set).sort().map((v) => ({ label: v, value: v }));
@@ -33,29 +48,6 @@ const statusOptions = [
 	{ label: "Current", value: "CURRENT" },
 	{ label: "Archived", value: "ARCHIVED" },
 ];
-
-const hasActiveFilters = computed(
-	() =>
-		!!selectedApplication.value ||
-		!!selectedSubdomain.value ||
-		!!selectedStatus.value ||
-		!!search.value,
-);
-
-const filtered = computed(() => {
-	return processes.value.filter((p) => {
-		if (selectedApplication.value && p.application !== selectedApplication.value) return false;
-		if (selectedSubdomain.value && p.subdomain !== selectedSubdomain.value) return false;
-		if (selectedStatus.value && p.status !== selectedStatus.value) return false;
-		if (search.value) {
-			const term = search.value.toLowerCase();
-			if (!p.code.toLowerCase().includes(term) && !p.name.toLowerCase().includes(term)) {
-				return false;
-			}
-		}
-		return true;
-	});
-});
 
 async function load() {
 	loading.value = true;
@@ -74,14 +66,17 @@ async function load() {
 onMounted(() => load());
 
 function viewProcess(p: Process) {
-	navigateToDetail(`/processes/${p.id}`);
+	void router.push({ path: `/processes/${p.id}`, query: route.query });
 }
 
-function clearFilters() {
-	selectedApplication.value = null;
-	selectedSubdomain.value = null;
-	selectedStatus.value = null;
-	search.value = "";
+function editProcess(p: Process) {
+	// Straight to the full-page Mermaid editor.
+	void router.push(`/processes/${p.id}/edit`);
+}
+
+function openCreate() {
+	// Full-page editor route — no drawer, so no filter-query carry needed.
+	void router.push("/processes/create");
 }
 </script>
 
@@ -98,82 +93,82 @@ function clearFilters() {
         <Button
           label="Create Process"
           icon="pi pi-plus"
-          @click="router.push('/processes/create')"
+          @click="openCreate"
         />
       </div>
     </header>
 
-    <div class="fc-card filter-card">
-      <div class="filter-row">
-        <div class="filter-group">
-          <label>Application</label>
-          <Select
-            v-model="selectedApplication"
-            :options="applicationOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All applications"
-            :showClear="true"
-            class="filter-select"
-          />
-        </div>
-        <div class="filter-group">
-          <label>Subdomain</label>
-          <Select
-            v-model="selectedSubdomain"
-            :options="subdomainOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All subdomains"
-            :showClear="true"
-            class="filter-select"
-          />
-        </div>
-        <div class="filter-group">
-          <label>Status</label>
-          <Select
-            v-model="selectedStatus"
-            :options="statusOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All statuses"
-            :showClear="true"
-            class="filter-select"
-          />
-        </div>
-        <div class="filter-group search-group">
-          <label>Search</label>
-          <IconField iconPosition="left">
-            <InputIcon class="pi pi-search" />
-            <InputText v-model="search" placeholder="Code or name" />
-          </IconField>
-        </div>
-        <div class="filter-actions">
-          <Button
-            v-if="hasActiveFilters"
-            label="Clear filters"
-            icon="pi pi-filter-slash"
-            text
-            severity="secondary"
-            @click="clearFilters"
-          />
-        </div>
-      </div>
-    </div>
-
     <div class="fc-card table-card">
       <DataTable
-        :value="filtered"
+        :value="processes"
         :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['code', 'name']"
         :paginator="true"
         :rows="50"
         :rowsPerPageOptions="[25, 50, 100, 250]"
         :showCurrentPageReport="true"
         currentPageReportTemplate="Showing {first} to {last} of {totalRecords} processes"
         size="small"
+        rowHover
         @row-click="(e) => viewProcess(e.data)"
         :rowClass="() => 'clickable-row'"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search processes..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Application">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.application.value"
+                    :options="applicationOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All applications"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Subdomain">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.subdomain.value"
+                    :options="subdomainOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All subdomains"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Status">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.status.value"
+                    :options="statusOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All statuses"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+
         <Column header="Code" style="width: 30%">
           <template #body="{ data }">
             <div class="code-display">
@@ -223,15 +218,35 @@ function clearFilters() {
           </template>
         </Column>
 
+        <Column header="Actions" style="width: 60px">
+          <template #body="{ data }">
+            <div class="action-buttons">
+              <Button
+                icon="pi pi-pencil"
+                text
+                rounded
+                severity="secondary"
+                v-tooltip.left="'Edit'"
+                @click.stop="editProcess(data)"
+              />
+            </div>
+          </template>
+        </Column>
+
         <template #empty>
           <div class="empty-message">
             <i class="pi pi-inbox"></i>
             <span>No processes yet</span>
-            <Button label="Create your first process" link @click="router.push('/processes/create')" />
+            <Button label="Create your first process" link @click="openCreate" />
           </div>
         </template>
       </DataTable>
     </div>
+
+    <!-- Drawer outlet: the detail child route renders over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="load" />
+    </RouterView>
   </div>
 </template>
 
@@ -241,40 +256,10 @@ function clearFilters() {
   gap: 8px;
 }
 
-.filter-card {
-  margin-bottom: 24px;
-}
-
-.filter-row {
+.action-buttons {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 180px;
-}
-
-.filter-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-color-secondary);
-}
-
-.filter-select {
-  min-width: 180px;
-}
-
-.search-group {
-  min-width: 220px;
-}
-
-.filter-actions {
-  margin-left: auto;
+  flex-wrap: nowrap;
+  gap: 0;
 }
 
 .table-card {

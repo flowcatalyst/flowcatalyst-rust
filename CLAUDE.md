@@ -130,7 +130,7 @@ We are migrating from SeaORM to raw SQLx. New repositories should use `sqlx::PgP
 - Both caches exist to avoid repeated RSA verification and DB queries on every authenticated request
 
 ## Static Asset Serving
-Vite hashed assets (`/assets/*`) are served with `Cache-Control: public, max-age=31536000, immutable`. Non-hashed files (index.html) use default caching with SPA fallback.
+Vite hashed assets (`/assets/*`) are served with `Cache-Control: public, max-age=31536000, immutable`. The SPA shell (`/`, `/index.html`, and the SPA fallback for any path no route claims) is never cacheable (`no-cache, no-store, must-revalidate`, `router::SPA_SHELL_CACHE_CONTROL`), so a deploy is picked up on the next load; other static files keep default caching. `fc-platform::router::serve_spa` does this for `FC_STATIC_DIR`; `fc-dev` does the same for the `frontend/dist` it embeds.
 
 ## Use Case / Operations Pattern
 
@@ -360,58 +360,103 @@ The `AuthorizationService` struct also provides general-purpose methods:
 
 ## Frontend UI Conventions
 
-**Tailwind is not installed.** Don't write Tailwind utility classes
-(`grid grid-cols-N`, `flex justify-between`, `mb-4`, `text-gray-500`,
-`md:col-span-2`, etc.). They silently no-op and you'll ship a layout that
-visually flattens — every list page that's tried this has needed a
-rewrite. Search the project: `grep -r tailwind` returns nothing.
+The SPA in `frontend/` **is the Go platform's production SPA**, taken
+verbatim from `flowcatalyst-go` (see `frontend/PROVENANCE.md` for the
+source commit and every change made on top of it). Rust is a drop-in
+replacement for Go, so the SPA calls this platform exactly as it calls Go.
+Match Go's idiom when adding UI; keep Rust-only additions (functions,
+anchor-tier gating, …) listed in `PROVENANCE.md`.
 
-When building or modifying any frontend page, **mirror the existing list
-pages** (`DispatchJobListPage.vue`, `EventListPage.vue`,
-`AuditLogListPage.vue`). The conventions are:
+**No Tailwind in the Vue SPA.** It isn't installed there: utility classes
+(`grid grid-cols-N`, `flex justify-between`, `mb-4`, …) silently no-op.
+Use PrimeVue components, the global classes in
+`frontend/src/styles/main.css`, and scoped CSS. (This is about the Vue app
+only; the server-rendered `fc-web` trial crate at `/ui/*` makes its own
+styling choices, Tailwind included.)
 
-- **Layout primitives** — global classes from `frontend/src/style.css`:
-  - `page-container` — root `<div>` for every page.
-  - `page-header` with `page-title` (h1) and `page-subtitle` (p) — the
-    standard header block; right-aligned action buttons sit alongside.
-  - `fc-card` — content card wrapper.
-- **Filter rows** — scoped `.toolbar` (column flex) wrapping `.filter-row`
-  (row flex, `gap: 0.5rem`, `flex-wrap: wrap`). Each filter widget gets
-  `class="filter-select"` (min-width via scoped CSS — typically 160–200px).
-  Search uses `IconField` + `InputIcon` + `InputText`.
-- **Components — PrimeVue, not bare HTML or Tailwind components.**
-  `Select` (not `Dropdown`, the renamed v4 form), `MultiSelect`,
-  `DataTable` + `Column`, `Button`, `Tag`, `IconField`, `InputText`. They
-  are auto-imported via `unplugin-vue-components` (see
-  `frontend/components.d.ts`); don't add explicit imports.
-- **List state** — use the `useListState` composable
-  (`frontend/src/composables/useListState.ts`) for filter + page state
-  with URL sync. Use `useReturnTo` for detail-page navigation.
-- **Pagination** — `DataTable lazy paginator` with `:rows-per-page-options`
-  for offset-paginated lists. **High-volume firehose tables** (events,
-  dispatch jobs, debug grids) get `?size=` only and no paginator at all;
-  see the per-page Vue files for the size-Select pattern.
-- **Scoped CSS for everything else.** Use real scoped CSS classes
-  (`.font-mono`, `.text-sm`, `.text-muted`, `.active-flag` etc.) instead
-  of inline Tailwind names. Common variables: `var(--text-color-secondary)`
-  for muted text, `var(--surface-border)` / `var(--surface-ground)` for
-  card chrome.
+**List page + drawer.** Mirror Go's list pages (`ConnectionListPage.vue`,
+`UserListPage.vue`, `SubscriptionListPage.vue`):
 
-**Rule of thumb when starting a new page**: open the closest existing list
-or detail page, copy its `<template>` + `<style scoped>` skeleton, and
-fill in the resource-specific bits. Don't invent layout from scratch —
-the visual standard is already in the codebase, and the project ships
-with no Tailwind to fall back on if you reach for it by reflex.
+- **Layout primitives** (global, `styles/main.css`): `page-container` as
+  the root, a `page-header` with `page-title` / `page-subtitle` and the
+  primary action button, `fc-card` around the table.
+- **Table toolbar**: `FcTableToolbar` in the `DataTable`'s `#header` slot —
+  quick search (`v-model:search`), a **Filters** popover (`#filters` slot;
+  each control wrapped in `FcFormField`, dropdowns `appendTo="self"`),
+  Clear All, optional refresh; a `#start` slot for an always-visible
+  selector. Filter state is `useListState` (URL-synced); `useTableFilters`
+  derives the popover badge / Clear All and, for client-side tables, the
+  `:filters` meta.
+- **Rows open a drawer**: `:rowClass="() => 'clickable-row'"` and
+  `@row-click` push the child route with `query: route.query`. Detail and
+  create views are **child routes of the list** (`/connections/new`,
+  `/connections/:id`) rendered in the list's
+  `<RouterView v-slot="{ Component }"><component :is="Component" @changed="load" /></RouterView>`
+  outlet, so the list stays visible and clickable underneath.
+- **Drawers**: `components/drawer/EntityDrawer.vue` (non-modal right panel;
+  `size` default / `wide` / `two-thirds`; `loading`, `error`, `dirty`;
+  `#header-extra` for status tags, `#footer` for actions; `close(force)`)
+  plus `useDrawerRoute({ listPath, paramKey, dirty })` (`id`, `goToList`,
+  `replaceToDetail` for the create → detail hand-off, and the
+  discard-changes leave guard). Edit forms track changes with
+  `useDirtyForm`. Detail drawers `watch` the route param — the instance is
+  reused when another row is clicked — and emit `changed` after writes.
+- **Forms**: `FcFormSection` (`flat` inside drawers; `#actions` slot),
+  `FcFormField` (label / `required` / `help` / `error` / `span`; its default
+  slot passes the input `id`), `.fc-form-grid` for two-column forms,
+  `FcDetailField` in a `.fc-detail-grid` for read-only values,
+  `FcFormActions` (`:bordered="false"` in a drawer footer).
+- **Full pages** only where a drawer is too small: editors and multi-tab
+  views (`RoleEditPage`, `ClientLoginThemePage`, `ProcessCreatePage`,
+  `FunctionDetailPage`, the manifest editor).
+- **Components — PrimeVue v4**, auto-imported by `unplugin-vue-components`
+  (`Select`, not `Dropdown`); `src/components/**` is auto-registered too.
+- **Pagination**: client-side `paginator` for small lists; `lazy
+  paginator` for offset-paginated server lists; cursor lists use
+  `useCursorPagination` (audit log, login attempts). **High-volume
+  firehose tables** (events, dispatch jobs, debug grids) take a result
+  `size` only, no paging.
+
+**Navigation and access** (owner decision #8): `config/navigation.ts`
+holds the sidebar groups (`scope: "anchor" | "client"` splits audiences);
+`stores/permissions.ts` maps routes to permission codes
+(`ROUTE_PERMISSIONS`, any-of lists allowed; detail routes inherit their
+list's entry) and anchor-only pages (`ANCHOR_ROUTES`). `canAccessPath` is
+the one rule for the route guard, the sidebar and the post-login landing
+page; a user with no role reaches only `/profile`. Use the catalogue's
+permission codes (`role/entity.rs`), and gate in-page actions with
+`userHasPermission(authStore.user, code)`. The server enforces every call
+regardless.
+
+**Rule of thumb for a new page**: copy the closest Go list page and its
+drawers, keep the `<template>` + `<style scoped>` skeleton, and fill in
+the resource-specific bits.
 
 ## Frontend API Response Handling
 
+API modules live in `frontend/src/api/`, one per resource, over the
+hand-rolled transport in `api/client.ts`: `apiFetch` (`/api`), `bffFetch`
+(`/bff`), `authFetch` (`/auth`, errors stay inline: no global toast, no
+401/403 modal). `client.ts` decodes the platform error envelope once
+(`{ error: CODE, message, details? }`): it toasts non-401 failures
+(opt out with `suppressGlobalErrorToast`), raises the session-expired /
+permission-denied modal on 401/403, and throws `ApiError` (`status`,
+`code`, `details`, a `message` with per-field validation errors appended).
+
+Request/response types **alias the generated contract** in
+`src/api/generated/types.gen.ts`, generated (types only) from
+`frontend/openapi/openapi.json` — a copy of Go's OpenAPI lockfile, the
+contract this platform converges to — so `vue-tsc` fails when a wrapper
+drifts. Regenerate with `cd frontend && pnpm api:generate`; don't overwrite
+that file with this platform's own `/q/openapi`. The function API has its
+own document (`api/generated-functions/`).
+
 Most of our PUT/PATCH update handlers return **`204 No Content`** — no body.
-The FE `apiFetch` resolves to `undefined` for 204 responses (see
-`frontend/src/api/client.ts`). That means:
+`apiFetch` resolves to `undefined` for 204 responses. That means:
 
 ```ts
 // ❌ wrong — `thing.value` becomes undefined, every `v-if="thing"` flips
-// false, and the page flashes "Not Found".
+// false, and the drawer shows "not found".
 thing.value = await thingsApi.update(id, ...);
 ```
 
@@ -419,27 +464,28 @@ thing.value = await thingsApi.update(id, ...);
 // ✅ right — call the void method, then refetch from the source of truth.
 await thingsApi.update(id, ...);
 await loadThing(id);
+emit("changed"); // drawers: let the list behind reload
 ```
 
 **Convention checklist when adding/modifying an FE API wrapper:**
 
-- If the backend handler signature is
-  `-> Result<StatusCode, …>` returning `NO_CONTENT`, the FE wrapper MUST
-  be typed `Promise<void>`. Don't declare it `Promise<Entity>` and let
-  the type lie — the bug is invisible until users see a "not found"
-  message after a successful save.
+- If the backend handler returns `NO_CONTENT`, the FE wrapper MUST be typed
+  `Promise<void>`. Don't declare it `Promise<Entity>` and let the type lie —
+  the bug is invisible until users see "not found" after a successful save.
 - After calling a void API method, **refetch** with `await loadX(id)`
-  (or whichever loader the page already has). Don't assign the call's
-  result to a reactive ref.
-- If the backend should actually be returning the updated entity, fix
-  the handler to do so (and update the FE wrapper). Either side is
-  valid; mismatched declarations are the bug.
+  (or whichever loader the drawer/page already has). Don't assign the
+  call's result to a reactive ref.
+- If the backend should return the updated entity, it must do so for Go
+  too (the SPA's contract is Go's); mismatched declarations are the bug.
 
 The convention is enforced by
 `frontend/tests/conventions/no-void-api-assignment.test.ts`. It scans
 `src/pages` and `src/components` for `ref.value = await xxxApi.method(...)`
-where `method` is declared `Promise<void>` and fails the build with the
-exact file:line. Run with `pnpm test` from `frontend/`.
+where `method` is declared `Promise<void>` and fails with the exact
+file:line. Run the frontend tests with `pnpm test` from `frontend/`
+(vitest; component tests mount with `@vue/test-utils` under a per-file
+`// @vitest-environment jsdom`), the type check with `pnpm build`, lint
+with `pnpm lint`.
 
 For genuinely intentional uses (rare), add a trailing
 `// fc-api-void: ok` comment on the line to opt out.

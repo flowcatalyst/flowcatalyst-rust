@@ -1,41 +1,53 @@
 <script setup lang="ts">
 import { toast } from "@/utils/errorBus";
-import { ref, computed, onMounted } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { FilterMatchMode } from "@primevue/core/api";
 import {
 	emailDomainMappingsApi,
 	type EmailDomainMapping,
 } from "@/api/email-domain-mappings";
 import { useListState } from "@/composables/useListState";
-import { useReturnTo } from "@/composables/useReturnTo";
+import { useTableFilters } from "@/composables/useTableFilters";
 
 const router = useRouter();
-const { navigateToDetail } = useReturnTo();
+const route = useRoute();
 const mappings = ref<EmailDomainMapping[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 
-const { filters } = useListState({
+const listState = useListState({
 	filters: {
 		q: { type: "string", key: "q" },
+		scopeType: { type: "string", key: "scope" },
+		idp: { type: "string", key: "idp" },
 	},
+	debounceFields: ["q", "idp"],
 });
+const { filters } = listState;
+
+const { filters: tableFilters, activeFilterCount, clearAll } = useTableFilters(
+	listState,
+	[
+		{ field: "scopeType", param: "scopeType" },
+		{
+			field: "identityProviderName",
+			param: "idp",
+			matchMode: FilterMatchMode.CONTAINS,
+		},
+	],
+);
+
+const scopeTypeFilterOptions = [
+	{ label: "Anchor", value: "ANCHOR" },
+	{ label: "Partner", value: "PARTNER" },
+	{ label: "Client", value: "CLIENT" },
+];
 
 // Delete dialog state
 const showDeleteDialog = ref(false);
 const mappingToDelete = ref<EmailDomainMapping | null>(null);
 const deleteLoading = ref(false);
-
-const filteredMappings = computed(() => {
-	if (!filters.q.value) return mappings.value;
-	const query = filters.q.value.toLowerCase();
-	return mappings.value.filter(
-		(mapping) =>
-			mapping.emailDomain.toLowerCase().includes(query) ||
-			mapping.scopeType.toLowerCase().includes(query) ||
-			(mapping.identityProviderName || "").toLowerCase().includes(query),
-	);
-});
 
 onMounted(async () => {
 	await loadMappings();
@@ -55,6 +67,20 @@ async function loadMappings() {
 	}
 }
 
+function openDetail(id: string, edit = false) {
+	void router.push({
+		path: `/authentication/email-domain-mappings/${id}`,
+		query: edit ? { ...route.query, edit: "true" } : route.query,
+	});
+}
+
+function openCreate() {
+	void router.push({
+		path: "/authentication/email-domain-mappings/new",
+		query: route.query,
+	});
+}
+
 function confirmDelete(mapping: EmailDomainMapping) {
 	mappingToDelete.value = mapping;
 	showDeleteDialog.value = true;
@@ -71,8 +97,12 @@ async function deleteMapping() {
 			(m) => m.id !== mappingToDelete.value?.id,
 		);
 		showDeleteDialog.value = false;
-		toast.success("Success", `Email domain mapping for "${mappingToDelete.value.emailDomain}" deleted`);
-	} catch (e: unknown) {
+		toast.success(
+			"Success",
+			`Email domain mapping for "${mappingToDelete.value.emailDomain}" deleted`,
+		);
+	} catch {
+		// delete errors surface via the global error toast
 	} finally {
 		deleteLoading.value = false;
 		mappingToDelete.value = null;
@@ -104,50 +134,72 @@ function formatDate(dateString: string) {
         <h1 class="page-title">Email Domain Mappings</h1>
         <p class="page-subtitle">Map email domains to identity providers and define user scope.</p>
       </div>
-      <Button
-        label="Add Domain Mapping"
-        icon="pi pi-plus"
-        @click="router.push('/authentication/email-domain-mappings/new')"
-      />
+      <Button label="Add Domain Mapping" icon="pi pi-plus" @click="openCreate" />
     </header>
 
     <Message v-if="error" severity="error" class="error-message">{{ error }}</Message>
 
     <div class="fc-card">
-      <div class="toolbar">
-        <IconField class="search-wrapper">
-          <InputIcon class="pi pi-search" />
-          <InputText v-model="filters.q.value" placeholder="Search domains..." />
-        </IconField>
-      </div>
-
-      <div v-if="loading" class="loading-container">
-        <ProgressSpinner strokeWidth="3" />
-      </div>
-
       <DataTable
-        v-else
-        :value="filteredMappings"
+        :value="mappings"
+        :loading="loading"
+        :filters="tableFilters"
+        :globalFilterFields="['emailDomain', 'scopeType', 'identityProviderName']"
         paginator
         :rows="100"
         :rowsPerPageOptions="[50, 100, 250, 500]"
         stripedRows
-        emptyMessage="No email domain mappings found"
+        rowHover
+        :rowClass="() => 'clickable-row'"
+        @row-click="(e) => openDetail(e.data.id)"
       >
+        <template #header>
+          <FcTableToolbar
+            v-model:search="filters.q.value"
+            search-placeholder="Search domains..."
+            :active-filter-count="activeFilterCount"
+            :has-active-filters="listState.hasActiveFilters.value"
+            @clear-all="clearAll"
+          >
+            <template #filters>
+              <FcFormField label="Scope Type">
+                <template #default="{ id: fieldId }">
+                  <Select
+                    :id="fieldId"
+                    v-model="filters.scopeType.value"
+                    :options="scopeTypeFilterOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="All scopes"
+                    showClear
+                    appendTo="self"
+                  />
+                </template>
+              </FcFormField>
+              <FcFormField label="Identity Provider">
+                <template #default="{ id: fieldId }">
+                  <InputText
+                    :id="fieldId"
+                    v-model="filters.idp.value"
+                    placeholder="Filter by provider name"
+                  />
+                </template>
+              </FcFormField>
+            </template>
+          </FcTableToolbar>
+        </template>
+        <template #empty>No email domain mappings found</template>
+
         <Column field="emailDomain" header="Email Domain" sortable>
           <template #body="{ data }">
             <span class="domain-name">{{ data.emailDomain }}</span>
           </template>
         </Column>
-        <Column header="Identity Provider" sortable>
+        <Column field="identityProviderName" header="Identity Provider" sortable>
           <template #body="{ data }">
+            <!-- The wire only enriches identityProviderName; there is no
+                 identityProviderType field (the old Tag here never rendered). -->
             <span class="provider-name">{{ data.identityProviderName || 'Unknown' }}</span>
-            <Tag
-              v-if="data.identityProviderType"
-              :value="data.identityProviderType"
-              :severity="data.identityProviderType === 'OIDC' ? 'info' : 'secondary'"
-              class="provider-type-tag"
-            />
           </template>
         </Column>
         <Column field="scopeType" header="Scope Type" sortable>
@@ -157,8 +209,11 @@ function formatDate(dateString: string) {
         </Column>
         <Column header="Primary Client">
           <template #body="{ data }">
-            <span v-if="data.primaryClientName" class="client-name">{{
-              data.primaryClientName
+            <!-- The wire carries primaryClientId only (no primaryClientName —
+                 the old binding here never rendered); the detail page resolves
+                 the display name from the clients list. -->
+            <span v-if="data.primaryClientId" class="client-name">{{
+              data.primaryClientId
             }}</span>
             <span v-else class="text-muted">-</span>
           </template>
@@ -172,19 +227,19 @@ function formatDate(dateString: string) {
           <template #body="{ data }">
             <div class="action-buttons">
               <Button
-                icon="pi pi-eye"
+                v-tooltip="'Edit'"
+                icon="pi pi-pencil"
                 text
                 rounded
-                v-tooltip="'View Details'"
-                @click="navigateToDetail(`/authentication/email-domain-mappings/${data.id}`)"
+                @click.stop="openDetail(data.id, true)"
               />
               <Button
+                v-tooltip="'Delete'"
                 icon="pi pi-trash"
                 text
                 rounded
                 severity="danger"
-                v-tooltip="'Delete'"
-                @click="confirmDelete(data)"
+                @click.stop="confirmDelete(data)"
               />
             </div>
           </template>
@@ -212,31 +267,25 @@ function formatDate(dateString: string) {
       </div>
 
       <template #footer>
-        <Button label="Cancel" text @click="showDeleteDialog = false" :disabled="deleteLoading" />
+        <Button label="Cancel" text :disabled="deleteLoading" @click="showDeleteDialog = false" />
         <Button
           label="Delete"
           icon="pi pi-trash"
           severity="danger"
-          @click="deleteMapping"
           :loading="deleteLoading"
+          @click="deleteMapping"
         />
       </template>
     </Dialog>
+
+    <!-- Drawer outlet: detail/create child routes render over this list -->
+    <RouterView v-slot="{ Component }">
+      <component :is="Component" @changed="loadMappings" />
+    </RouterView>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  margin-bottom: 16px;
-}
-
-
-.loading-container {
-  display: flex;
-  justify-content: center;
-  padding: 60px;
-}
-
 .error-message {
   margin-bottom: 16px;
 }
@@ -248,10 +297,6 @@ function formatDate(dateString: string) {
 
 .provider-name {
   color: #1e293b;
-}
-
-.provider-type-tag {
-  margin-left: 8px;
 }
 
 .client-name {

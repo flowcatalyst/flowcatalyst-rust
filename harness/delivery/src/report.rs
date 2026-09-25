@@ -20,6 +20,8 @@ pub struct SideResult {
     pub side: SideKind,
     pub summary: Option<Summary>,
     pub invariant_violations: Vec<String>,
+    /// Per violation, the `expected-diffs.json` entry accepting it.
+    pub invariants_accepted_by: Vec<Option<String>>,
     pub diagnosis: Option<String>,
     pub run: Option<SideRun>,
     pub error: Option<String>,
@@ -123,6 +125,7 @@ impl ScenarioResult {
                     side: run.side,
                     summary: None,
                     invariant_violations: vec![],
+                    invariants_accepted_by: vec![],
                     diagnosis: Some(e.clone()),
                     error: Some(e.clone()),
                     run: Some(run),
@@ -131,11 +134,22 @@ impl ScenarioResult {
             }
             let sum = compare::summarise(&run, secret.as_deref());
             let inv = compare::invariants(sc, &sum);
+            let accepted = inv
+                .iter()
+                .map(|v| {
+                    let field = compare::invariant_field(run.side, v);
+                    expected
+                        .iter()
+                        .find(|e| e.matches(&sc.name, &field))
+                        .map(ExpectedDiff::id)
+                })
+                .collect();
             results.push(SideResult {
                 side: run.side,
                 diagnosis: diagnose(&run, &sum),
                 summary: Some(sum),
                 invariant_violations: inv,
+                invariants_accepted_by: accepted,
                 error: None,
                 run: Some(run),
             });
@@ -145,6 +159,7 @@ impl ScenarioResult {
                 side: *k,
                 summary: None,
                 invariant_violations: vec![],
+                invariants_accepted_by: vec![],
                 diagnosis: Some(e.clone()),
                 run: None,
                 error: Some(e.clone()),
@@ -174,9 +189,12 @@ impl ScenarioResult {
             "ERROR"
         } else if diffs.iter().any(|d| d.accepted_by.is_none()) {
             "DIFF"
-        } else if results.iter().any(|r| !r.invariant_violations.is_empty()) {
+        } else if results
+            .iter()
+            .any(|r| r.invariants_accepted_by.iter().any(Option::is_none))
+        {
             "FAIL"
-        } else if !diffs.is_empty() {
+        } else if !diffs.is_empty() || results.iter().any(|r| !r.invariant_violations.is_empty()) {
             "ACCEPTED"
         } else {
             "PASS"
@@ -333,11 +351,18 @@ impl Report {
         stacks.sort_by_key(|s| s.side);
         let used: std::collections::BTreeSet<String> = scenarios
             .iter()
-            .flat_map(|s| s.diffs.iter().filter_map(|d| d.accepted_by.clone()))
+            .flat_map(|s| {
+                s.diffs.iter().filter_map(|d| d.accepted_by.clone()).chain(
+                    s.sides
+                        .iter()
+                        .flat_map(|r| r.invariants_accepted_by.iter().flatten().cloned()),
+                )
+            })
             .collect();
         let stale = if opts.only.is_none() && opts.sides.len() == 2 {
             expected
                 .iter()
+                .filter(|e| !e.intermittent)
                 .map(ExpectedDiff::id)
                 .filter(|id| !used.contains(id))
                 .collect()
@@ -400,10 +425,17 @@ impl Report {
                     Some(r) => match (&r.error, &r.summary) {
                         (Some(_), _) => "ERROR".into(),
                         (None, Some(sum)) => {
-                            let inv = if r.invariant_violations.is_empty() {
-                                "invariants ok".to_string()
-                            } else {
-                                format!("**{} invariant(s) broken**", r.invariant_violations.len())
+                            let open = r
+                                .invariants_accepted_by
+                                .iter()
+                                .filter(|a| a.is_none())
+                                .count();
+                            let cited = r.invariant_violations.len() - open;
+                            let inv = match (open, cited) {
+                                (0, 0) => "invariants ok".to_string(),
+                                (0, c) => format!("{c} invariant(s) broken, cited"),
+                                (o, 0) => format!("**{o} invariant(s) broken**"),
+                                (o, c) => format!("**{o} invariant(s) broken** (+{c} cited)"),
                             };
                             format!(
                                 "{}/{} accepted, {} deliveries; {inv}",
@@ -558,8 +590,19 @@ impl Report {
             for r in &sides {
                 if !r.invariant_violations.is_empty() {
                     let _ = writeln!(m, "Invariants broken on **{}**:", r.side.label());
-                    for v in &r.invariant_violations {
-                        let _ = writeln!(m, "- {v}");
+                    for (v, by) in r
+                        .invariant_violations
+                        .iter()
+                        .zip(r.invariants_accepted_by.iter())
+                    {
+                        match by {
+                            Some(by) => {
+                                let _ = writeln!(m, "- {v} — accepted by {by}");
+                            }
+                            None => {
+                                let _ = writeln!(m, "- {v}");
+                            }
+                        }
                     }
                     let _ = writeln!(m);
                 }

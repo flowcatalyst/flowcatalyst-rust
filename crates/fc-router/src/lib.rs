@@ -14,6 +14,7 @@
 //! - API: HTTP API endpoints for monitoring, health, and message publishing
 
 pub mod api;
+pub mod bootstrap;
 pub mod circuit_breaker_registry;
 pub mod config_sync;
 pub mod error;
@@ -25,9 +26,11 @@ pub mod manager;
 pub mod mediator;
 pub mod metrics;
 pub mod notification;
+pub mod platform_token;
 pub mod pool;
 pub mod queue_health_monitor;
 pub mod router_metrics;
+pub mod settled;
 pub mod standby;
 pub mod traffic;
 pub mod warning;
@@ -62,12 +65,14 @@ pub use notification::{
 };
 #[cfg(feature = "email")]
 pub use notification::{EmailConfig, EmailNotificationService};
+pub use platform_token::{origin_of, PlatformTokenSource, TokenError};
 pub use pool::{
     deferred_delay, disposition_of, retry_delay, BrokerAction, Disposition, DispositionMetric,
     GroupEffect, GroupInfo, MediatingEntry, PoolConfigUpdate, ProcessPool,
     MAX_IN_PIPELINE_ATTEMPTS,
 };
 pub use queue_health_monitor::{spawn_queue_health_monitor, QueueHealthConfig, QueueHealthMonitor};
+pub use settled::{HttpSettledReporter, SettledJob, SettledReport, SettledReporter, SETTLED_PATH};
 pub use standby::{
     spawn_leadership_monitor, LeadershipStatus, StandbyAwareProcessor, StandbyRouterConfig,
 };

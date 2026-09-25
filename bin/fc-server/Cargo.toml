@@ -12,8 +12,7 @@ path = "src/main.rs"
 [dependencies]
 fc-common = { path = "../../crates/fc-common" }
 fc-platform = { path = "../../crates/fc-platform" }
-fc-router = { path = "../../crates/fc-router" }
-fc-queue = { path = "../../crates/fc-queue", features = ["sqs", "postgres", "nats"] }
+fc-router = { path = "../../crates/fc-router", features = ["backends"] }
 fc-standby = { path = "../../crates/fc-standby" }
 fc-stream = { path = "../../crates/fc-stream" }
 fc-outbox = { path = "../../crates/fc-outbox", features = ["sqlite", "postgres"] }
@@ -30,9 +29,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 sqlx = { workspace = true }
-async-trait = { workspace = true }
 aws-config = { workspace = true }
-aws-sdk-sqs = { workspace = true }
 aws-sdk-secretsmanager = { workspace = true }
 reqwest = { workspace = true }
 rustls = "0.23"
@@ -42,11 +39,16 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 utoipa-axum = { workspace = true }
 
-[features]
-default = []
-alb = ["fc-router/alb"]
-
 [dev-dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
 rsa = { version = "0.9", features = ["pem"] }
+
+[features]
+default = []
+alb = ["fc-router/alb"]

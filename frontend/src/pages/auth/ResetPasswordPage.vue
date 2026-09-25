@@ -1,28 +1,64 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useForm, useField } from "vee-validate";
 import { toTypedSchema } from "@vee-validate/zod";
 import { z } from "zod";
-import { useLoginThemeStore } from "@/stores/loginTheme";
-import { validateResetToken, confirmPasswordReset } from "@/api/auth";
+import {
+	normalizeClientParam,
+	useLoginThemeStore,
+} from "@/stores/loginTheme";
+import { useAuthStore } from "@/stores/auth";
+import { landingPath } from "@/stores/permissions";
+import {
+	validateResetToken,
+	confirmPasswordReset,
+	setPostAuthRedirect,
+	checkSession,
+} from "@/api/auth";
+
+// Invite framing: the same page serves first-time invites (route
+// "set-password" — incl. portal identities) and self-service resets.
+import TwoFactorSetup from "@/components/TwoFactorSetup.vue";
+import type { TwoFactorMethod } from "@/api/twofactor";
 import { getErrorMessage } from "@/utils/errors";
+import { passwordPolicyError } from "@/utils/passwordPolicy";
 
 const route = useRoute();
 const router = useRouter();
 const themeStore = useLoginThemeStore();
+const authStore = useAuthStore();
 
 onMounted(async () => {
-	await themeStore.loadTheme();
+	await themeStore.loadTheme(normalizeClientParam(route.query["client"]));
 	themeStore.applyThemeColors();
 	await checkToken();
 });
 
-type PageState = "loading" | "invalid" | "form" | "submitting";
+type PageState =
+	| "loading"
+	| "invalid"
+	| "form"
+	| "submitting"
+	| "enroll"
+	| "portalDone"
+	| "redirecting";
 
 const pageState = ref<PageState>("loading");
+const isInvite = computed(() => route.name === "set-password");
+// Portal-identity token (from validate): no platform branding anywhere.
+// While loading on the invite route we also stay neutral so a portal
+// invitee never sees a flash of platform identity.
+const isPortal = ref(false);
+const showPlatformBrand = computed(
+	() => !isPortal.value && !(isInvite.value && pageState.value === "loading"),
+);
 const invalidReason = ref<"expired" | "not_found" | "unknown">("not_found");
 const submitError = ref<string | null>(null);
+const enrollToken = ref("");
+const enrollMethods = ref<TwoFactorMethod[]>([]);
+const requiresFactor = ref(false);
+const factorCode = ref("");
 
 const token = (route.query["token"] as string | undefined) ?? "";
 
@@ -35,7 +71,10 @@ async function checkToken() {
 
 	try {
 		const result = await validateResetToken(token);
+		isPortal.value = result.portal ?? false;
+		if (isPortal.value) document.title = "Set your password";
 		if (result.valid) {
+			requiresFactor.value = result.requiresFactor ?? false;
 			pageState.value = "form";
 		} else {
 			invalidReason.value =
@@ -52,21 +91,17 @@ async function checkToken() {
 	}
 }
 
-// Password schema — same rules as the rest of the app (8+ chars, upper, lower, digit, special)
+// Password schema — mirrors the server policy (passwordPolicyError): length
+// bounds + not-a-common-password. The server additionally rejects passwords
+// derived from the account's email/name (unknown to this page — the reset
+// token doesn't expose it); that error surfaces via submitError on confirm.
 const passwordSchema = toTypedSchema(
 	z
 		.object({
-			password: z
-				.string()
-				.min(8, "Password must be at least 8 characters")
-				.max(128, "Password must be at most 128 characters")
-				.regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-				.regex(/[a-z]/, "Password must contain at least one lowercase letter")
-				.regex(/[0-9]/, "Password must contain at least one number")
-				.regex(
-					/[^A-Za-z0-9]/,
-					"Password must contain at least one special character",
-				),
+			password: z.string().superRefine((pw, ctx) => {
+				const err = passwordPolicyError(pw);
+				if (err) ctx.addIssue({ code: z.ZodIssueCode.custom, message: err });
+			}),
 			confirmPassword: z.string(),
 		})
 		.refine((data) => data.password === data.confirmPassword, {
@@ -83,11 +118,55 @@ const { value: confirmPasswordValue, errorMessage: confirmPasswordError } =
 	useField<string>("confirmPassword");
 
 const onSubmit = handleSubmit(async (values) => {
+	if (requiresFactor.value && !factorCode.value.trim()) {
+		submitError.value = "Enter the code from your authenticator app.";
+		return;
+	}
 	pageState.value = "submitting";
 	submitError.value = null;
 
 	try {
-		await confirmPasswordReset(token, values.password);
+		const result = await confirmPasswordReset(
+			token,
+			values.password,
+			requiresFactor.value ? factorCode.value.trim() : undefined,
+		);
+		if (result.status === "enrollment_required" && result.enrollToken) {
+			// Domain requires 2FA — set it up before finishing. TwoFactorSetup
+			// completes the session and redirects on its own; an invite's
+			// server-validated redirect is stashed for it to follow.
+			if (result.redirectUri) setPostAuthRedirect(result.redirectUri);
+			enrollToken.value = result.enrollToken;
+			enrollMethods.value = result.allowedMethods ?? [];
+			pageState.value = "enroll";
+			return;
+		}
+		if (result.redirectUri) {
+			// Invite redirect (a portal's OAuth login, or the application that
+			// created the user via inviteRedirectUri) — validated server-side
+			// when the invite was minted. A platform session, when one was
+			// just established, lets that application's sign-in go straight
+			// through.
+			window.location.assign(result.redirectUri);
+			return;
+		}
+		if (result.sessionEstablished) {
+			// Platform invite, no redirect stashed, no 2FA required: the
+			// server already set the session cookie. Load the full session
+			// (permissions, clientId, roles) so landingPath resolves
+			// correctly, then go straight in — there's no login page to
+			// bounce back to in this flow.
+			pageState.value = "redirecting";
+			await checkSession();
+			await router.replace(landingPath(authStore.user));
+			return;
+		}
+		if (result.portal) {
+			// A portal identity with no redirect must NOT land on the
+			// platform login — it cannot sign portal users in.
+			pageState.value = "portalDone";
+			return;
+		}
 		await router.replace({ name: "login", query: { reset: "success" } });
 	} catch (e: unknown) {
 		submitError.value = getErrorMessage(
@@ -102,8 +181,11 @@ const onSubmit = handleSubmit(async (values) => {
 <template>
   <div class="login-container" :style="{ background: themeStore.background }">
     <div class="login-content">
-      <!-- Logo and branding -->
-      <div class="login-header">
+      <!-- Logo and branding (suppressed for portal identities) -->
+      <div v-if="!showPlatformBrand" class="login-header">
+        <h1 class="brand-name">Portal</h1>
+      </div>
+      <div v-else class="login-header">
         <img
           v-if="themeStore.theme.logoUrl"
           :src="themeStore.theme.logoUrl"
@@ -134,21 +216,28 @@ const onSubmit = handleSubmit(async (values) => {
         <!-- Loading state -->
         <div v-if="pageState === 'loading'" class="loading-state">
           <div class="spinner"></div>
-          <p>Validating your reset link...</p>
+          <p>{{ isInvite ? "Validating your invite link..." : "Validating your reset link..." }}</p>
         </div>
 
         <!-- Invalid / expired token -->
         <template v-else-if="pageState === 'invalid'">
           <h2 class="login-title">Link invalid or expired</h2>
           <div class="error-message">
-            <p v-if="invalidReason === 'expired'">
+            <p v-if="invalidReason === 'expired' && isInvite">
+              This invite link has expired. Ask your administrator to send a new invite.
+            </p>
+            <p v-else-if="invalidReason === 'expired'">
               This password reset link has expired. Reset links are valid for 15 minutes.
+            </p>
+            <p v-else-if="isInvite">
+              This invite link is invalid or has already been used.
             </p>
             <p v-else>
               This password reset link is invalid or has already been used.
             </p>
           </div>
           <RouterLink
+            v-if="!isInvite"
             :to="{ name: 'forgot-password' }"
             class="action-link"
           >
@@ -156,9 +245,32 @@ const onSubmit = handleSubmit(async (values) => {
           </RouterLink>
         </template>
 
-        <!-- Reset form -->
+        <!-- Forced 2FA enrollment after the password is set -->
+        <template v-else-if="pageState === 'enroll'">
+          <h2 class="login-title">Set up two-factor authentication</h2>
+          <TwoFactorSetup :enroll-token="enrollToken" :allowed-methods="enrollMethods" />
+        </template>
+
+        <!-- Session already established server-side (invite, no 2FA) -->
+        <template v-else-if="pageState === 'redirecting'">
+          <h2 class="login-title">Password set</h2>
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <p>Your password is set. Taking you to your account...</p>
+          </div>
+        </template>
+
+        <!-- Portal identity finished with no redirect configured -->
+        <template v-else-if="pageState === 'portalDone'">
+          <h2 class="login-title">Password set</h2>
+          <p class="portal-done-message">
+            Your password has been set. Return to your portal to sign in.
+          </p>
+        </template>
+
+        <!-- Set/reset form -->
         <template v-else>
-          <h2 class="login-title">Set a new password</h2>
+          <h2 class="login-title">{{ isInvite ? "Set your password" : "Set a new password" }}</h2>
 
           <div v-if="submitError" class="error-message">
             <p>{{ submitError }}</p>
@@ -166,15 +278,20 @@ const onSubmit = handleSubmit(async (values) => {
 
           <form class="login-form" @submit.prevent="onSubmit">
             <div class="form-field">
-              <label for="password">New password</label>
+              <label for="password">{{ isInvite ? "Password" : "New password" }}</label>
+              <!-- PrimeVue Password drops plain attrs (inheritAttrs:false) —
+                   autocomplete must go through inputProps to reach the input,
+                   or Chrome mis-classifies the field and autofills/reveals
+                   stored values instead of offering a new password. -->
               <Password
                 id="password"
                 v-model="passwordValue"
-                placeholder="At least 12 characters"
+                placeholder="At least 8 characters"
                 :disabled="pageState === 'submitting'"
                 :invalid="!!passwordError"
                 :feedback="true"
                 toggleMask
+                :inputProps="{ autocomplete: 'new-password' }"
                 inputClass="w-full"
                 class="w-full"
               />
@@ -182,15 +299,16 @@ const onSubmit = handleSubmit(async (values) => {
             </div>
 
             <div class="form-field">
-              <label for="confirmPassword">Confirm new password</label>
+              <label for="confirmPassword">{{ isInvite ? "Confirm password" : "Confirm new password" }}</label>
               <Password
                 id="confirmPassword"
                 v-model="confirmPasswordValue"
-                placeholder="Repeat your new password"
+                :placeholder="isInvite ? 'Repeat your password' : 'Repeat your new password'"
                 :disabled="pageState === 'submitting'"
                 :invalid="!!confirmPasswordError"
                 :feedback="false"
                 toggleMask
+                :inputProps="{ autocomplete: 'new-password' }"
                 inputClass="w-full"
                 class="w-full"
               />
@@ -199,9 +317,27 @@ const onSubmit = handleSubmit(async (values) => {
               </small>
             </div>
 
+            <!-- Strong-factor gate: a self-service reset needs an authenticator
+                 code (email alone can't authorize it). -->
+            <div v-if="requiresFactor" class="form-field">
+              <label for="factorCode">Authenticator code</label>
+              <InputText
+                id="factorCode"
+                v-model="factorCode"
+                placeholder="123456"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                :disabled="pageState === 'submitting'"
+                class="w-full"
+              />
+              <small class="field-hint">
+                Enter the 6-digit code from your authenticator app to confirm.
+              </small>
+            </div>
+
             <Button
               type="submit"
-              label="Reset password"
+              :label="isInvite ? 'Set password' : 'Reset password'"
               :loading="pageState === 'submitting'"
               class="w-full"
             />
@@ -210,7 +346,7 @@ const onSubmit = handleSubmit(async (values) => {
       </div>
 
       <!-- Footer -->
-      <p class="login-footer">
+      <p v-if="showPlatformBrand" class="login-footer">
         {{ themeStore.theme.footerText }}
       </p>
     </div>
@@ -218,6 +354,11 @@ const onSubmit = handleSubmit(async (values) => {
 </template>
 
 <style scoped>
+.portal-done-message {
+	margin: 0.5rem 0 0;
+	line-height: 1.5;
+}
+
 .login-container {
   min-height: 100vh;
   display: flex;
