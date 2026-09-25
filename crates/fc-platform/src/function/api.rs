@@ -556,9 +556,9 @@ const IMMUTABLE_FIELDS: [&str; 5] = [
     params(("address" = String, Path, description = "app.service.name")),
     request_body = UpdateFunctionRequest,
     responses(
-        (status = 204),
+        (status = 204, description = "Updated, or already so: a request that changes nothing (the status the function has, the same description) writes no event and is still 204"),
         (status = 400, description = "FUNCTION_IMMUTABLE_FIELD, STATUS_INVALID, ADDRESS_INVALID"),
-        (status = 404), (status = 409, description = "FUNCTION_ALREADY_ACTIVE / FUNCTION_ALREADY_DISABLED"),
+        (status = 404),
     ),
     security(("bearer_auth" = []))
 )]
@@ -593,13 +593,18 @@ pub async fn update_function(
     // One transaction for the status flip and the wiring it pauses or
     // resumes, as Java's TxOperation.
     let ops = state.ops.clone();
-    state
+    match state
         .ops
         .unit_of_work
         .run(move |scoped| async move { ops.update_in(caller, scoped).run(command, ctx).await })
         .await
-        .into_result()?;
-    Ok(StatusCode::NO_CONTENT)
+        .into_result()
+    {
+        // A no-op (already that status, same description): nothing written.
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(e) if e.is_unchanged() => Ok(StatusCode::NO_CONTENT),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Delete a function; its versions, aliases, routes and settings cascade.

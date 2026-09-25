@@ -367,14 +367,37 @@ async fn upload_publish_list_get_and_retire() {
     );
     assert_eq!(app.audit_count_for(&fid).await, 2, "create + publish");
 
-    // The same digest again: 409 naming the existing version.
-    let dup = post(
+    // The same digest and manifest again: a no-op, 200 with the existing
+    // version, and nothing written.
+    let (status, again) = post(
         &r,
         &format!("{path}/versions"),
         &t,
         publish_body(&platform_ref, &digest),
     )
     .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again, published,
+        "the existing version, as the publish answered it"
+    );
+    assert_eq!(
+        app.event_count_by_type("platform:function:version:published")
+            .await,
+        1,
+        "no event for a no-op"
+    );
+    assert_eq!(
+        app.audit_count_for(&fid).await,
+        2,
+        "no audit row for a no-op"
+    );
+    assert_eq!(version_count(&app, &fid).await, 1);
+
+    // The same digest under another manifest: still 409, naming the version.
+    let mut other = publish_body(&platform_ref, &digest);
+    other["manifest"]["warm"] = json!(true);
+    let dup = post(&r, &format!("{path}/versions"), &t, other).await;
     assert_error(&dup, StatusCode::CONFLICT, "VERSION_DIGEST_EXISTS");
     assert_eq!(dup.1["details"]["version"], 1);
     assert_eq!(
@@ -447,7 +470,8 @@ async fn upload_publish_list_get_and_retire() {
         json!([{"version": 2, "keys": ["GREETING"]}])
     );
 
-    // Retire 1: 200, the list shape, RETIRED with retiredAt; then again 409.
+    // Retire 1: 200, the list shape, RETIRED with retiredAt; then again a
+    // no-op: 200 with the same version, no second event.
     let (status, retired) = post(&r, &format!("{path}/versions/1/retire"), &t, json!({})).await;
     assert_eq!(status, StatusCode::OK, "{retired}");
     assert_eq!(retired["state"], "RETIRED");
@@ -458,10 +482,14 @@ async fn upload_publish_list_get_and_retire() {
             .await,
         1
     );
-    assert_error(
-        &post(&r, &format!("{path}/versions/1/retire"), &t, json!({})).await,
-        StatusCode::CONFLICT,
-        "VERSION_ALREADY_RETIRED",
+    let (status, again) = post(&r, &format!("{path}/versions/1/retire"), &t, json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, retired);
+    assert_eq!(
+        app.event_count_by_type("platform:function:version:retired")
+            .await,
+        1,
+        "no event for a no-op"
     );
 
     // The live version never retires; a named alias blocks it too.
@@ -799,7 +827,10 @@ async fn publish_checks_and_the_manifest_check() {
          whitespace-separated fields (sec min hour dom mon dow), got 5: '0 * * * *'"
     );
     assert_eq!(check["errors"][0]["details"], json!({}));
-    assert!(check.get("plan").is_none(), "no plan for an invalid manifest");
+    assert!(
+        check.get("plan").is_none(),
+        "no plan for an invalid manifest"
+    );
     // A manifest problem carries its pointer.
     let (_, bad) = post(
         &r,

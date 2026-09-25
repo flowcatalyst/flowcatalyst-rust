@@ -5,6 +5,12 @@
 //! artifact ref and digest, a `platform://` ref's own checks, the owner's
 //! policy and ceilings, the strict manifest, the signature, a duplicate
 //! digest, the publish checks, then the next version number and the commit.
+//!
+//! **A duplicate digest** (`VERSION_DIGEST_EXISTS`, `details.version`) is a
+//! no-op when the normalised manifest is the existing version's too (owner
+//! decision 5, beyond Java): the use case stops before its commit with
+//! [`UseCaseError::unchanged`], and the handler answers `200` with that
+//! version. Under a different manifest it stays Java's `409`.
 //! Java runs the publish checks after the version row is written and rolls
 //! it back on a failure; they only read, so running them just before the
 //! number is reserved gives the same outcome and the same first error,
@@ -224,12 +230,24 @@ impl<U: UnitOfWork> PublishVersionUseCase<U> {
         {
             let mut details = HashMap::new();
             details.insert("version".to_string(), serde_json::json!(existing.version));
+            let message = format!(
+                "digest is already published as version {} for this function",
+                existing.version
+            );
+            // The same bytes with the same (normalised) manifest are the
+            // version that already exists: a no-op, which the handler
+            // answers 200 with that version. The same bytes under another
+            // manifest stay a conflict: a version is immutable.
+            if existing.manifest == p.manifest {
+                return Err(UseCaseError::unchanged(
+                    "VERSION_DIGEST_EXISTS",
+                    message,
+                    details,
+                ));
+            }
             return Err(UseCaseError::business_rule_with_details(
                 "VERSION_DIGEST_EXISTS",
-                format!(
-                    "digest is already published as version {} for this function",
-                    existing.version
-                ),
+                message,
                 details,
             ));
         }

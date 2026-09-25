@@ -262,6 +262,10 @@ export type PromoteResponse = {
     version: number;
     versionId: string;
     previousVersion?: number;
+    /**
+     * false when the alias already named this version: nothing was written, and previousVersion is the version itself
+     */
+    changed: boolean;
 };
 
 /**
@@ -797,7 +801,7 @@ export type UpdateFunctionError = UpdateFunctionErrors[keyof UpdateFunctionError
 
 export type UpdateFunctionResponses = {
     /**
-     * Updated
+     * Updated, or already so: a request that changes nothing (the status the function has, the same description) writes nothing and is still 204
      */
     204: void;
 };
@@ -923,7 +927,7 @@ export type PublishFunctionVersionErrors = {
      */
     404: ErrorResponse;
     /**
-     * FUNCTION_DISABLED, VERSION_DIGEST_EXISTS
+     * FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the same digest under a different manifest; details.version names the existing version)
      */
     409: ErrorResponse;
     /**
@@ -939,6 +943,10 @@ export type PublishFunctionVersionErrors = {
 export type PublishFunctionVersionError = PublishFunctionVersionErrors[keyof PublishFunctionVersionErrors];
 
 export type PublishFunctionVersionResponses = {
+    /**
+     * The same digest and manifest are already published: that version, in its own state. Nothing is written (a no-op).
+     */
+    200: PublishResponse;
     /**
      * The published version
      */
@@ -1062,7 +1070,7 @@ export type RetireFunctionVersionError = RetireFunctionVersionErrors[keyof Retir
 
 export type RetireFunctionVersionResponses = {
     /**
-     * The retired version
+     * The retired version; retiring a retired version is a no-op answering it as it is
      */
     200: VersionResponse;
 };
@@ -1141,7 +1149,7 @@ export type PromoteFunctionAliasErrors = {
      */
     404: ErrorResponse;
     /**
-     * VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, ALIAS_UNCHANGED, SETTINGS_MISSING
+     * VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, SETTINGS_MISSING
      */
     409: ErrorResponse;
 };
@@ -1150,7 +1158,7 @@ export type PromoteFunctionAliasError = PromoteFunctionAliasErrors[keyof Promote
 
 export type PromoteFunctionAliasResponses = {
     /**
-     * The promotion result
+     * The promotion result; changed is false when the alias already named the version (a no-op, nothing written)
      */
     200: PromoteResponse;
 };

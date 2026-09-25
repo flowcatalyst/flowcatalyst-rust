@@ -34,9 +34,9 @@ import type {
 
 // The function API's types are generated from the platform's function
 // document (`crates/fc-platform/resources/openapi/functions.openapi.json`,
-// served at `GET /api/openapi-functions.json`, a byte-identical copy of
-// Java's), so `vue-tsc` fails when the contract drifts. Every operation of
-// that document is wrapped below except the four `/control/functions/*`
+// served at `GET /api/openapi-functions.json`: Java's, plus Rust's
+// backward-compatible additions), so `vue-tsc` fails when the contract
+// drifts. Every operation of that document is wrapped below except the four `/control/functions/*`
 // routes: those are the function host's protocol, never called by the SPA.
 export type {
 	AliasResponse,

@@ -296,7 +296,7 @@
         },
         "responses": {
           "204": {
-            "description": "Updated"
+            "description": "Updated, or already so: a request that changes nothing (the status the function has, the same description) writes nothing and is still 204"
           },
           "400": {
             "description": "FUNCTION_IMMUTABLE_FIELD, STATUS_INVALID",
@@ -523,6 +523,16 @@
               }
             }
           },
+          "200": {
+            "description": "The same digest and manifest are already published: that version, in its own state. Nothing is written (a no-op).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishResponse"
+                }
+              }
+            }
+          },
           "400": {
             "description": "ARTIFACT_REF_REQUIRED, ARTIFACT_REF_INVALID, DIGEST_INVALID, MANIFEST_REQUIRED, MANIFEST_UNKNOWN_FIELD, MANIFEST_INVALID, RUNTIME_INVALID, RUNTIME_MISMATCH, ENTRYPOINT_REQUIRED, ENTRYPOINT_INVALID, POOL_INVALID, LIMIT_INVALID, LIMIT_OVER_CEILING, LIMIT_NOT_APPLICABLE, ENDPOINT_INVALID, ENDPOINT_AUTH_REQUIRED, ROUTE_AMBIGUOUS, SUBSCRIPTION_INVALID, SUBSCRIPTION_DUPLICATE, SUBSCRIPTION_PATH_NOT_WEBHOOK, SCHEDULE_INVALID, SCHEDULE_DUPLICATE, SCHEDULE_PATH_NOT_WEBHOOK, PUBLIC_ROUTE_INVALID, PUBLIC_ROUTE_DUPLICATE, DB_INVALID, CONFIG_INVALID, SIGNATURE_REQUIRED, SIGNATURE_REJECTED",
             "content": {
@@ -554,7 +564,7 @@
             }
           },
           "409": {
-            "description": "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS",
+            "description": "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the same digest under a different manifest; details.version names the existing version)",
             "content": {
               "application/json": {
                 "schema": {
@@ -825,7 +835,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The retired version",
+            "description": "The retired version; retiring a retired version is a no-op answering it as it is",
             "content": {
               "application/json": {
                 "schema": {
@@ -922,7 +932,7 @@
         },
         "responses": {
           "200": {
-            "description": "The promotion result",
+            "description": "The promotion result; changed is false when the alias already named the version (a no-op, nothing written)",
             "content": {
               "application/json": {
                 "schema": {
@@ -962,7 +972,7 @@
             }
           },
           "409": {
-            "description": "VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, ALIAS_UNCHANGED, SETTINGS_MISSING",
+            "description": "VERSION_NOT_READY, VERSION_RETIRED, FUNCTION_DISABLED, SETTINGS_MISSING",
             "content": {
               "application/json": {
                 "schema": {
@@ -3330,12 +3340,17 @@
           },
           "previousVersion": {
             "type": "integer"
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "false when the alias already named this version: nothing was written, and previousVersion is the version itself"
           }
         },
         "required": [
           "alias",
           "version",
-          "versionId"
+          "versionId",
+          "changed"
         ],
         "additionalProperties": false
       },

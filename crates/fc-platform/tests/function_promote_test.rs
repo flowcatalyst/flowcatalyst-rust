@@ -823,11 +823,20 @@ async fn promote_and_remove_alias_codes() {
     assert_eq!(status, StatusCode::OK, "{out}");
     // A function with no triggers still gets its pool.
     assert_eq!(links(&app, &fid).await.len(), 1);
-    let unchanged = promote(&r, &t, path, "live", v1).await;
-    assert_error(&unchanged, StatusCode::CONFLICT, "ALIAS_UNCHANGED");
+    assert_eq!(out["changed"], true);
+    let changes = events_of_type(&app, "platform:function:alias:changed").await;
+    // The alias already names v1: a no-op, 200 with changed false and
+    // nothing written.
+    let (status, unchanged) = promote(&r, &t, path, "live", v1).await;
+    assert_eq!(status, StatusCode::OK, "{unchanged}");
     assert_eq!(
-        unchanged.1["message"],
-        "alias already points at this version"
+        unchanged,
+        json!({"alias": "live", "version": v1, "versionId": out["versionId"], "previousVersion": v1, "changed": false})
+    );
+    assert_eq!(
+        events_of_type(&app, "platform:function:alias:changed").await,
+        changes,
+        "no event for a no-op"
     );
 
     // Aliases: qa → v1, live cannot be removed, an unknown one is 404.

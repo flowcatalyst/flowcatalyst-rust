@@ -7,9 +7,10 @@ const openApiInput =
 		? `http://localhost:${livePort}/q/openapi`
 		: "./openapi/openapi.json";
 
-// The function API is a second, separate document: the byte-identical copy
-// of Java's `functions.openapi.json` that the platform serves verbatim at
-// `GET /api/openapi-functions.json` (crates/fc-platform/src/function/openapi.rs).
+// The function API is a second, separate document: Java's
+// `functions.openapi.json` plus Rust's backward-compatible additions, which
+// the platform serves verbatim at `GET /api/openapi-functions.json`
+// (crates/fc-platform/src/function/openapi.rs).
 // Types only — `api/functions.ts` wraps them over the hand-rolled
 // `api/client.ts`, as Java's SPA does (docs/spec/function-ui.md §1 there).
 const functionsOpenApiInput =

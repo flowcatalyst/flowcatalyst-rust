@@ -66,7 +66,9 @@ impl SignerResponse {
     }
 }
 
-/// `201` of a publish: `{id, version, state: "PUBLISHED", digest, signer?}`.
+/// `201` of a publish: `{id, version, state: "PUBLISHED", digest, signer?}`;
+/// `200` with the existing version (its own state) when the same digest and
+/// manifest were already published.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PublishResponse {
     pub id: String,
@@ -78,6 +80,17 @@ pub struct PublishResponse {
 }
 
 impl PublishResponse {
+    /// An existing version, for a publish that was a no-op: its own state.
+    fn existing(v: &FunctionVersion) -> PublishResponse {
+        PublishResponse {
+            id: v.id.clone(),
+            version: v.version,
+            state: v.state.name().to_string(),
+            digest: v.digest.value().to_string(),
+            signer: v.signer.as_ref().map(SignerResponse::of),
+        }
+    }
+
     fn of(event: &VersionPublished) -> PublishResponse {
         PublishResponse {
             id: event.version_id.clone(),
@@ -451,7 +464,9 @@ pub struct PromoteRequest {
 }
 
 /// `200` of a promote: `previousVersion` is the prior target's number,
-/// absent on a first promotion.
+/// absent on a first promotion. `changed` is false when the alias already
+/// named the version (a no-op: nothing written, `previousVersion` is the
+/// version itself).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PromoteResponse {
@@ -460,6 +475,7 @@ pub struct PromoteResponse {
     pub version_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_version: Option<i32>,
+    pub changed: bool,
 }
 
 /// One alias.
@@ -484,10 +500,11 @@ pub struct AliasResponse {
     request_body = PublishRequest,
     responses(
         (status = 201, body = PublishResponse),
+        (status = 200, body = PublishResponse, description = "The same digest and manifest are already published: that version, nothing written"),
         (status = 400, description = "ARTIFACT_REF_REQUIRED, ARTIFACT_REF_INVALID, DIGEST_INVALID, a manifest code, SIGNATURE_REQUIRED, SIGNATURE_REJECTED or a publish check"),
         (status = 403, description = "PERMISSION_REQUIRED or SIGNER_NOT_PERMITTED"),
         (status = 404, description = "Function_NOT_FOUND, also when out of reach"),
-        (status = 409, description = "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS or PUBLIC_ROUTE_TAKEN"),
+        (status = 409, description = "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the digest under another manifest) or PUBLIC_ROUTE_TAKEN"),
         (status = 422, description = "ARTIFACT_REF_MISMATCH or ARTIFACT_NOT_UPLOADED"),
         (status = 503, description = "ARTIFACT_STORE_NOT_CONFIGURED"),
     ),
@@ -503,7 +520,7 @@ pub async fn publish_version(
     let address = address_from_path(&address)?;
     let req: PublishRequest = parse_body(&body)?;
     let command = PublishCommand {
-        address,
+        address: address.clone(),
         artifact_ref: req.artifact_ref,
         digest: req.digest,
         signature_bundle: req.signature_bundle,
@@ -514,13 +531,26 @@ pub async fn publish_version(
     // One transaction for the version number's row lock and the commit, as
     // Java's TxOperation.
     let ops = state.ops.clone();
-    let event = state
+    let reach = caller.clone();
+    let outcome = state
         .ops
         .unit_of_work
         .run(move |scoped| async move { ops.publish_in(caller, scoped).run(command, ctx).await })
         .await
-        .into_result()?;
-    Ok((StatusCode::CREATED, Json(PublishResponse::of(&event))))
+        .into_result();
+    match outcome {
+        Ok(event) => Ok((StatusCode::CREATED, Json(PublishResponse::of(&event)))),
+        Err(e) if e.is_unchanged() => {
+            let number = e.details()["version"]
+                .as_i64()
+                .and_then(|n| i32::try_from(n).ok())
+                .ok_or_else(|| PlatformError::from(e.clone()))?;
+            let f = reachable_function(&state, &address, &reach).await?;
+            let v = version_or_not_found(&state, &f, number).await?;
+            Ok((StatusCode::OK, Json(PublishResponse::existing(&v))))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Validate a manifest as a publish would, writing nothing.
@@ -684,7 +714,7 @@ async fn version_or_not_found(
         (status = 400, description = "ADDRESS_INVALID or VERSION_INVALID"),
         (status = 403),
         (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
-        (status = 409, description = "VERSION_IS_LIVE, VERSION_ALIASED or VERSION_ALREADY_RETIRED"),
+        (status = 409, description = "VERSION_IS_LIVE or VERSION_ALIASED. Retiring a retired version is a no-op: 200 with it, nothing written"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -697,7 +727,7 @@ pub async fn retire_version(
     let address = address_from_path(&address)?;
     let number = parse_version_number(&version)?;
     let caller = state.caller(&auth.0).await?;
-    state
+    match state
         .ops
         .retire(caller.clone())
         .run(
@@ -708,7 +738,12 @@ pub async fn retire_version(
             ExecutionContext::from_auth(&auth.0),
         )
         .await
-        .into_result()?;
+        .into_result()
+    {
+        // Already retired: a no-op, answered with the version as it is.
+        Err(e) if !e.is_unchanged() => return Err(e.into()),
+        _ => {}
+    }
     let f = reachable_function(&state, &address, &caller).await?;
     let v = version_or_not_found(&state, &f, number).await?;
     Ok(Json(VersionResponse::summary(&v, f.is_live(&v.id))))
@@ -729,7 +764,7 @@ pub async fn retire_version(
         (status = 400, description = "ALIAS_INVALID, ADDRESS_INVALID or INVALID_JSON"),
         (status = 403),
         (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
-        (status = 409, description = "VERSION_NOT_READY, SETTINGS_MISSING, VERSION_RETIRED, FUNCTION_DISABLED, ALIAS_UNCHANGED or PUBLIC_ROUTE_TAKEN"),
+        (status = 409, description = "VERSION_NOT_READY, SETTINGS_MISSING, VERSION_RETIRED, FUNCTION_DISABLED or PUBLIC_ROUTE_TAKEN. An alias already naming the version is a no-op: 200 with changed false"),
     ),
     security(("bearer_auth" = []))
 )]
@@ -743,21 +778,38 @@ pub async fn promote(
     let address = address_from_path(&address)?;
     let req: PromoteRequest = parse_body(&body)?;
     let command = PromoteCommand {
-        address,
-        alias,
+        address: address.clone(),
+        alias: alias.clone(),
         version: req.version,
     };
     let caller = state.caller(&auth.0).await?;
+    let reach = caller.clone();
     let ctx = ExecutionContext::from_auth(&auth.0);
     // One transaction for the alias change and the wiring, as Java's
     // TxOperation.
     let ops = state.ops.clone();
-    let event = state
+    let outcome = state
         .ops
         .unit_of_work
         .run(move |scoped| async move { ops.promote_in(caller, scoped).run(command, ctx).await })
         .await
-        .into_result()?;
+        .into_result();
+    let event = match outcome {
+        Ok(event) => event,
+        // The alias already names this version: nothing written.
+        Err(e) if e.is_unchanged() => {
+            let f = reachable_function(&state, &address, &reach).await?;
+            let v = version_or_not_found(&state, &f, req.version).await?;
+            return Ok(Json(PromoteResponse {
+                alias,
+                version: v.version,
+                version_id: v.id,
+                previous_version: Some(v.version),
+                changed: false,
+            }));
+        }
+        Err(e) => return Err(e.into()),
+    };
     let previous_version = match &event.previous_version_id {
         Some(id) => state.versions.find_by_id(id).await?.map(|v| v.version),
         None => None,
@@ -767,6 +819,7 @@ pub async fn promote(
         version: event.version,
         version_id: event.version_id,
         previous_version,
+        changed: true,
     }))
 }
 

@@ -95,12 +95,14 @@ impl Function {
         self.updated_at = now;
     }
 
-    /// `409 FUNCTION_ALREADY_DISABLED` when it already is.
+    /// A no-op ([`UseCaseError::unchanged`], `FUNCTION_ALREADY_DISABLED`)
+    /// when it already is.
     pub fn disable(&mut self, now: DateTime<Utc>) -> Result<(), UseCaseError> {
         if self.status == FunctionStatus::Disabled {
-            return Err(UseCaseError::business_rule(
+            return Err(UseCaseError::unchanged(
                 "FUNCTION_ALREADY_DISABLED",
                 "function is already disabled",
+                Default::default(),
             ));
         }
         self.status = FunctionStatus::Disabled;
@@ -108,12 +110,14 @@ impl Function {
         Ok(())
     }
 
-    /// `409 FUNCTION_ALREADY_ACTIVE` when it already is.
+    /// A no-op ([`UseCaseError::unchanged`], `FUNCTION_ALREADY_ACTIVE`)
+    /// when it already is.
     pub fn enable(&mut self, now: DateTime<Utc>) -> Result<(), UseCaseError> {
         if self.status == FunctionStatus::Active {
-            return Err(UseCaseError::business_rule(
+            return Err(UseCaseError::unchanged(
                 "FUNCTION_ALREADY_ACTIVE",
                 "function is already active",
+                Default::default(),
             ));
         }
         self.status = FunctionStatus::Active;
@@ -141,8 +145,8 @@ impl Function {
     /// never `live`'s.
     ///
     /// `400 ALIAS_INVALID`, `400 VERSION_NOT_OF_FUNCTION`, `409
-    /// VERSION_RETIRED`, `409 FUNCTION_DISABLED`, `409 ALIAS_UNCHANGED`, in
-    /// that order.
+    /// VERSION_RETIRED`, `409 FUNCTION_DISABLED`, then the no-op
+    /// `ALIAS_UNCHANGED` ([`UseCaseError::unchanged`]), in that order.
     pub fn promote(
         &mut self,
         alias: &str,
@@ -171,9 +175,10 @@ impl Function {
         }
         let previous = self.version_id_of(alias).map(str::to_string);
         if previous.as_deref() == Some(version.id.as_str()) {
-            return Err(UseCaseError::business_rule(
+            return Err(UseCaseError::unchanged(
                 "ALIAS_UNCHANGED",
                 "alias already points at this version",
+                Default::default(),
             ));
         }
         let pointer = FunctionAlias {
@@ -324,13 +329,15 @@ impl FunctionVersion {
         }
     }
 
-    /// `PUBLISHED` or `READY` to `RETIRED(now)`; `409
-    /// VERSION_ALREADY_RETIRED` when it already is.
+    /// `PUBLISHED` or `READY` to `RETIRED(now)`; the no-op
+    /// `VERSION_ALREADY_RETIRED` ([`UseCaseError::unchanged`]) when it
+    /// already is.
     pub fn retire(&mut self, now: DateTime<Utc>) -> Result<(), UseCaseError> {
         if let VersionState::Retired(_) = self.state {
-            return Err(UseCaseError::business_rule(
+            return Err(UseCaseError::unchanged(
                 "VERSION_ALREADY_RETIRED",
                 "version is already retired",
+                Default::default(),
             ));
         }
         self.state = VersionState::Retired(now);
@@ -803,10 +810,12 @@ mod tests {
         let err = f.enable(Utc::now()).unwrap_err();
         assert_eq!(err.code(), "FUNCTION_ALREADY_ACTIVE");
         assert_eq!(err.http_status_code(), 409);
+        assert!(err.is_unchanged(), "a no-op, which the handler answers 204");
         f.disable(Utc::now()).unwrap();
         assert_eq!(f.status, FunctionStatus::Disabled);
         let err = f.disable(Utc::now()).unwrap_err();
         assert_eq!(err.code(), "FUNCTION_ALREADY_DISABLED");
+        assert!(err.is_unchanged());
         f.enable(Utc::now()).unwrap();
         assert_eq!(f.status, FunctionStatus::Active);
     }
@@ -912,6 +921,7 @@ mod tests {
             (err.http_status_code(), err.code(), err.message()),
             (409, "VERSION_ALREADY_RETIRED", "version is already retired")
         );
+        assert!(err.is_unchanged(), "a no-op, which the handler answers 200");
         // A READY version retires too.
         let mut ready = version();
         ready.state = VersionState::Ready(now);
@@ -956,6 +966,7 @@ mod tests {
                 "alias already points at this version"
             )
         );
+        assert!(err.is_unchanged(), "a no-op, which the handler answers 200");
         // Another alias may name the same version as live.
         assert_eq!(f.promote("qa", &v, "prn_1", now).unwrap(), None);
 

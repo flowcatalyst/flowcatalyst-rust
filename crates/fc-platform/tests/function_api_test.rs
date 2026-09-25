@@ -660,11 +660,17 @@ async fn functions_crud_reach_and_pagination() {
     let (_, updated) = get(&app, path, &anchor).await;
     assert_eq!(updated["description"], "Makes invoices");
     assert_eq!(updated["status"], "DISABLED");
-    assert_error(
-        &put(&app, path, &anchor, json!({"status": "DISABLED"})).await,
-        StatusCode::CONFLICT,
-        "FUNCTION_ALREADY_DISABLED",
-    );
+    // No-ops (the status it has; the same description too): 204, nothing
+    // written (the event counts below include neither).
+    for noop in [
+        json!({"status": "DISABLED"}),
+        json!({"description": "Makes invoices", "status": "DISABLED"}),
+        json!({"description": "Makes invoices"}),
+        json!({}),
+    ] {
+        let (status, body) = put(&app, path, &anchor, noop.clone()).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{noop}: {body}");
+    }
     assert_error(
         &put(&app, path, &anchor, json!({"status": "PAUSED"})).await,
         StatusCode::BAD_REQUEST,
