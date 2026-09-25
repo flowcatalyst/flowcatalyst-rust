@@ -10,7 +10,7 @@
 //! Rust additions are listed in `RUST_ADDITIONS` and nothing else may
 //! differ: the function-runner roles and the function grants on
 //! `platform:messaging-admin`, which Java added for functions (Go has no
-//! function runner).
+//! function runner), and owner ruling 13's service-account grants.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -303,8 +303,32 @@ const GO_ROLES: &[(&str, &str, &str, &[&str])] = &[
 ];
 
 /// Rust-only additions, by role: the function runner's (Java
-/// `PlatformRoles.java:149-150, 211-224`).
+/// `PlatformRoles.java:149-150, 211-224`), and the service-account
+/// permissions of owner ruling 13 (2026-09-25, Java 458ebf3a), which Go's
+/// admins never needed because anchor scope passed its gates.
 const RUST_ADDITIONS: &[(&str, &[&str])] = &[
+    (
+        "admin",
+        &[
+            "platform:iam:service-account:view",
+            "platform:iam:service-account:create",
+            "platform:iam:service-account:update",
+            "platform:iam:service-account:delete",
+            "platform:iam:service-account:manage",
+        ],
+    ),
+    (
+        "iam-admin",
+        &[
+            "platform:iam:service-account:view",
+            "platform:iam:service-account:create",
+            "platform:iam:service-account:update",
+            "platform:iam:service-account:delete",
+            "platform:iam:service-account:manage",
+        ],
+    ),
+    ("iam-readonly", &["platform:iam:service-account:view"]),
+    ("viewer", &["platform:iam:service-account:view"]),
     (
         "messaging-admin",
         &[

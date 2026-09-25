@@ -758,6 +758,15 @@ pub mod roles {
                 permissions::admin::CORS_ORIGIN_READ,
                 permissions::admin::CORS_ORIGIN_CREATE,
                 permissions::admin::CORS_ORIGIN_DELETE,
+                // Owner ruling 13 (2026-09-25, Java 458ebf3a): service
+                // accounts need these permissions, which no built-in role
+                // but super-admin held. What the holder may then give an
+                // account is bounded by the role ceiling.
+                permissions::admin::SERVICE_ACCOUNT_READ,
+                permissions::admin::SERVICE_ACCOUNT_CREATE,
+                permissions::admin::SERVICE_ACCOUNT_UPDATE,
+                permissions::admin::SERVICE_ACCOUNT_DELETE,
+                permissions::admin::SERVICE_ACCOUNT_MANAGE,
             ])
     }
 
@@ -809,6 +818,12 @@ pub mod roles {
                 permissions::admin::EMAIL_DOMAIN_MAPPING_CREATE,
                 permissions::admin::EMAIL_DOMAIN_MAPPING_UPDATE,
                 permissions::admin::EMAIL_DOMAIN_MAPPING_DELETE,
+                // Owner ruling 13 (Java 458ebf3a), as `platform:admin`.
+                permissions::admin::SERVICE_ACCOUNT_READ,
+                permissions::admin::SERVICE_ACCOUNT_CREATE,
+                permissions::admin::SERVICE_ACCOUNT_UPDATE,
+                permissions::admin::SERVICE_ACCOUNT_DELETE,
+                permissions::admin::SERVICE_ACCOUNT_MANAGE,
             ])
     }
 
@@ -823,6 +838,8 @@ pub mod roles {
                 permissions::iam::CLIENT_ACCESS_READ,
                 permissions::admin::IDENTITY_PROVIDER_READ,
                 permissions::admin::EMAIL_DOMAIN_MAPPING_READ,
+                // Owner ruling 13 (Java 458ebf3a).
+                permissions::admin::SERVICE_ACCOUNT_READ,
             ])
     }
 
@@ -979,6 +996,8 @@ pub mod roles {
                 permissions::admin::EMAIL_DOMAIN_MAPPING_READ,
                 permissions::admin::CONFIG_READ,
                 permissions::admin::CORS_ORIGIN_READ,
+                // Owner ruling 13 (Java 458ebf3a).
+                permissions::admin::SERVICE_ACCOUNT_READ,
             ])
     }
 
@@ -1192,6 +1211,25 @@ mod tests {
         let auth_ro = roles::auth_readonly();
         assert!(auth_ro.has_permission(permissions::auth::OAUTH_CLIENT_READ));
         assert!(!auth_ro.has_permission(permissions::auth::OAUTH_CLIENT_CREATE));
+
+        // Owner ruling 13: the service-account permissions.
+        for role in [roles::platform_admin(), roles::iam_admin()] {
+            for p in [
+                permissions::admin::SERVICE_ACCOUNT_READ,
+                permissions::admin::SERVICE_ACCOUNT_CREATE,
+                permissions::admin::SERVICE_ACCOUNT_UPDATE,
+                permissions::admin::SERVICE_ACCOUNT_DELETE,
+                permissions::admin::SERVICE_ACCOUNT_MANAGE,
+            ] {
+                assert!(role.permissions.contains(p), "{}: {p}", role.name);
+            }
+        }
+        for role in [roles::iam_readonly(), roles::viewer()] {
+            assert!(role
+                .permissions
+                .contains(permissions::admin::SERVICE_ACCOUNT_READ));
+            assert!(!role.has_permission(permissions::admin::SERVICE_ACCOUNT_UPDATE));
+        }
 
         let ai_ro = roles::ai_agent_readonly();
         assert!(ai_ro.has_permission(permissions::admin::EVENT_TYPE_READ));
