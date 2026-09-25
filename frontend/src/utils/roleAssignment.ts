@@ -7,5 +7,7 @@
  * granted are muted.
  */
 export function assignmentSourceSeverity(source: string): "info" | "secondary" {
-	return source === "ADMIN_ASSIGNED" || source === "ADMIN" ? "info" : "secondary";
+	return source === "ADMIN_ASSIGNED" || source === "ADMIN"
+		? "info"
+		: "secondary";
 }

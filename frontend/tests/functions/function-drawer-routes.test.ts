@@ -31,7 +31,9 @@ describe("function routes", () => {
 	});
 
 	it("keeps the function page and manifest editor as full pages", () => {
-		expect(resolved("/functions/acme.orders.ship").at(-1)).toBe("function-detail");
+		expect(resolved("/functions/acme.orders.ship").at(-1)).toBe(
+			"function-detail",
+		);
 		expect(resolved("/functions/acme.orders.ship")).not.toContain("functions");
 		expect(resolved("/functions/acme.orders.ship/manifest").at(-1)).toBe(
 			"function-manifest-editor",

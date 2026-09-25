@@ -8,7 +8,13 @@ describe("assignmentSourceSeverity", () => {
 	});
 
 	it("mutes synced and platform-granted roles", () => {
-		for (const source of ["IDP_SYNC", "SDK_SYNC", "PROVISIONED", "BOOTSTRAP", "SYSTEM"]) {
+		for (const source of [
+			"IDP_SYNC",
+			"SDK_SYNC",
+			"PROVISIONED",
+			"BOOTSTRAP",
+			"SYSTEM",
+		]) {
 			expect(assignmentSourceSeverity(source)).toBe("secondary");
 		}
 	});

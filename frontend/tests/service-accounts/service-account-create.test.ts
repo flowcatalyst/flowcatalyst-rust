@@ -44,9 +44,8 @@ const created = {
 };
 
 async function mountDrawer() {
-	const { default: Drawer } = await import(
-		"@/pages/service-accounts/ServiceAccountCreateDrawer.vue"
-	);
+	const { default: Drawer } =
+		await import("@/pages/service-accounts/ServiceAccountCreateDrawer.vue");
 	const wrapper = mount(Drawer, {
 		attachTo: document.body,
 		global: {
@@ -56,8 +55,12 @@ async function mountDrawer() {
 		},
 	});
 	await flushPromises();
-	await wrapper.find('input[placeholder="My Service Account"]').setValue("Billing Sync");
-	await wrapper.find('input[placeholder="my-service-account"]').setValue("billing-sync");
+	await wrapper
+		.find('input[placeholder="My Service Account"]')
+		.setValue("Billing Sync");
+	await wrapper
+		.find('input[placeholder="my-service-account"]')
+		.setValue("billing-sync");
 	return wrapper;
 }
 
@@ -79,7 +82,9 @@ beforeEach(() => {
 describe("ServiceAccountCreateDrawer application access", () => {
 	it("is off by default and does not send allApplications", async () => {
 		const wrapper = await mountDrawer();
-		const toggle = wrapper.find<HTMLInputElement>("input#createAllApplications");
+		const toggle = wrapper.find<HTMLInputElement>(
+			"input#createAllApplications",
+		);
 		expect(toggle.exists()).toBe(true);
 		expect(toggle.element.checked).toBe(false);
 

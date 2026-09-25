@@ -17,7 +17,10 @@ import { createPinia, setActivePinia } from "pinia";
 import { START_LOCATION, type RouteLocationNormalized } from "vue-router";
 import type { User } from "@/stores/auth";
 
-vi.mock("@/api/auth", () => ({ checkSession: vi.fn(), oauthAuthorizeUrl: vi.fn() }));
+vi.mock("@/api/auth", () => ({
+	checkSession: vi.fn(),
+	oauthAuthorizeUrl: vi.fn(),
+}));
 
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -68,13 +71,21 @@ describe("route permissions use the catalogue's codes", () => {
 		expect(getRoutePermission("/authentication/oauth-clients")).toBe(
 			"platform:auth:oauth-client:view",
 		);
-		expect(getRoutePermission("/platform/audit-log")).toBe("platform:admin:audit-log:view");
-		expect(getRoutePermission("/platform/cors")).toBe("platform:admin:cors-origin:view");
-		expect(getRoutePermission("/platform/settings/names")).toBe("platform:admin:config:view");
+		expect(getRoutePermission("/platform/audit-log")).toBe(
+			"platform:admin:audit-log:view",
+		);
+		expect(getRoutePermission("/platform/cors")).toBe(
+			"platform:admin:cors-origin:view",
+		);
+		expect(getRoutePermission("/platform/settings/names")).toBe(
+			"platform:admin:config:view",
+		);
 	});
 
 	it("admits any one of several codes, and describes them all", () => {
-		const processViewer = user({ permissions: ["platform:application-service:process:view"] });
+		const processViewer = user({
+			permissions: ["platform:application-service:process:view"],
+		});
 		expect(canAccessPath(processViewer, "/processes/prc_1")).toBe(true);
 		expect(canAccessPath(processViewer, "/events")).toBe(false);
 		expect(describeRoutePermission("/processes")).toBe(
@@ -84,7 +95,9 @@ describe("route permissions use the catalogue's codes", () => {
 
 	it("opens a page to a non-super-admin holding its catalogue permission", () => {
 		const idpViewer = user({ permissions: ["platform:iam:idp:view"] });
-		expect(canAccessPath(idpViewer, "/authentication/identity-providers")).toBe(true);
+		expect(canAccessPath(idpViewer, "/authentication/identity-providers")).toBe(
+			true,
+		);
 	});
 });
 
@@ -102,7 +115,13 @@ describe("anchor-only pages", () => {
 		]) {
 			expect(requiresAnchor(path), path).toBe(true);
 		}
-		for (const path of ["/users", "/applications", "/events", "/dashboard", "/profile"]) {
+		for (const path of [
+			"/users",
+			"/applications",
+			"/events",
+			"/dashboard",
+			"/profile",
+		]) {
 			expect(requiresAnchor(path), path).toBe(false);
 		}
 	});
@@ -110,18 +129,28 @@ describe("anchor-only pages", () => {
 	it("needs anchor tier and the permission; an unknown tier is not held against the user", () => {
 		expect(canAccessPath(user({}), "/clients")).toBe(true);
 		expect(canAccessPath(user({ scope: "PARTNER" }), "/clients")).toBe(false);
-		expect(canAccessPath(user({ scope: "CLIENT", clientId: "clt_1" }), "/clients/clt_1")).toBe(
-			false,
-		);
+		expect(
+			canAccessPath(
+				user({ scope: "CLIENT", clientId: "clt_1" }),
+				"/clients/clt_1",
+			),
+		).toBe(false);
 		expect(canAccessPath(user({ scope: null }), "/clients")).toBe(true);
 		// Tier is reach, not authority: anchor still needs the permission.
-		expect(canAccessPath(user({ permissions: ["platform:iam:user:view"] }), "/clients")).toBe(
-			false,
-		);
+		expect(
+			canAccessPath(
+				user({ permissions: ["platform:iam:user:view"] }),
+				"/clients",
+			),
+		).toBe(false);
 		// Pages that are not anchor-only follow the permission alone.
 		expect(
 			canAccessPath(
-				user({ scope: "CLIENT", clientId: "clt_1", permissions: ["platform:iam:user:view"] }),
+				user({
+					scope: "CLIENT",
+					clientId: "clt_1",
+					permissions: ["platform:iam:user:view"],
+				}),
 				"/client-administration/users",
 			),
 		).toBe(true);
@@ -130,20 +159,30 @@ describe("anchor-only pages", () => {
 
 describe("tier decides scope when /auth/me sends it", () => {
 	it("treats a partner without a home client as client-scoped", () => {
-		expect(userScope(user({ scope: "PARTNER", clientId: null }))).toBe("client");
-		expect(userScope(user({ scope: "ANCHOR", clientId: "clt_home" }))).toBe("anchor");
+		expect(userScope(user({ scope: "PARTNER", clientId: null }))).toBe(
+			"client",
+		);
+		expect(userScope(user({ scope: "ANCHOR", clientId: "clt_home" }))).toBe(
+			"anchor",
+		);
 		expect(userScope(user({ scope: null, clientId: null }))).toBe("anchor");
 		expect(userScope(user({ scope: null, clientId: "clt_1" }))).toBe("client");
 	});
 
 	it("lets anchor and partner users act for other clients", () => {
-		expect(isUnscopedUser(user({ scope: "PARTNER", clientId: "clt_home" }))).toBe(true);
-		expect(isUnscopedUser(user({ scope: "CLIENT", clientId: null }))).toBe(false);
+		expect(
+			isUnscopedUser(user({ scope: "PARTNER", clientId: "clt_home" })),
+		).toBe(true);
+		expect(isUnscopedUser(user({ scope: "CLIENT", clientId: null }))).toBe(
+			false,
+		);
 		expect(isUnscopedUser(user({ scope: null, clientId: null }))).toBe(true);
 	});
 
 	it("never lands a partner on the anchor dashboard", () => {
-		expect(landingPath(user({ scope: "PARTNER" }))).toBe("/client-administration/users");
+		expect(landingPath(user({ scope: "PARTNER" }))).toBe(
+			"/client-administration/users",
+		);
 		expect(landingPath(user({}))).toBe("/dashboard");
 	});
 });
@@ -154,7 +193,11 @@ describe("route guard", () => {
 	it("sends a client-tier user holding the permission away from an anchor-only page", async () => {
 		useAuthStore().setUser(user({ scope: "CLIENT", clientId: "clt_1" }));
 		const next = vi.fn();
-		await createRoutePermissionGuard()(route("/clients"), route("/events"), next);
+		await createRoutePermissionGuard()(
+			route("/clients"),
+			route("/events"),
+			next,
+		);
 		expect(next).toHaveBeenCalledWith({ path: "/profile", replace: true });
 		expect(usePermissionsStore().permissionDenied?.path).toBe("/clients");
 	});
