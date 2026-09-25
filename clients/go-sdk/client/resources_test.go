@@ -387,3 +387,26 @@ func TestRouterCallsSendThePlatformBearerToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Bearer tok-1", "Bearer tok-1"}, seen)
 }
+
+// A new service account has no application access; AllApplications asks for
+// every application and is sent only when set.
+func TestServiceAccountsCreateSendsAllApplicationsOnlyWhenSet(t *testing.T) {
+	srv, seen := newMockSrv(t, `{"serviceAccount":{"id":"sa_1","code":"svc","name":"Svc","clientIds":[],"active":true,"authType":"BEARER_TOKEN","roles":[],"createdAt":"t","updatedAt":"t"},"principalId":"prn_1","oauth":{"clientId":"cid","clientSecret":"cs"},"webhook":{"authToken":"at","signingSecret":"ss"}}`)
+	c := client.New(srv.URL)
+
+	out, err := c.ServiceAccounts().Create(context.Background(), &client.CreateServiceAccountRequest{Code: "svc", Name: "Svc"})
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodPost, seen.method)
+	assert.Equal(t, "/api/service-accounts", seen.path)
+	assert.NotContains(t, seen.body, "allApplications")
+	assert.Equal(t, "sa_1", out.ServiceAccount.ID)
+	assert.Equal(t, "prn_1", out.PrincipalID)
+	assert.Equal(t, "cs", out.OAuth.ClientSecret)
+	assert.Equal(t, "ss", out.Webhook.SigningSecret)
+
+	_, err = c.ServiceAccounts().Create(context.Background(), &client.CreateServiceAccountRequest{Code: "svc", Name: "Svc", AllApplications: true})
+	require.NoError(t, err)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(seen.body), &body))
+	assert.Equal(t, true, body["allApplications"])
+}

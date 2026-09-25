@@ -8,4 +8,9 @@ type SyncResult struct {
 	Updated         uint32   `json:"updated"`
 	Deleted         uint32   `json:"deleted"`
 	SyncedCodes     []string `json:"syncedCodes"`
+	// PasswordHashIgnored — principal sync only: the emails whose
+	// PasswordHash the platform ignored because the user already existed.
+	// A sync uses a hash only to create a user, never to change an existing
+	// one's password. Empty (omitted by the platform) otherwise.
+	PasswordHashIgnored []string `json:"passwordHashIgnored,omitempty"`
 }
