@@ -125,7 +125,7 @@ async fn a_secret_config_value_never_reaches_the_audit_log() {
             json!({ "value": SECRET, "valueType": "SECRET" }),
         )
         .await;
-    assert_status(resp, StatusCode::CREATED).await;
+    assert_status(resp, StatusCode::OK).await;
     // An update that omits the type keeps the stored SECRET type.
     let resp = app
         .put(
@@ -142,7 +142,7 @@ async fn a_secret_config_value_never_reaches_the_audit_log() {
             json!({ "value": PLAIN, "valueType": "PLAIN" }),
         )
         .await;
-    assert_status(resp, StatusCode::CREATED).await;
+    assert_status(resp, StatusCode::OK).await;
 
     let rows = all_audit_json(&app).await;
     let set_rows: Vec<&(String, String)> = rows

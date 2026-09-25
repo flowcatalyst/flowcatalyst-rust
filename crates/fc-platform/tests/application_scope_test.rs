@@ -376,7 +376,7 @@ async fn platform_config_is_confined_to_the_callers_applications() {
     let own = app
         .put("/api/config/cfg-a/general/colour", &sa_a, body.clone())
         .await;
-    assert_eq!(own.status(), StatusCode::CREATED);
+    assert_eq!(own.status(), StatusCode::OK);
     let other = app
         .put("/api/config/cfg-b/general/colour", &sa_a, body.clone())
         .await;
@@ -401,7 +401,7 @@ async fn platform_config_is_confined_to_the_callers_applications() {
     let as_admin = app
         .put("/api/config/cfg-b/general/colour", &admin, body)
         .await;
-    assert_eq!(as_admin.status(), StatusCode::CREATED);
+    assert_eq!(as_admin.status(), StatusCode::OK);
     // An anchor admin holding every permission (a stored principal, so its
     // application scope resolves).
     app.anchor_admin_token().await; // seeds the platform:test-admin role

@@ -121,6 +121,19 @@ impl PlatformError {
         }
     }
 
+    /// Go's `httperror.NotFound(resource, id)` (shared/httperror/
+    /// httperror.go:91-96): 404 `<Resource>_NOT_FOUND`, the resource name
+    /// as given (Go does not upper-case it, so `Config_NOT_FOUND`), and
+    /// `<Resource> not found: <id>`.
+    pub fn not_found_code(resource: &str, id: impl std::fmt::Display) -> Self {
+        Self::Coded {
+            status: StatusCode::NOT_FOUND,
+            code: format!("{resource}_NOT_FOUND"),
+            message: format!("{resource} not found: {id}"),
+            details: Default::default(),
+        }
+    }
+
     /// A 403 with a specific code (Go's `usecase.Authorization`, rendered
     /// by shared/httperror/httperror.go:55-80 as `{"error": code, "message"}`).
     pub fn forbidden_code(code: impl Into<String>, message: impl Into<String>) -> Self {

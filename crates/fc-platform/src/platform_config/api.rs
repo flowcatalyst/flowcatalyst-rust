@@ -306,8 +306,9 @@ pub async fn get_property(
         )
         .await?
         .ok_or_else(|| {
-            PlatformError::not_found(
-                "PlatformConfig",
+            // Go's httperror.NotFound("Config", …) (platformconfig/api/api.go:107).
+            PlatformError::not_found_code(
+                "Config",
                 format!("{}/{}/{}", app_code, section, property),
             )
         })?;
@@ -338,8 +339,7 @@ pub async fn get_property(
     ),
     request_body = SetConfigRequest,
     responses(
-        (status = 200, description = "Config updated", body = ConfigResponse),
-        (status = 201, description = "Config created", body = ConfigResponse)
+        (status = 200, description = "Config created or updated", body = ConfigResponse)
     ),
     security(("bearer_auth" = []))
 )]
@@ -371,7 +371,7 @@ pub async fn set_property(
         description: req.description,
     };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
-    let event = state
+    state
         .set_property_use_case
         .run(cmd, ctx)
         .await
@@ -389,12 +389,12 @@ pub async fn set_property(
         .await?
         .ok_or_else(|| PlatformError::internal("Config set committed but row not found"))?;
 
-    let status = if event.was_created {
-        axum::http::StatusCode::CREATED
-    } else {
-        axum::http::StatusCode::OK
-    };
-    Ok((status, Json(ConfigResponse::from_config(config))))
+    // 200 whether the property was created or updated, as Go
+    // (platformconfig/api/api.go:36).
+    Ok((
+        axum::http::StatusCode::OK,
+        Json(ConfigResponse::from_config(config)),
+    ))
 }
 
 /// Delete a config property
@@ -411,8 +411,7 @@ pub async fn set_property(
         ("client_id" = Option<String>, Query, description = "Client ID filter")
     ),
     responses(
-        (status = 204, description = "Config deleted"),
-        (status = 404, description = "Config not found")
+        (status = 204, description = "Config deleted, or already absent")
     ),
     security(("bearer_auth" = []))
 )]
@@ -428,7 +427,9 @@ pub async fn delete_property(
         .require_application_access(&auth.0, &app_code)
         .await?;
     let scope_str = query.scope_or_global()?.as_str();
-    let deleted = state
+    // Idempotent: 204 whether or not the property existed, as Go
+    // (platformconfig/api/api.go:163-165).
+    state
         .config_repo
         .delete_by_key(
             &app_code,
@@ -438,14 +439,7 @@ pub async fn delete_property(
             query.client_id.as_deref(),
         )
         .await?;
-    if deleted {
-        Ok(axum::http::StatusCode::NO_CONTENT)
-    } else {
-        Err(PlatformError::not_found(
-            "PlatformConfig",
-            format!("{}/{}/{}", app_code, section, property),
-        ))
-    }
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 pub fn admin_platform_config_router(state: PlatformConfigState) -> OpenApiRouter {
