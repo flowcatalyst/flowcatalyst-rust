@@ -26,6 +26,11 @@ incompatibly.
   are unchanged.
 - `FlowCatalyst\UseCase\AuditMasked` interface: a command can list extra
   top-level fields to mask. `OutboxUnitOfWork` honours it.
+- `WebhookValidator::check()` / `checkRequest()`: the result-returning forms
+  of `validate()` / `validateRequest()` (owner ruling 11 of 2026-09-25).
+  They return a `FlowCatalyst\Webhook\WebhookVerification` (`valid`, and
+  the `reason` when invalid) instead of throwing. The same check; the
+  throwing methods are unchanged.
 
 ### Changed
 - The OIDC session refresh (`TokenRefresher`, used by the refresh route and
