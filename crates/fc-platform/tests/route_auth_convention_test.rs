@@ -31,6 +31,10 @@ use std::path::{Path, PathBuf};
 /// Routes that authenticate no one, or only optionally: `"METHOD /path"`.
 const PUBLIC_ROUTES: &[(&str, &str)] = &[
     (
+        "GET /api/platform/cors/allowed",
+        "the browser-facing CORS origin list; Go's publicAllowedOrigins is unauthenticated",
+    ),
+    (
         "GET /api/public/platform",
         "the login page's platform info (Go publicapi)",
     ),
@@ -87,10 +91,6 @@ const READS_WITHOUT_PERMISSION: &[(&str, &str)] = &[
     (
         "GET /api/clients/{id}/applications",
         "Go getApplications: anchor or client reach, no permission",
-    ),
-    (
-        "GET /api/platform/cors/allowed",
-        "Go publicAllowed checks nothing",
     ),
     (
         "GET /api/email-domain-mappings/lookup/{domain}",
