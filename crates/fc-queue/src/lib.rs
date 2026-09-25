@@ -13,6 +13,9 @@ pub mod postgres;
 #[cfg(feature = "sqs")]
 pub mod sqs;
 
+#[cfg(feature = "sqs")]
+pub mod sqs_publisher;
+
 #[cfg(feature = "activemq")]
 pub mod activemq;
 
