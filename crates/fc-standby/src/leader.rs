@@ -5,11 +5,12 @@
 //! - Periodic heartbeat to extend lease
 //! - Automatic leader change on lease expiry
 //! - Callback notifications for leadership changes
+//! - Local demotion when Redis stops answering (see [`LeaderElection::is_leader`])
 
-use redis::aio::ConnectionManager;
+use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, watch};
 use tracing::{debug, error, info, warn};
 
@@ -30,11 +31,35 @@ pub enum LeadershipStatus {
     Unknown,
 }
 
+/// How long any one Redis command may take before it counts as a failure.
+/// Go's go-redis client defaults to a 3s read/write timeout, and its
+/// election demotes on any error; without a bound a hung Redis left
+/// `is_leader` true while the lock expired and another instance took it.
+pub const REDIS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Bound on establishing a Redis connection (go-redis `DialTimeout`).
+pub const REDIS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long after its last confirmed acquire/extend this instance may still
+/// call itself leader: the lock TTL minus a safety margin (a fifth of the
+/// TTL, at least one second). Past it the lock may already have expired in
+/// Redis and been taken by another instance, so leadership is dropped
+/// locally whether or not the election loop has managed to hear back from
+/// Redis.
+pub fn lease_validity(lock_ttl: Duration) -> Duration {
+    let margin = (lock_ttl / 5).max(Duration::from_secs(1));
+    lock_ttl.saturating_sub(margin)
+}
+
 /// Leader election manager
 pub struct LeaderElection {
     config: LeaderElectionConfig,
     conn: ConnectionManager,
     is_leader: AtomicBool,
+    /// When Redis last confirmed this instance holds the lock (a successful
+    /// SET NX or extend). `is_leader()` answers false once this is older
+    /// than [`lease_validity`], even if the election loop is stuck.
+    last_confirmed: Mutex<Option<Instant>>,
     running: AtomicBool,
     shutdown_tx: broadcast::Sender<()>,
     status_tx: watch::Sender<LeadershipStatus>,
@@ -47,7 +72,10 @@ impl LeaderElection {
         let client = redis::Client::open(config.redis_url.as_str())
             .map_err(|e| StandbyError::Connection(e.to_string()))?;
 
-        let conn = ConnectionManager::new(client).await?;
+        let manager_config = ConnectionManagerConfig::new()
+            .set_response_timeout(REDIS_RESPONSE_TIMEOUT)
+            .set_connection_timeout(REDIS_CONNECT_TIMEOUT);
+        let conn = ConnectionManager::new_with_config(client, manager_config).await?;
         let (shutdown_tx, _) = broadcast::channel(1);
         let (status_tx, status_rx) = watch::channel(LeadershipStatus::Unknown);
 
@@ -55,6 +83,7 @@ impl LeaderElection {
             config,
             conn,
             is_leader: AtomicBool::new(false),
+            last_confirmed: Mutex::new(None),
             running: AtomicBool::new(false),
             shutdown_tx,
             status_tx,
@@ -62,9 +91,29 @@ impl LeaderElection {
         })
     }
 
-    /// Check if this instance is currently the leader
+    /// Check if this instance is currently the leader.
+    ///
+    /// True only while the last confirmation from Redis is younger than
+    /// [`lease_validity`] of the lock TTL. The election loop demotes on any
+    /// Redis error (as Go's does), but a loop that cannot reach Redis at all
+    /// — or is slow to find out — must not keep answering true while the
+    /// lock expires under it and another instance acquires it.
     pub fn is_leader(&self) -> bool {
-        self.is_leader.load(Ordering::SeqCst)
+        self.is_leader.load(Ordering::SeqCst) && self.lease_fresh()
+    }
+
+    fn lease_fresh(&self) -> bool {
+        let validity = lease_validity(Duration::from_secs(self.config.lock_ttl_seconds));
+        self.last_confirmed
+            .lock()
+            .map(|g| g.is_some_and(|t| t.elapsed() < validity))
+            .unwrap_or(false)
+    }
+
+    fn confirm(&self) {
+        if let Ok(mut g) = self.last_confirmed.lock() {
+            *g = Some(Instant::now());
+        }
     }
 
     /// Get current leadership status
@@ -101,13 +150,28 @@ impl LeaderElection {
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(
-                election.config.heartbeat_interval_seconds,
+                election.config.heartbeat_interval_seconds.max(1),
             ));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        election.election_tick().await;
+                        // A tick is two Redis round trips at most; bound it
+                        // as a whole so nothing can wedge the loop.
+                        if tokio::time::timeout(
+                            REDIS_RESPONSE_TIMEOUT * 3,
+                            election.election_tick(),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            error!(
+                                instance_id = %election.config.instance_id,
+                                "Leader election tick timed out; demoting"
+                            );
+                            election.set_status(LeadershipStatus::Unknown);
+                        }
                     }
                     _ = shutdown_rx.recv() => {
                         info!(instance_id = %election.config.instance_id, "Leader election shutting down");
@@ -121,43 +185,48 @@ impl LeaderElection {
         Ok(())
     }
 
-    /// Single election tick - try to acquire or extend leadership
+    /// Single election tick — Go's `tryAcquire`: SET NX, and if the lock
+    /// is already held, extend it if it is ours. Any Redis error demotes.
+    ///
+    /// Trying to extend when SET NX fails (rather than only when we think we
+    /// are leader) is what lets an instance that was demoted by a transient
+    /// error take its own, still-held lock straight back on the next tick,
+    /// instead of leaving the deployment leaderless until the lock expires.
     async fn election_tick(&self) {
         let mut conn = self.conn.clone();
 
-        if self.is_leader() {
-            // Already leader - extend the lease
-            match self.extend_lease(&mut conn).await {
-                Ok(true) => {
-                    debug!(instance_id = %self.config.instance_id, "Extended leadership lease");
-                }
-                Ok(false) => {
-                    // Lost leadership
-                    warn!(instance_id = %self.config.instance_id, "Lost leadership");
-                    self.set_status(LeadershipStatus::Follower);
-                }
+        if self.is_leader.load(Ordering::SeqCst) && !self.lease_fresh() {
+            warn!(
+                instance_id = %self.config.instance_id,
+                "Leadership lease not confirmed within its validity window; demoting"
+            );
+            self.set_status(LeadershipStatus::Unknown);
+        }
+
+        let acquired = match self.try_acquire_leadership(&mut conn).await {
+            Ok(true) => true,
+            Ok(false) => match self.extend_lease(&mut conn).await {
+                Ok(extended) => extended,
                 Err(e) => {
                     error!(error = %e, "Failed to extend lease");
-                    // Assume we lost leadership on error
-                    self.set_status(LeadershipStatus::Follower);
-                }
-            }
-        } else {
-            // Not leader - try to acquire
-            match self.try_acquire_leadership(&mut conn).await {
-                Ok(true) => {
-                    info!(instance_id = %self.config.instance_id, "Acquired leadership");
-                    self.set_status(LeadershipStatus::Leader);
-                }
-                Ok(false) => {
-                    debug!(instance_id = %self.config.instance_id, "Leadership held by another instance");
-                    self.set_status(LeadershipStatus::Follower);
-                }
-                Err(e) => {
-                    error!(error = %e, "Failed to acquire leadership");
                     self.set_status(LeadershipStatus::Unknown);
+                    return;
                 }
+            },
+            Err(e) => {
+                error!(error = %e, "Failed to acquire leadership");
+                self.set_status(LeadershipStatus::Unknown);
+                return;
             }
+        };
+
+        if acquired {
+            self.confirm();
+            debug!(instance_id = %self.config.instance_id, "Holding leadership lock");
+            self.set_status(LeadershipStatus::Leader);
+        } else {
+            debug!(instance_id = %self.config.instance_id, "Leadership held by another instance");
+            self.set_status(LeadershipStatus::Follower);
         }
     }
 
@@ -200,7 +269,7 @@ impl LeaderElection {
 
     /// Release leadership
     async fn release_leadership(&self) {
-        if !self.is_leader() {
+        if !self.is_leader.load(Ordering::SeqCst) {
             return;
         }
 
@@ -216,12 +285,20 @@ impl LeaderElection {
             end
         "#;
 
-        match redis::Script::new(script)
-            .key(&self.config.lock_key)
-            .arg(&self.config.instance_id)
-            .invoke_async::<i32>(&mut conn)
-            .await
-        {
+        match tokio::time::timeout(
+            REDIS_RESPONSE_TIMEOUT,
+            redis::Script::new(script)
+                .key(&self.config.lock_key)
+                .arg(&self.config.instance_id)
+                .invoke_async::<i32>(&mut conn),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(redis::RedisError::from((
+                redis::ErrorKind::IoError,
+                "release timed out",
+            )))
+        }) {
             Ok(1) => {
                 info!(instance_id = %self.config.instance_id, "Released leadership");
             }
@@ -233,6 +310,9 @@ impl LeaderElection {
             }
         }
 
+        if let Ok(mut g) = self.last_confirmed.lock() {
+            *g = None;
+        }
         self.set_status(LeadershipStatus::Follower);
     }
 
@@ -298,7 +378,7 @@ impl StandbyGuard {
     pub async fn wait_for_leadership(&self) {
         let mut rx = self.election.subscribe();
 
-        while *rx.borrow() != LeadershipStatus::Leader {
+        while *rx.borrow() != LeadershipStatus::Leader || !self.election.is_leader() {
             if rx.changed().await.is_err() {
                 break;
             }
@@ -316,6 +396,22 @@ mod tests {
         assert_eq!(config.lock_ttl_seconds, 30);
         assert_eq!(config.heartbeat_interval_seconds, 10);
         assert_eq!(config.lock_key, "fc:leader");
+    }
+
+    /// The local lease is the lock TTL minus a fifth of it (at least 1s),
+    /// so an instance stops calling itself leader before its lock can have
+    /// expired in Redis.
+    #[test]
+    fn lease_validity_is_ttl_minus_margin() {
+        assert_eq!(
+            lease_validity(Duration::from_secs(30)),
+            Duration::from_secs(24)
+        );
+        assert_eq!(
+            lease_validity(Duration::from_secs(3)),
+            Duration::from_secs(2)
+        );
+        assert_eq!(lease_validity(Duration::from_secs(1)), Duration::ZERO);
     }
 
     #[test]
