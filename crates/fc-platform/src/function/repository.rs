@@ -116,6 +116,40 @@ impl FunctionRepository {
         self.hydrate(rows).await
     }
 
+    /// Every `ACTIVE` function, by address (Java `list(ListFilter(null,
+    /// null, ACTIVE))`): desired state's starting set.
+    pub async fn list_active(&self) -> Result<Vec<Function>> {
+        let rows = sqlx::query_as::<_, FunctionRow>(&format!(
+            "SELECT {COLUMNS} FROM fn_functions WHERE status = 'ACTIVE' \
+             ORDER BY application_code ASC, service_name ASC, name ASC"
+        ))
+        .fetch_all(&self.pool)
+        .await?;
+        self.hydrate(rows).await
+    }
+
+    /// Every function at one of `addresses`, in one query; an address with
+    /// no function is simply absent.
+    pub async fn find_by_addresses(&self, addresses: &[FunctionAddress]) -> Result<Vec<Function>> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+        let applications: Vec<&str> = addresses.iter().map(|a| a.application()).collect();
+        let services: Vec<&str> = addresses.iter().map(|a| a.service()).collect();
+        let names: Vec<&str> = addresses.iter().map(|a| a.name()).collect();
+        let rows = sqlx::query_as::<_, FunctionRow>(&format!(
+            "SELECT {COLUMNS} FROM fn_functions \
+             WHERE (application_code, service_name, name) IN \
+                   (SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[]))"
+        ))
+        .bind(&applications)
+        .bind(&services)
+        .bind(&names)
+        .fetch_all(&self.pool)
+        .await?;
+        self.hydrate(rows).await
+    }
+
     /// One page of functions matching `filter`, ordered by address.
     pub async fn find_with_filters(
         &self,

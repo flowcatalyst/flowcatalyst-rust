@@ -52,6 +52,33 @@ impl FunctionRouteRepository {
         rows.into_iter().map(to_entity).collect()
     }
 
+    /// Every route of every function in `function_ids`, in one query (Java
+    /// `listByFunctions`), grouped by function.
+    pub async fn list_by_functions(
+        &self,
+        function_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, Vec<FunctionRoute>>> {
+        let mut out: std::collections::HashMap<String, Vec<FunctionRoute>> =
+            std::collections::HashMap::new();
+        if function_ids.is_empty() {
+            return Ok(out);
+        }
+        let rows = sqlx::query_as::<_, RouteRow>(&format!(
+            "SELECT {COLUMNS} FROM fn_routes WHERE function_id = ANY($1) \
+             ORDER BY hostname ASC, path_prefix ASC"
+        ))
+        .bind(function_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in rows {
+            let route = to_entity(row)?;
+            out.entry(route.function_id.clone())
+                .or_default()
+                .push(route);
+        }
+        Ok(out)
+    }
+
     /// Every route at one of `keys`' exact `(hostname, pathPrefix)` pairs,
     /// in one query (Java `findPublic`, for many).
     pub async fn find_public_each(

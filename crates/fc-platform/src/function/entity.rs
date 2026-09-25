@@ -356,6 +356,18 @@ impl FunctionVersion {
             _ => None,
         }
     }
+
+    /// `PUBLISHED` to `READY(now)` (Java `FunctionVersion.markReady`). A
+    /// `READY` version keeps its first `ready_at` and a `RETIRED` one stays
+    /// retired: never an error, since a host reporting a version it still
+    /// holds is routine. The mark-ready use case refuses anything but
+    /// `PUBLISHED` before it gets here, so no event is ever emitted for a
+    /// no-op.
+    pub fn mark_ready(&mut self, now: DateTime<Utc>) {
+        if self.state == VersionState::Published {
+            self.state = VersionState::Ready(now);
+        }
+    }
 }
 
 impl HasId for FunctionVersion {
@@ -412,6 +424,13 @@ pub enum LoadState {
 }
 
 impl LoadState {
+    /// Whether traffic may still be routed to it (Java `LoadState.ok`):
+    /// `REGISTERED` and `LOADED` are, `FAILED` is not. A heartbeat marks a
+    /// `PUBLISHED` version ready on the first `ok` report.
+    pub fn ok(&self) -> bool {
+        !matches!(self, LoadState::Failed(_))
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             LoadState::Registered => "REGISTERED",
@@ -451,6 +470,46 @@ impl FunctionHost {
     /// Three missed 15 s beats (Java `FunctionHost.LIVE_WINDOW`).
     pub fn live_window() -> Duration {
         Duration::seconds(45)
+    }
+
+    /// How stale a host row must be before any heartbeat purges it (Java
+    /// `FunctionHost.PURGE_AFTER`): a host that stopped without
+    /// deregistering is garbage after a day, not a permanent row.
+    pub fn purge_after() -> Duration {
+        Duration::days(1)
+    }
+
+    /// A fresh, `ACTIVE` host with nothing loaded (Java `FunctionHost.register`).
+    pub fn register(id: impl Into<String>, pool: impl Into<String>, now: DateTime<Utc>) -> Self {
+        FunctionHost {
+            id: id.into(),
+            pool: pool.into(),
+            state: HostState::Active,
+            loaded: Vec::new(),
+            started_at: now,
+            last_heartbeat: now,
+        }
+    }
+
+    /// Replaces `state` and `loaded` wholesale and stamps the heartbeat
+    /// (Java `FunctionHost.heartbeat`). `pool` and `started_at` never change
+    /// after [`FunctionHost::register`].
+    pub fn heartbeat(
+        mut self,
+        state: HostState,
+        loaded: Vec<LoadedVersion>,
+        now: DateTime<Utc>,
+    ) -> Self {
+        self.state = state;
+        self.loaded = loaded;
+        self.last_heartbeat = now;
+        self
+    }
+}
+
+impl HasId for FunctionHost {
+    fn id(&self) -> &str {
+        &self.id
     }
 }
 

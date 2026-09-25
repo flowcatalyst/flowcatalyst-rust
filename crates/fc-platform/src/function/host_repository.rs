@@ -1,5 +1,13 @@
-//! `fn_hosts`, read side (Java `function/FunctionHostRepository.java`). The
-//! heartbeat that writes these rows is the host control plane (P6).
+//! `fn_hosts` (Java `function/FunctionHostRepository.java`).
+//!
+//! **Written by the heartbeat only, outside the unit of work.** A host row is
+//! telemetry a host sends every 15 s, not a business operation: Java writes
+//! it straight through the repository with no event and no audit
+//! (`FunctionControlApi.heartbeat`, spec `function-api.md` §6.2 step 1), and
+//! so does this. It is the same category as CLAUDE.md's platform
+//! infrastructure exceptions: an event per beat would swamp `msg_events` at
+//! four rows per host per minute. What a heartbeat *causes* (a version
+//! becoming `READY`) does go through a use case with its event and audit.
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -34,6 +42,70 @@ pub struct FunctionHostRepository {
 impl FunctionHostRepository {
     pub fn new(pool: &PgPool) -> Self {
         Self { pool: pool.clone() }
+    }
+
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<FunctionHost>> {
+        let row = sqlx::query_as::<_, HostRow>(
+            "SELECT id, pool, state, loaded, started_at, last_heartbeat FROM fn_hosts WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(to_entity).transpose()
+    }
+
+    /// Hosts of `pool` heartbeated at or after `seen_since`, by id (Java
+    /// `listLive`): the hosts whose loaded versions feed desired state's
+    /// `unload`.
+    pub async fn list_live(
+        &self,
+        pool: &str,
+        seen_since: DateTime<Utc>,
+    ) -> Result<Vec<FunctionHost>> {
+        let rows = sqlx::query_as::<_, HostRow>(
+            "SELECT id, pool, state, loaded, started_at, last_heartbeat FROM fn_hosts \
+             WHERE pool = $1 AND last_heartbeat >= $2 ORDER BY id ASC",
+        )
+        .bind(pool)
+        .bind(seen_since)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(to_entity).collect()
+    }
+
+    /// One heartbeat's write, in one transaction (Java
+    /// `FunctionControlApi.heartbeat`: `deleteStale` then `persist`): first
+    /// every row whose last heartbeat is strictly before `purge_before`,
+    /// except `host`'s own (which this beat is about to refresh); then the
+    /// upsert of `host`. The upsert never rewrites `pool` or `started_at`,
+    /// so a host's pool is the one it first registered with. Returns how
+    /// many stale rows were purged.
+    pub async fn heartbeat(&self, host: &FunctionHost, purge_before: DateTime<Utc>) -> Result<u64> {
+        let mut tx = self.pool.begin().await?;
+        let purged = sqlx::query("DELETE FROM fn_hosts WHERE last_heartbeat < $1 AND id <> $2")
+            .bind(purge_before)
+            .bind(&host.id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        sqlx::query(
+            "INSERT INTO fn_hosts (id, pool, state, loaded, started_at, last_heartbeat) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (id) DO UPDATE SET \
+                state = EXCLUDED.state, \
+                loaded = EXCLUDED.loaded, \
+                last_heartbeat = EXCLUDED.last_heartbeat",
+        )
+        .bind(&host.id)
+        .bind(&host.pool)
+        .bind(host.state.as_str())
+        .bind(write_loaded(&host.loaded))
+        .bind(host.started_at)
+        .bind(host.last_heartbeat)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(purged)
     }
 
     /// Every host, any pool and any age, that reports a version of
@@ -80,6 +152,26 @@ fn to_entity(row: HostRow) -> Result<FunctionHost> {
     })
 }
 
+/// `[{address, version, state, error?}]`, `error` only on `FAILED` (Java
+/// `loadedToJson`).
+fn write_loaded(loaded: &[LoadedVersion]) -> Value {
+    Value::Array(
+        loaded
+            .iter()
+            .map(|lv| {
+                let mut entry = serde_json::Map::new();
+                entry.insert("address".into(), Value::String(lv.address.render()));
+                entry.insert("version".into(), Value::from(lv.version));
+                entry.insert("state".into(), Value::String(lv.state.name().into()));
+                if let Some(error) = lv.state.error() {
+                    entry.insert("error".into(), Value::String(error.into()));
+                }
+                Value::Object(entry)
+            })
+            .collect(),
+    )
+}
+
 /// Tolerant reader (Java `readLoaded`): an entry with a bad address, a
 /// version that is not a positive integer, or an unknown state is dropped
 /// rather than failing the row; a non-array reads as nothing loaded.
@@ -121,6 +213,38 @@ fn read_loaded_version(node: &Value) -> Option<LoadedVersion> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn loaded_round_trips_with_the_error_only_on_failed() {
+        let address = FunctionAddress::parse("a.b.c").unwrap();
+        let loaded = vec![
+            LoadedVersion {
+                address: address.clone(),
+                version: 1,
+                state: LoadState::Registered,
+            },
+            LoadedVersion {
+                address: address.clone(),
+                version: 2,
+                state: LoadState::Loaded,
+            },
+            LoadedVersion {
+                address,
+                version: 3,
+                state: LoadState::Failed("LOAD:WASM_INVALID".into()),
+            },
+        ];
+        let json = write_loaded(&loaded);
+        assert_eq!(
+            json,
+            json!([
+                {"address": "a.b.c", "version": 1, "state": "REGISTERED"},
+                {"address": "a.b.c", "version": 2, "state": "LOADED"},
+                {"address": "a.b.c", "version": 3, "state": "FAILED", "error": "LOAD:WASM_INVALID"},
+            ])
+        );
+        assert_eq!(read_loaded(&json), loaded);
+    }
 
     #[test]
     fn loaded_reader_drops_what_it_cannot_read() {

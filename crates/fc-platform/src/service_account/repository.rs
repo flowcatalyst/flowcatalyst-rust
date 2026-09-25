@@ -285,6 +285,44 @@ impl ServiceAccountRepository {
         Ok(row)
     }
 
+    /// [`Self::oldest_active_webhook_credentials`] for many applications in
+    /// one query, keyed by application id (absent when it has no active
+    /// account).
+    pub async fn oldest_active_webhook_credentials_for(
+        &self,
+        application_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, StoredWebhookCredentials>> {
+        if application_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows: Vec<(String, StoredWebhookCredentials)> =
+            sqlx::query_as::<_, (String, String, bool, Option<String>, Option<String>)>(
+                "SELECT DISTINCT ON (application_id) application_id, code, active, \
+             wh_auth_token_ref, wh_signing_secret_ref FROM iam_service_accounts \
+             WHERE application_id = ANY($1) AND active = true \
+             ORDER BY application_id ASC, created_at ASC",
+            )
+            .bind(application_ids)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(
+                |(application_id, code, active, token_ref, signing_secret_ref)| {
+                    (
+                        application_id,
+                        StoredWebhookCredentials {
+                            code,
+                            active,
+                            token_ref,
+                            signing_secret_ref,
+                        },
+                    )
+                },
+            )
+            .collect();
+        Ok(rows.into_iter().collect())
+    }
+
     /// The stored webhook credentials of one named account, active or not:
     /// `id` is the account's own id or its principal's.
     pub async fn webhook_credentials_by_id(
