@@ -141,7 +141,7 @@ pub async fn create_email_domain_mapping(
     use crate::email_domain_mapping::operations::CreateEmailDomainMappingCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_email_domain_mappings(&auth.0)?;
 
     let cmd = CreateEmailDomainMappingCommand {
         email_domain: req.email_domain,
@@ -301,7 +301,7 @@ pub async fn update_email_domain_mapping(
     use crate::email_domain_mapping::operations::UpdateEmailDomainMappingCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_email_domain_mappings(&auth.0)?;
 
     let cmd = UpdateEmailDomainMappingCommand {
         mapping_id: id,
@@ -342,7 +342,7 @@ pub async fn delete_email_domain_mapping(
     use crate::email_domain_mapping::operations::DeleteEmailDomainMappingCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_email_domain_mappings(&auth.0)?;
 
     let cmd = DeleteEmailDomainMappingCommand { mapping_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);

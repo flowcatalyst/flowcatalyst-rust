@@ -29,7 +29,7 @@ use support::{assert_status, TestApp};
 #[ignore = "requires Docker"]
 async fn create_client_emits_event_and_audit_log() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
 
     let resp = app
         .post(
@@ -72,7 +72,7 @@ async fn create_client_emits_event_and_audit_log() {
 #[ignore = "requires Docker"]
 async fn update_client_emits_second_event_and_audit_log() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
 
     let create = app
         .post(
@@ -120,7 +120,7 @@ async fn update_client_emits_second_event_and_audit_log() {
 #[ignore = "requires Docker"]
 async fn create_anchor_domain_emits_event_and_audit_log() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
 
     let resp = app
         .post(
@@ -151,7 +151,7 @@ async fn create_anchor_domain_emits_event_and_audit_log() {
 #[ignore = "requires Docker"]
 async fn delete_anchor_domain_emits_event_and_audit_log() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
 
     let created = app
         .post(
@@ -310,7 +310,7 @@ async fn deactivate_oauth_client_emits_event_and_audit_log() {
 #[ignore = "requires Docker"]
 async fn create_idp_role_mapping_emits_event_and_audit_log() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
 
     let resp = app
         .post(

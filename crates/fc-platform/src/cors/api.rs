@@ -94,7 +94,7 @@ pub async fn create_cors_origin(
     use crate::cors::operations::AddCorsOriginCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_cors_origins(&auth.0)?;
 
     let cmd = AddCorsOriginCommand {
         origin: req.origin,
@@ -203,7 +203,7 @@ pub async fn delete_cors_origin(
     use crate::cors::operations::DeleteCorsOriginCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_cors_origins(&auth.0)?;
 
     let cmd = DeleteCorsOriginCommand { origin_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);

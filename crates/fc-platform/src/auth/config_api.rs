@@ -344,7 +344,7 @@ pub async fn create_anchor_domain(
     use crate::auth::operations::CreateAnchorDomainCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_anchor_domains(&auth.0)?;
 
     let domain = req.domain.to_lowercase();
     let cmd = CreateAnchorDomainCommand {
@@ -383,7 +383,7 @@ pub async fn list_anchor_domains(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
 ) -> Result<Json<AnchorDomainListResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_anchor_domains(&auth.0)?;
 
     let anchor_domains = state.anchor_domain_repo.find_all().await?;
 
@@ -422,7 +422,7 @@ pub async fn get_anchor_domain(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<AnchorDomainResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_anchor_domains(&auth.0)?;
 
     let domain = state
         .anchor_domain_repo
@@ -467,7 +467,7 @@ pub async fn check_anchor_domain(
     auth: Authenticated,
     Path(domain): Path<String>,
 ) -> Result<Json<CheckAnchorDomainResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_anchor_domains(&auth.0)?;
 
     let is_anchor = state
         .anchor_domain_repo
@@ -502,7 +502,7 @@ pub async fn delete_anchor_domain(
     use crate::auth::operations::DeleteAnchorDomainCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_anchor_domains(&auth.0)?;
 
     let cmd = DeleteAnchorDomainCommand {
         anchor_domain_id: id,
@@ -549,7 +549,7 @@ pub async fn update_anchor_domain(
     use crate::auth::operations::UpdateAnchorDomainCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_anchor_domains(&auth.0)?;
 
     let cmd = UpdateAnchorDomainCommand {
         anchor_domain_id: id,
@@ -590,7 +590,7 @@ pub async fn create_client_auth_config(
     use crate::auth::operations::CreateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_auth_configs(&auth.0)?;
 
     let email_domain = req.email_domain.to_lowercase();
     let cmd = CreateAuthConfigCommand {
@@ -641,7 +641,7 @@ pub async fn get_client_auth_config(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ClientAuthConfigResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_auth_configs(&auth.0)?;
 
     let config = state
         .client_auth_config_repo
@@ -667,7 +667,7 @@ pub async fn list_client_auth_configs(
     State(state): State<AuthConfigState>,
     auth: Authenticated,
 ) -> Result<Json<AuthConfigListResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_auth_configs(&auth.0)?;
 
     let configs = state.client_auth_config_repo.find_all().await?;
     let configs: Vec<ClientAuthConfigResponse> = configs.into_iter().map(|c| c.into()).collect();
@@ -701,7 +701,7 @@ pub async fn update_client_auth_config(
     use crate::auth::operations::UpdateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_auth_configs(&auth.0)?;
 
     let cmd = UpdateAuthConfigCommand {
         auth_config_id: id,
@@ -747,7 +747,7 @@ pub async fn delete_client_auth_config(
     use crate::auth::operations::DeleteAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_auth_configs(&auth.0)?;
 
     let cmd = DeleteAuthConfigCommand { auth_config_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
@@ -792,7 +792,7 @@ pub async fn update_config_type(
     use crate::auth::operations::UpdateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_auth_configs(&auth.0)?;
 
     let cmd = UpdateAuthConfigCommand {
         auth_config_id: id,
@@ -835,7 +835,7 @@ pub async fn get_by_domain(
     auth: Authenticated,
     Path(domain): Path<String>,
 ) -> Result<Json<ClientAuthConfigResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_auth_configs(&auth.0)?;
 
     let config = state
         .client_auth_config_repo
@@ -865,7 +865,7 @@ pub async fn create_internal_auth_config(
     auth: Authenticated,
     Json(req): Json<CreateInternalAuthConfigRequest>,
 ) -> Result<Json<CreatedResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_auth_configs(&auth.0)?;
 
     use crate::auth::operations::CreateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
@@ -919,7 +919,7 @@ pub async fn create_oidc_auth_config(
     use crate::auth::operations::CreateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_auth_configs(&auth.0)?;
 
     let email_domain = req.email_domain.to_lowercase();
     let cmd = CreateAuthConfigCommand {
@@ -970,7 +970,7 @@ pub async fn update_oidc_config(
     Path(id): Path<String>,
     Json(req): Json<UpdateOidcConfigRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
@@ -1018,7 +1018,7 @@ pub async fn update_client_binding(
     Path(id): Path<String>,
     Json(req): Json<UpdateClientBindingRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
@@ -1066,7 +1066,7 @@ pub async fn update_additional_clients(
     Path(id): Path<String>,
     Json(req): Json<UpdateAdditionalClientsRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
@@ -1114,7 +1114,7 @@ pub async fn update_granted_clients(
     Path(id): Path<String>,
     Json(req): Json<UpdateGrantedClientsRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_auth_configs(&auth.0)?;
 
     use crate::auth::operations::UpdateAuthConfigCommand;
     use crate::usecase::{ExecutionContext, UseCase};
@@ -1166,7 +1166,7 @@ pub async fn create_idp_role_mapping(
     use crate::auth::operations::CreateIdpRoleMappingCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_identity_providers(&auth.0)?;
 
     let cmd = CreateIdpRoleMappingCommand {
         idp_type: req.idp_type.clone(),
@@ -1215,7 +1215,7 @@ pub async fn list_idp_role_mappings(
     auth: Authenticated,
     Query(query): Query<IdpRoleMappingQuery>,
 ) -> Result<Json<IdpRoleMappingListResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_identity_providers(&auth.0)?;
 
     let mappings = if let Some(ref idp_type) = query.idp_type {
         state
@@ -1255,7 +1255,7 @@ pub async fn delete_idp_role_mapping(
     use crate::auth::operations::DeleteIdpRoleMappingCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_identity_providers(&auth.0)?;
 
     let cmd = DeleteIdpRoleMappingCommand { mapping_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);

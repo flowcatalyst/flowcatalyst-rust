@@ -519,6 +519,131 @@ pub mod checks {
         require_permission(context, permissions::admin::SERVICE_ACCOUNT_DELETE)
     }
 
+    // ── Platform-owner routes: anchor reach plus the permission ─────────
+    //
+    // Go's `anchorWith(perm)` families (shared/auth/auth.go:704-790). These
+    // were anchor-only here, which let any anchor principal (a read-only
+    // staff role, a provisioned service account) write them.
+
+    /// Clients, create (Go `CanCreateClients`).
+    pub fn can_create_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CLIENT_CREATE)
+    }
+
+    /// Clients, update, notes and enabled applications (Go
+    /// `CanUpdateClients`; Java ClientApi for the application links, which
+    /// Go gates by anchor alone).
+    pub fn can_update_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CLIENT_UPDATE)
+    }
+
+    /// Clients, delete (Go `CanDeleteClients`).
+    pub fn can_delete_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CLIENT_DELETE)
+    }
+
+    /// Clients, activate (Go `CanActivateClients`).
+    pub fn can_activate_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CLIENT_ACTIVATE)
+    }
+
+    /// Clients, suspend (Go `CanSuspendClients`).
+    pub fn can_suspend_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CLIENT_SUSPEND)
+    }
+
+    /// Clients, deactivate (Go `CanDeactivateClients`).
+    pub fn can_deactivate_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CLIENT_DEACTIVATE)
+    }
+
+    /// Identity providers, read; also IdP role mappings, read (Go
+    /// `CanReadIdentityProviders`).
+    pub fn can_read_identity_providers(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::IDENTITY_PROVIDER_READ)
+    }
+
+    /// Identity providers, create (Go `CanCreateIdentityProviders`).
+    pub fn can_create_identity_providers(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::IDENTITY_PROVIDER_CREATE)
+    }
+
+    /// Identity providers, update; also IdP role mappings, create and
+    /// delete (Go `CanUpdateIdentityProviders`).
+    pub fn can_update_identity_providers(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::IDENTITY_PROVIDER_UPDATE)
+    }
+
+    /// Identity providers, delete (Go `CanDeleteIdentityProviders`).
+    pub fn can_delete_identity_providers(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::IDENTITY_PROVIDER_DELETE)
+    }
+
+    /// Email-domain mappings, create (Go `CanCreateEmailDomainMappings`).
+    pub fn can_create_email_domain_mappings(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::EMAIL_DOMAIN_MAPPING_CREATE)
+    }
+
+    /// Email-domain mappings, update (Go `CanUpdateEmailDomainMappings`).
+    pub fn can_update_email_domain_mappings(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::EMAIL_DOMAIN_MAPPING_UPDATE)
+    }
+
+    /// Email-domain mappings, delete (Go `CanDeleteEmailDomainMappings`).
+    pub fn can_delete_email_domain_mappings(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::EMAIL_DOMAIN_MAPPING_DELETE)
+    }
+
+    /// Anchor domains, read (Go `CanReadAnchorDomains`).
+    pub fn can_read_anchor_domains(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::ANCHOR_DOMAIN_READ)
+    }
+
+    /// Anchor domains, create (Go `CanCreateAnchorDomains`).
+    pub fn can_create_anchor_domains(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::ANCHOR_DOMAIN_CREATE)
+    }
+
+    /// Anchor domains, update (Go `CanUpdateAnchorDomains`).
+    pub fn can_update_anchor_domains(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::ANCHOR_DOMAIN_UPDATE)
+    }
+
+    /// Anchor domains, delete (Go `CanDeleteAnchorDomains`).
+    pub fn can_delete_anchor_domains(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::ANCHOR_DOMAIN_DELETE)
+    }
+
+    /// Client auth configs, read (Go `CanReadAuthConfigs`).
+    pub fn can_read_auth_configs(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::CLIENT_AUTH_CONFIG_READ)
+    }
+
+    /// Client auth configs, create (Go `CanCreateAuthConfigs`).
+    pub fn can_create_auth_configs(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::CLIENT_AUTH_CONFIG_CREATE)
+    }
+
+    /// Client auth configs, update (Go `CanUpdateAuthConfigs`).
+    pub fn can_update_auth_configs(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::CLIENT_AUTH_CONFIG_UPDATE)
+    }
+
+    /// Client auth configs, delete (Go `CanDeleteAuthConfigs`).
+    pub fn can_delete_auth_configs(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::CLIENT_AUTH_CONFIG_DELETE)
+    }
+
+    /// CORS origins, create (Go `CanCreateCorsOrigins`).
+    pub fn can_create_cors_origins(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CORS_ORIGIN_CREATE)
+    }
+
+    /// CORS origins, delete (Go `CanDeleteCorsOrigins`).
+    pub fn can_delete_cors_origins(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::admin::CORS_ORIGIN_DELETE)
+    }
+
     /// Principals, the user-administration writes (create, update,
     /// activate, deactivate, password reset, application access): any of the
     /// user create/update/delete permissions, as Go's `CanWritePrincipals`

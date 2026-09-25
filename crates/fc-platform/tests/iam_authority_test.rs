@@ -429,3 +429,103 @@ async fn client_admin_updates_client_users_only() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
     assert_eq!(code(&resp), "PERMISSION_REQUIRED");
 }
+
+// ── Platform-owner routes: Go's anchorWith(perm) (fix S4) ────────────────
+
+/// Client, identity-provider, email-domain, anchor-domain, auth-config and
+/// CORS routes need anchor reach and the family's permission.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn platform_owner_routes_need_anchor_and_the_permission() {
+    let app = setup().await;
+    let clt = create_client(&app, "owner-clt").await;
+    let bare_anchor = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::iam::USER_READ],
+    );
+
+    let posts = [
+        ("/api/clients", json!({ "identifier": "c2", "name": "C2" })),
+        (
+            "/api/identity-providers",
+            json!({ "code": "idp-x", "name": "IdP", "type": "INTERNAL" }),
+        ),
+        (
+            "/api/email-domain-mappings",
+            json!({ "emailDomain": "x.test", "identityProviderId": "idp_x", "scopeType": "ANCHOR" }),
+        ),
+        ("/api/anchor-domains", json!({ "domain": "anchor.test" })),
+        ("/api/platform/cors", json!({ "origin": "https://x.test" })),
+    ];
+    for (path, body) in &posts {
+        let (status, resp) = read_json(app.post(path, &bare_anchor, body.clone()).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {resp}");
+        assert_eq!(code(&resp), "PERMISSION_REQUIRED", "{path}");
+    }
+    for path in [
+        "/api/anchor-domains".to_string(),
+        "/api/auth-configs".to_string(),
+        "/api/idp-role-mappings".to_string(),
+    ] {
+        let (status, resp) = read_json(app.get(&path, &bare_anchor).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {resp}");
+        assert_eq!(code(&resp), "PERMISSION_REQUIRED", "{path}");
+    }
+    for path in [
+        format!("/api/clients/{clt}/suspend"),
+        format!("/api/clients/{clt}/deactivate"),
+        format!("/api/clients/{clt}/activate"),
+    ] {
+        let (status, resp) =
+            read_json(app.post(&path, &bare_anchor, json!({"reason": "x"})).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {resp}");
+        assert_eq!(code(&resp), "PERMISSION_REQUIRED", "{path}");
+    }
+
+    // The permission without anchor reach: refused on the tier.
+    let client_creator = caller(
+        &app,
+        UserScope::Client,
+        Some(&clt),
+        &[permissions::admin::CLIENT_CREATE],
+    );
+    let (status, resp) = read_json(
+        app.post(
+            "/api/clients",
+            &client_creator,
+            json!({ "identifier": "c3", "name": "C3" }),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(code(&resp), "ANCHOR_REQUIRED");
+
+    // Both: the write lands.
+    let creator = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::admin::CLIENT_CREATE],
+    );
+    let (status, resp) = read_json(
+        app.post(
+            "/api/clients",
+            &creator,
+            json!({ "identifier": "c4", "name": "C4" }),
+        )
+        .await,
+    )
+    .await;
+    assert!(status.is_success(), "{status}: {resp}");
+    let domains = caller(
+        &app,
+        UserScope::Anchor,
+        None,
+        &[permissions::admin::ANCHOR_DOMAIN_READ],
+    );
+    let (status, resp) = read_json(app.get("/api/anchor-domains", &domains).await).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+}

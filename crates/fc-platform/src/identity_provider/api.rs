@@ -164,7 +164,7 @@ async fn create_identity_provider(
     use crate::identity_provider::operations::CreateIdentityProviderCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_identity_providers(&auth.0)?;
 
     let cmd = CreateIdentityProviderCommand {
         code: req.code,
@@ -263,7 +263,7 @@ async fn update_identity_provider(
     use crate::identity_provider::operations::UpdateIdentityProviderCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_identity_providers(&auth.0)?;
 
     let cmd = UpdateIdentityProviderCommand {
         idp_id: id,
@@ -305,7 +305,7 @@ async fn delete_identity_provider(
     use crate::identity_provider::operations::DeleteIdentityProviderCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_identity_providers(&auth.0)?;
 
     let cmd = DeleteIdentityProviderCommand { idp_id: id };
     let ctx = ExecutionContext::create(&auth.0.principal_id);
