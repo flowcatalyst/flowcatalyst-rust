@@ -70,6 +70,19 @@ Go fails 3 scenarios that Rust passes (#31). `platform-down` and `router-restart
 - Batch ingest statuses and limits
 - Listener timeouts (ruling 10)
 
+## Deployment contract (the Rust images must run with the production task definitions unchanged)
+- [ ] Router: production runs **Go's `fc-server` in router-only role** (`inhance/iac/compute/fc-router.ts`).
+      Rust must honour the same env: role toggles, comma-separated `FLOWCATALYST_CONFIG_URL` (the
+      platform's router-config plus integral's `/api/config`), `FC_ROUTER_PLATFORM_URL` with
+      client-credentials, settle reporting, notifications (`feat/router-env`)
+- [ ] Platform and worker tasks (`flowcatalyst.ts`): DB secret provider and ARN, JWT current and
+      previous keys, app key, SMTP, WebAuthn, OIDC TTLs, Redis, subsystem toggles, health checks
+      (`feat/platform-env`)
+- [ ] integral's create-user invite flags on `/api/principals/users` (`--invite-link`,
+      `--invite-redirect-uri`) (`feat/go-routes` follow-up)
+- [ ] IaC hygiene (owner): the router task definition holds the Teams webhook `sig=` in plain text;
+      move it to SSM
+
 ## Before deploy (owner)
 - [ ] Run `docs/fc-predeploy-checks.sql` (tenant pins, cross-app role permissions, OAuth clients on non-service
       principals, service accounts' batch permissions, service accounts not tied to an application)
