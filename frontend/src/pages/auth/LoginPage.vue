@@ -6,12 +6,27 @@ import { toTypedSchema } from "@vee-validate/zod";
 import { z } from "zod";
 import { useAuthStore } from "@/stores/auth";
 import { useLoginThemeStore } from "@/stores/loginTheme";
-import { checkEmailDomain, loadPermissions, login } from "@/api/auth";
+import {
+	checkEmailDomain,
+	loadPermissions,
+	login,
+	type LoginResult,
+} from "@/api/auth";
 import { authenticateWithPasskey, isWebauthnSupported } from "@/api/webauthn";
+import TwoFactorChallenge from "@/components/TwoFactorChallenge.vue";
+import TwoFactorSetup from "@/components/TwoFactorSetup.vue";
 import router from "@/router";
 import { getErrorMessage } from "@/utils/errors";
 
-type LoginStep = "email" | "password" | "redirecting";
+type LoginStep =
+	| "email"
+	| "password"
+	| "redirecting"
+	| "2fa"
+	| "enroll";
+
+type MfaChallenge = Extract<LoginResult, { status: "mfa_required" }>;
+type MfaEnroll = Extract<LoginResult, { status: "enrollment_required" }>;
 
 const route = useRoute();
 const authStore = useAuthStore();
@@ -28,6 +43,24 @@ onMounted(async () => {
 
 const step = ref<LoginStep>("email");
 const isSubmitting = ref(false);
+// The pending second step of a password sign-in (no session yet).
+const mfaChallenge = ref<MfaChallenge | null>(null);
+const mfaEnroll = ref<MfaEnroll | null>(null);
+
+const stepTitle = computed(() => {
+	switch (step.value) {
+		case "email":
+			return "Sign in to your account";
+		case "password":
+			return "Enter your password";
+		case "2fa":
+			return "Verify it's you";
+		case "enroll":
+			return "Set up two-factor authentication";
+		default:
+			return "Redirecting...";
+	}
+});
 
 // Email step schema
 const emailSchema = toTypedSchema(
@@ -72,6 +105,8 @@ function onChangeEmail() {
 	step.value = "email";
 	passwordValue.value = "";
 	passwordTouched.value = false;
+	mfaChallenge.value = null;
+	mfaEnroll.value = null;
 	authStore.setError(null);
 }
 
@@ -122,6 +157,9 @@ const onCheckEmail = handleEmailSubmit(async (values) => {
 			step.value = "password";
 		}
 	} catch (e: unknown) {
+		authStore.setError(
+			getErrorMessage(e, "Could not check your email — please try again."),
+		);
 	} finally {
 		isSubmitting.value = false;
 	}
@@ -133,7 +171,18 @@ async function onSubmitPassword() {
 	isSubmitting.value = true;
 
 	try {
-		await login({ email: currentEmail.value, password: passwordValue.value });
+		const result = await login({
+			email: currentEmail.value,
+			password: passwordValue.value,
+		});
+		if (result.status === "mfa_required") {
+			mfaChallenge.value = result;
+			step.value = "2fa";
+		} else if (result.status === "enrollment_required") {
+			mfaEnroll.value = result;
+			step.value = "enroll";
+		}
+		// "ok": login() has set the session and navigated.
 	} catch {
 		// Error is handled by AuthStore
 	} finally {
@@ -237,15 +286,7 @@ async function onPasskeyLogin() {
 
       <!-- Login card -->
       <div class="login-card">
-        <h2 class="login-title">
-          {{
-            step === 'email'
-              ? 'Sign in to your account'
-              : step === 'password'
-                ? 'Enter your password'
-                : 'Redirecting...'
-          }}
-        </h2>
+        <h2 class="login-title">{{ stepTitle }}</h2>
 
         <!-- Password reset success banner -->
         <div v-if="showResetSuccess" class="success-banner">
@@ -350,6 +391,27 @@ async function onPasskeyLogin() {
             @click="onPasskeyLogin"
           />
         </form>
+
+        <!-- Two-factor challenge -->
+        <div v-if="step === '2fa' && mfaChallenge" class="login-form">
+          <TwoFactorChallenge
+            :mfa-token="mfaChallenge.mfaToken"
+            :methods="mfaChallenge.methods"
+            :remember-device-allowed="mfaChallenge.rememberDeviceAllowed"
+          />
+          <button type="button" class="change-email-btn" @click="onChangeEmail">
+            Back to sign in
+          </button>
+        </div>
+
+        <!-- Two-factor enrolment the email domain requires. Confirming signs
+             the user in (then shows the recovery codes once), so there is no
+             way back to the email step from here. -->
+        <TwoFactorSetup
+          v-if="step === 'enroll' && mfaEnroll"
+          :enroll-token="mfaEnroll.enrollToken"
+          :allowed-methods="mfaEnroll.allowedMethods"
+        />
       </div>
 
       <!-- Footer -->

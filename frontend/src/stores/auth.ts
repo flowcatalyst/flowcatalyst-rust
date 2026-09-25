@@ -14,6 +14,11 @@ export interface User {
 	 * its old rule, a platform admin role reaches everything.
 	 */
 	permissions: string[] | null;
+	/**
+	 * The account signs in through a federated identity provider, which owns
+	 * its password: the SPA hides password self-service. Absent means false.
+	 */
+	ssoManaged?: boolean;
 }
 
 export const useAuthStore = defineStore("auth", () => {
