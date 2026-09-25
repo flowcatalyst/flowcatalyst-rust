@@ -991,6 +991,13 @@ pub fn build_platform_routes(
             encryption_service.clone(),
         ),
     );
+    // FC_FN_ARTIFACT_STORE and FC_FN_SIGNATURES/FC_FN_TRUST_ROOT are resolved
+    // once; an unrecognised store or signatures off outside dev mode refuse to
+    // start, as in Java (ArtifactBlobStores.configure, Signatures.resolve).
+    let function_artifacts = crate::function::artifact::store_from_env()
+        .unwrap_or_else(|e| panic!("invalid function artifact store: {e}"));
+    let function_signatures = crate::function::artifact::signatures_from_env()
+        .unwrap_or_else(|e| panic!("invalid function signature settings: {e}"));
     let functions_state = crate::function::api::FunctionsState {
         functions: repos.function_repo.clone(),
         versions: repos.function_version_repo.clone(),
@@ -1004,6 +1011,7 @@ pub fn build_platform_routes(
         limits: function_limits,
         ops: crate::function::operations::FunctionOperations {
             functions: repos.function_repo.clone(),
+            versions: repos.function_version_repo.clone(),
             applications: repos.application_repo.clone(),
             clients: repos.client_repo.clone(),
             settings: function_settings,
@@ -1011,6 +1019,18 @@ pub fn build_platform_routes(
             domains: repos.function_domain_repo.clone(),
             routes: repos.function_route_repo.clone(),
             trigger_sync: crate::function::operations::TriggerSync,
+            limits: function_limits,
+            signatures: function_signatures,
+            artifacts: function_artifacts,
+            publish_checks: crate::function::operations::PublishChecks {
+                event_types: repos.event_type_repo.clone(),
+                service_accounts: repos.service_account_repo.clone(),
+                versions: repos.function_version_repo.clone(),
+                functions: repos.function_repo.clone(),
+                domains: repos.function_domain_repo.clone(),
+                routes: repos.function_route_repo.clone(),
+                limits: function_limits,
+            },
             unit_of_work: unit_of_work.clone(),
         },
     };

@@ -17,7 +17,7 @@
 
 use serde::Serialize;
 
-use crate::function::entity::{ClientPolicy, Function, FunctionDomain};
+use crate::function::entity::{ClientPolicy, Function, FunctionDomain, FunctionVersion};
 use crate::impl_domain_event;
 use crate::usecase::{EventMetadata, ExecutionContext};
 
@@ -126,6 +126,67 @@ impl FunctionDeleted {
             metadata: function_metadata(ctx, DELETED, f),
             function_id: f.id.clone(),
             address: f.address.render(),
+        }
+    }
+}
+
+/// `{functionId, address, versionId, version, digest, pool, signerIssuer?,
+/// signerSubject?}`: the signer is absent when signatures are off.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionPublished {
+    #[serde(skip)]
+    pub metadata: EventMetadata,
+    pub function_id: String,
+    pub address: String,
+    pub version_id: String,
+    pub version: i32,
+    pub digest: String,
+    pub pool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_issuer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_subject: Option<String>,
+}
+impl_domain_event!(VersionPublished);
+
+impl VersionPublished {
+    pub fn new(ctx: &ExecutionContext, f: &Function, v: &FunctionVersion) -> Self {
+        Self {
+            metadata: function_metadata(ctx, VERSION_PUBLISHED, f),
+            function_id: f.id.clone(),
+            address: f.address.render(),
+            version_id: v.id.clone(),
+            version: v.version,
+            digest: v.digest.value().to_string(),
+            pool: v.manifest.pool.value().to_string(),
+            signer_issuer: v.signer.as_ref().map(|s| s.issuer.clone()),
+            signer_subject: v.signer.as_ref().map(|s| s.subject.clone()),
+        }
+    }
+}
+
+/// `{functionId, address, versionId, version}`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionRetired {
+    #[serde(skip)]
+    pub metadata: EventMetadata,
+    pub function_id: String,
+    pub address: String,
+    pub version_id: String,
+    pub version: i32,
+}
+impl_domain_event!(VersionRetired);
+
+impl VersionRetired {
+    pub fn new(ctx: &ExecutionContext, f: &Function, v: &FunctionVersion) -> Self {
+        Self {
+            metadata: function_metadata(ctx, VERSION_RETIRED, f),
+            function_id: f.id.clone(),
+            address: f.address.render(),
+            version_id: v.id.clone(),
+            version: v.version,
         }
     }
 }

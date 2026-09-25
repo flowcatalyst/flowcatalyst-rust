@@ -326,6 +326,28 @@ impl EventTypeRepository {
         rows.into_iter().map(EventType::try_from).collect()
     }
 
+    /// The status of each event type named by `codes`, shallow (one query,
+    /// no spec versions). A code with no row is absent.
+    pub async fn statuses_by_codes(
+        &self,
+        codes: &[String],
+    ) -> Result<std::collections::HashMap<String, EventTypeStatus>> {
+        if codes.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT id, code, status FROM msg_event_types WHERE code = ANY($1)")
+                .bind(codes)
+                .fetch_all(&self.pool)
+                .await?;
+        rows.into_iter()
+            .map(|(id, code, status)| {
+                let status = decode(&status, "msg_event_types", "status", &id)?;
+                Ok((code, status))
+            })
+            .collect()
+    }
+
     pub async fn exists_by_code(&self, code: &str) -> Result<bool> {
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM msg_event_types WHERE code = $1")
             .bind(code)

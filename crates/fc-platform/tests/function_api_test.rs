@@ -23,7 +23,7 @@ use tower::ServiceExt;
 use fc_platform::application::entity::Application;
 use fc_platform::domain::{Principal, UserScope};
 use fc_platform::function::api::{functions_router, FunctionsState};
-use fc_platform::function::operations::{FunctionOperations, TriggerSync};
+use fc_platform::function::operations::{FunctionOperations, PublishChecks, TriggerSync};
 use fc_platform::function::settings_repository::FunctionSettingsRepository;
 use fc_platform::function::{ClientCeilings, FunctionLimits, JsonNode, Manifest, Runtime};
 use fc_platform::role::entity::{permissions, AuthRole};
@@ -272,6 +272,7 @@ fn function_router(app: &TestApp, encryption: Option<Arc<EncryptionService>>) ->
         limits: FunctionLimits::defaults(),
         ops: FunctionOperations {
             functions: app.repos.function_repo.clone(),
+            versions: app.repos.function_version_repo.clone(),
             applications: app.repos.application_repo.clone(),
             clients: app.repos.client_repo.clone(),
             settings,
@@ -279,6 +280,18 @@ fn function_router(app: &TestApp, encryption: Option<Arc<EncryptionService>>) ->
             domains: app.repos.function_domain_repo.clone(),
             routes: app.repos.function_route_repo.clone(),
             trigger_sync: TriggerSync,
+            limits: FunctionLimits::defaults(),
+            signatures: fc_function_signing::Signatures::Off,
+            artifacts: None,
+            publish_checks: PublishChecks {
+                event_types: app.repos.event_type_repo.clone(),
+                service_accounts: app.repos.service_account_repo.clone(),
+                versions: app.repos.function_version_repo.clone(),
+                functions: app.repos.function_repo.clone(),
+                domains: app.repos.function_domain_repo.clone(),
+                routes: app.repos.function_route_repo.clone(),
+                limits: FunctionLimits::defaults(),
+            },
             unit_of_work: app.unit_of_work.clone(),
         },
     };

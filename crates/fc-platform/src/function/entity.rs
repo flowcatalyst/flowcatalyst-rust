@@ -140,7 +140,7 @@ impl HasId for Function {
     }
 }
 
-// ── Versions (read here; published in P4) ───────────────────────────────────
+// ── Versions ────────────────────────────────────────────────────────────────
 
 /// A version's lifecycle (Java `FunctionVersion.VersionState`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,9 +168,10 @@ pub struct SignerIdentity {
     pub subject: String,
 }
 
-/// A published, immutable function version (Java `FunctionVersion`). This
-/// workstream only reads versions (config and secrets `declared`, status,
-/// a function's `live`); publishing them is P4.
+/// A published, immutable function version (Java `FunctionVersion`): its
+/// artifact, digest, signer and manifest never change once published; only
+/// its state moves (`PUBLISHED` to `READY` on a host's heartbeat, either to
+/// `RETIRED`). Versions are retired, never deleted.
 #[derive(Clone)]
 pub struct FunctionVersion {
     /// `fnv_…`
@@ -186,6 +187,72 @@ pub struct FunctionVersion {
     pub state: VersionState,
     pub published_by: String,
     pub published_at: DateTime<Utc>,
+}
+
+impl FunctionVersion {
+    /// A fresh `PUBLISHED` version (Java `FunctionVersion.publish`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish(
+        function_id: &str,
+        version: i32,
+        artifact_ref: &str,
+        digest: Digest,
+        signature_bundle: Option<String>,
+        signer: Option<SignerIdentity>,
+        manifest: Manifest,
+        published_by: &str,
+        now: DateTime<Utc>,
+    ) -> FunctionVersion {
+        FunctionVersion {
+            id: tsid::generate(EntityType::FunctionVersion),
+            function_id: function_id.to_string(),
+            version,
+            artifact_ref: artifact_ref.to_string(),
+            digest,
+            signature_bundle,
+            signature_bundle_ref: None,
+            signer,
+            manifest,
+            state: VersionState::Published,
+            published_by: published_by.to_string(),
+            published_at: now,
+        }
+    }
+
+    /// `PUBLISHED` or `READY` to `RETIRED(now)`; `409
+    /// VERSION_ALREADY_RETIRED` when it already is.
+    pub fn retire(&mut self, now: DateTime<Utc>) -> Result<(), UseCaseError> {
+        if let VersionState::Retired(_) = self.state {
+            return Err(UseCaseError::business_rule(
+                "VERSION_ALREADY_RETIRED",
+                "version is already retired",
+            ));
+        }
+        self.state = VersionState::Retired(now);
+        Ok(())
+    }
+
+    /// When the version became `READY`, if it is.
+    pub fn ready_at(&self) -> Option<DateTime<Utc>> {
+        match self.state {
+            VersionState::Ready(at) => Some(at),
+            _ => None,
+        }
+    }
+
+    /// When the version was retired, if it was.
+    pub fn retired_at(&self) -> Option<DateTime<Utc>> {
+        match self.state {
+            VersionState::Retired(at) => Some(at),
+            _ => None,
+        }
+    }
+}
+
+impl HasId for FunctionVersion {
+    fn id(&self) -> &str {
+        &self.id
+    }
 }
 
 /// Masks the signature bundle to its length, as Java's `toString` does.
@@ -325,6 +392,18 @@ pub struct ClientPolicy {
 }
 
 impl ClientPolicy {
+    /// Whether some rule permits `signer` to publish for `runtime` (Java
+    /// `ClientPolicy.permits`): an equal issuer, an equal subject and the
+    /// runtime in that rule's set. No patterns, no case folding, no
+    /// trimming; an empty signer list permits nothing.
+    pub fn permits(&self, signer: &SignerIdentity, runtime: Runtime) -> bool {
+        self.signers.iter().any(|rule| {
+            rule.issuer == signer.issuer
+                && rule.subject == signer.subject
+                && rule.runtimes.contains(&runtime)
+        })
+    }
+
     /// Each ceiling resolved against the platform default: the column when
     /// set, else the default.
     pub fn ceilings(&self, defaults: &FunctionLimits) -> Result<ClientCeilings, NonPositiveLimit> {
@@ -594,6 +673,99 @@ mod tests {
         assert_eq!(c.wasm_memory_mb(), defaults.wasm_memory_mb());
         assert_eq!(c.db_pool_size(), 2);
         assert_eq!(p.id(), "PLATFORM");
+    }
+
+    fn version() -> FunctionVersion {
+        let defaults = FunctionLimits::defaults();
+        let manifest = Manifest::parse_strict(
+            Some(
+                &crate::function::JsonNode::parse(r#"{"runtime":"wasm","entrypoint":"handle"}"#)
+                    .unwrap(),
+            ),
+            Runtime::Wasm,
+            &defaults,
+            &ClientCeilings::of(&defaults),
+        )
+        .unwrap();
+        FunctionVersion::publish(
+            "fnc_1",
+            1,
+            "oci://r/a",
+            Digest::parse(&format!("sha256:{}", "a".repeat(64))).unwrap(),
+            Some("{}".into()),
+            None,
+            manifest,
+            "prn_1",
+            Utc::now(),
+        )
+    }
+
+    #[test]
+    fn publish_is_published_and_retire_refuses_a_retired_version() {
+        let mut v = version();
+        assert!(v.id.starts_with("fnv_"));
+        assert_eq!(v.state, VersionState::Published);
+        assert_eq!((v.ready_at(), v.retired_at()), (None, None));
+        assert_eq!(v.signature_bundle_ref, None);
+        let now = Utc::now();
+        v.retire(now).unwrap();
+        assert_eq!(v.state, VersionState::Retired(now));
+        assert_eq!(v.retired_at(), Some(now));
+        let err = v.retire(Utc::now()).unwrap_err();
+        assert_eq!(
+            (err.http_status_code(), err.code(), err.message()),
+            (409, "VERSION_ALREADY_RETIRED", "version is already retired")
+        );
+        // A READY version retires too.
+        let mut ready = version();
+        ready.state = VersionState::Ready(now);
+        ready.retire(now).unwrap();
+        assert_eq!(ready.retired_at(), Some(now));
+    }
+
+    #[test]
+    fn a_version_debug_masks_the_bundle_to_its_length() {
+        let text = format!("{:?}", version());
+        assert!(text.contains("\"2 chars\""), "{text}");
+        assert!(!text.contains("{}"), "{text}");
+    }
+
+    #[test]
+    fn permits_matches_issuer_subject_and_runtime_exactly() {
+        let signer = SignerIdentity {
+            issuer: "https://issuer".into(),
+            subject: "repo:acme/fn".into(),
+        };
+        let policy = |signers: Vec<SignerRule>| ClientPolicy {
+            owner: FunctionOwner::Platform,
+            signers,
+            max_duration_ms: None,
+            max_concurrency: None,
+            max_wasm_memory_mb: None,
+            max_db_pool_size: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        assert!(!policy(vec![]).permits(&signer, Runtime::Wasm));
+        let exact = policy(vec![SignerRule::new(
+            "https://issuer",
+            "repo:acme/fn",
+            [Runtime::Wasm],
+        )]);
+        assert!(exact.permits(&signer, Runtime::Wasm));
+        assert!(
+            !exact.permits(&signer, Runtime::Jvm),
+            "runtime must be in the rule"
+        );
+        for (issuer, subject) in [
+            ("https://issuer/", "repo:acme/fn"),
+            ("https://ISSUER", "repo:acme/fn"),
+            ("https://issuer", "repo:acme/fn "),
+            ("https://issuer", "repo:acme/*"),
+        ] {
+            let p = policy(vec![SignerRule::new(issuer, subject, [Runtime::Wasm])]);
+            assert!(!p.permits(&signer, Runtime::Wasm), "{issuer} {subject}");
+        }
     }
 
     #[test]
