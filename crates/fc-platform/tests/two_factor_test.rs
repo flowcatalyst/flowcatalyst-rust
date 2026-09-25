@@ -765,7 +765,7 @@ async fn a_user_changes_their_password_with_their_second_factor() {
     assert_eq!(attempts.len(), 2, "{history}");
     assert_eq!(attempts[0]["attemptType"], "USER_LOGIN");
     assert_eq!(attempts[0]["outcome"], "FAILURE");
-    assert_eq!(attempts[0]["failureReason"], "INVALID_CREDENTIALS");
+    assert_eq!(attempts[0]["failureReason"], "Invalid credentials");
     assert_eq!(attempts[1]["outcome"], "SUCCESS");
 }
 

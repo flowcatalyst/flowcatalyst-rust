@@ -210,7 +210,7 @@ pub async fn login(
         BackoffDecision::Reject {
             retry_after_secs, ..
         } => {
-            return Err(login_backoff::rejection_error(retry_after_secs));
+            return Ok(crate::mfa::login_api::too_many_requests(retry_after_secs));
         }
     }
 
@@ -260,12 +260,10 @@ pub async fn login(
                 None,
                 ip,
                 LoginOutcome::Failure,
-                Some("INVALID_CREDENTIALS"),
+                Some("Invalid credentials"),
             )
             .await;
-            return Err(PlatformError::Unauthorized {
-                message: "Invalid credentials".to_string(),
-            });
+            return Ok(crate::mfa::login_api::unauthorized("Invalid credentials"));
         }
     };
 
@@ -291,12 +289,10 @@ pub async fn login(
             Some(&principal.id),
             ip,
             LoginOutcome::Failure,
-            Some("INVALID_CREDENTIALS"),
+            Some("Invalid credentials"),
         )
         .await;
-        return Err(PlatformError::Unauthorized {
-            message: "Invalid credentials".to_string(),
-        });
+        return Ok(crate::mfa::login_api::unauthorized("Invalid credentials"));
     }
 
     // Check if user is active
@@ -307,12 +303,11 @@ pub async fn login(
             Some(&principal.id),
             ip,
             LoginOutcome::Failure,
-            Some("ACCOUNT_INACTIVE"),
+            Some("Invalid credentials"),
         )
         .await;
-        return Err(PlatformError::Unauthorized {
-            message: "Account is not active".to_string(),
-        });
+        // Go answers an inactive account as it answers a wrong password.
+        return Ok(crate::mfa::login_api::unauthorized("Invalid credentials"));
     }
 
     // Lazy upgrade: a hash that isn't Argon2id at the current parameters (a
