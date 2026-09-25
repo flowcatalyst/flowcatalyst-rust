@@ -12,6 +12,8 @@ fc-function-abi = { path = "../fc-function-abi" }
 # as Java's host links the server's classes.
 fc-function-model = { path = "../fc-function-model" }
 fc-function-signing = { path = "../fc-function-signing" }
+# The listener timeouts (owner ruling 10), shared with the platform.
+fc-http-listener = { path = "../fc-http-listener" }
 
 tokio = { workspace = true }
 tokio-util = { workspace = true }

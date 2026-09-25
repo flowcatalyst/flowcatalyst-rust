@@ -791,6 +791,41 @@ fn password_reset_requested_response() -> axum::response::Response {
     .into_response()
 }
 
+/// The platform API listener's timeouts (owner ruling 10): keep-alive idle
+/// 75 s, 30 s to read a request, nothing while a handler runs. A function
+/// artifact upload (up to 256 MiB) is read against a 30 s stall deadline
+/// instead of a total one, as Java reads its streaming uploads.
+pub fn listener_timeouts() -> fc_http_listener::ListenerTimeouts {
+    fc_http_listener::ListenerTimeouts::new(
+        r#"{"error":"REQUEST_TIMEOUT","code":"REQUEST_TIMEOUT","message":"the request was not received in time"}"#,
+    )
+    .with_streamed_uploads(is_artifact_upload)
+}
+
+/// `PUT /api/functions/{address}/artifacts/{digest}`.
+fn is_artifact_upload(method: &axum::http::Method, uri: &axum::http::Uri) -> bool {
+    let Some(rest) = uri.path().strip_prefix("/api/functions/") else {
+        return false;
+    };
+    let segments: Vec<&str> = rest.split('/').collect();
+    method == axum::http::Method::PUT
+        && segments.len() == 3
+        && segments[1] == "artifacts"
+        && !segments[0].is_empty()
+        && !segments[2].is_empty()
+}
+
+/// Serve the platform API on `listener` with [`listener_timeouts`] until
+/// `shutdown` completes, then let in-flight requests finish. In place of
+/// `axum::serve`, which has no per-connection timeouts.
+pub async fn serve_api(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: impl std::future::Future<Output = ()> + Send,
+) {
+    fc_http_listener::serve(listener, app, listener_timeouts(), shutdown).await
+}
+
 /// `Cache-Control` of every SPA shell response (index.html, whether asked
 /// for by name, as `/`, or as the fallback for a client-side route). Hashed
 /// `/assets/*` keep `public, max-age=31536000, immutable`.
@@ -836,6 +871,36 @@ mod tests {
 
     /// Java 8fd35a8b: every shell response is never cacheable; hashed
     /// assets stay immutable and other static files keep default caching.
+    #[test]
+    fn only_an_artifact_upload_is_read_against_a_stall_deadline() {
+        let upload = |m: axum::http::Method, p: &str| is_artifact_upload(&m, &p.parse().unwrap());
+        let digest = format!("sha256:{}", "a".repeat(64));
+        assert!(upload(
+            axum::http::Method::PUT,
+            &format!("/api/functions/shop.default.hello/artifacts/{digest}")
+        ));
+        assert!(!upload(
+            axum::http::Method::GET,
+            &format!("/api/functions/shop.default.hello/artifacts/{digest}")
+        ));
+        assert!(!upload(
+            axum::http::Method::PUT,
+            "/api/functions/shop.default.hello"
+        ));
+        assert!(!upload(
+            axum::http::Method::PUT,
+            "/api/functions//artifacts/x"
+        ));
+        assert!(!upload(
+            axum::http::Method::PUT,
+            "/api/principals/x/artifacts/y"
+        ));
+        assert_eq!(
+            listener_timeouts().request_read,
+            fc_http_listener::REQUEST_READ
+        );
+    }
+
     #[tokio::test]
     async fn the_spa_shell_is_never_cacheable_and_assets_stay_immutable() {
         let dir = tempfile::tempdir().unwrap();

@@ -16,6 +16,8 @@ fc-function-abi = { path = "../fc-function-abi" }
 fc-function-model = { path = "../fc-function-model" }
 # Sigstore verification of a published version's signature bundle.
 fc-function-signing = { path = "../fc-function-signing" }
+# The listener timeouts (owner ruling 10), shared with the function host.
+fc-http-listener = { path = "../fc-http-listener" }
 
 # Async runtime
 tokio = { workspace = true }

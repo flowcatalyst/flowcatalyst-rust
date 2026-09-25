@@ -14,7 +14,8 @@ use futures::FutureExt;
 use http::request::Parts;
 use http::HeaderMap;
 use http_body_util::BodyExt;
-use hyper::body::Incoming;
+/// The request body, read against the listener's request deadline.
+type Incoming = fc_http_listener::RequestBody;
 use indexmap::IndexMap;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;

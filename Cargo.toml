@@ -13,6 +13,7 @@ members = [
     "crates/fc-function-model",
     "crates/fc-fnhost-core",
     "crates/fc-function-signing",
+    "crates/fc-http-listener",
     "bin/fc-dev",
     "bin/fc-mcp-server",
     "bin/fc-router",

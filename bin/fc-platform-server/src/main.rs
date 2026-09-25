@@ -181,9 +181,8 @@ async fn main() -> Result<()> {
     // is active.
     let rate_limit_store =
         fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
-    let rate_limit_policies = Arc::new(
-        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
-    );
+    let rate_limit_policies =
+        Arc::new(fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env());
 
     // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
     // purger does the same).
@@ -297,8 +296,9 @@ async fn main() -> Result<()> {
     info!("API server listening on http://{}", api_addr);
 
     let api_listener = TcpListener::bind(&api_addr).await?;
+    // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
     let api_task = tokio::spawn(async move {
-        axum::serve(api_listener, app).await.unwrap();
+        fc_platform::router::serve_api(api_listener, app, std::future::pending()).await;
     });
 
     // Start metrics server

@@ -44,9 +44,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto;
-use hyper_util::server::graceful::GracefulShutdown;
 use parking_lot::{Mutex, RwLock};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -323,10 +320,9 @@ fn serve(
     let (stop, mut stopped) = watch::channel::<Option<Duration>>(None);
     let serving = Arc::new(AtomicBool::new(true));
     let alive = serving.clone();
+    let timeouts = listener_timeouts();
     let task = tokio::spawn(async move {
         let _serving = ServingFlag(alive);
-        let builder = auto::Builder::new(TokioExecutor::new());
-        let graceful = GracefulShutdown::new();
         let mut connections = JoinSet::new();
         loop {
             tokio::select! {
@@ -341,8 +337,8 @@ fn serve(
                     };
                     let _ = stream.set_nodelay(true);
                     let shared = shared.clone();
-                    let builder = builder.clone();
-                    let watcher = graceful.watcher();
+                    let timeouts = timeouts.clone();
+                    let mut stop = stopped.clone();
                     connections.spawn(async move {
                         let service = service_fn(move |request| {
                             let shared = shared.clone();
@@ -351,8 +347,13 @@ fn serve(
                                 Ok::<_, Infallible>(answer.into_response())
                             }
                         });
-                        let connection = builder.serve_connection(TokioIo::new(stream), service);
-                        if let Err(e) = watcher.watch(connection).await {
+                        let stopping = async move {
+                            let _ = stop.wait_for(Option::is_some).await;
+                        };
+                        if let Err(e) =
+                            fc_http_listener::serve_connection(stream, service, &timeouts, stopping)
+                                .await
+                        {
                             tracing::debug!(err = %e, "connection ended with an error");
                         }
                     });
@@ -362,10 +363,14 @@ fn serve(
             }
         }
         drop(listener);
+        // Every connection was told to stop: in-flight requests finish,
+        // idle keep-alive connections close at once.
         let timeout = stopped.borrow().unwrap_or(Duration::ZERO);
-        if tokio::time::timeout(timeout, graceful.shutdown())
-            .await
-            .is_err()
+        if tokio::time::timeout(timeout, async {
+            while connections.join_next().await.is_some() {}
+        })
+        .await
+        .is_err()
         {
             tracing::warn!(entry = entry.wire_value(), "in-flight requests did not finish within the drain timeout; closing their connections");
         }
@@ -376,6 +381,16 @@ fn serve(
         task,
         serving,
     })
+}
+
+/// Both entries' timeouts (owner ruling 10, Java 3f176222): a keep-alive
+/// connection closes 75 s after its last request, a request must be read
+/// within 30 s (a body that isn't answers `408 REQUEST_TIMEOUT`), and
+/// nothing fires while an invocation runs or its response streams.
+fn listener_timeouts() -> fc_http_listener::ListenerTimeouts {
+    fc_http_listener::ListenerTimeouts::new(
+        r#"{"error":"REQUEST_TIMEOUT","message":"the request was not received in time"}"#,
+    )
 }
 
 /// Cleared when the accept loop ends, however it ends (`LISTENER_DOWN`).

@@ -1,0 +1,22 @@
+[package]
+name = "fc-http-listener"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Phase-aware connection timeouts for FlowCatalyst's HTTP listeners (owner ruling 10): keep-alive idle, request read, never in-flight work"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+pin-project-lite = { workspace = true }
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio", "http1", "http2", "service"] }
+tower-service = "0.3"
+
+[dev-dependencies]
+futures = { workspace = true }

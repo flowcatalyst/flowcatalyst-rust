@@ -995,18 +995,13 @@ async fn main() -> Result<()> {
     let api_listener = TcpListener::bind(&api_addr).await?;
     let api_handle = {
         let mut shutdown_rx = shutdown_tx.subscribe();
+        // Keep-alive idle 75 s, 30 s to read a request (owner ruling 10).
         tokio::spawn(async move {
-            let server = axum::serve(api_listener, api_app);
-            tokio::select! {
-                result = server => {
-                    if let Err(e) = result {
-                        error!("API server error: {}", e);
-                    }
-                }
-                _ = shutdown_rx.recv() => {
-                    info!("API server shutting down");
-                }
-            }
+            fc_platform::router::serve_api(api_listener, api_app, async move {
+                let _ = shutdown_rx.recv().await;
+                info!("API server shutting down");
+            })
+            .await;
         })
     };
 
