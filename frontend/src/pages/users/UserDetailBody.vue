@@ -18,6 +18,7 @@ import { getErrorMessage } from "@/utils/errors";
 import { passwordPolicyError } from "@/utils/passwordPolicy";
 import { useClientOptions } from "@/composables/useClientOptions";
 import { useDirtyForm } from "@/composables/useDirtyForm";
+import { assignmentSourceSeverity } from "@/utils/roleAssignment";
 import { useConfirm } from "primevue/useconfirm";
 
 const props = defineProps<{
@@ -1053,7 +1054,7 @@ function formatDate(dateStr: string | null | undefined) {
           <template #body="{ data }">
             <Tag
               :value="data.assignmentSource"
-              :severity="data.assignmentSource === 'MANUAL' ? 'info' : 'secondary'"
+              :severity="assignmentSourceSeverity(data.assignmentSource)"
             />
           </template>
         </Column>

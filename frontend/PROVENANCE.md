@@ -53,3 +53,10 @@ Rust's b36bc522, onto Go's dashboard: an "Audit logs" card in Platform Sync that
 `POST /bff/audit-logs/redact-existing` and toasts the counts (not part of Sync All; remove with the
 backend route). `api/audit-logs.ts` gains `redactExistingAuditLogs`. Tests that mount components use
 `@vue/test-utils` and `jsdom` (devDependencies added to Go's `package.json` / lockfile).
+
+### Role assignment source tags
+
+Rust's f6bf4a22: the user and service-account role tables highlighted `assignmentSource === "MANUAL"`,
+which neither backend emits, so every role rendered muted. `utils/roleAssignment.ts`
+(`assignmentSourceSeverity`) highlights `ADMIN_ASSIGNED` / legacy `ADMIN` and mutes the synced and
+platform-granted sources.

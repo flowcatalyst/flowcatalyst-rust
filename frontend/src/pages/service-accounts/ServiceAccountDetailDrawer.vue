@@ -19,6 +19,7 @@ import { clientsApi, type Client } from "@/api/clients";
 import EntityDrawer from "@/components/drawer/EntityDrawer.vue";
 import { useDrawerRoute } from "@/composables/useDrawerRoute";
 import { useDirtyForm } from "@/composables/useDirtyForm";
+import { assignmentSourceSeverity } from "@/utils/roleAssignment";
 
 const emit = defineEmits<{
 	changed: [];
@@ -820,7 +821,7 @@ async function deleteServiceAccount() {
             <template #body="{ data }">
               <Tag
                 :value="data.assignmentSource"
-                :severity="data.assignmentSource === 'MANUAL' ? 'info' : 'secondary'"
+                :severity="assignmentSourceSeverity(data.assignmentSource)"
               />
             </template>
           </Column>
