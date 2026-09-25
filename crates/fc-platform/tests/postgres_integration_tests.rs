@@ -945,7 +945,8 @@ async fn test_sync_rollup_audit_fits_a_long_application_code() {
     assert!(result.is_ok(), "the rollup commits: {:?}", result.err());
 
     let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM aud_logs WHERE entity_type = 'Application' AND entity_id = $1",
+        // Go's subject `platform.eventtypes.{code}`: entity type `Eventtypes`.
+        "SELECT COUNT(*) FROM aud_logs WHERE entity_type = 'Eventtypes' AND entity_id = $1",
     )
     .bind(code)
     .fetch_one(&pool)
