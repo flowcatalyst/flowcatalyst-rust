@@ -82,11 +82,14 @@ async fn publish_raw(servers: &str, subject: &str, message: &Message) {
         .await
         .expect("failed to connect to publish");
     let js = async_nats::jetstream::new(client);
-    js.publish(subject.to_string(), serde_json::to_vec(message).unwrap().into())
-        .await
-        .expect("publish request failed")
-        .await
-        .expect("publish ack failed");
+    js.publish(
+        subject.to_string(),
+        serde_json::to_vec(message).unwrap().into(),
+    )
+    .await
+    .expect("publish request failed")
+    .await
+    .expect("publish ack failed");
 }
 
 /// Messages already sitting on the stream when the consumer's standing
@@ -127,7 +130,12 @@ async fn item2_available_messages_return_without_waiting() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     for i in 0..3 {
-        publish_raw(&servers, &format!("{stream}.m{i}"), &healthy_message(&format!("item2-{i}"))).await;
+        publish_raw(
+            &servers,
+            &format!("{stream}.m{i}"),
+            &healthy_message(&format!("item2-{i}")),
+        )
+        .await;
     }
 
     // Settle window: `publish_raw`'s ack only proves the broker has the
@@ -148,7 +156,10 @@ async fn item2_available_messages_return_without_waiting() {
         "should have picked up all three already-published messages in one poll"
     );
     assert_eq!(
-        messages.iter().map(|m| m.message.id.as_str()).collect::<Vec<_>>(),
+        messages
+            .iter()
+            .map(|m| m.message.id.as_str())
+            .collect::<Vec<_>>(),
         vec!["item2-0", "item2-1", "item2-2"],
         "delivery order must match publish order"
     );
@@ -206,7 +217,12 @@ async fn item2_blocks_on_empty_then_returns_promptly_once_published() {
          nothing published — it's an untimed wait, not a short fixed poll"
     );
 
-    publish_raw(&servers, &format!("{stream}.m0"), &healthy_message("item2-block-0")).await;
+    publish_raw(
+        &servers,
+        &format!("{stream}.m0"),
+        &healthy_message("item2-block-0"),
+    )
+    .await;
 
     let messages = tokio::time::timeout(Duration::from_millis(500), handle)
         .await
@@ -255,7 +271,10 @@ async fn item2_stop_unblocks_a_parked_poll_within_500ms() {
 
     // Give the poll task a moment to actually be parked on `recv()`.
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(!handle.is_finished(), "poll() should still be parked before stop()");
+    assert!(
+        !handle.is_finished(),
+        "poll() should still be parked before stop()"
+    );
 
     let start = Instant::now();
     consumer.stop().await;
@@ -394,4 +413,77 @@ async fn item2_bounded_channel_caps_ack_pending_before_any_poll() {
     // poll() must still work and return real messages once we do call it.
     let messages = consumer.poll(max_messages).await.expect("poll failed");
     assert_eq!(messages.len(), max_messages as usize);
+}
+
+/// C4: `max_deliver` and `max_ack_pending` default to unlimited, as Go's do
+/// (owner ruling 2026-09-22: "the router owns give-up") — and a durable
+/// consumer provisioned earlier under the old finite defaults (10 / 1000)
+/// is UPDATED on the next start, not reused untouched. Before this,
+/// `get_or_create_consumer` returned the existing consumer as it was, so a
+/// deployment's first-ever limits stayed in force for ever.
+#[tokio::test]
+#[ignore]
+async fn c4_existing_durable_consumer_is_updated_to_unlimited_limits() {
+    let (_container, servers) = start_jetstream().await;
+    let stream = format!("C4LIMITS{}", uuid::Uuid::new_v4().simple());
+    let subject_filter = format!("{stream}.>");
+
+    // Provision stream + durable consumer the way the old code did.
+    {
+        let client = async_nats::connect(&servers).await.expect("connect");
+        let js = async_nats::jetstream::new(client);
+        let s = js
+            .get_or_create_stream(async_nats::jetstream::stream::Config {
+                name: stream.clone(),
+                subjects: vec![subject_filter.clone()],
+                retention: async_nats::jetstream::stream::RetentionPolicy::WorkQueue,
+                ..Default::default()
+            })
+            .await
+            .expect("create stream");
+        let _: async_nats::jetstream::consumer::PullConsumer = s
+            .create_consumer(async_nats::jetstream::consumer::pull::Config {
+                durable_name: Some("router".to_string()),
+                ack_wait: Duration::from_secs(120),
+                max_deliver: 10,
+                max_ack_pending: 1000,
+                filter_subject: subject_filter.clone(),
+                ..Default::default()
+            })
+            .await
+            .expect("create legacy consumer");
+    }
+
+    let config = NatsConfig {
+        servers: servers.clone(),
+        stream_name: stream.clone(),
+        consumer_name: "router".to_string(),
+        subject: subject_filter,
+        ..NatsConfig::default()
+    };
+    assert_eq!(config.max_deliver, -1);
+    assert_eq!(config.max_ack_pending, -1);
+    let consumer = NatsQueueConsumer::new(config)
+        .await
+        .expect("failed to build consumer");
+
+    let client = async_nats::connect(&servers).await.expect("connect");
+    let js = async_nats::jetstream::new(client);
+    let mut nats_consumer: async_nats::jetstream::consumer::PullConsumer = js
+        .get_stream(&stream)
+        .await
+        .expect("get stream")
+        .get_consumer("router")
+        .await
+        .expect("get consumer");
+    let info = nats_consumer.info().await.expect("consumer info");
+    assert_eq!(
+        info.config.max_deliver, -1,
+        "the existing durable consumer's max_deliver must be updated to unlimited"
+    );
+    assert_eq!(
+        info.config.max_ack_pending, -1,
+        "the existing durable consumer's max_ack_pending must be updated to unlimited"
+    );
+    consumer.stop().await;
 }

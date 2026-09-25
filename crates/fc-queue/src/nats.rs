@@ -51,9 +51,12 @@ pub struct NatsConfig {
     pub poll_timeout_ms: u64,
     /// Ack wait time in seconds before redelivery
     pub ack_wait_secs: u64,
-    /// Maximum number of delivery attempts before giving up
+    /// Maximum number of delivery attempts before the server gives up on a
+    /// message. `-1` (the default) is unlimited — see [`NatsConfig::default`].
     pub max_deliver: i64,
-    /// Maximum number of unacknowledged messages the consumer can have in-flight
+    /// Maximum number of unacknowledged messages the consumer can have
+    /// in-flight. `-1` (the default) is unlimited — see
+    /// [`NatsConfig::default`].
     pub max_ack_pending: i64,
     /// Stream storage type: "file" or "memory"
     pub storage: String,
@@ -76,8 +79,8 @@ impl NatsConfig {
     /// falls back to [`NatsConfig::default`]'s value for that field (same
     /// defaults the other routers ship: stream `FLOWCATALYST`, consumer
     /// `fc-router`, subject `flowcatalyst.>`, batch 10, poll timeout 20s,
-    /// ack-wait 120s, max-deliver 10, max-ack-pending 1000, storage file,
-    /// replicas 1, max-age 7d).
+    /// ack-wait 120s, max-deliver -1 (unlimited), max-ack-pending -1
+    /// (unlimited), storage file, replicas 1, max-age 7d).
     pub fn from_uri(uri: &str) -> Result<Self> {
         if !uri.starts_with("nats://") {
             return Err(QueueError::Config(format!("not a nats:// URI: {}", uri)));
@@ -155,6 +158,18 @@ impl NatsConfig {
     }
 }
 
+/// Defaults match Go's `nats.DefaultConfig`.
+///
+/// `max_deliver` and `max_ack_pending` are unlimited (`-1`), as Go's are
+/// (owner ruling 2026-09-22: "the router owns give-up"). The router releases
+/// work back to the broker on its own schedule — every capacity deferral and
+/// every nack spends one JetStream delivery — so a finite `max_deliver` turns
+/// a slow pool's backlog into messages the server silently stops
+/// redelivering. A message NAKed with a delay also stays ack-pending for the
+/// whole delay, so a finite `max_ack_pending` lets one deferred backlog
+/// suspend delivery for the entire stream. A cap can still be set per URI
+/// (`max-deliver=`, `max-ack-pending=`) where poison-message protection is
+/// wanted.
 impl Default for NatsConfig {
     fn default() -> Self {
         Self {
@@ -165,8 +180,8 @@ impl Default for NatsConfig {
             max_messages_per_poll: 10,
             poll_timeout_ms: 20_000, // Java default: 20 seconds
             ack_wait_secs: 120,      // Java default: 120 seconds
-            max_deliver: 10,         // Java default: 10 redeliveries
-            max_ack_pending: 1000,
+            max_deliver: -1,         // unlimited (Go; owner ruling 2026-09-22)
+            max_ack_pending: -1,     // unlimited (Go; owner ruling 2026-09-22)
             storage: "file".to_string(),
             replicas: 1,
             max_age_days: 7,
@@ -300,23 +315,29 @@ impl NatsQueueConsumer {
             "JetStream stream ready"
         );
 
-        // Ensure durable consumer exists (create or get)
-        let consumer = stream
-            .get_or_create_consumer(
-                &config.consumer_name,
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(config.consumer_name.clone()),
-                    ack_wait: Duration::from_secs(config.ack_wait_secs),
-                    max_deliver: config.max_deliver,
-                    max_ack_pending: config.max_ack_pending,
-                    filter_subject: config.subject.clone(),
-                    ..Default::default()
-                },
-            )
+        // Create the durable consumer, or UPDATE it if it already exists
+        // (Go: `CreateOrUpdateConsumer`). `get_or_create_consumer` returned
+        // an existing consumer untouched, so a consumer provisioned under
+        // the old finite defaults (max-deliver 10, max-ack-pending 1000)
+        // kept them for ever; create-or-update applies the configured
+        // limits to it on the next start.
+        let consumer: PullConsumer = stream
+            .create_consumer(jetstream::consumer::pull::Config {
+                name: Some(config.consumer_name.clone()),
+                durable_name: Some(config.consumer_name.clone()),
+                ack_wait: Duration::from_secs(config.ack_wait_secs),
+                max_deliver: config.max_deliver,
+                max_ack_pending: config.max_ack_pending,
+                filter_subject: config.subject.clone(),
+                ..Default::default()
+            })
             .await
             .map_err(|e| {
                 QueueError::nats(
-                    format!("Failed to get/create consumer '{}'", config.consumer_name),
+                    format!(
+                        "Failed to create/update consumer '{}'",
+                        config.consumer_name
+                    ),
                     e,
                 )
             })?;
@@ -787,8 +808,9 @@ mod tests {
         assert_eq!(config.max_messages_per_poll, 10);
         assert_eq!(config.poll_timeout_ms, 20_000); // Java: 20 seconds
         assert_eq!(config.ack_wait_secs, 120); // Java: 120 seconds
-        assert_eq!(config.max_deliver, 10); // Java: 10 redeliveries
-        assert_eq!(config.max_ack_pending, 1000);
+                                               // Go: unlimited (owner ruling 2026-09-22 — the router owns give-up).
+        assert_eq!(config.max_deliver, -1);
+        assert_eq!(config.max_ack_pending, -1);
         assert_eq!(config.storage, "file");
         assert_eq!(config.replicas, 1);
         assert_eq!(config.max_age_days, 7);
