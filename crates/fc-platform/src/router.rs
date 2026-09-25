@@ -238,6 +238,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     pub scheduled_jobs: ScheduledJobsState,
     /// `/api/functions*`, `/api/function-{pools,policies,domains,routes}`.
     pub functions: crate::function::api::FunctionsState,
+    /// `/control/functions/*`: what a function host calls (not in Swagger).
+    pub function_control: crate::function::control_api::FunctionControlState,
     pub filter_options: FilterOptionsState,
     pub clients: ClientsState,
     pub principals: PrincipalsState,
@@ -637,7 +639,12 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(PATH_API_CONFIG, platform_config_router())
             // Public
-            .nest(PATH_API_PUBLIC, public_router(self.public));
+            .nest(PATH_API_PUBLIC, public_router(self.public))
+            // The function host control plane (desired state, heartbeat,
+            // emit, artifact download), gated on the host role.
+            .merge(crate::function::control_api::function_control_router(
+                self.function_control,
+            ));
 
         // Dispatch processing (optional — only when message router callback is needed)
         let app = if let Some(dispatch_process) = self.dispatch_process {

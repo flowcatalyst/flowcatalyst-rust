@@ -41,6 +41,8 @@ utoipa-axum = { workspace = true }
 jsonwebtoken = { workspace = true }
 hmac = "0.12"
 sha2 = "0.10"
+# Streams an artifact from the blob store to the host (control plane).
+tokio-util = { workspace = true, features = ["io"] }
 base64 = "0.22"
 argon2 = "0.5"
 rsa = { version = "0.9", features = ["pem"] }
@@ -122,3 +124,4 @@ testcontainers-modules = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 hyper = { version = "1.0", features = ["full"] }
 http-body-util = "0.1"
+tempfile = { workspace = true }

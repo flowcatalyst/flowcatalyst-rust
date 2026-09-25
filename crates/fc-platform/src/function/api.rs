@@ -644,8 +644,8 @@ pub async fn delete_function(
 }
 
 /// What exists for one function now: its versions, the hosts reporting it
-/// and the wiring its last `live` promote created. Hosts stay empty until
-/// the host control plane (P6) writes them.
+/// (as their heartbeats left them, `stale` past the live window) and the
+/// wiring its last `live` promote created.
 #[utoipa::path(
     get, path = "/api/functions/{address}/status", tag = "functions",
     operation_id = "getApiFunctionsByAddressStatus",
