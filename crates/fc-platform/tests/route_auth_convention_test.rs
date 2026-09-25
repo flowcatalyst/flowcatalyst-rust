@@ -610,6 +610,7 @@ fn collect_routes(
         }
     }
 
+    let attr_path_re = regex::Regex::new(r#"\bpath\s*=\s*"([^"]*)""#).unwrap();
     for args in chain_calls(body, "routes") {
         let inner = args.trim();
         let Some(list) = inner
@@ -643,10 +644,7 @@ fn collect_routes(
                 .find(|t| !t.is_empty())
                 .unwrap_or("")
                 .to_uppercase();
-            let path = regex::Regex::new(r#"\bpath\s*=\s*"([^"]*)""#)
-                .unwrap()
-                .captures(attr)
-                .map(|c| c[1].to_string());
+            let path = attr_path_re.captures(attr).map(|c| c[1].to_string());
             match path {
                 Some(p) => out.push(Route {
                     method,
