@@ -162,6 +162,26 @@ export const NAVIGATION_CONFIG: NavGroup[] = [
 		],
 	},
 	{
+		label: "Functions",
+		items: [
+			{
+				label: "Functions",
+				icon: "pi pi-code",
+				route: "/functions",
+			},
+			{
+				label: "Function Domains",
+				icon: "pi pi-globe",
+				route: "/function-domains",
+			},
+			{
+				label: "Function Policies",
+				icon: "pi pi-shield",
+				route: "/function-policies",
+			},
+		],
+	},
+	{
 		label: "Developer",
 		items: [
 			{

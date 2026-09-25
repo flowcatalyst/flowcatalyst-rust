@@ -268,6 +268,24 @@ at P6 and H3. The sizes below are rough lines of code excluding tests.
 - Follow CLAUDE.md frontend conventions (PrimeVue, no Tailwind, `useListState`).
 - The Invoke tab only shows curl commands, as in Java.
 
+> **As built** (branch `feat/fn-p7-frontend`):
+> - Types are generated from `crates/fc-platform/resources/openapi/functions.openapi.json` into
+>   `frontend/src/api/generated-functions` (types only; identical to Java's). `api/functions.ts`
+>   wraps every management operation; the 204 routes are `Promise<void>`.
+> - Java's drawers became routed pages, in this SPA's conventions: `/functions` (list, pools card),
+>   `/functions/new`, `/functions/:address` (Overview with hosts and wiring, Versions and aliases,
+>   Config & Secrets, Public Routes, Invoke), `/functions/:address/manifest` (the manifest editor),
+>   `/function-domains[/:hostname]` (claim as a dialog), `/function-policies[/:owner]`. Publishing is
+>   a dialog.
+> - W5: nothing assumes `wasm` means Extism. A wasm function is described as a WASI 0.2 component;
+>   a wasm function's new-manifest template uses `wasi_http_incoming_handler`.
+> - Java's policy drawer sends signers without `runtimes`, which both platforms refuse
+>   (`RUNTIME_INVALID`), so it can't save a signer. The Rust page edits each signer's runtimes.
+> - The Invoke tab shows curl only. The `fcdev fn invoke` lines are left out: Rust's fc-dev has no
+>   `fn invoke` (H8).
+> - Additions beyond Java: enable/disable, the status document's wiring table, removing a config
+>   value, and the routes on a domain's hostname.
+
 **P8: parity**
 - Run `parity/scenarios/functions/functions.json` (41 steps) against Rust through the `SubprocessSide` runner on the Java branch `parity/rust-side`.
 - Add the surfaces Java's `parity/surface.json` doesn't cover yet: manifest check, artifact upload and download, and the schema route.

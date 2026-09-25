@@ -14,16 +14,25 @@ export const BFF_BASE_URL = "/bff";
 export class ApiError extends Error {
 	status: number;
 	code?: string;
+	/**
+	 * The platform envelope's raw `details` object, when present (e.g.
+	 * `{ errors: [{ message, location }] }` for a validation failure). Kept
+	 * as structured data for a caller that renders its own per-field errors
+	 * (the function publish dialog and create page).
+	 */
+	details?: Record<string, unknown>;
 
 	constructor(
 		message: string,
 		status: number,
 		code?: string,
+		details?: Record<string, unknown>,
 	) {
 		super(message);
 		this.name = "ApiError";
 		this.status = status;
 		this.code = code;
+		this.details = details;
 	}
 }
 
@@ -100,7 +109,11 @@ async function baseFetch<T>(
 	const headers: Record<string, string> = {
 		...(init.headers as Record<string, string>),
 	};
-	if (init.body) {
+	// Default to JSON only when the caller hasn't set a Content-Type. Every
+	// JSON call site sends a string body and sets none, so they are
+	// unchanged; the function artifact upload sends raw bytes as
+	// `application/octet-stream` and sets its own.
+	if (init.body && !headers["Content-Type"]) {
 		headers["Content-Type"] = "application/json";
 	}
 
@@ -133,7 +146,11 @@ async function baseFetch<T>(
 			toast.error(summaryForStatus(response.status), message);
 		}
 
-		throw new ApiError(message, response.status, code);
+		const details =
+			error?.details && typeof error.details === "object"
+				? (error.details as Record<string, unknown>)
+				: undefined;
+		throw new ApiError(message, response.status, code, details);
 	}
 
 	// Handle 204 No Content

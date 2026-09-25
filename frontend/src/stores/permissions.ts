@@ -155,7 +155,56 @@ export const ROUTE_PERMISSIONS: Record<string, string> = {
 
 	// Developer portal
 	"/developer": "platform:developer:application-openapi:view",
+
+	// Functions
+	"/functions": "platform:function:function:view",
+	"/functions/new": "platform:function:function:manage",
+	"/function-domains": "platform:function:domain:manage",
+	"/function-policies": "platform:function:policy:manage",
 };
+
+/**
+ * Whether a role list carries a platform admin role. The route guard lets
+ * these through every permission check; in-page action gating uses the same
+ * rule so a page never hides an action from a user the guard admitted.
+ */
+export function isPlatformAdminRole(roles: string[]): boolean {
+	return roles.some(
+		(role) =>
+			role === "platform:super-admin" ||
+			role === "platform:admin" ||
+			(role.toLowerCase().includes("platform") &&
+				role.toLowerCase().includes("admin")),
+	);
+}
+
+/**
+ * The route guard's rule, for gating an in-page action: a platform admin
+ * role, or the permission itself (or `*`). The server enforces every
+ * permission regardless; this only decides what the page shows.
+ */
+export function userHasPermission(
+	user: { roles: string[]; permissions: string[] } | null | undefined,
+	permission: string,
+): boolean {
+	if (!user) return false;
+	if (isPlatformAdminRole(user.roles)) return true;
+	return (
+		user.permissions.includes(permission) || user.permissions.includes("*")
+	);
+}
+
+/**
+ * Anchor-or-partner scope: `/auth/me` only carries a `clientId` for a
+ * CLIENT-scope principal, so a principal without one may act for other
+ * owners (the platform, or a client it picks). The server's reach rule
+ * still decides what each call may touch.
+ */
+export function isUnscopedUser(
+	user: { clientId: string | null } | null | undefined,
+): boolean {
+	return !!user && !user.clientId;
+}
 
 /**
  * Get the required permission for a route path.

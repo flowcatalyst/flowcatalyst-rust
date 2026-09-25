@@ -7,11 +7,29 @@ const openApiInput =
 		? `http://localhost:${livePort}/q/openapi`
 		: "./openapi/openapi.json";
 
-export default defineConfig({
-	input: openApiInput,
-	output: {
-		path: "src/api/generated",
+// The function API is a second, separate document: the byte-identical copy
+// of Java's `functions.openapi.json` that the platform serves verbatim at
+// `GET /api/openapi-functions.json` (crates/fc-platform/src/function/openapi.rs).
+// Types only — `api/functions.ts` wraps them over the hand-rolled
+// `api/client.ts`, as Java's SPA does (docs/spec/function-ui.md §1 there).
+const functionsOpenApiInput =
+	"../crates/fc-platform/resources/openapi/functions.openapi.json";
+
+export default defineConfig([
+	{
+		input: openApiInput,
+		output: {
+			path: "src/api/generated",
+		},
+		postProcess: [],
+		plugins: ["@hey-api/typescript", "@hey-api/sdk", "@hey-api/client-fetch"],
 	},
-	postProcess: [],
-	plugins: ["@hey-api/typescript", "@hey-api/sdk", "@hey-api/client-fetch"],
-});
+	{
+		input: functionsOpenApiInput,
+		output: {
+			path: "src/api/generated-functions",
+		},
+		postProcess: [],
+		plugins: ["@hey-api/typescript"],
+	},
+]);
