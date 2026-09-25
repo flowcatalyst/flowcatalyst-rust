@@ -11,8 +11,9 @@ use syn::{parse_macro_input, spanned::Spanned, FnArg, ItemFn};
 /// The function takes the [`Request`] and, optionally, the [`Context`], may be
 /// `async` or not, and returns anything that implements `HandlerOutput`:
 /// a `Response`, or a `Result<Response, E>` whose `E: Display` (the PDK's
-/// `Error`, `anyhow::Error`, any `std::error::Error`). An `Err` answers
-/// Java's `fail`: `500` with `{"error":"<the error's message>"}`.
+/// `Error`, `anyhow::Error`, any `std::error::Error`). An `Err` is logged and
+/// answers `500 {"error":"the function failed"}`; use `Response::fail` to send
+/// a message of your choosing.
 ///
 /// ```ignore
 /// #[fc_function_pdk::handler]

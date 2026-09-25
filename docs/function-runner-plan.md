@@ -359,8 +359,9 @@ function author's run natively. Bindings: `wasip2 =1.0.4` (WASI 0.2.12, as the h
 and `wit-bindgen =0.57.1` over `wit/flowcatalyst-function` (world `imports`).
 
 - `#[handler]` on `async fn handle(req: Request, ctx: Context) -> Result<Response, E>` (or sync, or
-  `(req)` only; `E: Display`) exports the incoming handler. An `Err` is logged at ERROR and answers
-  Java's `fail`: `500 {"error":"<error and causes>"}`.
+  `(req)` only; `E: Display`) exports the incoming handler. An `Err` is logged at ERROR (with causes)
+  and answers the generic `500 {"error":"the function failed"}`, so internals can't leak on public
+  routes; `Response::fail(message)` sends an author-chosen message (Java's `fail`).
 - `Request`: method, path, raw and decoded query (the host's decoding), case-insensitive headers,
   `body`/`text`/`json`, `path_param` and `caller` (from the invocation). `Webhook::event(&req)` /
   `Webhook::schedule(&req)` (fc-function-abi's parsers now take `impl AsRef<[u8]>`).

@@ -114,9 +114,15 @@ async fn a_pdk_guest_sees_its_request_and_invocation() {
     );
     assert_eq!(echoed["remoteAddress"], "127.0.0.1");
 
+    // An `Err` never reaches the caller: the body is the host's generic
+    // failure and the message is only logged (no internals on public routes).
     let fail = h.get("/fail?msg=no+such+order").await;
-    assert_eq!(fail.status, 500, "an Err is Java's fail");
-    assert_eq!(fail.text(), r#"{"error":"no such order"}"#);
+    assert_eq!(fail.status, 500);
+    assert_eq!(fail.text(), r#"{"error":"the function failed"}"#);
+    // An explicit `Response::fail(message)` is Java's fail: the author chose it.
+    let explicit = h.get("/fail-explicit?msg=no+such+order").await;
+    assert_eq!(explicit.status, 500);
+    assert_eq!(explicit.text(), r#"{"error":"no such order"}"#);
 
     let retry = h.get("/retry").await;
     assert_eq!(retry.status, 429);
@@ -369,9 +375,10 @@ async fn without_the_flowcatalyst_feature_a_pdk_guest_is_a_plain_wasi_http_compo
             "query": {"x": ["1", "2"]}, "body": {"n": 1},
         })
     );
+    // A parse error bubbling up as `Err` must not leak serde's message.
     let bad = h.post("/x", b"nope", &[]).await;
     assert_eq!(bad.status, 500);
-    assert!(bad.error().starts_with("expected ident"), "{}", bad.text());
+    assert_eq!(bad.text(), r#"{"error":"the function failed"}"#);
     h.close().await;
 }
 

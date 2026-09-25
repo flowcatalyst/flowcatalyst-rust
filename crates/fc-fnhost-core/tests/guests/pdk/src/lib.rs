@@ -7,7 +7,9 @@
 //! - `/http?url=U[&body=B]`: one outbound `GET` (or `POST` of `B`);
 //! - `/webhook`: the body parsed with `Webhook::event(&req)`;
 //! - `/log?msg=M`: through `ctx.logger()` and the `log` crate;
-//! - `/fail?msg=M`: an `Err`; `/retry`: `Response::retry(1.5 s)`;
+//! - `/fail?msg=M`: an `Err` (generic body; the message is only logged);
+//! - `/fail-explicit?msg=M`: `Response::fail(M)` (the message is the body);
+//! - `/retry`: `Response::retry(1.5 s)`;
 //! - `/clock`: `ctx.now()` as epoch milliseconds.
 
 use std::time::{Duration, UNIX_EPOCH};
@@ -94,6 +96,7 @@ async fn handle(req: Request, ctx: Context) -> Result<Response, Error> {
             Ok(Response::ack())
         }
         "fail" => Err(Error::msg(req.query_param("msg").unwrap_or("boom"))),
+        "fail-explicit" => Ok(Response::fail(req.query_param("msg").unwrap_or("boom"))?),
         "retry" => Ok(Response::retry(Duration::from_millis(1500))),
         "clock" => {
             let ms = ctx.now().duration_since(UNIX_EPOCH)?.as_millis() as u64;

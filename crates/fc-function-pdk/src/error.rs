@@ -5,9 +5,10 @@ use fc_function_abi::Response;
 /// Any error a handler can return with `?`: every `std::error::Error`
 /// converts into it (like `anyhow::Error`, which a handler may use instead).
 ///
-/// An `Err` from a handler answers Java's `fail`: `500` with
-/// `{"error":"<the error and its causes>"}` (its `{:#}` form), and the same
-/// text goes to the function's log at ERROR.
+/// An `Err` from a handler goes to the function's log at ERROR (its `{:#}`
+/// form: the error and its causes) and answers the host's generic
+/// `500 {"error":"the function failed"}`, so internals never reach a caller.
+/// To tell the caller something, return `Response::fail(message)`.
 pub struct Error(Box<dyn std::error::Error + Send + Sync + 'static>);
 
 /// `Result<T, fc_function_pdk::Error>`.
@@ -94,12 +95,6 @@ impl<E: fmt::Display> HandlerOutput for std::result::Result<Response, E> {
     }
 }
 
-/// The response for a handler's `Err`: Java's `fail(message)`, or the host's
-/// own `{"error":"the function failed"}` when the message is blank.
-pub(crate) fn failure(message: &str) -> Response {
-    Response::fail(message).unwrap_or_else(|_| Response::function_failed())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,12 +122,12 @@ mod tests {
     }
 
     #[test]
-    fn an_err_is_javas_fail_and_a_blank_one_the_hosts_failure() {
-        let out: Result<Response> = Err(Error::msg("bad \"input\""));
-        let response = failure(&out.into_response().unwrap_err());
-        assert_eq!(response.status(), 500);
-        assert_eq!(response.body(), br#"{"error":"bad \"input\""}"#);
-        assert_eq!(failure("  "), Response::function_failed());
+    fn an_err_carries_its_causes_for_the_log() {
+        let out: Result<Response> = Err(Error::from(Outer(std::io::Error::other("disk gone"))));
+        assert_eq!(
+            out.into_response().unwrap_err(),
+            "reading the order: disk gone"
+        );
     }
 
     #[test]

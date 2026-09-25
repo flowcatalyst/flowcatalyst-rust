@@ -25,7 +25,7 @@ use wasip2::io::poll::Pollable;
 
 use crate::backend::Backend;
 use crate::context::{Context, Level};
-use crate::error::{failure, HandlerOutput};
+use crate::error::HandlerOutput;
 use crate::request::Request;
 use crate::Response;
 
@@ -197,8 +197,14 @@ where
             match block_on(handler(request, context)).into_response() {
                 Ok(response) => response,
                 Err(message) => {
+                    // The cause chain goes to the function's log only. The body
+                    // is the host's generic failure, so an `Err` bubbling up
+                    // with `?` can't leak internals (hosts, SQL, paths) to a
+                    // caller, which matters on public routes. A handler that
+                    // wants to tell the caller something returns
+                    // `Response::fail(message)` explicitly.
                     backend.log(Level::Error, &format!("the handler failed: {message}"));
-                    failure(&message)
+                    Response::function_failed()
                 }
             }
         }

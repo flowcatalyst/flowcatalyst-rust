@@ -33,7 +33,7 @@
 //! | `Function.handle(Request, FunctionContext)` | a [`#[handler]`](handler) function |
 //! | `Request` | [`Request`] (HTTP) + [`Context::invocation`] (ids, caller, …) |
 //! | `Result.ack/retry/fail/json/http` | [`Response`] (re-exported), [`json()`](fn@json) |
-//! | a thrown exception | an `Err` from the handler: `500 {"error":…}` |
+//! | a thrown exception | an `Err` from the handler: logged; `500 {"error":"the function failed"}` |
 //! | `ctx.config()`, `ctx.secrets()` | [`Context::config`], [`Context::secrets`] |
 //! | `ctx.events().emit(OutboundEvent)` / `EventEmitException` | [`Events::emit`] / [`EmitError`] |
 //! | `ctx.http().send(HttpCall)` / `HttpCallRefusedException` | [`Http::send`] / [`HttpError::Denied`] |
@@ -103,8 +103,9 @@ pub use runtime::block_on;
 ///
 /// The function takes a [`Request`] and, optionally, a [`Context`]; it may be
 /// `async` or not; it returns a [`Response`] or a `Result<Response, E>` with
-/// `E: Display` (see [`HandlerOutput`]). An `Err` is logged and answers
-/// Java's `fail`: `500` with `{"error":"<the error's message>"}`. A panic
+/// `E: Display` (see [`HandlerOutput`]). An `Err` is logged (with its causes)
+/// and answers `500 {"error":"the function failed"}`; return
+/// `Response::fail(message)` to send a message of your choosing. A panic
 /// traps, which the host answers with `500 {"error":"the function failed"}`.
 ///
 /// One per component: a component has exactly one incoming handler.
