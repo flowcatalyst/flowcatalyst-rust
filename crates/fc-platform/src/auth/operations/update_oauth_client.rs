@@ -133,7 +133,7 @@ impl<U: UnitOfWork> UpdateOAuthClientUseCase<U> {
         }
         client.updated_at = chrono::Utc::now();
 
-        let event = OAuthClientUpdated::new(ctx, &client.id, &client.client_id);
+        let event = OAuthClientUpdated::new(ctx, &client.id, &client.client_name);
         Ok((client, event))
     }
 }

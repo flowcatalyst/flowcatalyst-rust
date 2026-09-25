@@ -142,7 +142,8 @@ impl<U: UnitOfWork> CreateOAuthClientUseCase<U> {
         client.service_account_principal_id = command.service_account_principal_id.clone();
         client.created_by = command.created_by.clone();
 
-        let event = OAuthClientCreated::new(ctx, &client.id, &client.client_id);
+        let event =
+            OAuthClientCreated::new(ctx, &client.id, &client.client_id, &client.client_name);
         Ok((client, event))
     }
 }

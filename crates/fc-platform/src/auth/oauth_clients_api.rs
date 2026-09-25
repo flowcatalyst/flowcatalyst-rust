@@ -673,8 +673,15 @@ pub async fn regenerate_oauth_client_secret(
         .await
         .into_result()?;
 
+    // The event carries only Go's payload, so re-fetch the public client_id
+    // the response returns, as Go does (auth/api/api.go:331-339).
+    let client = state
+        .oauth_client_repo
+        .find_by_id(&event.oauth_client_id)
+        .await?
+        .ok_or_else(|| PlatformError::not_found("OAuthClient", &event.oauth_client_id))?;
     Ok(Json(RegenerateSecretResponse {
-        client_id: event.client_id,
+        client_id: client.client_id,
         client_secret: plaintext_secret,
         previous_secret_expires_at: event.previous_secret_expires_at.map(|t| t.to_rfc3339()),
     }))

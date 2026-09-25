@@ -644,9 +644,7 @@ fn oauth_client_secret_rotation_persists_only_the_hash() {
         (true, false)
     );
 
-    let e = fixed!(
-        crate::auth::operations::events::OAuthClientSecretRotated::new(&ctx(), "oac_1", "client-1")
-    );
+    let e = fixed!(crate::auth::operations::events::OAuthClientSecretRotated::new(&ctx(), "oac_1"));
     let rows = persisted(&e, &cmd);
     assert_no_plaintext(&rows, OAUTH_CLIENT_SECRET);
     // The hash itself no longer reaches the audit row either: the

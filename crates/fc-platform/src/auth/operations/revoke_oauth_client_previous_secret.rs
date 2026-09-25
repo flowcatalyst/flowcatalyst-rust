@@ -82,7 +82,7 @@ impl<U: UnitOfWork> UseCase for RevokeOAuthClientPreviousSecretUseCase<U> {
         };
         client.revoke_previous_secret();
 
-        let event = OAuthClientPreviousSecretRevoked::new(&ctx, &client.id, &client.client_id);
+        let event = OAuthClientPreviousSecretRevoked::new(&ctx, &client.id);
         self.unit_of_work
             .commit(&client, &*self.oauth_client_repo, event, &command)
             .await

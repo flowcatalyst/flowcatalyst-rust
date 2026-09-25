@@ -90,7 +90,7 @@ impl<U: UnitOfWork> ActivateOAuthClientUseCase<U> {
         client.active = true;
         client.updated_at = chrono::Utc::now();
 
-        let event = OAuthClientActivated::new(ctx, &client.id, &client.client_id);
+        let event = OAuthClientActivated::new(ctx, &client.id);
         Ok((client, event))
     }
 }
