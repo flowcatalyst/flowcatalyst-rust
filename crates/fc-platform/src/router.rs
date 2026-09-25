@@ -291,6 +291,8 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     /// Optional — dispatch processing endpoint state. None when dispatch processing
     /// is not needed (e.g., tests or standalone platform server without router).
     pub dispatch_process: Option<DispatchProcessState>,
+    /// Routes Go serves that Rust lacked (`shared::go_routes`).
+    pub go_routes: crate::shared::go_routes::GoRoutesState,
 
     /// Optional static directory for SPA serving. When set, serves:
     /// - `/assets/*` with immutable cache headers (Vite hashed assets)
@@ -412,6 +414,8 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
             // The function API: full paths under five prefixes, so merged.
             .merge(crate::function::api::functions_router(self.functions))
+            // Go-parity routes, at their full paths (`shared::go_routes`).
+            .merge(crate::shared::go_routes::go_routes_router(self.go_routes))
             .nest(PATH_AUTH, auth_router(self.auth).layer(auth_layer.clone()))
             .nest(
                 PATH_AUTH,

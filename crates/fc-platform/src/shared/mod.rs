@@ -26,6 +26,7 @@ pub mod client_selection_api;
 pub mod debug_api;
 pub mod dispatch_process_api;
 pub mod filter_options_api;
+pub mod go_routes;
 pub mod health_api;
 pub mod me_api;
 pub mod monitoring_api;

@@ -1217,6 +1217,7 @@ pub fn build_platform_routes(
             sync_openapi_use_case,
             platform_application_id,
         },
+        go_routes: crate::shared::go_routes::GoRoutesState::build(repos, auth, unit_of_work),
         static_dir: config.static_dir,
         rate_limit_store: config.rate_limit_store,
         rate_limit_policies: config.rate_limit_policies,
