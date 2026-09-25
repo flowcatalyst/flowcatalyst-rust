@@ -82,6 +82,7 @@ impl TryFrom<PrincipalRow> for Principal {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            application_code_map: std::collections::HashMap::new(),
             all_applications: r.all_applications,
             created_at: r.created_at,
             updated_at: r.updated_at,
@@ -133,6 +134,9 @@ struct ClientIdentifierRow {
 struct PrincipalApplicationAccessRow {
     principal_id: String,
     application_id: String,
+    /// The application's code; NULL when the application row is gone (the
+    /// junction has no FK), as Go's LEFT JOIN reads it.
+    application_code: Option<String>,
 }
 
 /// The application-access facts for one principal, without hydrating the
@@ -713,14 +717,26 @@ impl PrincipalRepository {
         principal.client_identifier_map = identifier_map;
 
         // Load application access
+        // Go's hydrateAppAccess (principal/repository.go:286-322): LEFT JOIN
+        // for the code, ordered by application id.
         let app_rows = sqlx::query_as::<_, PrincipalApplicationAccessRow>(
-            "SELECT principal_id, application_id FROM iam_principal_application_access WHERE principal_id = $1"
+            "SELECT a.principal_id, a.application_id, ap.code AS application_code
+             FROM iam_principal_application_access a
+             LEFT JOIN app_applications ap ON ap.id = a.application_id
+             WHERE a.principal_id = $1
+             ORDER BY a.application_id",
         )
         .bind(&id)
         .fetch_all(&self.pool)
         .await?;
-        principal.accessible_application_ids =
-            app_rows.into_iter().map(|a| a.application_id).collect();
+        for a in app_rows {
+            if let Some(code) = a.application_code.filter(|c| !c.is_empty()) {
+                principal
+                    .application_code_map
+                    .insert(a.application_id.clone(), code);
+            }
+            principal.accessible_application_ids.push(a.application_id);
+        }
 
         Ok(principal)
     }
@@ -797,7 +813,11 @@ impl PrincipalRepository {
 
         // Batch-load application access
         let all_app_access = sqlx::query_as::<_, PrincipalApplicationAccessRow>(
-            "SELECT principal_id, application_id FROM iam_principal_application_access WHERE principal_id = ANY($1)"
+            "SELECT a.principal_id, a.application_id, ap.code AS application_code
+             FROM iam_principal_application_access a
+             LEFT JOIN app_applications ap ON ap.id = a.application_id
+             WHERE a.principal_id = ANY($1)
+             ORDER BY a.application_id",
         )
         .bind(&principal_ids)
         .fetch_all(&self.pool)
@@ -805,7 +825,12 @@ impl PrincipalRepository {
 
         let mut app_access_map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
+        let mut app_code_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for a in all_app_access {
+            if let Some(code) = a.application_code.filter(|c| !c.is_empty()) {
+                app_code_map.insert(a.application_id.clone(), code);
+            }
             app_access_map
                 .entry(a.principal_id)
                 .or_default()
@@ -838,6 +863,10 @@ impl PrincipalRepository {
                 }
                 principal.client_identifier_map = id_map;
                 if let Some(apps) = app_access_map.remove(&id) {
+                    principal.application_code_map = apps
+                        .iter()
+                        .filter_map(|a| app_code_map.get(a).map(|c| (a.clone(), c.clone())))
+                        .collect();
                     principal.accessible_application_ids = apps;
                 }
                 Ok(principal)

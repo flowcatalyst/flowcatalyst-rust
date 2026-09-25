@@ -8,8 +8,11 @@ use serde::{Deserialize, Serialize};
 /// JWT claims for access tokens issued by FlowCatalyst.
 ///
 /// These claims are embedded in every JWT issued by the platform's
-/// `/oauth/token` endpoint.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `/oauth/token` endpoint. The platform's shape: `tier` is the tenancy
+/// tier and `scope` the space-delimited granted permissions. Tokens from
+/// older platforms carry the tier on `scope` and no `tier`; [`Self::tier`]
+/// reads either.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AccessTokenClaims {
     /// Subject — principal ID (e.g., `"prn_0HZXEQ5Y8JY5Z"`)
     pub sub: String,
@@ -36,7 +39,14 @@ pub struct AccessTokenClaims {
     #[serde(rename = "type")]
     pub principal_type: String,
 
-    /// User scope: `"ANCHOR"`, `"PARTNER"`, or `"CLIENT"`
+    /// Tenancy tier: `"ANCHOR"`, `"PARTNER"`, or `"CLIENT"`. Absent on
+    /// tokens from older platforms, which carried it on `scope`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+
+    /// The granted permissions, space-delimited (the OAuth scope). On tokens
+    /// from older platforms (no `tier`), the tier.
+    #[serde(default)]
     pub scope: String,
 
     /// User email (present for USER type, absent for SERVICE)
@@ -59,6 +69,20 @@ pub struct AccessTokenClaims {
     /// `#[serde(default)]` lets us deserialize older tokens too.
     #[serde(default)]
     pub applications: Vec<String>,
+
+    /// Access to every application (deprecated companion of the `"*"`
+    /// applications entry)
+    #[serde(default)]
+    pub all_applications: bool,
+
+    /// The OAuth client the token was minted through, when there was one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azp: Option<String>,
+
+    /// `"api"` (carries authority) or `"identity"` (interactive-login
+    /// token, no authority); absent on older tokens
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_use: Option<String>,
 }
 
 impl AccessTokenClaims {
@@ -72,9 +96,23 @@ impl AccessTokenClaims {
         self.roles.iter().any(|r| r == role)
     }
 
+    /// The tenancy tier: the `tier` claim, or on an older token its `scope`.
+    pub fn tier(&self) -> &str {
+        self.tier.as_deref().unwrap_or(&self.scope)
+    }
+
+    /// The permissions granted on `scope`. Empty on older tokens, whose
+    /// `scope` was the tier.
+    pub fn permissions(&self) -> Vec<&str> {
+        if self.tier.is_none() {
+            return Vec::new();
+        }
+        self.scope.split_whitespace().collect()
+    }
+
     /// Check if this is an anchor user (full platform access).
     pub fn is_anchor(&self) -> bool {
-        self.scope == "ANCHOR"
+        self.tier() == "ANCHOR"
     }
 
     /// Check if this is a service account.
@@ -196,7 +234,49 @@ mod tests {
             clients: clients.into_iter().map(String::from).collect(),
             roles: roles.into_iter().map(String::from).collect(),
             applications: vec![],
+            ..Default::default()
         }
+    }
+
+    /// The platform's shape (Go `authservice.AccessTokenClaims`): `tier`
+    /// is the tier and `scope` the granted permissions.
+    #[test]
+    fn platform_shape_reads_tier_and_permissions() {
+        let json = r#"{
+            "sub": "prn_1", "iss": "fc", "aud": "fc", "exp": 9999999999,
+            "iat": 1000000000, "nbf": 1000000000, "jti": "j1",
+            "type": "SERVICE", "tier": "ANCHOR",
+            "scope": "platform:iam:user:view platform:messaging:event:view",
+            "name": "Svc", "clients": ["*"], "roles": [],
+            "applications": ["*"], "all_applications": true, "token_use": "api"
+        }"#;
+        let claims: AccessTokenClaims = serde_json::from_str(json).unwrap();
+        assert!(claims.is_anchor());
+        assert_eq!(claims.tier(), "ANCHOR");
+        assert_eq!(
+            claims.permissions(),
+            vec!["platform:iam:user:view", "platform:messaging:event:view"]
+        );
+        assert!(claims.all_applications);
+        assert_eq!(claims.token_use.as_deref(), Some("api"));
+
+        // A token with no granted permissions omits `scope`.
+        let json = r#"{
+            "sub": "prn_1", "iss": "fc", "aud": "fc", "exp": 9999999999,
+            "iat": 1000000000, "type": "USER", "tier": "CLIENT",
+            "name": "U", "clients": ["clt_1:acme"], "roles": []
+        }"#;
+        let claims: AccessTokenClaims = serde_json::from_str(json).unwrap();
+        assert_eq!(claims.tier(), "CLIENT");
+        assert!(claims.permissions().is_empty());
+    }
+
+    /// Older tokens carried the tier on `scope`.
+    #[test]
+    fn legacy_shape_reads_the_tier_from_scope() {
+        let claims = make_claims("ANCHOR", "USER", vec!["*"], vec![]);
+        assert_eq!(claims.tier(), "ANCHOR");
+        assert!(claims.permissions().is_empty());
     }
 
     // ─── AccessTokenClaims ──────────────────────────────────────────────

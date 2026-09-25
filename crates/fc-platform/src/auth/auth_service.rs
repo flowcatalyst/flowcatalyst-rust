@@ -23,7 +23,27 @@ struct CachedClaims {
 /// Cache TTL for validated tokens (30 seconds — short enough to respect expiry changes)
 const TOKEN_CACHE_TTL_SECS: u64 = 30;
 
-/// JWT Claims for ID tokens (OIDC Core 1.0)
+/// `token_use` of an access token that carries the principal's authority
+/// and may be presented as a platform API bearer (Go
+/// `authservice.TokenUseAPI`, authservice.go:49).
+pub const TOKEN_USE_API: &str = "api";
+
+/// `token_use` of an interactive-login access token: identity only, no
+/// authority; the API middleware refuses it (Go
+/// `authservice.TokenUseIdentity`, authservice.go:50).
+pub const TOKEN_USE_IDENTITY: &str = "identity";
+
+/// The `applications` entry meaning every application, present and future
+/// (Go `allApplicationsSentinel`, authservice.go:758).
+pub const ALL_APPLICATIONS_SENTINEL: &str = "*";
+
+/// OIDC ID token lifetime. Go wires `IDTokenExpirySecs: 300`
+/// (internal/server/wire_services.go:96): the ID token proves the login
+/// once and is never a bearer.
+pub const ID_TOKEN_EXPIRY_SECS: i64 = 300;
+
+/// JWT Claims for ID tokens (OIDC Core 1.0), in Go's shape
+/// (`authservice.IDTokenClaims`, authservice.go:144-181).
 ///
 /// The ID token is a security token that contains claims about the authentication
 /// of the end-user. Unlike the access token (used for API calls), the ID token
@@ -66,7 +86,7 @@ pub struct IdTokenClaims {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email_verified: Option<bool>,
 
-    /// Last updated timestamp
+    /// The principal's last modification (Unix timestamp)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
 
@@ -83,14 +103,13 @@ pub struct IdTokenClaims {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub azp: Option<String>,
 
-    // --- FlowCatalyst custom claims (matching TypeScript provider) ---
+    // --- FlowCatalyst custom claims ---
     /// Principal type; on the wire `USER` or `SERVICE`
     #[serde(rename = "type")]
     pub principal_type: PrincipalType,
 
-    /// User scope; on the wire `ANCHOR`, `PARTNER` or `CLIENT` (uppercase —
-    /// the TS SDK lowercases it on receipt, so the spelling is load-bearing)
-    pub scope: UserScope,
+    /// Tenancy tier; on the wire `ANCHOR`, `PARTNER` or `CLIENT`
+    pub tier: UserScope,
 
     /// Client ID this principal belongs to
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,15 +118,24 @@ pub struct IdTokenClaims {
     /// Roles assigned to this principal
     pub roles: Vec<String>,
 
-    /// Application codes extracted from role names
+    /// Accessible applications: `["*"]`, or `id:code` pairs
     pub applications: Vec<String>,
+
+    /// Deprecated companion of the `"*"` applications entry
+    pub all_applications: bool,
 
     /// Client access list ("*" for anchor users, "id:identifier" pairs for others)
     pub clients: Vec<String>,
 }
 
-/// JWT Claims for access tokens
+/// JWT Claims for access tokens, in Go's shape
+/// (`authservice.AccessTokenClaims`, authservice.go:84-142).
+///
+/// Deserialization also accepts the shape Rust issued before it matched Go —
+/// the tier on `scope` and no `tier` claim — so those tokens keep working
+/// until they expire; see [`AccessTokenClaimsWire`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "AccessTokenClaimsWire")]
 pub struct AccessTokenClaims {
     /// Subject (principal ID)
     pub sub: String,
@@ -134,9 +162,13 @@ pub struct AccessTokenClaims {
     #[serde(rename = "type")]
     pub principal_type: PrincipalType,
 
-    /// User scope; on the wire `ANCHOR`, `PARTNER` or `CLIENT` (uppercase —
-    /// the TS SDK lowercases it on receipt, so the spelling is load-bearing)
-    pub scope: UserScope,
+    /// Tenancy tier; on the wire `ANCHOR`, `PARTNER` or `CLIENT`
+    pub tier: UserScope,
+
+    /// Granted permissions, space-delimited (the OAuth `scope`). Absent when
+    /// the token carries none; permissions then derive from `roles`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 
     /// User email (for USER type)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -145,17 +177,98 @@ pub struct AccessTokenClaims {
     /// Display name
     pub name: String,
 
-    /// Client IDs this principal can access
-    /// "*" for anchor users (access all)
+    /// Client access: `["*"]` for anchor, `id:identifier` pairs otherwise
     pub clients: Vec<String>,
 
     /// Roles assigned to this principal
-    #[serde(default)]
     pub roles: Vec<String>,
 
-    /// Application codes extracted from role names (e.g., "operant:admin" → "operant")
-    #[serde(default)]
+    /// Accessible applications: `["*"]`, or `id:code` pairs
     pub applications: Vec<String>,
+
+    /// Deprecated companion of the `"*"` applications entry
+    pub all_applications: bool,
+
+    /// The OAuth client the token was minted through, when there was one
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azp: Option<String>,
+
+    /// [`TOKEN_USE_API`] or [`TOKEN_USE_IDENTITY`]; absent on older tokens
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_use: Option<String>,
+}
+
+/// The access-token claims as they may arrive: Go's shape, or the shape
+/// Rust issued before it (the tier on `scope`, no `tier`, no `token_use`).
+#[derive(Deserialize)]
+struct AccessTokenClaimsWire {
+    sub: String,
+    iss: String,
+    aud: String,
+    exp: i64,
+    iat: i64,
+    #[serde(default)]
+    nbf: i64,
+    #[serde(default)]
+    jti: String,
+    #[serde(rename = "type")]
+    principal_type: PrincipalType,
+    #[serde(default)]
+    tier: Option<UserScope>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    clients: Vec<String>,
+    #[serde(default)]
+    roles: Vec<String>,
+    #[serde(default)]
+    applications: Vec<String>,
+    #[serde(default)]
+    all_applications: bool,
+    #[serde(default)]
+    azp: Option<String>,
+    #[serde(default)]
+    token_use: Option<String>,
+}
+
+impl TryFrom<AccessTokenClaimsWire> for AccessTokenClaims {
+    type Error = String;
+
+    fn try_from(w: AccessTokenClaimsWire) -> std::result::Result<Self, Self::Error> {
+        // `tier` wins when present. Without it the token predates Go's shape
+        // and its `scope` is the tier, not permissions.
+        let (tier, scope) = match w.tier {
+            Some(tier) => (tier, w.scope.filter(|s| !s.trim().is_empty())),
+            None => match w.scope.as_deref().map(str::parse::<UserScope>) {
+                Some(Ok(tier)) => (tier, None),
+                _ => return Err("token carries no tier".to_string()),
+            },
+        };
+        Ok(Self {
+            sub: w.sub,
+            iss: w.iss,
+            aud: w.aud,
+            exp: w.exp,
+            iat: w.iat,
+            nbf: w.nbf,
+            jti: w.jti,
+            principal_type: w.principal_type,
+            tier,
+            scope,
+            email: w.email,
+            name: w.name,
+            clients: w.clients,
+            roles: w.roles,
+            applications: w.applications,
+            all_applications: w.all_applications,
+            azp: w.azp,
+            token_use: w.token_use,
+        })
+    }
 }
 
 impl AccessTokenClaims {
@@ -177,13 +290,68 @@ impl AccessTokenClaims {
 
     /// Check if the claims are for an anchor user.
     pub fn is_anchor(&self) -> bool {
-        self.scope.is_anchor()
+        self.tier.is_anchor()
     }
 
     /// The principal ID (the `sub` claim).
     pub fn principal_id(&self) -> &str {
         &self.sub
     }
+
+    /// The permissions granted on the `scope` claim (Go's
+    /// `strings.Fields(scope)`, sessiontoken.go:196). Empty when the token
+    /// carries none.
+    pub fn granted_permissions(&self) -> Vec<String> {
+        self.scope
+            .as_deref()
+            .map(|s| s.split_whitespace().map(str::to_string).collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether this is an identity-only (interactive-login) access token,
+    /// which must not authorize API calls.
+    pub fn is_identity_only(&self) -> bool {
+        self.token_use.as_deref() == Some(TOKEN_USE_IDENTITY)
+    }
+}
+
+/// The `clients` claim (Go `buildClients`, authservice.go:700-717): anchor →
+/// `["*"]`; partner → the assigned clients; client → the home client; each
+/// as `id:identifier` when the identifier is known, else the bare id.
+pub fn clients_claim(principal: &Principal) -> Vec<String> {
+    let pair = |id: &String| match principal.client_identifier_map.get(id) {
+        Some(identifier) => format!("{id}:{identifier}"),
+        None => id.clone(),
+    };
+    match principal.scope {
+        UserScope::Anchor => vec!["*".to_string()],
+        UserScope::Partner => principal.assigned_clients.iter().map(pair).collect(),
+        UserScope::Client => principal.client_id.iter().map(pair).collect(),
+    }
+}
+
+/// The `applications` claim (Go `appAccessOf`, authservice.go:738-755):
+/// `["*"]` when the principal reaches every application, otherwise its
+/// application grants as `id:code` pairs (the bare id when the code is
+/// unknown).
+pub fn applications_claim(principal: &Principal) -> Vec<String> {
+    if principal.all_applications {
+        return vec![ALL_APPLICATIONS_SENTINEL.to_string()];
+    }
+    principal
+        .accessible_application_ids
+        .iter()
+        .map(|id| match principal.application_code_map.get(id) {
+            Some(code) if !code.is_empty() => format!("{id}:{code}"),
+            _ => id.clone(),
+        })
+        .collect()
+}
+
+/// The role names a principal holds, in assignment order (Go `roleNames`,
+/// authservice.go:680-686).
+pub fn role_names(principal: &Principal) -> Vec<String> {
+    principal.roles.iter().map(|r| r.role.clone()).collect()
 }
 
 /// Configuration for the auth service
@@ -657,92 +825,100 @@ impl AuthService {
         self.algorithm
     }
 
-    /// Generate an access token for a principal (short-lived, for API calls)
+    /// The access-token lifetime, which token responses advertise as
+    /// `expires_in` (Go `AccessTokenTTLSecs`, authservice.go:388).
+    pub fn access_token_expiry_secs(&self) -> i64 {
+        self.config.access_token_expiry_secs
+    }
+
+    /// A short-lived, authority-bearing access token (`token_use: api`, no
+    /// `scope`). Go `GenerateAccessToken` (authservice.go:416).
     pub fn generate_access_token(&self, principal: &Principal) -> Result<String> {
-        self.generate_token_with_expiry(principal, self.config.access_token_expiry_secs)
+        self.sign_access(self.access_token_claims(
+            principal,
+            self.config.access_token_expiry_secs,
+            &[],
+            true,
+            None,
+            Utc::now(),
+        ))
     }
 
-    /// Generate a session token for a principal (longer-lived, for cookie-based sessions)
+    /// An authority-bearing access token whose `scope` carries the granted
+    /// permissions, stamped with `azp` when minted through an OAuth client
+    /// that is not the principal itself. Go `GenerateAccessTokenWithScope`
+    /// / `GenerateAccessTokenWithScopeFor` (authservice.go:426-435).
+    pub fn generate_access_token_with_scope(
+        &self,
+        principal: &Principal,
+        granted: &[String],
+        azp: Option<&str>,
+    ) -> Result<String> {
+        self.sign_access(self.access_token_claims(
+            principal,
+            self.config.access_token_expiry_secs,
+            granted,
+            true,
+            azp,
+            Utc::now(),
+        ))
+    }
+
+    /// The access token an interactive login returns: `token_use: identity`
+    /// and no authority (empty `roles`, `clients`, `applications`, no
+    /// `scope`). The API middleware refuses it. Go
+    /// `GenerateIdentityAccessToken[For]` (authservice.go:445-455).
+    pub fn generate_identity_access_token(
+        &self,
+        principal: &Principal,
+        azp: Option<&str>,
+    ) -> Result<String> {
+        self.sign_access(self.access_token_claims(
+            principal,
+            self.config.access_token_expiry_secs,
+            &[],
+            false,
+            azp,
+            Utc::now(),
+        ))
+    }
+
+    /// A longer-lived, authority-bearing token for cookie sessions. Go
+    /// `GenerateSessionToken` (authservice.go:459).
     pub fn generate_session_token(&self, principal: &Principal) -> Result<String> {
-        self.generate_token_with_expiry(principal, self.config.session_token_expiry_secs)
+        self.sign_access(self.access_token_claims(
+            principal,
+            self.config.session_token_expiry_secs,
+            &[],
+            true,
+            None,
+            Utc::now(),
+        ))
     }
 
-    /// Generate an OIDC ID token for a principal.
-    ///
-    /// The ID token contains identity claims for the client application (relying party).
-    /// It includes the same custom claims as the TypeScript oidc-provider version:
-    /// type, scope, client_id, roles, applications, clients.
-    ///
+    /// Generate an OIDC ID token for a principal with its full role list.
     /// `client_id` becomes the `aud` claim; `nonce` is echoed from the
-    /// authorization request.
+    /// authorization request. Go `GenerateIDToken` (authservice.go:508).
     pub fn generate_id_token(
         &self,
         principal: &Principal,
         client_id: &str,
         nonce: Option<String>,
     ) -> Result<String> {
-        let now = Utc::now();
-        let exp = now + Duration::seconds(self.config.access_token_expiry_secs);
+        self.generate_id_token_with_roles(principal, client_id, nonce, role_names(principal))
+    }
 
-        // Build client access list (same logic as access token)
-        let clients = match principal.scope {
-            UserScope::Anchor => vec!["*".to_string()],
-            UserScope::Partner => principal
-                .assigned_clients
-                .iter()
-                .map(|id| match principal.client_identifier_map.get(id) {
-                    Some(identifier) => format!("{}:{}", id, identifier),
-                    None => id.clone(),
-                })
-                .collect(),
-            UserScope::Client => principal
-                .client_id
-                .clone()
-                .into_iter()
-                .map(|id| match principal.client_identifier_map.get(&id) {
-                    Some(identifier) => format!("{}:{}", id, identifier),
-                    None => id,
-                })
-                .collect(),
-        };
-
-        // Extract application codes from role names
-        let role_names: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
-        let applications: Vec<String> = {
-            let mut apps: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for role in &role_names {
-                if let Some(app_code) = role.split(':').next() {
-                    if role.contains(':') {
-                        apps.insert(app_code.to_string());
-                    }
-                }
-            }
-            apps.into_iter().collect()
-        };
-
-        let claims = IdTokenClaims {
-            sub: principal.id.clone(),
-            iss: self.config.issuer.clone(),
-            aud: client_id.to_string(),
-            exp: exp.timestamp(),
-            iat: now.timestamp(),
-            auth_time: Some(now.timestamp()),
-            nonce,
-            name: Some(principal.name.clone()),
-            email: principal.email().map(String::from),
-            email_verified: principal.email().map(|_| true),
-            updated_at: Some(now.timestamp()),
-            acr: None, // Not tracking authentication context class yet
-            amr: None, // Not tracking authentication methods yet
-            azp: Some(client_id.to_string()), // Always set when aud is single-valued (OIDC Core §2)
-            principal_type: principal.principal_type,
-            scope: principal.scope,
-            client_id: principal.client_id.clone(),
-            roles: role_names,
-            applications,
-            clients,
-        };
-
+    /// [`Self::generate_id_token`] with the `roles` claim overridden — the
+    /// roles narrowed to an app-scoped client's applications. Go
+    /// `GenerateIDTokenWithRoles` (authservice.go:521).
+    pub fn generate_id_token_with_roles(
+        &self,
+        principal: &Principal,
+        client_id: &str,
+        nonce: Option<String>,
+        roles: Vec<String>,
+    ) -> Result<String> {
+        let claims = self.id_token_claims(principal, client_id, nonce, roles, Utc::now());
         let mut header = Header::new(self.algorithm);
         header.kid = self.key_id.clone();
         encode(&header, &claims, &self.encoding_key).map_err(|e| PlatformError::Internal {
@@ -750,52 +926,21 @@ impl AuthService {
         })
     }
 
-    /// Generate a token with a specific expiry duration
-    fn generate_token_with_expiry(
+    /// The access-token claim set, unsigned. Go `generateTokenWithExpiry`
+    /// (authservice.go:467-501): an authoritative token carries the
+    /// principal's authority and `token_use: api`; an identity token emits
+    /// empty authority arrays and `token_use: identity`.
+    pub fn access_token_claims(
         &self,
         principal: &Principal,
         expiry_secs: i64,
-    ) -> Result<String> {
-        let now = Utc::now();
+        granted: &[String],
+        authoritative: bool,
+        azp: Option<&str>,
+        now: chrono::DateTime<Utc>,
+    ) -> AccessTokenClaims {
         let exp = now + Duration::seconds(expiry_secs);
-
-        // Determine client access — TS format: "id:identifier" pairs
-        let clients = match principal.scope {
-            UserScope::Anchor => vec!["*".to_string()],
-            UserScope::Partner => principal
-                .assigned_clients
-                .iter()
-                .map(|id| match principal.client_identifier_map.get(id) {
-                    Some(identifier) => format!("{}:{}", id, identifier),
-                    None => id.clone(),
-                })
-                .collect(),
-            UserScope::Client => principal
-                .client_id
-                .clone()
-                .into_iter()
-                .map(|id| match principal.client_identifier_map.get(&id) {
-                    Some(identifier) => format!("{}:{}", id, identifier),
-                    None => id,
-                })
-                .collect(),
-        };
-
-        // Extract application codes from role names (e.g., "operant:admin" → "operant")
-        let role_names: Vec<String> = principal.roles.iter().map(|r| r.role.clone()).collect();
-        let applications: Vec<String> = {
-            let mut apps: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for role in &role_names {
-                if let Some(app_code) = role.split(':').next() {
-                    if role.contains(':') {
-                        apps.insert(app_code.to_string());
-                    }
-                }
-            }
-            apps.into_iter().collect()
-        };
-
-        let claims = AccessTokenClaims {
+        let mut claims = AccessTokenClaims {
             sub: principal.id.clone(),
             iss: self.config.issuer.clone(),
             aud: self.config.audience.clone(),
@@ -804,14 +949,75 @@ impl AuthService {
             nbf: now.timestamp(),
             jti: crate::shared::tsid::generate_untyped(),
             principal_type: principal.principal_type,
-            scope: principal.scope,
-            email: principal.email().map(String::from),
+            tier: principal.scope,
+            scope: None,
+            email: principal
+                .email()
+                .filter(|e| !e.is_empty())
+                .map(String::from),
             name: principal.name.clone(),
-            clients,
-            roles: role_names,
-            applications,
+            clients: Vec::new(),
+            roles: Vec::new(),
+            applications: Vec::new(),
+            all_applications: false,
+            azp: azp.filter(|a| !a.is_empty()).map(String::from),
+            token_use: None,
         };
+        if authoritative {
+            claims.token_use = Some(TOKEN_USE_API.to_string());
+            claims.scope = Some(granted.join(" ")).filter(|s| !s.is_empty());
+            claims.clients = clients_claim(principal);
+            claims.roles = role_names(principal);
+            claims.applications = applications_claim(principal);
+            claims.all_applications = principal.all_applications;
+        } else {
+            claims.token_use = Some(TOKEN_USE_IDENTITY.to_string());
+        }
+        claims
+    }
 
+    /// The ID-token claim set, unsigned. Go `idTokenClaims`
+    /// (authservice.go:555-602). `auth_time` is `now`: Rust does not yet
+    /// carry the login time on its authorization codes (Go's zero-time
+    /// fallback).
+    pub fn id_token_claims(
+        &self,
+        principal: &Principal,
+        client_id: &str,
+        nonce: Option<String>,
+        roles: Vec<String>,
+        now: chrono::DateTime<Utc>,
+    ) -> IdTokenClaims {
+        let email = principal
+            .email()
+            .filter(|e| !e.is_empty())
+            .map(String::from);
+        IdTokenClaims {
+            sub: principal.id.clone(),
+            iss: self.config.issuer.clone(),
+            aud: client_id.to_string(),
+            exp: (now + Duration::seconds(ID_TOKEN_EXPIRY_SECS)).timestamp(),
+            iat: now.timestamp(),
+            auth_time: Some(now.timestamp()),
+            nonce,
+            name: Some(principal.name.clone()),
+            email_verified: email.as_ref().map(|_| true),
+            email,
+            updated_at: Some(principal.updated_at.timestamp()),
+            acr: None,
+            amr: None,
+            azp: Some(client_id.to_string()),
+            principal_type: principal.principal_type,
+            tier: principal.scope,
+            client_id: principal.client_id.clone(),
+            roles,
+            applications: applications_claim(principal),
+            all_applications: principal.all_applications,
+            clients: clients_claim(principal),
+        }
+    }
+
+    fn sign_access(&self, claims: AccessTokenClaims) -> Result<String> {
         let mut header = Header::new(self.algorithm);
         header.kid = self.key_id.clone();
         encode(&header, &claims, &self.encoding_key).map_err(|e| PlatformError::Internal {
@@ -903,39 +1109,269 @@ mod tests {
     use super::*;
     use crate::{Principal, PrincipalType, UserScope};
 
+    use serde_json::json;
+
+    fn service() -> AuthService {
+        AuthService::new(AuthConfig {
+            secret_key: "golden-claims-test-secret-at-least-32-bytes!".to_string(),
+            issuer: "https://fc.example.test".to_string(),
+            audience: "https://fc.example.test".to_string(),
+            ..AuthConfig::default()
+        })
+    }
+
+    fn now() -> chrono::DateTime<Utc> {
+        chrono::DateTime::from_timestamp(1_760_000_000, 0).unwrap()
+    }
+
+    /// A CLIENT-tier user with a known client identifier, two roles, and two
+    /// application grants — one whose code is known and one whose isn't.
+    fn client_user() -> Principal {
+        let mut p = Principal::new_user("ada@acme.test", UserScope::Client).with_client_id("clt_A");
+        p.id = "prn_ADA".to_string();
+        p.name = "Ada Lovelace".to_string();
+        p.client_identifier_map
+            .insert("clt_A".to_string(), "acme".to_string());
+        p.assign_role("hr:manager");
+        p.assign_role("platform:viewer");
+        p.all_applications = false;
+        p.accessible_application_ids = vec!["app_1".to_string(), "app_2".to_string()];
+        p.application_code_map
+            .insert("app_1".to_string(), "hr".to_string());
+        p.updated_at = chrono::DateTime::from_timestamp(1_750_000_000, 0).unwrap();
+        p
+    }
+
+    /// The claims as JSON, with the random `jti` pinned.
+    fn wire(claims: &impl Serialize) -> serde_json::Value {
+        let mut v = serde_json::to_value(claims).unwrap();
+        if v.get("jti").is_some() {
+            v["jti"] = json!("JTI");
+        }
+        v
+    }
+
+    fn payload_json(token: &str) -> serde_json::Value {
+        use base64::Engine;
+        let payload = token.split('.').nth(1).unwrap();
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// Go `generateTokenWithExpiry(p, 3600, nil, true, "")`
+    /// (authservice.go:467-501) for the same principal: `tier` carries the
+    /// tier, `scope` is omitted (no granted permissions), `clients` and
+    /// `applications` are `id:identifier` / `id:code` pairs, `token_use` is
+    /// `api`, no `azp`.
     #[test]
-    fn test_generate_and_validate_token() {
-        let config = AuthConfig::default();
-        let service = AuthService::new(config);
+    fn access_token_claims_match_go_for_a_client_user() {
+        let s = service();
+        let claims = s.access_token_claims(&client_user(), 3600, &[], true, None, now());
+        assert_eq!(
+            wire(&claims),
+            json!({
+                "iss": "https://fc.example.test",
+                "sub": "prn_ADA",
+                "aud": "https://fc.example.test",
+                "exp": 1_760_003_600,
+                "iat": 1_760_000_000,
+                "nbf": 1_760_000_000,
+                "jti": "JTI",
+                "type": "USER",
+                "tier": "CLIENT",
+                "email": "ada@acme.test",
+                "name": "Ada Lovelace",
+                "clients": ["clt_A:acme"],
+                "roles": ["hr:manager", "platform:viewer"],
+                "applications": ["app_1:hr", "app_2"],
+                "all_applications": false,
+                "token_use": "api"
+            })
+        );
+    }
 
-        let principal = Principal::new_user("test@example.com", UserScope::Anchor);
-        let token = service.generate_access_token(&principal).unwrap();
+    /// Go `GenerateAccessTokenWithScopeFor(p, granted, clientID)`: `scope`
+    /// is the space-joined granted permissions and `azp` the OAuth client.
+    #[test]
+    fn scoped_access_token_carries_permissions_and_azp() {
+        let s = service();
+        let granted = vec![
+            "platform:iam:user:view".to_string(),
+            "hr:staff:record:view".to_string(),
+        ];
+        let v = wire(&s.access_token_claims(
+            &client_user(),
+            3600,
+            &granted,
+            true,
+            Some("oc_hr"),
+            now(),
+        ));
+        assert_eq!(v["scope"], "platform:iam:user:view hr:staff:record:view");
+        assert_eq!(v["azp"], "oc_hr");
+        assert_eq!(v["tier"], "CLIENT");
+        assert_eq!(v["token_use"], "api");
+    }
 
-        let claims = service.validate_token(&token).unwrap();
-        assert_eq!(claims.sub, principal.id);
-        assert_eq!(claims.scope, UserScope::Anchor);
-        assert!(claims.clients.contains(&"*".to_string()));
+    /// Go `generateTokenWithExpiry(..., authoritative=false, ...)`: identity
+    /// only, empty authority arrays, `token_use: identity`.
+    #[test]
+    fn identity_access_token_matches_go() {
+        let s = service();
+        let v =
+            wire(&s.access_token_claims(&client_user(), 3600, &[], false, Some("oc_hr"), now()));
+        assert_eq!(v["token_use"], "identity");
+        assert_eq!(v["clients"], json!([]));
+        assert_eq!(v["roles"], json!([]));
+        assert_eq!(v["applications"], json!([]));
+        assert_eq!(v["all_applications"], false);
+        assert!(v.get("scope").is_none());
+        assert_eq!(v["tier"], "CLIENT");
+        assert_eq!(v["azp"], "oc_hr");
+    }
+
+    /// Go `buildClients` / `appAccessOf` for the other tiers: an anchor
+    /// reaches `*` clients; all-applications is the `*` entry plus the
+    /// deprecated flag; a partner's grants are paired where known.
+    #[test]
+    fn anchor_and_partner_authority_claims_match_go() {
+        let s = service();
+        let mut anchor = Principal::new_service("svc", "Svc", UserScope::Anchor);
+        anchor.all_applications = true;
+        let v = wire(&s.access_token_claims(&anchor, 3600, &[], true, None, now()));
+        assert_eq!(v["type"], "SERVICE");
+        assert_eq!(v["tier"], "ANCHOR");
+        assert_eq!(v["clients"], json!(["*"]));
+        assert_eq!(v["applications"], json!(["*"]));
+        assert_eq!(v["all_applications"], true);
+        assert!(v.get("email").is_none());
+
+        let mut partner = Principal::new_user("p@x.test", UserScope::Partner);
+        partner.all_applications = false;
+        partner.assigned_clients = vec!["clt_B".to_string(), "clt_C".to_string()];
+        partner
+            .client_identifier_map
+            .insert("clt_B".to_string(), "beta".to_string());
+        let v = wire(&s.access_token_claims(&partner, 3600, &[], true, None, now()));
+        assert_eq!(v["tier"], "PARTNER");
+        assert_eq!(v["clients"], json!(["clt_B:beta", "clt_C"]));
+        assert_eq!(v["applications"], json!([]));
+    }
+
+    /// Go `idTokenClaims` (authservice.go:555-602) for the same principal:
+    /// 300-second lifetime, `tier` (not `scope`), `updated_at` = the
+    /// principal's, `azp` = `aud` = the relying party, no `nbf`/`jti`.
+    #[test]
+    fn id_token_claims_match_go() {
+        let s = service();
+        let p = client_user();
+        let claims = s.id_token_claims(&p, "oc_hr", Some("n-1".to_string()), role_names(&p), now());
+        assert_eq!(
+            wire(&claims),
+            json!({
+                "iss": "https://fc.example.test",
+                "sub": "prn_ADA",
+                "aud": "oc_hr",
+                "exp": 1_760_000_300,
+                "iat": 1_760_000_000,
+                "auth_time": 1_760_000_000,
+                "nonce": "n-1",
+                "name": "Ada Lovelace",
+                "email": "ada@acme.test",
+                "email_verified": true,
+                "updated_at": 1_750_000_000,
+                "azp": "oc_hr",
+                "type": "USER",
+                "tier": "CLIENT",
+                "client_id": "clt_A",
+                "roles": ["hr:manager", "platform:viewer"],
+                "applications": ["app_1:hr", "app_2"],
+                "all_applications": false,
+                "clients": ["clt_A:acme"]
+            })
+        );
     }
 
     #[test]
-    fn test_client_scope_token() {
-        let config = AuthConfig::default();
-        let service = AuthService::new(config);
+    fn issued_tokens_round_trip_through_validation() {
+        let s = service();
+        let p = client_user();
+        let claims = s
+            .validate_token(&s.generate_access_token(&p).unwrap())
+            .unwrap();
+        assert_eq!(claims.sub, "prn_ADA");
+        assert_eq!(claims.tier, UserScope::Client);
+        assert_eq!(claims.scope, None);
+        assert_eq!(claims.token_use.as_deref(), Some(TOKEN_USE_API));
+        assert_eq!(claims.applications, vec!["app_1:hr", "app_2"]);
+        assert!(claims.has_client_access("clt_A"));
 
-        let principal =
-            Principal::new_user("test@example.com", UserScope::Client).with_client_id("client123");
+        let granted = vec!["platform:iam:user:view".to_string()];
+        let claims = s
+            .validate_token(
+                &s.generate_access_token_with_scope(&p, &granted, None)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(claims.granted_permissions(), granted);
 
-        let token = service.generate_access_token(&principal).unwrap();
-        let claims = service.validate_token(&token).unwrap();
-
-        assert_eq!(claims.scope, UserScope::Client);
-        assert!(claims.clients.contains(&"client123".to_string()));
-        assert!(!claims.clients.contains(&"*".to_string()));
+        let session = s.generate_session_token(&p).unwrap();
+        let claims = s.validate_token(&session).unwrap();
+        assert_eq!(claims.exp - claims.iat, 86400);
+        assert_eq!(claims.token_use.as_deref(), Some(TOKEN_USE_API));
     }
 
-    /// The claim shape before `type`/`scope` became enums: plain strings.
+    /// AgentPlanner's bearer check (central_agent/flowcatalyst/oidc.py:
+    /// 159-174, 270-282): RS256, `aud` = the issuer, `iss` = the issuer,
+    /// `exp`/`iat`/`sub` present, `token_use == "api"`, and a `tier` it
+    /// recognises (principal.py:81-106).
+    #[test]
+    fn agentplanner_accepts_a_client_credentials_token() {
+        let (private_pem, public_pem) = AuthConfig::generate_rsa_keys(None).unwrap();
+        let s = AuthService::new(AuthConfig {
+            rsa_private_key: Some(private_pem),
+            rsa_public_key: Some(public_pem),
+            issuer: "https://fc.example.test".to_string(),
+            audience: "https://fc.example.test".to_string(),
+            ..AuthConfig::default()
+        });
+        let mut sa = Principal::new_service("agent-planner", "Agent Planner", UserScope::Client);
+        sa.client_id = Some("clt_A".to_string());
+        let token = s
+            .generate_access_token_with_scope(
+                &sa,
+                &["agent-planner:planning:run:read".to_string()],
+                None,
+            )
+            .unwrap();
+        let header = jsonwebtoken::decode_header(&token).unwrap();
+        assert_eq!(header.alg, Algorithm::RS256);
+        assert!(header.kid.is_some());
+        let v = payload_json(&token);
+        assert_eq!(v["aud"], v["iss"]);
+        assert_eq!(v["token_use"], "api");
+        assert!(["ANCHOR", "PARTNER", "CLIENT"].contains(&v["tier"].as_str().unwrap()));
+        for claim in [
+            "exp",
+            "iat",
+            "sub",
+            "name",
+            "type",
+            "roles",
+            "clients",
+            "applications",
+        ] {
+            assert!(v.get(claim).is_some(), "{claim} missing");
+        }
+        assert!(v["all_applications"].is_boolean());
+    }
+
+    /// The access-token shape Rust issued before it matched Go: the tier on
+    /// `scope`, no `tier`, no `token_use`, applications as codes.
     #[derive(Serialize)]
-    struct PreEnumAccessClaims {
+    struct PreGoAccessClaims {
         sub: String,
         iss: String,
         aud: String,
@@ -953,20 +1389,11 @@ mod tests {
         applications: Vec<String>,
     }
 
-    fn payload_json(token: &str) -> serde_json::Value {
-        use base64::Engine;
-        let payload = token.split('.').nth(1).unwrap();
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(payload)
-            .unwrap();
-        serde_json::from_slice(&bytes).unwrap()
-    }
-
     #[test]
-    fn tokens_issued_before_the_enum_claims_still_validate() {
-        let service = AuthService::new(AuthConfig::default());
+    fn tokens_issued_in_the_old_shape_still_validate() {
+        let s = service();
         let now = Utc::now().timestamp();
-        for (ty, scope, want_ty, want_scope) in [
+        for (ty, scope, want_ty, want_tier) in [
             ("USER", "ANCHOR", PrincipalType::User, UserScope::Anchor),
             (
                 "SERVICE",
@@ -976,10 +1403,10 @@ mod tests {
             ),
             ("USER", "PARTNER", PrincipalType::User, UserScope::Partner),
         ] {
-            let old = PreEnumAccessClaims {
+            let old = PreGoAccessClaims {
                 sub: "prn_1".to_string(),
-                iss: service.config.issuer.clone(),
-                aud: service.config.audience.clone(),
+                iss: s.config.issuer.clone(),
+                aud: s.config.audience.clone(),
                 exp: now + 600,
                 iat: now,
                 nbf: now,
@@ -989,34 +1416,39 @@ mod tests {
                 email: None,
                 name: "Old Token".to_string(),
                 clients: vec!["*".to_string()],
-                roles: vec![],
-                applications: vec![],
+                roles: vec!["platform:super-admin".to_string()],
+                applications: vec!["platform".to_string()],
             };
-            let mut header = Header::new(service.algorithm);
-            header.kid = service.key_id.clone();
-            let token = encode(&header, &old, &service.encoding_key).unwrap();
-            let claims = service.validate_token(&token).unwrap();
+            let mut header = Header::new(s.algorithm);
+            header.kid = s.key_id.clone();
+            let token = encode(&header, &old, &s.encoding_key).unwrap();
+            let claims = s.validate_token(&token).unwrap();
             assert_eq!(claims.principal_type, want_ty);
-            assert_eq!(claims.scope, want_scope);
+            assert_eq!(claims.tier, want_tier);
+            // The old scope was the tier, never permissions: they derive
+            // from the roles, as before.
+            assert!(claims.granted_permissions().is_empty());
+            assert_eq!(claims.token_use, None);
+            assert!(!claims.is_identity_only());
         }
     }
 
+    /// When both are present `tier` wins and `scope` is permissions.
     #[test]
-    fn issued_claims_keep_their_uppercase_wire_values() {
-        let service = AuthService::new(AuthConfig::default());
-        let mut principal = Principal::new_user("test@example.com", UserScope::Anchor);
-        principal.principal_type = PrincipalType::Service;
-        let token = service.generate_access_token(&principal).unwrap();
-        let json = payload_json(&token);
-        assert_eq!(json["type"], "SERVICE");
-        assert_eq!(json["scope"], "ANCHOR");
+    fn tier_is_preferred_over_scope() {
+        let claims: AccessTokenClaims = serde_json::from_value(json!({
+            "sub": "prn_1", "iss": "i", "aud": "a", "exp": 2, "iat": 1,
+            "type": "USER", "tier": "PARTNER", "scope": "ANCHOR"
+        }))
+        .unwrap();
+        assert_eq!(claims.tier, UserScope::Partner);
+        assert_eq!(claims.granted_permissions(), vec!["ANCHOR"]);
 
-        let id_token = service
-            .generate_id_token(&principal, "client-1", None)
-            .unwrap();
-        let json = payload_json(&id_token);
-        assert_eq!(json["type"], "SERVICE");
-        assert_eq!(json["scope"], "ANCHOR");
+        let untiered: std::result::Result<AccessTokenClaims, _> = serde_json::from_value(json!({
+            "sub": "prn_1", "iss": "i", "aud": "a", "exp": 2, "iat": 1,
+            "type": "USER", "scope": "platform:iam:user:view"
+        }));
+        assert!(untiered.is_err(), "a token with no tier is refused");
     }
 
     #[test]

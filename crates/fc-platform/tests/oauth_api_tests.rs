@@ -45,7 +45,7 @@ fn test_generate_and_validate_access_token() {
     assert_eq!(claims.sub, principal.id);
     assert_eq!(claims.email, Some("test@example.com".to_string()));
     assert_eq!(claims.principal_type, PrincipalType::User);
-    assert_eq!(claims.scope, UserScope::Anchor);
+    assert_eq!(claims.tier, UserScope::Anchor);
     assert_eq!(claims.iss, "flowcatalyst");
     assert_eq!(claims.aud, "flowcatalyst");
     assert!(claims.roles.contains(&"admin".to_string()));
@@ -90,7 +90,7 @@ fn test_token_claims_for_service_principal() {
 
     let claims = auth_service.validate_token(&token).unwrap();
     assert_eq!(claims.principal_type, PrincipalType::Service);
-    assert_eq!(claims.scope, UserScope::Anchor);
+    assert_eq!(claims.tier, UserScope::Anchor);
     assert_eq!(claims.name, "Test Service");
     assert_eq!(claims.email, None);
 }
@@ -103,7 +103,7 @@ fn test_token_claims_for_client_scope_user() {
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
-    assert_eq!(claims.scope, UserScope::Client);
+    assert_eq!(claims.tier, UserScope::Client);
     assert!(claims.clients.contains(&"client-abc".to_string()));
 }
 
@@ -116,7 +116,7 @@ fn test_token_claims_for_partner_scope_user() {
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
-    assert_eq!(claims.scope, UserScope::Partner);
+    assert_eq!(claims.tier, UserScope::Partner);
     // Partner users should have their assigned clients in the token
     assert!(claims.clients.contains(&"client-1".to_string()));
     assert!(claims.clients.contains(&"client-2".to_string()));
@@ -129,7 +129,7 @@ fn test_anchor_scope_has_wildcard_client_access() {
     let token = auth_service.generate_access_token(&principal).unwrap();
 
     let claims = auth_service.validate_token(&token).unwrap();
-    assert_eq!(claims.scope, UserScope::Anchor);
+    assert_eq!(claims.tier, UserScope::Anchor);
     assert!(claims.clients.contains(&"*".to_string()));
 }
 
@@ -196,7 +196,7 @@ fn test_introspect_valid_token() {
     // Validate token (this is what the introspect endpoint does)
     let claims = auth_service.validate_token(&token).unwrap();
     assert!(!claims.sub.is_empty());
-    assert_eq!(claims.scope, UserScope::Anchor);
+    assert_eq!(claims.tier, UserScope::Anchor);
     assert!(claims.exp > 0);
     assert!(claims.iat > 0);
 }

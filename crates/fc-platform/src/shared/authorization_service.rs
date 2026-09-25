@@ -52,7 +52,7 @@ impl AuthContext {
         Self {
             principal_id: claims.sub.clone(),
             principal_type: claims.principal_type,
-            scope: claims.scope,
+            scope: claims.tier,
             email: claims.email.clone(),
             name: claims.name.clone(),
             accessible_clients: claims.clients.clone(),
@@ -106,6 +106,9 @@ impl AuthContext {
     }
 }
 
+/// Go's `errIdentityTokenNotAPICredential` (shared/middleware/middleware.go:24).
+pub const IDENTITY_TOKEN_NOT_API_CREDENTIAL: &str = "this access token was issued for interactive login and cannot authorize API requests; obtain an API token via the client_credentials grant";
+
 /// Cached permission entry with TTL
 struct CachedPermissions {
     permissions: HashSet<String>,
@@ -132,8 +135,23 @@ impl AuthorizationService {
 
     /// Build an authorization context from JWT claims
     /// Resolves all permissions from roles (cached)
+    ///
+    /// As Go's middleware `introspect` (shared/middleware/middleware.go:185-213):
+    /// an identity-only token (`token_use: identity`) authorizes nothing and
+    /// is refused; a token whose `scope` carries granted permissions uses
+    /// exactly those; one without derives them from its roles.
     pub async fn build_context(&self, claims: &AccessTokenClaims) -> Result<AuthContext> {
-        let permissions = self.resolve_permissions(&claims.roles).await?;
+        if claims.is_identity_only() {
+            return Err(PlatformError::InvalidToken {
+                message: IDENTITY_TOKEN_NOT_API_CREDENTIAL.to_string(),
+            });
+        }
+        let granted = claims.granted_permissions();
+        let permissions = if granted.is_empty() {
+            self.resolve_permissions(&claims.roles).await?
+        } else {
+            granted.into_iter().collect()
+        };
         Ok(AuthContext::from_claims_with_permissions(
             claims,
             permissions,
@@ -1239,12 +1257,16 @@ mod tests {
             nbf: 1699996400,
             jti: "jwt-id-1".to_string(),
             principal_type: PrincipalType::Service,
-            scope: UserScope::Anchor,
+            tier: UserScope::Anchor,
+            scope: None,
             email: Some("svc@test.com".to_string()),
             name: "Service Account".to_string(),
             clients: vec!["*".to_string()],
             roles: vec!["platform:super-admin".to_string()],
             applications: vec!["app1".to_string()],
+            all_applications: false,
+            azp: None,
+            token_use: Some("api".to_string()),
         };
         let mut perms = HashSet::new();
         perms.insert("platform:*:*:*".to_string());

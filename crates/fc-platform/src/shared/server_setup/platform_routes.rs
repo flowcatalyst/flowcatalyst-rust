@@ -592,6 +592,7 @@ pub fn build_platform_routes(
     let oauth_state = OAuthState {
         oauth_client_repo: repos.oauth_client_repo.clone(),
         principal_repo: repos.principal_repo.clone(),
+        role_repo: repos.role_repo.clone(),
         auth_service: auth.auth.clone(),
         auth_code_repo: repos.auth_code_repo.clone(),
         refresh_token_repo: repos.refresh_token_repo.clone(),

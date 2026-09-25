@@ -200,6 +200,11 @@ pub struct Principal {
     #[serde(default)]
     pub accessible_application_ids: Vec<String>,
 
+    /// Accessible application ID → application code (for the JWT
+    /// `applications` claim's "id:code" pairs; Go `ApplicationCodeMap`)
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub application_code_map: std::collections::HashMap<String, String>,
+
     /// Access to every application, present and future
     /// (`iam_principals.all_applications`): the application-axis analogue of
     /// the anchor tier. When false the principal reaches only
@@ -251,6 +256,7 @@ impl Principal {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            application_code_map: std::collections::HashMap::new(),
             all_applications: true,
             created_at: now,
             updated_at: now,
@@ -283,6 +289,7 @@ impl Principal {
             assigned_clients: vec![],
             client_identifier_map: std::collections::HashMap::new(),
             accessible_application_ids: vec![],
+            application_code_map: std::collections::HashMap::new(),
             all_applications: false,
             created_at: now,
             updated_at: now,

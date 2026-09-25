@@ -403,23 +403,25 @@ async fn fc_dev_publishes_deploys_and_invokes_a_function_on_its_own_host() {
     assert_eq!(answer["status"], 200, "{answer}");
     assert_eq!(answer["body"], r#"{"ok":true}"#, "{answer}");
 
-    // A versioned call carries the CLI's bearer token, and the host accepts
-    // it as a platform token (no 401). It is still refused (403
-    // PERMISSION_REQUIRED): the host reads permissions from the `scope`
-    // claim, as Java's tokens carry them, but the Rust platform's `scope`
-    // is the principal's tier (`ANCHOR`). A platform/host mismatch outside
-    // fc-dev; see docs/function-runner-plan.md, H8.
-    let (_, out, err) = fc_dev_fn(&[
+    // A versioned call carries the CLI's bearer token. The host reads the
+    // caller's permissions from the token's `scope` claim, which the
+    // platform now fills with the granted permissions as Go does
+    // (oauthapi/token.go:645-679), so the call reaches the function.
+    let (code, out, err) = fc_dev_fn(&[
         "--credentials-file",
         &creds,
+        "--output",
+        "json",
         "invoke",
         &format!("{ADDRESS}:1"),
         "--path",
         "/healthz",
     ])
     .await;
-    assert!(out.starts_with("HTTP "), "{out}{err}");
-    assert!(!out.starts_with("HTTP 401"), "{out}{err}");
+    assert_eq!(code, 0, "{out}{err}");
+    let answer: Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(answer["status"], 200, "{answer}");
+    assert_eq!(answer["body"], r#"{"ok":true}"#, "{answer}");
 
     // A two-part address is a usage error.
     let (code, _, err) = fc_dev_fn(&["--credentials-file", &creds, "invoke", "shop.book"]).await;

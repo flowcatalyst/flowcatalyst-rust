@@ -68,8 +68,9 @@ impl Principal {
         self.auth.email()
     }
 
+    /// The tenancy tier (`ANCHOR` | `PARTNER` | `CLIENT`).
     pub fn scope(&self) -> &str {
-        &self.auth.claims.scope
+        self.auth.claims.tier()
     }
 
     pub fn principal_type(&self) -> &str {
@@ -169,6 +170,7 @@ mod tests {
             clients: vec!["clt_a".into()],
             roles: roles.iter().map(|s| s.to_string()).collect(),
             applications: vec![],
+            ..Default::default()
         };
         Principal::from_auth(
             AuthContext::new(claims, "tok".into()),
