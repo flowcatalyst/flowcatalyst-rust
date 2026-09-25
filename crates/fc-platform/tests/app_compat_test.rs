@@ -630,3 +630,54 @@ async fn auth_me_lists_the_effective_permissions() {
     let (status, _) = read_json(app.get("/auth/me", &token).await).await;
     assert_eq!(status, 401);
 }
+
+/// fc-outbox retries a batch it didn't see acknowledged, so the same hr
+/// events (same `deduplicationId`) arrive twice. Go stores them once and
+/// reports every item SUCCESS (event/repository.go:31-140,
+/// event/api/api.go:197-205); a repeat inside one batch is dropped too.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn replayed_events_are_stored_once_and_acknowledged() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+    create_client(&app, "inhance").await;
+
+    let batch = json!({"items": [
+        hr_outbox_item("r1", "inhance"),
+        hr_outbox_item("r2", "inhance"),
+        hr_outbox_item("r1", "inhance")
+    ]});
+    for attempt in 0..2 {
+        let (status, body) = read_json(app.post("/api/events/batch", &token, &batch).await).await;
+        assert_eq!(status, 200, "attempt {attempt}: {body}");
+        let results = body["results"].as_array().unwrap();
+        assert_eq!(results.len(), 3, "positional results: {body}");
+        assert!(results.iter().all(|r| r["status"] == "SUCCESS"), "{body}");
+    }
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM msg_events WHERE type = 'hr:grading:grading-record:submitted'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 2);
+
+    // An item with no deduplication id gets Go's `<type>-<tsid>` one.
+    let mut no_dedup = hr_outbox_item("x", "inhance");
+    no_dedup.as_object_mut().unwrap().remove("deduplicationId");
+    let (status, _) = read_json(
+        app.post("/api/events/batch", &token, json!({"items": [no_dedup]}))
+            .await,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (dedup,): (Option<String>,) = sqlx::query_as(
+        "SELECT deduplication_id FROM msg_events WHERE deduplication_id NOT LIKE '%-r_' AND type = 'hr:grading:grading-record:submitted'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert!(dedup
+        .unwrap()
+        .starts_with("hr:grading:grading-record:submitted-"));
+}

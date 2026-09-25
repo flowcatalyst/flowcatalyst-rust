@@ -507,14 +507,31 @@ pub async fn batch_create_events(
     let mut new_events: Vec<Event> = Vec::new();
     let mut duplicate_count = 0usize;
 
+    // Every deduplication id of the batch looked up in one query; an event
+    // repeating one already stored, or one earlier in this batch, is a
+    // duplicate and answers with the event it repeats.
+    let dedup_ids: Vec<String> = req
+        .events
+        .iter()
+        .filter_map(|e| e.deduplication_id.clone())
+        .collect();
+    let mut known: std::collections::HashMap<String, Event> = state
+        .event_repo
+        .find_by_deduplication_ids(&dedup_ids)
+        .await?
+        .into_iter()
+        .filter_map(|e| e.deduplication_id.clone().map(|d| (d, e)))
+        .collect();
+
     for event_req in req.events.into_iter() {
-        // Check for duplicate deduplication ID
-        if let Some(ref dedup_id) = event_req.deduplication_id {
-            if let Some(existing) = state.event_repo.find_by_deduplication_id(dedup_id).await? {
-                all_events.push(existing);
-                duplicate_count += 1;
-                continue;
-            }
+        if let Some(existing) = event_req
+            .deduplication_id
+            .as_deref()
+            .and_then(|d| known.get(d))
+        {
+            all_events.push(existing.clone());
+            duplicate_count += 1;
+            continue;
         }
 
         // Determine client ID
@@ -562,6 +579,9 @@ pub async fn batch_create_events(
                 .with_context_data(event_req.context_data.into_iter().map(Into::into).collect());
         }
 
+        if let Some(dedup_id) = event.deduplication_id.clone() {
+            known.insert(dedup_id, event.clone());
+        }
         new_events.push(event.clone());
         all_events.push(event);
     }

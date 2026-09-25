@@ -133,7 +133,13 @@ async fn batch_events(
         event.subject = item.subject;
         event.correlation_id = item.correlation_id;
         event.causation_id = item.causation_id;
-        event.deduplication_id = item.deduplication_id;
+        // Go's event.New gives every event a deduplication id,
+        // `<type>-<tsid>` (event/entity.go:70); a sent one wins.
+        event.deduplication_id = Some(
+            item.deduplication_id
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| format!("{}-{}", event.event_type, event.id)),
+        );
         event.message_group = item.message_group;
         event.client_id = item.client_id.or_else(|| {
             item.client_code
@@ -145,6 +151,9 @@ async fn batch_events(
         inserted_events.push(event);
     }
 
+    // Idempotent on the deduplication id (EventRepository::insert_many): a
+    // duplicate is dropped and still reported SUCCESS, the outcome the
+    // sender wants acknowledged (Go event/api/api.go:197-205).
     state.event_repo.insert_many(&inserted_events).await?;
 
     let results: Vec<BatchResultItem> = inserted_events

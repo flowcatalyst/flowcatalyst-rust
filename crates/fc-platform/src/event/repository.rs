@@ -103,43 +103,27 @@ impl EventRepository {
         Self { pool: pool.clone() }
     }
 
+    /// Store one event, idempotently: see [`Self::insert_many`].
     pub async fn insert(&self, event: &Event) -> Result<()> {
-        let context_json = if event.context_data.is_empty() {
-            None
-        } else {
-            serde_json::to_value(&event.context_data).ok()
-        };
-
-        sqlx::query(
-            r#"INSERT INTO msg_events
-                (id, spec_version, type, source, subject, time, data,
-                 correlation_id, causation_id, deduplication_id,
-                 message_group, client_id, context_data, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())"#,
-        )
-        .bind(&event.id)
-        .bind(&event.spec_version)
-        .bind(&event.event_type)
-        .bind(&event.source)
-        .bind(&event.subject)
-        .bind(event.time)
-        .bind(&event.data)
-        .bind(&event.correlation_id)
-        .bind(&event.causation_id)
-        .bind(&event.deduplication_id)
-        .bind(&event.message_group)
-        .bind(&event.client_id)
-        .bind(&context_json)
-        .execute(&self.pool)
-        .await?;
-
+        self.insert_many(std::slice::from_ref(event)).await?;
         Ok(())
     }
 
-    /// Batch insert events in a single query using UNNEST arrays.
-    pub async fn insert_many(&self, events: &[Event]) -> Result<()> {
+    /// Store a batch of events idempotently, as Go's `InsertBatch`
+    /// (flowcatalyst-go internal/platform/event/repository.go:31-140): an
+    /// event whose deduplication id is already stored, or repeats an earlier
+    /// one in the batch, is dropped (one lookup for the whole batch); the
+    /// rest go in with one UNNEST `INSERT … ON CONFLICT DO NOTHING`. The
+    /// unique index is `(deduplication_id, created_at)` on the partitioned
+    /// table, so the conflict clause alone only catches a repeat with the
+    /// same `created_at`: the lookup is the dedup and the clause the last
+    /// line of defence. An event with no deduplication id is always stored.
+    ///
+    /// Returns how many events were stored.
+    pub async fn insert_many(&self, events: &[Event]) -> Result<u64> {
+        let events = self.drop_duplicates(events).await?;
         if events.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
         let mut ids = Vec::with_capacity(events.len());
@@ -176,7 +160,7 @@ impl EventRepository {
             });
         }
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"INSERT INTO msg_events
                 (id, spec_version, type, source, subject, time, data,
                  correlation_id, causation_id, deduplication_id,
@@ -186,7 +170,8 @@ impl EventRepository {
                 $5::varchar[], $6::timestamptz[], $7::jsonb[],
                 $8::varchar[], $9::varchar[], $10::varchar[],
                 $11::varchar[], $12::varchar[], $13::jsonb[]
-            ), NOW()"#,
+            ), NOW()
+            ON CONFLICT DO NOTHING"#,
         )
         .bind(&ids)
         .bind(&spec_versions)
@@ -204,7 +189,41 @@ impl EventRepository {
         .execute(&self.pool)
         .await?;
 
-        Ok(())
+        Ok(result.rows_affected())
+    }
+
+    /// The events of `events` to store: those whose deduplication id is not
+    /// stored yet, first occurrence winning within the batch (Go
+    /// `dropDuplicates`, event/repository.go:96-140).
+    async fn drop_duplicates<'e>(&self, events: &'e [Event]) -> Result<Vec<&'e Event>> {
+        let dedup_ids: Vec<&str> = events
+            .iter()
+            .filter_map(|e| e.deduplication_id.as_deref())
+            .filter(|d| !d.is_empty())
+            .collect();
+        let stored: std::collections::HashSet<String> = if dedup_ids.is_empty() {
+            std::collections::HashSet::new()
+        } else {
+            sqlx::query_as::<_, (String,)>(
+                "SELECT DISTINCT deduplication_id FROM msg_events WHERE deduplication_id = ANY($1)",
+            )
+            .bind(&dedup_ids)
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|(d,)| d)
+            .collect()
+        };
+        let mut seen = std::collections::HashSet::new();
+        Ok(events
+            .iter()
+            .filter(
+                |e| match e.deduplication_id.as_deref().filter(|d| !d.is_empty()) {
+                    None => true,
+                    Some(d) => !stored.contains(d) && seen.insert(d),
+                },
+            )
+            .collect())
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Event>> {
@@ -248,6 +267,24 @@ impl EventRepository {
         .fetch_all(&self.pool)
         .await?;
 
+        Ok(rows.into_iter().map(Event::from).collect())
+    }
+
+    /// The stored events carrying any of these deduplication ids, in one
+    /// query.
+    pub async fn find_by_deduplication_ids(
+        &self,
+        deduplication_ids: &[String],
+    ) -> Result<Vec<Event>> {
+        if deduplication_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let rows = sqlx::query_as::<_, EventRow>(
+            "SELECT * FROM msg_events WHERE deduplication_id = ANY($1)",
+        )
+        .bind(deduplication_ids)
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows.into_iter().map(Event::from).collect())
     }
 
