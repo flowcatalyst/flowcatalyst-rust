@@ -20,7 +20,7 @@
 //! | [`desired`], [`heartbeat`] | `fnhost/reconcile/{DesiredDocument,HeartbeatReport}.java` |
 //! | [`reconciler`], [`reconcile_loop`] | `fnhost/reconcile/{Reconciler,ReconcileLoop}.java` |
 //! | [`artifact`] | `platform/function/artifact/*Store*.java`, `fnhost/reconcile/PlatformArtifactStore.java` |
-//! | [`signature`] | `platform/function/artifact/{Signatures,SignatureVerifier,TrustRoot}.java` |
+//! | [`signature`], [`digest`] | `platform/function/artifact/{Signatures,SignatureVerifier,TrustRoot}.java`, `platform/function/{Digest,SignerIdentity}.java` — re-exported from `fc-function-signing`, which the platform also depends on |
 //! | [`loader`], [`registry`] | `fnhost/load/{FunctionLoader,LoadedFunction,FunctionRegistry}.java` |
 //! | [`invoke`] | `LoadedFunction.invoke`, `fnhost/http/InvocationRunner.java` (the runtime-agnostic seam) |
 //! | [`listener`] | `fnhost/http/*`, `fnhost/route/PublicRouteTable.java` |
@@ -34,7 +34,6 @@ pub mod artifact;
 pub mod clock;
 pub mod control_plane;
 pub mod desired;
-pub mod digest;
 pub mod env;
 pub mod fingerprint;
 pub mod heartbeat;
@@ -50,7 +49,14 @@ pub mod reconcile_loop;
 pub mod reconciler;
 pub mod registry;
 pub mod route_pattern;
-pub mod signature;
 pub mod token;
 pub mod tsid;
 pub mod wasm;
+
+// The Sigstore bundle verifier and its `Digest`/`SignerIdentity` value types
+// are shared with the platform (checked at publish) and are no longer
+// duplicated here; see `fc-function-signing`. Re-exported under their old
+// paths so every existing `crate::digest::*` / `crate::signature::*` call
+// site in this crate, and every downstream user of
+// `fc_fnhost_core::{digest,signature}`, keeps compiling unchanged.
+pub use fc_function_signing::{digest, signature};

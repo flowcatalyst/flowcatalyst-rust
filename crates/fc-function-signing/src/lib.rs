@@ -5,13 +5,9 @@
 //! platform (checked at publish, P4) and the function host (checked again
 //! before a load).
 //!
-//! **Temporary duplication.** This crate is a verbatim copy of
-//! `fc-fnhost-core`'s `signature` module, its `Digest`/`SignerIdentity` and
-//! the JDK helpers it uses, together with its tests and Java's fixtures.
-//! It was split out while `fc-fnhost-core` was being edited concurrently;
-//! the host still carries its own copy. A later dedupe pass switches
-//! `fc-fnhost-core` to depend on this crate and deletes the copy there. Until
-//! then, a fix to either copy must be made to both.
+//! `fc-fnhost-core` re-exports this crate's [`digest`] and [`signature`]
+//! modules under its own paths rather than carrying a copy, so a fix here is
+//! the only fix either caller needs.
 //!
 //! | Module | Java |
 //! |---|---|
