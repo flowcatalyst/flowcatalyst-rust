@@ -23,7 +23,7 @@ use super::login_api::{coded, issue_code, query_escape, redirect, PortalLoginSta
 use super::operations::{EnsureCommand, EnsurePortalIdentityUseCase};
 use super::repository::PortalOidcState;
 use super::PortalState;
-use crate::auth::oidc_login_api::{portal_handshake, portal_verify_callback, OidcLoginApiState};
+use crate::auth::oidc_login_api::{portal_handshake, portal_verify_callback};
 use crate::identity_provider::entity::IdentityProviderType;
 use crate::usecase::{ExecutionContext, UseCase};
 
@@ -44,19 +44,18 @@ fn resolve_failed() -> Response {
 async fn resolve_provider(
     portal: &PortalState,
     provider_id: &str,
-) -> Result<crate::IdentityProvider, Response> {
-    let idp = match portal.identity_providers.find_by_id(provider_id).await {
-        Ok(Some(idp)) => idp,
-        _ => return Err(resolve_failed()),
-    };
-    if idp.r#type != IdentityProviderType::Oidc
-        || idp.oidc_issuer_url.is_none()
-        || idp.oidc_client_id.is_none()
-        || (idp.oidc_multi_tenant && idp.allowed_email_domains.is_empty())
-    {
-        return Err(resolve_failed());
-    }
-    Ok(idp)
+) -> Option<crate::IdentityProvider> {
+    let idp = portal
+        .identity_providers
+        .find_by_id(provider_id)
+        .await
+        .ok()
+        .flatten()?;
+    let usable = idp.r#type == IdentityProviderType::Oidc
+        && idp.oidc_issuer_url.is_some()
+        && idp.oidc_client_id.is_some()
+        && !(idp.oidc_multi_tenant && idp.allowed_email_domains.is_empty());
+    usable.then_some(idp)
 }
 
 /// Start the IdP handshake for a consumed portal flow.
@@ -67,9 +66,8 @@ pub async fn start(
     host: &str,
     uri: &Uri,
 ) -> Response {
-    let idp = match resolve_provider(&s.portal, provider_id).await {
-        Ok(idp) => idp,
-        Err(r) => return r,
+    let Some(idp) = resolve_provider(&s.portal, provider_id).await else {
+        return resolve_failed();
     };
     let handshake = portal_handshake(&s.oidc, host, uri, &idp);
     let parked = PortalOidcState {
@@ -135,13 +133,22 @@ async fn callback(
     host: &str,
     uri: &Uri,
 ) -> Response {
-    let idp = match resolve_provider(&s.portal, &parked.identity_provider_id).await {
-        Ok(idp) => idp,
-        Err(r) => return r,
+    let Some(idp) = resolve_provider(&s.portal, &parked.identity_provider_id).await else {
+        return resolve_failed();
     };
-    let (email, name) = match verify(&s.oidc, host, uri, &idp, code, parked).await {
+    let verified = portal_verify_callback(
+        &s.oidc,
+        host,
+        uri,
+        &idp,
+        code,
+        &parked.code_verifier,
+        &parked.nonce,
+    )
+    .await;
+    let (email, name) = match verified {
         Ok(v) => v,
-        Err(r) => return r,
+        Err((status, code, message)) => return coded(status, code, &message),
     };
     // Provider-direct trust binding: the IdP's own allowed_email_domains
     // (non-empty for multi-tenant IdPs by the resolve guard).
@@ -159,27 +166,6 @@ async fn callback(
         );
     }
     complete(&s.portal, parked, &email, name.as_deref().unwrap_or("")).await
-}
-
-async fn verify(
-    oidc: &OidcLoginApiState,
-    host: &str,
-    uri: &Uri,
-    idp: &crate::IdentityProvider,
-    code: &str,
-    parked: &PortalOidcState,
-) -> Result<(String, Option<String>), Response> {
-    portal_verify_callback(
-        oidc,
-        host,
-        uri,
-        idp,
-        code,
-        &parked.code_verifier,
-        &parked.nonce,
-    )
-    .await
-    .map_err(|(status, code, message)| self::coded(status, code, &message))
 }
 
 /// Bounce the user-agent back to the portal with OAuth error params (the

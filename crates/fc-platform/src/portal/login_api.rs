@@ -122,14 +122,16 @@ fn flow_expired() -> Response {
     coded(StatusCode::BAD_REQUEST, "FLOW_EXPIRED", FLOW_EXPIRED)
 }
 
-fn decode<T: DeserializeOwned>(raw: &Bytes) -> Result<T, Response> {
-    serde_json::from_slice(raw).map_err(|_| {
-        coded(
-            StatusCode::BAD_REQUEST,
-            "INVALID_BODY",
-            "malformed request body",
-        )
-    })
+fn invalid_body() -> Response {
+    coded(
+        StatusCode::BAD_REQUEST,
+        "INVALID_BODY",
+        "malformed request body",
+    )
+}
+
+fn decode<T: DeserializeOwned>(raw: &Bytes) -> Option<T> {
+    serde_json::from_slice(raw).ok()
 }
 
 /// The per-(client, email) budget; fails open on a backend error.
@@ -291,8 +293,8 @@ struct FlowEmailBody {
 /// identity exists.
 pub async fn check_domain(State(s): State<PortalLoginState>, raw: Bytes) -> Response {
     let body: FlowEmailBody = match decode(&raw) {
-        Ok(b) => b,
-        Err(r) => return r,
+        Some(b) => b,
+        None => return invalid_body(),
     };
     let flow = match s.portal.flows.find_live(&body.flow_id).await {
         Ok(Some(f)) => f,
@@ -341,8 +343,8 @@ struct LoginBody {
 /// status enumeration) and do NOT consume the flow.
 pub async fn password_login(State(s): State<PortalLoginState>, raw: Bytes) -> Response {
     let body: LoginBody = match decode(&raw) {
-        Ok(b) => b,
-        Err(r) => return r,
+        Some(b) => b,
+        None => return invalid_body(),
     };
     let portal = &s.portal;
     let flow = match portal.flows.find_live(&body.flow_id).await {
@@ -495,8 +497,8 @@ const RESET_MESSAGE: &str = "If an account exists, a reset email has been sent."
 /// leads back to the portal's origin.
 pub async fn request_password_reset(State(s): State<PortalLoginState>, raw: Bytes) -> Response {
     let body: FlowEmailBody = match decode(&raw) {
-        Ok(b) => b,
-        Err(r) => return r,
+        Some(b) => b,
+        None => return invalid_body(),
     };
     let portal = &s.portal;
     let flow = match portal.flows.find_live(&body.flow_id).await {
