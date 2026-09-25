@@ -5,6 +5,8 @@
 mod applications;
 mod audit_log;
 mod clients;
+mod connections;
+mod dispatch_pools;
 mod event_types;
 mod login;
 mod nav;

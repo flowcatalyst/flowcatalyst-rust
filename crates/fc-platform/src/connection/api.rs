@@ -179,11 +179,7 @@ pub async fn list_connections(
     // read permission, a client's only to callers reaching that client.
     let connections: Vec<_> = connections
         .into_iter()
-        .filter(|c| {
-            c.client_id
-                .as_deref()
-                .is_none_or(|cid| crate::shared::caller_reach::reaches_client(&auth.0, cid))
-        })
+        .filter(|c| super::access::is_visible(&auth.0, c))
         .collect();
     let total = connections.len();
     Ok(Json(ConnectionsListResponse {
@@ -219,11 +215,7 @@ pub async fn get_connection(
         .find_by_id(&id)
         .await?
         .or_not_found("Connection", &id)?;
-    if let Some(cid) = conn.client_id.as_deref() {
-        if !crate::shared::caller_reach::reaches_client(&auth.0, cid) {
-            return Err(PlatformError::forbidden("No access to this connection"));
-        }
-    }
+    super::access::ensure_visible(&auth.0, &conn)?;
     Ok(Json(conn.into()))
 }
 

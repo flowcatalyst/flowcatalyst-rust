@@ -2,6 +2,7 @@
 //!
 //! Named endpoint connections for dispatch.
 
+pub mod access;
 pub mod api;
 pub mod entity;
 pub mod operations;
