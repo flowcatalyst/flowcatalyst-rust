@@ -494,7 +494,7 @@ async fn created_service_account_reaches_only_granted_applications() {
     let app = TestApp::setup().await;
     let app_x = create_app(&app, "new-x").await;
     create_app(&app, "new-y").await;
-    let admin = app.anchor_token();
+    let admin = app.anchor_admin_token().await;
 
     let (status, body) = read_json(
         app.post(

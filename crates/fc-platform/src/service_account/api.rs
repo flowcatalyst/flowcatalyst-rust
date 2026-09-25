@@ -267,9 +267,10 @@ pub struct ServiceAccountsState<U: UnitOfWork + 'static> {
 )]
 pub async fn list_service_accounts<U: UnitOfWork>(
     State(state): State<ServiceAccountsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Query(query): Query<ServiceAccountsQuery>,
 ) -> Result<Json<ServiceAccountListResponse>, PlatformError> {
+    crate::checks::can_read_service_accounts(&auth.0)?;
     // `find_active()` is the default regardless of the requested `active`
     // filter — inactive lookups are then handled by the `.retain()` below.
     // (Worth revisiting: inactive accounts are currently unreachable via
@@ -315,9 +316,10 @@ pub async fn list_service_accounts<U: UnitOfWork>(
 )]
 pub async fn get_service_account<U: UnitOfWork>(
     State(state): State<ServiceAccountsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
+    crate::checks::can_read_service_accounts(&auth.0)?;
     let account = state
         .repo
         .find_by_id(&id)
@@ -344,9 +346,10 @@ pub async fn get_service_account<U: UnitOfWork>(
 )]
 pub async fn get_service_account_by_code<U: UnitOfWork>(
     State(state): State<ServiceAccountsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(code): Path<String>,
 ) -> Result<Json<ServiceAccountResponse>, PlatformError> {
+    crate::checks::can_read_service_accounts(&auth.0)?;
     let account = state
         .repo
         .find_by_code(&code)
@@ -375,7 +378,7 @@ pub async fn create_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Json(req): Json<CreateServiceAccountRequest>,
 ) -> Result<(StatusCode, Json<CreateServiceAccountResponse>), PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_service_accounts(&auth.0)?;
     if req.application_id.is_some() {
         return Err(PlatformError::validation(
             "applicationId is not accepted: a new service account has no application \
@@ -491,7 +494,7 @@ pub async fn update_service_account<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<UpdateServiceAccountRequest>,
 ) -> Result<StatusCode, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_service_accounts(&auth.0)?;
     let command = UpdateServiceAccountCommand {
         id: id.clone(),
         name: req.name,
@@ -528,7 +531,7 @@ pub async fn delete_service_account<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_service_accounts(&auth.0)?;
     let command = DeleteServiceAccountCommand { id };
 
     let ctx = ExecutionContext::create(auth.0.principal_id.clone());
@@ -599,7 +602,7 @@ pub async fn regenerate_auth_token<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateTokenResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::require_anchor_scope(&auth.0)?;
     let command = RegenerateAuthTokenCommand {
         service_account_id: id,
     };
@@ -639,7 +642,7 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::require_anchor_scope(&auth.0)?;
     let command = RegenerateSigningSecretCommand {
         service_account_id: id,
     };
@@ -676,9 +679,10 @@ pub async fn regenerate_signing_secret<U: UnitOfWork>(
 )]
 pub async fn get_roles<U: UnitOfWork>(
     State(state): State<ServiceAccountsState<U>>,
-    _auth: Authenticated,
+    auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<RolesResponse>, PlatformError> {
+    crate::checks::can_read_service_accounts(&auth.0)?;
     let account = state
         .repo
         .find_by_id(&id)
@@ -720,7 +724,7 @@ pub async fn assign_roles<U: UnitOfWork>(
     Path(id): Path<String>,
     Json(req): Json<AssignRolesRequest>,
 ) -> Result<Json<AssignRolesResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::require_anchor_scope(&auth.0)?;
     let command = AssignRolesCommand {
         service_account_id: id.clone(),
         roles: req.roles,

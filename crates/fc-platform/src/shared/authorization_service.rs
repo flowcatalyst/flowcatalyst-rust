@@ -403,6 +403,94 @@ pub mod checks {
         }
     }
 
+    /// Go's `anchorWith` (shared/auth/auth.go:704-709): anchor scope, then
+    /// one permission, with Go's bodies (403 `ANCHOR_REQUIRED`, then 403
+    /// `PERMISSION_REQUIRED`).
+    fn anchor_with(context: &AuthContext, permission: &str) -> Result<()> {
+        require_anchor_scope(context)?;
+        require_permission(context, permission)
+    }
+
+    /// Any one of several permissions, answering as Go's `requireAny`
+    /// (shared/auth/auth.go:473-481): 403 `PERMISSION_REQUIRED`,
+    /// `one of: <a>, <b>`.
+    fn require_any_permission(context: &AuthContext, permissions: &[&str]) -> Result<()> {
+        if context.has_any_permission(permissions) {
+            Ok(())
+        } else {
+            Err(PlatformError::forbidden_code(
+                "PERMISSION_REQUIRED",
+                format!("one of: {}", permissions.join(", ")),
+            ))
+        }
+    }
+
+    /// OAuth clients, read (list, get, by client_id): anchor plus
+    /// `platform:auth:oauth-client:view` (Go's `CanReadOAuthClients`,
+    /// shared/auth/auth.go:732).
+    pub fn can_read_oauth_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::OAUTH_CLIENT_READ)
+    }
+
+    /// OAuth clients, create: anchor plus `platform:auth:oauth-client:create`
+    /// (Go's `CanCreateOAuthClients`, auth.go:733).
+    pub fn can_create_oauth_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::OAUTH_CLIENT_CREATE)
+    }
+
+    /// OAuth clients, update, activate, deactivate: anchor plus
+    /// `platform:auth:oauth-client:update` (Go's `CanUpdateOAuthClients`,
+    /// auth.go:734).
+    pub fn can_update_oauth_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::OAUTH_CLIENT_UPDATE)
+    }
+
+    /// OAuth clients, delete: anchor plus `platform:auth:oauth-client:delete`
+    /// (Go's `CanDeleteOAuthClients`, auth.go:735).
+    pub fn can_delete_oauth_clients(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::OAUTH_CLIENT_DELETE)
+    }
+
+    /// OAuth client secrets: rotate, regenerate and revoke-previous all mint
+    /// or withdraw a credential, so they share anchor plus
+    /// `platform:auth:oauth-client:regenerate-secret` (Go's
+    /// `CanRotateOAuthClientSecrets`, auth.go:737-742).
+    pub fn can_write_oauth_client_secrets(context: &AuthContext) -> Result<()> {
+        anchor_with(context, permissions::auth::OAUTH_CLIENT_REGENERATE_SECRET)
+    }
+
+    /// Service accounts, read: `platform:iam:service-account:view`, as Go's
+    /// `CanReadServiceAccounts` (shared/auth/auth.go:675-677).
+    pub fn can_read_service_accounts(context: &AuthContext) -> Result<()> {
+        require_permission(context, permissions::admin::SERVICE_ACCOUNT_READ)
+    }
+
+    /// Service accounts, create and update: any of the service-account
+    /// create/update/delete permissions, as Go's `CanWriteServiceAccounts`
+    /// (auth.go:691-693), and anchor scope on top. Go has no anchor check
+    /// here; Rust keeps one because an account's tier follows its client
+    /// links, so a non-anchor holder could otherwise create or relink a
+    /// client-less account, which is ANCHOR tier.
+    pub fn can_write_service_accounts(context: &AuthContext) -> Result<()> {
+        require_anchor_scope(context)?;
+        require_any_permission(
+            context,
+            &[
+                permissions::admin::SERVICE_ACCOUNT_CREATE,
+                permissions::admin::SERVICE_ACCOUNT_UPDATE,
+                permissions::admin::SERVICE_ACCOUNT_DELETE,
+            ],
+        )
+    }
+
+    /// Service accounts, delete: `platform:iam:service-account:delete`, as
+    /// Go's `CanDeleteServiceAccounts` (auth.go:687-689), with the same
+    /// anchor requirement as [`can_write_service_accounts`].
+    pub fn can_delete_service_accounts(context: &AuthContext) -> Result<()> {
+        require_anchor_scope(context)?;
+        require_permission(context, permissions::admin::SERVICE_ACCOUNT_DELETE)
+    }
+
     /// Platform-config access grants, read: anchor plus
     /// `platform:admin:config:view` (Go's `CanReadPlatformConfig`,
     /// shared/auth/auth.go:784).

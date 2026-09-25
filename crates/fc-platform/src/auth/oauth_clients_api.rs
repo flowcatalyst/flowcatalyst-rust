@@ -239,7 +239,7 @@ pub async fn create_oauth_client(
     use crate::auth::operations::CreateOAuthClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_create_oauth_clients(&auth.0)?;
 
     // Auto-generate client_id if not provided
     let client_id = req
@@ -343,7 +343,7 @@ pub async fn get_oauth_client(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<OAuthClientResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_oauth_clients(&auth.0)?;
 
     let client = state
         .oauth_client_repo
@@ -371,7 +371,7 @@ pub async fn list_oauth_clients(
     auth: Authenticated,
     Query(query): Query<OAuthClientsQuery>,
 ) -> Result<Json<OAuthClientListResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_oauth_clients(&auth.0)?;
 
     let clients = if query.active.unwrap_or(true) {
         state.oauth_client_repo.find_active().await?
@@ -409,7 +409,7 @@ pub async fn update_oauth_client(
     use crate::auth::operations::UpdateOAuthClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_oauth_clients(&auth.0)?;
 
     let cmd = UpdateOAuthClientCommand {
         oauth_client_id: id,
@@ -459,7 +459,7 @@ pub async fn delete_oauth_client(
     use crate::auth::operations::DeleteOAuthClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_delete_oauth_clients(&auth.0)?;
 
     let cmd = DeleteOAuthClientCommand {
         oauth_client_id: id,
@@ -520,7 +520,7 @@ pub async fn get_oauth_client_by_client_id(
     auth: Authenticated,
     Path(client_id): Path<String>,
 ) -> Result<Json<OAuthClientResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_read_oauth_clients(&auth.0)?;
 
     let client = state
         .oauth_client_repo
@@ -554,7 +554,7 @@ pub async fn activate_oauth_client(
     use crate::auth::operations::ActivateOAuthClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_oauth_clients(&auth.0)?;
 
     let cmd = ActivateOAuthClientCommand {
         oauth_client_id: id,
@@ -594,7 +594,7 @@ pub async fn deactivate_oauth_client(
     use crate::auth::operations::DeactivateOAuthClientCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_update_oauth_clients(&auth.0)?;
 
     let cmd = DeactivateOAuthClientCommand {
         oauth_client_id: id,
@@ -650,7 +650,7 @@ pub async fn regenerate_oauth_client_secret(
     use crate::auth::operations::RotateOAuthClientSecretCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_oauth_client_secrets(&auth.0)?;
     let req = parse_rotate_body(&body)?;
 
     // Generate + hash the secret at the edge; the use case gets only the
@@ -710,7 +710,7 @@ pub async fn rotate_oauth_client_secret(
     path: Path<String>,
     body: axum::body::Bytes,
 ) -> Result<Json<RegenerateSecretResponse>, PlatformError> {
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_oauth_client_secrets(&auth.0)?;
     regenerate_oauth_client_secret(state, auth, path, body).await
 }
 
@@ -740,7 +740,7 @@ pub async fn revoke_oauth_client_previous_secret(
     use crate::auth::operations::RevokeOAuthClientPreviousSecretCommand;
     use crate::usecase::{ExecutionContext, UseCase};
 
-    crate::checks::require_anchor(&auth.0)?;
+    crate::checks::can_write_oauth_client_secrets(&auth.0)?;
     let cmd = RevokeOAuthClientPreviousSecretCommand {
         oauth_client_id: id,
     };

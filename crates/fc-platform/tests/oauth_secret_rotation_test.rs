@@ -44,7 +44,7 @@ async fn token_status(app: &TestApp, client_id: &str, secret: &str) -> StatusCod
 
 async fn rotate(app: &TestApp, id: &str, body: Option<Value>) -> (StatusCode, Value) {
     let path = format!("/api/oauth-clients/{id}/rotate-secret");
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
     let resp = match body {
         Some(b) => app.post(&path, &token, b).await,
         None => {
@@ -64,7 +64,7 @@ async fn rotate(app: &TestApp, id: &str, body: Option<Value>) -> (StatusCode, Va
 #[ignore = "requires Docker"]
 async fn rotated_secret_overlaps_until_revoked_or_lapsed() {
     let app = setup().await;
-    let admin = app.anchor_token();
+    let admin = app.anchor_admin_token().await;
 
     // A service account comes with a CONFIDENTIAL client_credentials client.
     let (status, body) = read_json(
@@ -183,7 +183,7 @@ async fn rotated_secret_overlaps_until_revoked_or_lapsed() {
 #[ignore = "requires Docker"]
 async fn only_confidential_clients_rotate() {
     let app = setup().await;
-    let admin = app.anchor_token();
+    let admin = app.anchor_admin_token().await;
     let (status, body) = read_json(
         app.post(
             "/api/oauth-clients",

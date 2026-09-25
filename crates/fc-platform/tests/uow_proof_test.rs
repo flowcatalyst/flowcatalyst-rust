@@ -188,7 +188,7 @@ async fn delete_anchor_domain_emits_event_and_audit_log() {
 #[ignore = "requires Docker"]
 async fn create_public_oauth_client_emits_event_and_audit_log() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
 
     let resp = app
         .post(
@@ -222,7 +222,7 @@ async fn create_public_oauth_client_emits_event_and_audit_log() {
 #[ignore = "requires Docker"]
 async fn update_oauth_client_emits_second_event_and_audit_log() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
 
     let created = app
         .post(
@@ -265,7 +265,7 @@ async fn update_oauth_client_emits_second_event_and_audit_log() {
 #[ignore = "requires Docker"]
 async fn deactivate_oauth_client_emits_event_and_audit_log() {
     let app = TestApp::setup().await;
-    let token = app.anchor_token();
+    let token = app.anchor_admin_token().await;
 
     let created = app
         .post(
