@@ -86,35 +86,83 @@ impl ConfigSyncConfig {
     }
 }
 
-/// Response from the configuration service (`MessageRouterConfig`)
+/// Response from the configuration service (`MessageRouterConfig`).
+///
+/// Parsed as Go's `common.RouterConfig` is: an absent or `null`
+/// `processingPools` / `queues` is an empty list, not a parse error.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageRouterConfigResponse {
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub processing_pools: Vec<PoolConfigResponse>,
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub queues: Vec<QueueConfigResponse>,
+}
+
+/// `null` reads as an empty list (Go unmarshals `null` into a nil slice).
+fn null_as_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PoolConfigResponse {
     pub code: String,
+    /// Absent reads as 0, as Go's `uint32` does; the pool then derives its
+    /// effective concurrency (see `ProcessPool::new`).
+    #[serde(default)]
     pub concurrency: usize,
     #[serde(default)]
     pub rate_limit_per_minute: Option<u32>,
 }
 
+/// One queue of the document. Deserialized as Go's
+/// `common.QueueConfig.UnmarshalJSON`: `queueUri` (legacy `uri`) and
+/// `queueName` (legacy `name`, else the URI); `connections` and
+/// `visibilityTimeout` are left `None` — meaning "unstated", so the
+/// defaults of 1 and 120 apply — when absent, `null` **or zero**. A
+/// producer that writes the full struct writes 0 for "no opinion", and a
+/// consumer at 0 connections / a 0-second visibility timeout is never what
+/// it meant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "RawQueueConfig")]
 pub struct QueueConfigResponse {
-    #[serde(alias = "queueName")]
     pub queue_name: Option<String>,
-    #[serde(alias = "queueUri")]
     pub queue_uri: String,
-    #[serde(default)]
     pub connections: Option<u32>,
-    #[serde(default)]
     pub visibility_timeout: Option<u32>,
 }
+
+/// The wire keys Go accepts for a queue, before its defaults are applied.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawQueueConfig {
+    queue_name: Option<String>,
+    queue_uri: Option<String>,
+    name: Option<String>,
+    uri: Option<String>,
+    connections: Option<u32>,
+    visibility_timeout: Option<u32>,
+}
+
+impl From<RawQueueConfig> for QueueConfigResponse {
+    fn from(raw: RawQueueConfig) -> Self {
+        Self {
+            queue_name: raw.queue_name.or(raw.name),
+            queue_uri: raw.queue_uri.or(raw.uri).unwrap_or_default(),
+            connections: raw.connections.filter(|&c| c > 0),
+            visibility_timeout: raw.visibility_timeout.filter(|&v| v > 0),
+        }
+    }
+}
+
+/// Go's defaults for an unstated `connections` / `visibilityTimeout`.
+const DEFAULT_QUEUE_CONNECTIONS: u32 = 1;
+const DEFAULT_VISIBILITY_TIMEOUT_SECS: u32 = 120;
 
 impl From<MessageRouterConfigResponse> for RouterConfig {
     fn from(response: MessageRouterConfigResponse) -> Self {
@@ -134,8 +182,14 @@ impl From<MessageRouterConfigResponse> for RouterConfig {
                 .map(|q| QueueConfig {
                     name: q.queue_name.unwrap_or_else(|| q.queue_uri.clone()),
                     uri: q.queue_uri,
-                    connections: q.connections.unwrap_or(1),
-                    visibility_timeout: q.visibility_timeout.unwrap_or(120),
+                    connections: q
+                        .connections
+                        .filter(|&c| c > 0)
+                        .unwrap_or(DEFAULT_QUEUE_CONNECTIONS),
+                    visibility_timeout: q
+                        .visibility_timeout
+                        .filter(|&v| v > 0)
+                        .unwrap_or(DEFAULT_VISIBILITY_TIMEOUT_SECS),
                 })
                 .collect(),
         }
@@ -929,6 +983,71 @@ mod tests {
         let merged = merge_configs(&[("only".to_string(), cfg.clone())]);
         assert_eq!(merged.processing_pools.len(), 1);
         assert_eq!(merged.queues.len(), 1);
+    }
+
+    fn parse(doc: serde_json::Value) -> RouterConfig {
+        serde_json::from_value::<MessageRouterConfigResponse>(doc)
+            .expect("document parses")
+            .into()
+    }
+
+    /// Go `QueueConfig.UnmarshalJSON`: an explicit 0 means "unstated",
+    /// exactly as an absent key or `null` does.
+    #[test]
+    fn zero_absent_and_null_connections_and_visibility_take_gos_defaults() {
+        let cfg = parse(serde_json::json!({
+            "processingPools": [],
+            "queues": [
+                {"queueName": "zero", "queueUri": "u0", "connections": 0, "visibilityTimeout": 0},
+                {"queueName": "absent", "queueUri": "u1"},
+                {"queueName": "null", "queueUri": "u2", "connections": null, "visibilityTimeout": null},
+                {"queueName": "set", "queueUri": "u3", "connections": 3, "visibilityTimeout": 45},
+            ],
+        }));
+        let got: Vec<(u32, u32)> = cfg
+            .queues
+            .iter()
+            .map(|q| (q.connections, q.visibility_timeout))
+            .collect();
+        assert_eq!(got, vec![(1, 120), (1, 120), (1, 120), (3, 45)]);
+    }
+
+    /// Go accepts the legacy `{name, uri}` keys, prefers the canonical ones,
+    /// and names a queue by its URI when no name is given.
+    #[test]
+    fn queue_keys_and_name_fallback_follow_go() {
+        let cfg = parse(serde_json::json!({
+            "queues": [
+                {"name": "legacy", "uri": "legacy-uri"},
+                {"queueUri": "only-uri"},
+                {"queueName": "canon", "name": "ignored", "queueUri": "canon-uri", "uri": "ignored-uri"},
+            ],
+        }));
+        let got: Vec<(&str, &str)> = cfg
+            .queues
+            .iter()
+            .map(|q| (q.name.as_str(), q.uri.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("legacy", "legacy-uri"),
+                ("only-uri", "only-uri"),
+                ("canon", "canon-uri")
+            ]
+        );
+        assert!(cfg.processing_pools.is_empty(), "absent pools read as none");
+    }
+
+    /// `null` lists and an absent pool concurrency parse (Go: nil slice, 0).
+    #[test]
+    fn null_lists_and_absent_concurrency_parse() {
+        let cfg = parse(serde_json::json!({
+            "processingPools": [{"code": "P"}],
+            "queues": null,
+        }));
+        assert_eq!(cfg.processing_pools[0].concurrency, 0);
+        assert!(cfg.queues.is_empty());
     }
 
     #[test]
