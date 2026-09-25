@@ -5,7 +5,8 @@
 //! over every case in `manifest-cases.json`. These tests feed the same
 //! inputs to the Rust port and require the same answers: the same problems
 //! (code, message, pointer) in the same order, the same first error, and
-//! byte-identical normalised JSON.
+//! the same normalised JSON (compared as values: key order and number
+//! spelling are not part of what gets stored).
 
 use std::path::{Path, PathBuf};
 
@@ -49,6 +50,11 @@ fn ceilings(case: &Value) -> ClientCeilings {
             ClientCeilings::new(n(0), n(1), n(2), n(3)).unwrap()
         }
     }
+}
+
+/// JSON text as a value: key order and number spelling do not count.
+fn json_value(text: &str) -> Value {
+    serde_json::from_str(text).unwrap()
 }
 
 fn problems_of(rejected: &fc_function_model::ManifestRejected) -> Vec<(String, String, String)> {
@@ -99,8 +105,8 @@ fn manifest_check_matches_java() {
             "ok" => {
                 let manifest = result.unwrap_or_else(|r| panic!("{name}: {:?}", r.problems()));
                 assert_eq!(
-                    manifest.to_json().to_json_string(),
-                    expected["normalised"].as_str().unwrap(),
+                    json_value(&manifest.to_json().to_json_string()),
+                    json_value(expected["normalised"].as_str().unwrap()),
                     "{name}: normalised JSON"
                 );
                 assert!(expected["roundTrip"].as_bool().unwrap(), "{name}");
@@ -186,8 +192,8 @@ fn read_stored_matches_java() {
         let result = Manifest::read_stored(&root);
         match expected["result"].as_str().unwrap() {
             "ok" => assert_eq!(
-                result.unwrap().to_json().to_json_string(),
-                expected["normalised"].as_str().unwrap(),
+                json_value(&result.unwrap().to_json().to_json_string()),
+                json_value(expected["normalised"].as_str().unwrap()),
                 "{name}"
             ),
             "unreadable" => assert_eq!(

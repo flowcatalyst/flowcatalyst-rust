@@ -78,7 +78,7 @@ impl fmt::Debug for Digest {
 
 /// The keyless signer that published a version: the OIDC issuer and subject.
 /// Compared exactly: no pattern, no case folding, no trimming.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct SignerIdentity {
     pub issuer: String,
     pub subject: String,

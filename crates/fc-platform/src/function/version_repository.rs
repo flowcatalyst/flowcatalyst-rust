@@ -398,7 +398,7 @@ impl Persist<FunctionVersion> for FunctionVersionRepository {
         .bind(&v.signature_bundle_ref)
         .bind(issuer)
         .bind(subject)
-        .bind(v.manifest.to_json().to_json_string())
+        .bind(serde_json::to_string(&v.manifest).expect("a manifest always serialises"))
         .bind(v.state.name())
         .bind(&v.published_by)
         .bind(v.published_at)
