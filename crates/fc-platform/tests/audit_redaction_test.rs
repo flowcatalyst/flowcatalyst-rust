@@ -249,6 +249,36 @@ async fn stored_row(app: &TestApp, id: &str) -> (String, String) {
     .expect("read seeded row")
 }
 
+/// S11 (Java b4a15fd8): a row stored before source-side redaction — every
+/// Go-era row — is served redacted by the audit-log API whether or not the
+/// sweep has run, and the stored row is left as it was.
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn a_legacy_row_is_served_redacted_without_the_sweep() {
+    let app = setup().await;
+    let token = app.anchor_admin_token().await;
+    seed_audit_row(
+        &app,
+        "seed_legacy",
+        "CreateOAuthClientCommand",
+        json!({"note": "legacy", "clientSecret": "hunter2"}),
+    )
+    .await;
+
+    let body = assert_status(
+        app.get("/api/audit-logs/seed_legacy", &token).await,
+        StatusCode::OK,
+    )
+    .await;
+    let served = body["operationJson"].as_str().expect("operationJson");
+    assert!(!served.contains("hunter2"), "{served}");
+    assert!(served.contains("\"clientSecret\":\"***\""), "{served}");
+    assert!(served.contains("\"note\":\"legacy\""), "{served}");
+
+    let (stored, _) = stored_row(&app, "seed_legacy").await;
+    assert!(stored.contains("hunter2"), "a read never rewrites the row");
+}
+
 async fn redact_existing(app: &TestApp, token: &str) -> (StatusCode, serde_json::Value) {
     support::read_json(
         app.post("/bff/audit-logs/redact-existing", token, json!({}))
