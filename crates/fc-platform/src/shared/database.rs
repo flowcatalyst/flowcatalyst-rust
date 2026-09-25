@@ -88,14 +88,155 @@ pub trait SecretProvider: Send + Sync {
     async fn get_db_url(&self) -> Result<String, anyhow::Error>;
 }
 
+/// Where the platform database connection comes from, with Go's precedence
+/// (flowcatalyst-go `internal/server/envcfg.go` `ResolveDatabaseURL` and
+/// `dbsecret.go`): a full URL beats Secrets Manager, which beats explicit
+/// `DB_*` credentials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DatabaseSource {
+    /// A ready connection string.
+    Url(String),
+    /// Username/password (and optionally port) from an RDS-style Secrets
+    /// Manager secret; host and database name from the environment.
+    AwsSecretsManager {
+        secret_arn: String,
+        host: String,
+        db_name: String,
+        /// `DB_PORT`, or 5432; the secret's own `port` wins over it.
+        fallback_port: String,
+    },
+}
+
+/// The local-development default Go falls back to when nothing is configured.
+pub const DEFAULT_DATABASE_URL: &str = "postgresql://postgres@localhost:5432/flowcatalyst";
+
+/// [`database_source`] over the process environment.
+pub fn database_source_from_env() -> Result<DatabaseSource, anyhow::Error> {
+    database_source(|k| std::env::var(k).ok())
+}
+
+/// Resolve the database source from `get` (an environment lookup):
+/// 1. `FC_DATABASE_URL` / `DATABASE_URL` — used as is;
+/// 2. `DB_HOST` + `DB_SECRET_ARN` — Secrets Manager (`DB_SECRET_PROVIDER`
+///    must be `aws`, the default; anything else is a startup error, as in
+///    Go), with `DB_NAME` (default `flowcatalyst`) and `DB_PORT`;
+/// 3. `DB_HOST` + `DB_USERNAME` (default `postgres`) + `DB_PASSWORD`;
+/// 4. nothing — [`DEFAULT_DATABASE_URL`].
+///
+/// Blank values count as unset.
+pub fn database_source(
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<DatabaseSource, anyhow::Error> {
+    let get = |k: &str| get(k).filter(|v| !v.trim().is_empty());
+    if let Some(url) = get("FC_DATABASE_URL").or_else(|| get("DATABASE_URL")) {
+        return Ok(DatabaseSource::Url(url));
+    }
+    let Some(host) = get("DB_HOST") else {
+        return Ok(DatabaseSource::Url(DEFAULT_DATABASE_URL.to_string()));
+    };
+    let db_name = get("DB_NAME").unwrap_or_else(|| "flowcatalyst".to_string());
+    let port = get("DB_PORT").unwrap_or_else(|| "5432".to_string());
+
+    if let Some(secret_arn) = get("DB_SECRET_ARN") {
+        let provider = get("DB_SECRET_PROVIDER").unwrap_or_else(|| "aws".to_string());
+        if !provider.eq_ignore_ascii_case("aws") {
+            anyhow::bail!("DB_SECRET_PROVIDER {provider:?} not supported (only \"aws\")");
+        }
+        return Ok(DatabaseSource::AwsSecretsManager {
+            secret_arn,
+            host,
+            db_name,
+            fallback_port: port,
+        });
+    }
+
+    let username = get("DB_USERNAME").unwrap_or_else(|| "postgres".to_string());
+    let host_port = if host.contains(':') {
+        host
+    } else {
+        format!("{host}:{port}")
+    };
+    Ok(DatabaseSource::Url(match get("DB_PASSWORD") {
+        None => format!("postgresql://{username}@{host_port}/{db_name}"),
+        Some(password) => format!(
+            "postgresql://{username}:{}@{host_port}/{db_name}",
+            urlencoding::encode(&password)
+        ),
+    }))
+}
+
+/// The credential-rotation poll interval: `DB_SECRET_REFRESH_INTERVAL_MS`,
+/// 5 minutes when unset or unparseable; zero or negative disables polling
+/// (Go `NewDBSecretRefresher`).
+pub fn secret_refresh_interval_from_env() -> Duration {
+    let ms = std::env::var("DB_SECRET_REFRESH_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or(300_000);
+    if ms <= 0 {
+        Duration::ZERO
+    } else {
+        Duration::from_millis(ms as u64)
+    }
+}
+
+/// The region of an ARN (`arn:partition:service:REGION:account:resource`),
+/// or `None` for a bare secret name (Go `regionFromARN`).
+pub fn region_from_arn(arn: &str) -> Option<String> {
+    let parts: Vec<&str> = arn.split(':').collect();
+    (parts.len() >= 4 && parts[0] == "arn" && !parts[3].is_empty()).then(|| parts[3].to_string())
+}
+
+/// Build the connection URL from an RDS-style secret's JSON
+/// (`{"username","password","port"?}`): the secret's port beats
+/// `fallback_port`, a host that already names a port keeps it, and the
+/// password is percent-encoded (Go `buildDBSecretDSN`).
+pub fn db_url_from_secret_json(
+    secret_json: &str,
+    host: &str,
+    db_name: &str,
+    fallback_port: &str,
+) -> Result<String, anyhow::Error> {
+    let creds: serde_json::Value = serde_json::from_str(secret_json)
+        .map_err(|e| anyhow::anyhow!("Failed to parse DB secret JSON: {}", e))?;
+    let field = |k: &str| creds[k].as_str().filter(|v| !v.is_empty());
+    let (Some(username), Some(password)) = (field("username"), field("password")) else {
+        anyhow::bail!("DB secret is missing username/password");
+    };
+    let port = creds["port"]
+        .as_u64()
+        .filter(|p| *p > 0)
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| fallback_port.to_string());
+    let host_port = if host.contains(':') {
+        host.to_string()
+    } else {
+        format!("{host}:{port}")
+    };
+    Ok(format!(
+        "postgresql://{}:{}@{}/{}",
+        username,
+        urlencoding::encode(password),
+        host_port,
+        db_name
+    ))
+}
+
 /// AWS Secrets Manager provider. Reads `{"username":..., "password":..., "port":...}`
 /// JSON from a secret and constructs a `postgresql://` URL using the supplied
 /// host and database name.
+///
+/// The client's region is the secret ARN's own (a secret must be read from
+/// its region, and ECS on EC2 need not export `AWS_REGION`), as in Go.
+/// Credentials come from the default chain (the ECS task role in
+/// production). The SDK's endpoint override (`AWS_ENDPOINT_URL_SECRETS_MANAGER`
+/// / `AWS_ENDPOINT_URL`) is honoured, which is how tests point it at a fake.
 pub struct AwsSecretProvider {
     secret_arn: String,
     host: String,
     db_name: String,
     fallback_port: String,
+    client: tokio::sync::OnceCell<aws_sdk_secretsmanager::Client>,
 }
 
 impl AwsSecretProvider {
@@ -105,7 +246,20 @@ impl AwsSecretProvider {
             host,
             db_name,
             fallback_port,
+            client: tokio::sync::OnceCell::new(),
         }
+    }
+
+    async fn client(&self) -> &aws_sdk_secretsmanager::Client {
+        self.client
+            .get_or_init(|| async {
+                let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+                if let Some(region) = region_from_arn(&self.secret_arn) {
+                    loader = loader.region(aws_config::Region::new(region));
+                }
+                aws_sdk_secretsmanager::Client::new(&loader.load().await)
+            })
+            .await
     }
 }
 
@@ -116,47 +270,30 @@ impl SecretProvider for AwsSecretProvider {
     }
 
     async fn get_db_url(&self) -> Result<String, anyhow::Error> {
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let sm = aws_sdk_secretsmanager::Client::new(&config);
-
-        let secret = sm
+        let secret = self
+            .client()
+            .await
             .get_secret_value()
             .secret_id(&self.secret_arn)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to get DB secret from Secrets Manager: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to get DB secret from Secrets Manager: {}",
+                    aws_sdk_secretsmanager::error::DisplayErrorContext(&e)
+                )
+            })?;
 
         let secret_string = secret
             .secret_string()
             .ok_or_else(|| anyhow::anyhow!("DB secret has no string value"))?;
 
-        let creds: serde_json::Value = serde_json::from_str(secret_string)
-            .map_err(|e| anyhow::anyhow!("Failed to parse DB secret JSON: {}", e))?;
-
-        let username = creds["username"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("DB secret missing 'username' field"))?;
-        let password = creds["password"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("DB secret missing 'password' field"))?;
-        let port = creds["port"]
-            .as_u64()
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| self.fallback_port.clone());
-
-        let password_encoded = urlencoding::encode(password);
-        let url = if self.host.contains(':') {
-            format!(
-                "postgresql://{}:{}@{}/{}",
-                username, password_encoded, self.host, self.db_name
-            )
-        } else {
-            format!(
-                "postgresql://{}:{}@{}:{}/{}",
-                username, password_encoded, self.host, port, self.db_name
-            )
-        };
-        Ok(url)
+        db_url_from_secret_json(
+            secret_string,
+            &self.host,
+            &self.db_name,
+            &self.fallback_port,
+        )
     }
 }
 
@@ -1009,5 +1146,112 @@ mod sql_split_tests {
         let sql = "INSERT INTO t VALUES ('a;b'); SELECT 1;";
         let parts = split_sql_statements(sql);
         assert_eq!(parts.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod database_source_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn source(vars: &[(&str, &str)]) -> Result<DatabaseSource, anyhow::Error> {
+        let map: HashMap<String, String> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        database_source(|k| map.get(k).cloned())
+    }
+
+    #[test]
+    fn a_full_url_beats_everything() {
+        let s = source(&[
+            ("DATABASE_URL", "postgresql://a@b/c"),
+            ("DB_HOST", "h"),
+            ("DB_SECRET_ARN", "arn"),
+        ])
+        .unwrap();
+        assert_eq!(s, DatabaseSource::Url("postgresql://a@b/c".into()));
+    }
+
+    #[test]
+    fn the_production_task_env_resolves_to_secrets_manager() {
+        let s = source(&[
+            ("DB_SECRET_PROVIDER", "aws"),
+            (
+                "DB_SECRET_ARN",
+                "arn:aws:secretsmanager:eu-west-1:1:secret:rds!db-x",
+            ),
+            ("DB_HOST", "db.example.internal"),
+            ("DB_NAME", "flowcatalyst"),
+        ])
+        .unwrap();
+        assert_eq!(
+            s,
+            DatabaseSource::AwsSecretsManager {
+                secret_arn: "arn:aws:secretsmanager:eu-west-1:1:secret:rds!db-x".into(),
+                host: "db.example.internal".into(),
+                db_name: "flowcatalyst".into(),
+                fallback_port: "5432".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_unknown_secret_provider_is_refused() {
+        let err = source(&[
+            ("DB_SECRET_PROVIDER", "gcp"),
+            ("DB_SECRET_ARN", "x"),
+            ("DB_HOST", "h"),
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("DB_SECRET_PROVIDER"));
+    }
+
+    #[test]
+    fn explicit_credentials_and_the_local_default() {
+        assert_eq!(
+            source(&[("DB_HOST", "h"), ("DB_PASSWORD", "p w/@")]).unwrap(),
+            DatabaseSource::Url("postgresql://postgres:p%20w%2F%40@h:5432/flowcatalyst".into())
+        );
+        assert_eq!(
+            source(&[
+                ("DB_HOST", "h:6000"),
+                ("DB_USERNAME", "u"),
+                ("DB_NAME", "n")
+            ])
+            .unwrap(),
+            DatabaseSource::Url("postgresql://u@h:6000/n".into())
+        );
+        assert_eq!(
+            source(&[]).unwrap(),
+            DatabaseSource::Url(DEFAULT_DATABASE_URL.into())
+        );
+    }
+
+    #[test]
+    fn the_secret_port_beats_db_port_and_passwords_are_escaped() {
+        let url = db_url_from_secret_json(
+            r#"{"username":"admin","password":"a:b@c","port":6543}"#,
+            "db",
+            "fc",
+            "5432",
+        )
+        .unwrap();
+        assert_eq!(url, "postgresql://admin:a%3Ab%40c@db:6543/fc");
+        let url = db_url_from_secret_json(r#"{"username":"u","password":"p"}"#, "db", "fc", "7000")
+            .unwrap();
+        assert_eq!(url, "postgresql://u:p@db:7000/fc");
+        assert!(
+            db_url_from_secret_json(r#"{"username":"u","password":""}"#, "db", "fc", "1").is_err()
+        );
+    }
+
+    #[test]
+    fn the_region_comes_from_the_arn() {
+        assert_eq!(
+            region_from_arn("arn:aws:secretsmanager:ap-southeast-2:123:secret:x").as_deref(),
+            Some("ap-southeast-2")
+        );
+        assert_eq!(region_from_arn("my-secret-name"), None);
     }
 }

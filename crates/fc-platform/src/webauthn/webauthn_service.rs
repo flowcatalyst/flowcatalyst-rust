@@ -30,12 +30,18 @@ pub struct WebauthnService {
 
 impl WebauthnService {
     pub fn from_env() -> Result<Self> {
-        let rp_id =
-            env::var("FC_WEBAUTHN_RP_ID").unwrap_or_else(|_| "auth.flowcatalyst.io".to_string());
+        // Go's names and defaults (internal/server/wire_services.go,
+        // envcfg.go `webauthnOrigins`): the RP id defaults to `localhost`;
+        // origins come from `FC_WEBAUTHN_ORIGINS` (comma-separated, matched
+        // verbatim), then the legacy singular `FC_WEBAUTHN_RP_ORIGIN`, then
+        // `http://localhost:8080`. Blank values count as unset.
+        let non_empty = |k: &str| env::var(k).ok().filter(|v| !v.trim().is_empty());
+        let rp_id = non_empty("FC_WEBAUTHN_RP_ID").unwrap_or_else(|| "localhost".to_string());
         let rp_name =
-            env::var("FC_WEBAUTHN_RP_NAME").unwrap_or_else(|_| "FlowCatalyst".to_string());
-        let origins_raw =
-            env::var("FC_WEBAUTHN_ORIGINS").unwrap_or_else(|_| format!("https://{}", rp_id));
+            non_empty("FC_WEBAUTHN_RP_NAME").unwrap_or_else(|| "FlowCatalyst".to_string());
+        let origins_raw = non_empty("FC_WEBAUTHN_ORIGINS")
+            .or_else(|| non_empty("FC_WEBAUTHN_RP_ORIGIN"))
+            .unwrap_or_else(|| "http://localhost:8080".to_string());
         let origins: Vec<Url> = origins_raw
             .split(',')
             .map(str::trim)

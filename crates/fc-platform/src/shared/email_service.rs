@@ -38,13 +38,16 @@ impl EmailService for LogEmailService {
 }
 
 /// SMTP email service for production use.
-/// Configure via environment variables (supports both FC_ and TS-style names):
-/// - `FC_SMTP_HOST` / `SMTP_HOST` — SMTP server hostname
+/// Configure via environment variables — Go's names and semantics
+/// (flowcatalyst-go `internal/platform/shared/email`): the `FC_`-prefixed name
+/// wins, a blank value counts as unset.
+/// - `FC_SMTP_HOST` / `SMTP_HOST` — SMTP server hostname (unset: log-only)
 /// - `FC_SMTP_PORT` / `SMTP_PORT` — SMTP server port (default: 587)
-/// - `FC_SMTP_USERNAME` / `SMTP_USERNAME` — SMTP auth username
+/// - `FC_SMTP_USERNAME` / `SMTP_USERNAME` — SMTP auth username (blank: no AUTH)
 /// - `FC_SMTP_PASSWORD` / `SMTP_PASSWORD` — SMTP auth password
-/// - `FC_SMTP_FROM` / `SMTP_FROM` — Sender email address
-/// - `FC_SMTP_SECURE` / `SMTP_SECURE` — Use TLS directly (default: false, uses STARTTLS)
+/// - `FC_SMTP_FROM` / `SMTP_FROM` — Sender (default `noreply@flowcatalyst.local`)
+/// - `FC_SMTP_SECURE` / `SMTP_SECURE` — `true`/`1`/`yes`/`on`: implicit TLS
+///   (e.g. :465); anything else: STARTTLS (e.g. SendGrid on :587)
 pub struct SmtpEmailService {
     host: String,
     port: u16,
@@ -54,28 +57,36 @@ pub struct SmtpEmailService {
     secure: bool,
 }
 
-/// Read env var with fallback alias (FC_ prefix first, then TS-style name).
-fn env_or_alias(primary: &str, alias: &str) -> Option<String> {
-    std::env::var(primary)
-        .ok()
-        .or_else(|| std::env::var(alias).ok())
+/// The first non-blank value among `names`, trimmed (Go `envFirst`).
+fn env_first(names: &[&str]) -> Option<String> {
+    names.iter().find_map(|n| {
+        std::env::var(n)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    })
 }
 
 impl SmtpEmailService {
     /// Create from environment variables. Returns None if SMTP is not configured.
     pub fn from_env() -> Option<Self> {
-        let host = env_or_alias("FC_SMTP_HOST", "SMTP_HOST")?;
-        let port = env_or_alias("FC_SMTP_PORT", "SMTP_PORT")
+        let host = env_first(&["FC_SMTP_HOST", "SMTP_HOST"])?;
+        let port = env_first(&["FC_SMTP_PORT", "SMTP_PORT"])
             .and_then(|p| p.parse().ok())
             .unwrap_or(587);
-        let username = env_or_alias("FC_SMTP_USERNAME", "SMTP_USERNAME").unwrap_or_default();
-        let password = env_or_alias("FC_SMTP_PASSWORD", "SMTP_PASSWORD").unwrap_or_default();
-        let from = env_or_alias("FC_SMTP_FROM", "SMTP_FROM")
+        let username = env_first(&["FC_SMTP_USERNAME", "SMTP_USERNAME"]).unwrap_or_default();
+        let password = env_first(&["FC_SMTP_PASSWORD", "SMTP_PASSWORD"]).unwrap_or_default();
+        let from = env_first(&["FC_SMTP_FROM", "SMTP_FROM"])
             .unwrap_or_else(|| "noreply@flowcatalyst.local".to_string());
-        let secure = env_or_alias("FC_SMTP_SECURE", "SMTP_SECURE")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false);
+        let secure = matches!(
+            env_first(&["FC_SMTP_SECURE", "SMTP_SECURE"])
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .as_str(),
+            "true" | "1" | "yes" | "on"
+        );
 
+        info!(host = %host, port, from = %from, secure, "SMTP email service configured");
         Some(Self {
             host,
             port,
@@ -93,7 +104,7 @@ impl EmailService for SmtpEmailService {
         use lettre::{
             message::{header::ContentType, Mailbox},
             transport::smtp::authentication::Credentials,
-            Message as LettreMessage, SmtpTransport, Transport,
+            AsyncSmtpTransport, AsyncTransport, Message as LettreMessage, Tokio1Executor,
         };
 
         let from_mailbox: Mailbox = self
@@ -113,24 +124,32 @@ impl EmailService for SmtpEmailService {
             .body(message.html_body.clone())
             .map_err(|e| format!("Failed to build email: {}", e))?;
 
-        let creds = Credentials::new(self.username.clone(), self.password.clone());
-
-        let mailer = if self.secure {
-            SmtpTransport::relay(&self.host)
+        // secure=true: TLS from the first byte; otherwise STARTTLS (Go's
+        // net/smtp upgrades when the server offers it, which SendGrid's :587
+        // does; here the upgrade is required, so credentials never travel in
+        // clear).
+        let builder = if self.secure {
+            AsyncSmtpTransport::<Tokio1Executor>::relay(&self.host)
                 .map_err(|e| format!("SMTP TLS connection failed: {}", e))?
-                .port(self.port)
-                .credentials(creds)
-                .build()
         } else {
-            SmtpTransport::starttls_relay(&self.host)
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.host)
                 .map_err(|e| format!("SMTP STARTTLS connection failed: {}", e))?
-                .port(self.port)
-                .credentials(creds)
-                .build()
+        }
+        .port(self.port);
+        // Go authenticates only when a username is configured.
+        let builder = if self.username.is_empty() {
+            builder
+        } else {
+            builder.credentials(Credentials::new(
+                self.username.clone(),
+                self.password.clone(),
+            ))
         };
 
-        mailer
-            .send(&email)
+        builder
+            .build()
+            .send(email)
+            .await
             .map_err(|e| format!("Failed to send email: {}", e))?;
 
         info!(to = %message.to, subject = %message.subject, "Email sent successfully");
