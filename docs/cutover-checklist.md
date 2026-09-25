@@ -26,15 +26,17 @@ as they merge to `main`.
 ## Platform contract
 - [ ] Domain event type names and `data` match Go (about 40 differ) (`feat/go-events`)
 - [ ] `aws-sm://` secret references resolved as Go; backfill skips references (`feat/go-events`)
-- [ ] Read endpoints enforce Go's read permissions (many only require a login today)
+- [ ] Read endpoints enforce Go's read permissions (many only require a login today) (`feat/go-authz`;
+      `docs/parity/read-permissions-vs-go.md`)
 - [ ] Route-auth guardrail: a convention test that every `/api` and `/bff` route authenticates unless
-      allowlisted
+      allowlisted (`feat/go-authz`: `tests/route_auth_convention_test.rs`)
 - [ ] `/auth/me` returns effective permissions plus scope/tier; the SPA hides nav items the user can't use
-      (decision #8)
+      (decision #8) (`feat/go-authz`)
 - [ ] Missing Go routes: `connections/sync`, `docs/sync`, `POST /api/processes/sync`, `router-config`,
       `/auth/password-setup/request`, 2FA/TOTP, reset-2fa, developer credentials
-- [ ] Behaviour behind the `client-admin` and `portal-administrator` roles
-- [ ] Go's roleless-user "profile-only" middleware
+- [ ] Behaviour behind the `client-admin` (`feat/go-authz`) and `portal-administrator` (`feat/go-routes-portal`)
+      roles
+- [ ] Go's roleless-user "profile-only" middleware (`feat/go-authz`)
 
 ## API convergence (from parity run 1)
 - [ ] Core (`feat/api-core`): `POST /api/principals`; Go's error envelope and codes; extractor rejections as
