@@ -1,0 +1,30 @@
+{
+  "name": "dispatch-jobs-api",
+  "description": "10 dispatch jobs created directly through POST /api/dispatch-jobs/batch (the SDK path), 2 groups; target answers 200. Go delivers directly-created jobs unsigned: the signer is resolved from the job's subscription, its connection, or the application named by the code's first segment \u2014 never from the job's own serviceAccountId \u2014 so the signature invariant is off; the signature verdicts are still compared.",
+  "covers": [
+    "C2"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR"
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "dispatchJobs",
+      "target": "main",
+      "count": 10,
+      "groups": [
+        "g1",
+        "g2"
+      ]
+    }
+  ],
+  "settle": {
+    "timeoutMs": 60000
+  },
+  "invariants": {
+    "signed": false
+  }
+}

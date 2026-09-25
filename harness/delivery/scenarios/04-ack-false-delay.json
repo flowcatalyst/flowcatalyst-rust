@@ -1,0 +1,45 @@
+{
+  "name": "ack-false-delay",
+  "description": "Target answers 200 {\"ack\":false,\"delaySeconds\":3} on the first attempt, 200 after: the next attempt comes no sooner than the delay asked for.",
+  "covers": [
+    "H1"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 3,
+      "script": {
+        "byAttempt": [
+          {
+            "attempts": [
+              1,
+              1
+            ],
+            "respond": {
+              "status": 200,
+              "body": {
+                "ack": false,
+                "delaySeconds": 3
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 5
+    }
+  ],
+  "settle": {
+    "timeoutMs": 90000
+  },
+  "invariants": {
+    "maxAttempts": 2,
+    "minRetryGapMs": 2500
+  }
+}

@@ -1,0 +1,28 @@
+[package]
+name = "fc-delivery-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Go-vs-Rust end-to-end delivery parity harness (owner decisions #28/#29)"
+
+[[bin]]
+name = "fc-delivery-harness"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+clap = { version = "4.5", features = ["derive", "env"] }
+futures = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+parking_lot = { workspace = true }
+rand = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }

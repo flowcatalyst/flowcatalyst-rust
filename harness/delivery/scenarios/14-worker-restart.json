@@ -1,0 +1,47 @@
+{
+  "name": "worker-restart",
+  "description": "40 events in 4 groups, target answers after 250ms; the worker (dispatch scheduler) is killed (SIGKILL) 2s in and started again. Nothing lost; nothing published or accepted twice.",
+  "covers": [
+    "H5",
+    "stale recovery"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "script": {
+        "default": {
+          "status": 200,
+          "body": {
+            "ack": true
+          },
+          "delayMs": 250
+        }
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 40,
+      "groups": [
+        "g1",
+        "g2",
+        "g3",
+        "g4"
+      ]
+    }
+  ],
+  "disruptions": [
+    {
+      "atMs": 2000,
+      "process": "worker",
+      "action": "kill"
+    }
+  ],
+  "settle": {
+    "timeoutMs": 180000,
+    "quietMs": 10000
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "name": "permanent-errors",
+  "description": "Three targets that never accept: 400 (maxRetries 2), 401 (maxRetries 3; Go fails an auth refusal on the first attempt) and 501 (maxRetries 2). Every job ends FAILED; the attempt counts are the retry policy.",
+  "covers": [
+    "retry budget",
+    "conformance config-error-501"
+  ],
+  "targets": [
+    {
+      "name": "bad-request",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 2,
+      "script": {
+        "default": {
+          "status": 400,
+          "body": {
+            "error": "bad"
+          }
+        }
+      }
+    },
+    {
+      "name": "unauthorized",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 3,
+      "script": {
+        "default": {
+          "status": 401
+        }
+      }
+    },
+    {
+      "name": "not-implemented",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 2,
+      "script": {
+        "default": {
+          "status": 501
+        }
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "bad-request",
+      "count": 2
+    },
+    {
+      "kind": "events",
+      "target": "unauthorized",
+      "count": 2
+    },
+    {
+      "kind": "events",
+      "target": "not-implemented",
+      "count": 2
+    }
+  ],
+  "settle": {
+    "allAccepted": false,
+    "allTerminal": true,
+    "timeoutMs": 120000
+  },
+  "invariants": {
+    "noLoss": false,
+    "maxAttempts": 3
+  }
+}

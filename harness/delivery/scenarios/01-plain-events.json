@@ -1,0 +1,30 @@
+{
+  "name": "plain-events",
+  "description": "Baseline: 20 events in 4 message groups through events/batch \u2192 fan-out \u2192 scheduler \u2192 SQS \u2192 router \u2192 /api/dispatch/process \u2192 webhook; every target answers 200.",
+  "covers": [
+    "baseline",
+    "C1"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR"
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 20,
+      "groups": [
+        "g1",
+        "g2",
+        "g3",
+        "g4"
+      ]
+    }
+  ],
+  "settle": {
+    "timeoutMs": 60000
+  }
+}
