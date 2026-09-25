@@ -214,11 +214,35 @@ pub struct BffEventTypesState {
 // ── Sync request DTO ──────────────────────────────────────────────────────
 
 /// Request body for sync-platform endpoint
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BffSyncPlatformRequest {
-    /// Application code to sync event types for
-    pub application_code: String,
+    /// Must be `platform` when given: the platform's own event types sync
+    /// into `platform` only (owner ruling 16). Any other application is
+    /// `400 PLATFORM_SYNC_ONLY`.
+    #[serde(default)]
+    pub application_code: Option<String>,
+}
+
+/// The application sync-platform syncs into.
+const PLATFORM_APPLICATION_CODE: &str = "platform";
+
+/// Owner ruling 16 (Java 635c2e3e): the platform's catalogue belongs to
+/// `platform` only. A body naming no application (or a blank one) or
+/// `platform` itself is fine; any other would put the platform's event
+/// types into that application.
+fn sync_platform_target(body: Option<BffSyncPlatformRequest>) -> Result<(), PlatformError> {
+    match body
+        .and_then(|b| b.application_code)
+        .as_deref()
+        .map(str::trim)
+    {
+        None | Some("") | Some(PLATFORM_APPLICATION_CODE) => Ok(()),
+        Some(_) => Err(PlatformError::bad_request_code(
+            "PLATFORM_SYNC_ONLY",
+            "sync-platform syncs the platform's own event types into 'platform' only",
+        )),
+    }
 }
 
 /// Response for sync-platform endpoint
@@ -766,7 +790,7 @@ pub async fn deprecate_schema(
     request_body = BffSyncPlatformRequest,
     responses(
         (status = 200, description = "Event types synced", body = BffSyncPlatformResponse),
-        (status = 400, description = "Validation error")
+        (status = 400, description = "PLATFORM_SYNC_ONLY: the body named another application")
     ),
     security(("bearer_auth" = []))
 )]
@@ -779,9 +803,8 @@ pub async fn sync_platform(
 
     crate::shared::authorization_service::checks::can_write_event_types(&auth.0)?;
 
-    let application_code = body
-        .map(|b| b.0.application_code)
-        .unwrap_or_else(|| "platform".to_string());
+    sync_platform_target(body.map(|b| b.0))?;
+    let application_code = PLATFORM_APPLICATION_CODE.to_string();
 
     let definitions = crate::seed::platform_event_types::definitions();
     let inputs: Vec<SyncEventTypeInput> = definitions
@@ -949,4 +972,34 @@ pub fn bff_event_types_router(state: BffEventTypesState) -> OpenApiRouter {
         .routes(routes!(finalise_schema))
         .routes(routes!(deprecate_schema))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(code: Option<&str>) -> Option<BffSyncPlatformRequest> {
+        Some(BffSyncPlatformRequest {
+            application_code: code.map(str::to_string),
+        })
+    }
+
+    /// Owner ruling 16: sync-platform targets `platform` only.
+    #[test]
+    fn sync_platform_syncs_into_platform_only() {
+        assert!(sync_platform_target(None).is_ok());
+        assert!(sync_platform_target(body(None)).is_ok());
+        assert!(sync_platform_target(body(Some("  "))).is_ok());
+        assert!(sync_platform_target(body(Some("platform"))).is_ok());
+        assert!(sync_platform_target(body(Some(" platform "))).is_ok());
+        match sync_platform_target(body(Some("orders"))) {
+            Err(PlatformError::Coded { status, code, .. }) => {
+                assert_eq!(
+                    (status.as_u16(), code.as_str()),
+                    (400, "PLATFORM_SYNC_ONLY")
+                )
+            }
+            other => panic!("expected PLATFORM_SYNC_ONLY, got {other:?}"),
+        }
+    }
 }
