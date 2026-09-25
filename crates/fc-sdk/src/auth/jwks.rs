@@ -623,12 +623,15 @@ mod tests {
             nbf: now,
             jti: "jti_test".to_string(),
             principal_type: "USER".to_string(),
-            scope: "ANCHOR".to_string(),
+            tier: "ANCHOR".to_string(),
+            scope: String::new(),
             email: Some("test@example.com".to_string()),
             name: "Test".to_string(),
             clients: vec!["*".to_string()],
             roles: vec!["admin".to_string()],
             applications: vec![],
+            all_applications: false,
+            token_use: None,
         };
 
         let header = Header::new(Algorithm::HS256);
@@ -695,12 +698,15 @@ mod tests {
             nbf: now - 200,
             jti: "j".to_string(),
             principal_type: "USER".to_string(),
-            scope: "CLIENT".to_string(),
+            tier: "CLIENT".to_string(),
+            scope: String::new(),
             email: None,
             name: "t".to_string(),
             clients: vec![],
             roles: vec![],
             applications: vec![],
+            all_applications: false,
+            token_use: None,
         };
         let token = encode(
             &Header::new(Algorithm::HS256),

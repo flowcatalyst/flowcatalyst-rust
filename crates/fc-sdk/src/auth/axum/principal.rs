@@ -68,8 +68,27 @@ impl Principal {
         self.auth.email()
     }
 
+    /// The tenancy tier (`ANCHOR` | `PARTNER` | `CLIENT`).
+    ///
+    /// Kept under its historical name: the tier used to ride the `scope`
+    /// claim. The platform now sends it as `tier`, and `scope` carries the
+    /// granted permissions (see [`Self::granted_permissions`]). Same as
+    /// [`Self::tier`].
     pub fn scope(&self) -> &str {
-        &self.auth.claims.scope
+        self.tier()
+    }
+
+    /// The tenancy tier (`ANCHOR` | `PARTNER` | `CLIENT`), from the `tier`
+    /// claim, or from `scope` on a token that predates `tier`.
+    pub fn tier(&self) -> &str {
+        self.auth.claims.tenancy_tier()
+    }
+
+    /// Permissions granted on the token's space-delimited `scope` claim.
+    /// Independent of the [`RbacCatalogue`]-resolved set that
+    /// [`Self::has_permission_to`] checks.
+    pub fn granted_permissions(&self) -> Vec<&str> {
+        self.auth.claims.granted_permissions()
     }
 
     pub fn principal_type(&self) -> &str {
@@ -163,12 +182,15 @@ mod tests {
             nbf: 1_000_000_000,
             jti: "jti".into(),
             principal_type: "USER".into(),
-            scope: "CLIENT".into(),
+            tier: "CLIENT".into(),
+            scope: String::new(),
             email: None,
             name: "Tester".into(),
             clients: vec!["clt_a".into()],
             roles: roles.iter().map(|s| s.to_string()).collect(),
             applications: vec![],
+            all_applications: false,
+            token_use: None,
         };
         Principal::from_auth(
             AuthContext::new(claims, "tok".into()),

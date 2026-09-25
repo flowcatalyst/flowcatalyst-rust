@@ -2,6 +2,15 @@
 //!
 //! Token claims matching FlowCatalyst's access token format,
 //! plus a rich auth context for authorization checks.
+//!
+//! Claim shape (the Go platform's, which the Rust platform issues too):
+//! `tier` is the tenancy tier (`ANCHOR` | `PARTNER` | `CLIENT`); `scope` is
+//! the granted permissions as a space-delimited string (absent when there
+//! are none); `token_use` is `api` or `identity`; `clients` holds `"*"` or
+//! `"{id}:{identifier}"` entries; `applications` holds `"*"` or
+//! `"{id}:{code}"` entries, with `all_applications` alongside. Bare ids (the
+//! older form) are still accepted in both lists, and a token that predates
+//! `tier` (tier carried in `scope`) still reads its tier correctly.
 
 use serde::{Deserialize, Serialize};
 
@@ -36,7 +45,17 @@ pub struct AccessTokenClaims {
     #[serde(rename = "type")]
     pub principal_type: String,
 
-    /// User scope: `"ANCHOR"`, `"PARTNER"`, or `"CLIENT"`
+    /// Tenancy tier: `"ANCHOR"`, `"PARTNER"`, or `"CLIENT"`. Empty on a
+    /// token that predates the claim — use [`Self::tenancy_tier`], which
+    /// falls back to the legacy `scope`-as-tier form.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tier: String,
+
+    /// Granted permissions, space-delimited (the OAuth `scope` claim);
+    /// empty when the token carries none. See
+    /// [`Self::granted_permissions`]. Tokens minted before `tier` existed
+    /// carried the tenancy tier here instead.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub scope: String,
 
     /// User email (present for USER type, absent for SERVICE)
@@ -46,25 +65,106 @@ pub struct AccessTokenClaims {
     /// Display name
     pub name: String,
 
-    /// Client IDs this principal can access.
-    /// `["*"]` for anchor users (access to all clients).
+    /// Clients this principal can access: `"{id}:{identifier}"` entries
+    /// (bare ids on older tokens), or `["*"]` for anchor users.
+    #[serde(default)]
     pub clients: Vec<String>,
 
     /// Roles assigned to this principal
     #[serde(default)]
     pub roles: Vec<String>,
 
-    /// Application codes derived from roles (e.g. `"operant"` from
-    /// `"operant:admin"`). Always present on tokens issued by FC, but
-    /// `#[serde(default)]` lets us deserialize older tokens too.
+    /// Applications this principal can access: `"{id}:{code}"` entries
+    /// (bare ids on older tokens), or `["*"]` for every application.
     #[serde(default)]
     pub applications: Vec<String>,
+
+    /// Access to every application, present and future (the application
+    /// analogue of the anchor tier). When true, `applications` is not a
+    /// restriction.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_applications: bool,
+
+    /// Access-token class: `"api"` (carries authority, valid as a platform
+    /// API bearer) or `"identity"` (interactive login; carries no roles,
+    /// clients, applications or scope). `None` on tokens that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_use: Option<String>,
+}
+
+const TIERS: [&str; 3] = ["ANCHOR", "PARTNER", "CLIENT"];
+
+/// The id part of a `"{id}:{label}"` claim entry (the whole entry when it
+/// has no label).
+fn entry_id(entry: &str) -> &str {
+    entry.split_once(':').map_or(entry, |(id, _)| id)
 }
 
 impl AccessTokenClaims {
-    /// Check if this principal has access to a specific client.
+    /// Check if this principal has access to a specific client (by id).
     pub fn has_client_access(&self, client_id: &str) -> bool {
-        self.clients.iter().any(|c| c == "*" || c == client_id)
+        self.clients
+            .iter()
+            .any(|c| c == "*" || c == client_id || entry_id(c) == client_id)
+    }
+
+    /// The tenancy tier: the `tier` claim, or — on a token that predates it
+    /// — a tier value carried in `scope`. Empty when neither is present.
+    pub fn tenancy_tier(&self) -> &str {
+        if !self.tier.is_empty() {
+            &self.tier
+        } else if TIERS.contains(&self.scope.as_str()) {
+            &self.scope
+        } else {
+            ""
+        }
+    }
+
+    /// The granted permissions from the space-delimited `scope` claim.
+    /// Empty when the token carries none, and for a legacy token whose
+    /// `scope` held the tier.
+    pub fn granted_permissions(&self) -> Vec<&str> {
+        if self.tier.is_empty() && TIERS.contains(&self.scope.as_str()) {
+            return Vec::new();
+        }
+        self.scope.split_whitespace().collect()
+    }
+
+    /// The client ids this principal can access (`"*"` for all), with the
+    /// identifier part of each `"{id}:{identifier}"` entry dropped.
+    pub fn client_id_list(&self) -> Vec<&str> {
+        self.clients.iter().map(|c| entry_id(c)).collect()
+    }
+
+    /// The application ids this principal can access, with the code part of
+    /// each `"{id}:{code}"` entry dropped. Empty when
+    /// [`Self::has_all_applications`] is true.
+    pub fn application_ids(&self) -> Vec<&str> {
+        if self.has_all_applications() {
+            return Vec::new();
+        }
+        self.applications.iter().map(|a| entry_id(a)).collect()
+    }
+
+    /// Whether this principal reaches every application: the `"*"` entry or
+    /// the `all_applications` claim.
+    pub fn has_all_applications(&self) -> bool {
+        self.all_applications || self.applications.iter().any(|a| a == "*")
+    }
+
+    /// Check if this principal can access an application (by id).
+    pub fn has_application_access(&self, application_id: &str) -> bool {
+        self.has_all_applications()
+            || self
+                .applications
+                .iter()
+                .any(|a| a == application_id || entry_id(a) == application_id)
+    }
+
+    /// Whether this is an identity-only access token (`token_use =
+    /// "identity"`), which carries no authority.
+    pub fn is_identity_token(&self) -> bool {
+        self.token_use.as_deref() == Some("identity")
     }
 
     /// Check if this principal has a specific role.
@@ -72,9 +172,10 @@ impl AccessTokenClaims {
         self.roles.iter().any(|r| r == role)
     }
 
-    /// Check if this is an anchor user (full platform access).
+    /// Check if this is an anchor user (full platform access): the
+    /// `ANCHOR` tier, or a `"*"` entry in `clients`.
     pub fn is_anchor(&self) -> bool {
-        self.scope == "ANCHOR"
+        self.tenancy_tier() == "ANCHOR" || self.clients.iter().any(|c| c == "*")
     }
 
     /// Check if this is a service account.
@@ -190,12 +291,15 @@ mod tests {
             nbf: 1000000000,
             jti: "jti_abc".to_string(),
             principal_type: principal_type.to_string(),
-            scope: scope.to_string(),
+            tier: scope.to_string(),
+            scope: String::new(),
             email: Some("user@example.com".to_string()),
             name: "Test User".to_string(),
             clients: clients.into_iter().map(String::from).collect(),
             roles: roles.into_iter().map(String::from).collect(),
             applications: vec![],
+            all_applications: false,
+            token_use: None,
         }
     }
 
@@ -285,7 +389,8 @@ mod tests {
 
         assert_eq!(deserialized.sub, "prn_test123");
         assert_eq!(deserialized.principal_type, "USER");
-        assert_eq!(deserialized.scope, "ANCHOR");
+        assert_eq!(deserialized.tier, "ANCHOR");
+        assert_eq!(deserialized.tenancy_tier(), "ANCHOR");
         assert_eq!(deserialized.clients, vec!["*"]);
         assert_eq!(deserialized.roles, vec!["admin"]);
         assert_eq!(deserialized.email.as_deref(), Some("user@example.com"));
@@ -370,5 +475,104 @@ mod tests {
 
         assert_eq!(cloned.principal_id(), ctx.principal_id());
         assert_eq!(cloned.bearer_token(), ctx.bearer_token());
+    }
+
+    // ─── Go's claim shape ───────────────────────────────────────────────
+
+    /// An `api` access token as the platform mints it (Go's shape).
+    fn go_api_token() -> AccessTokenClaims {
+        serde_json::from_value(serde_json::json!({
+            "iss": "https://fc.example.com", "sub": "prn_1", "aud": "flowcatalyst",
+            "exp": 9999999999i64, "iat": 1000000000, "nbf": 1000000000, "jti": "j1",
+            "type": "USER", "tier": "CLIENT",
+            "scope": "orders:order:read  orders:order:write",
+            "email": "u@example.com", "name": "U",
+            "clients": ["clt_a:acme", "clt_b"],
+            "roles": ["orders:viewer"],
+            "applications": ["app_1:orders", "app_2"],
+            "all_applications": false,
+            "token_use": "api"
+        }))
+        .expect("Go-shaped access token deserialises")
+    }
+
+    #[test]
+    fn go_shape_tier_and_scope_are_read_apart() {
+        let c = go_api_token();
+        assert_eq!(c.tenancy_tier(), "CLIENT");
+        assert!(!c.is_anchor());
+        assert_eq!(
+            c.granted_permissions(),
+            vec!["orders:order:read", "orders:order:write"]
+        );
+        assert!(!c.is_identity_token());
+    }
+
+    #[test]
+    fn go_shape_client_and_application_pairs_match_by_id() {
+        let c = go_api_token();
+        assert!(c.has_client_access("clt_a"));
+        assert!(c.has_client_access("clt_b"));
+        assert!(!c.has_client_access("acme"));
+        assert!(!c.has_client_access("clt_c"));
+        assert_eq!(c.client_id_list(), vec!["clt_a", "clt_b"]);
+        assert!(c.has_application_access("app_1"));
+        assert!(c.has_application_access("app_2"));
+        assert!(!c.has_application_access("app_3"));
+        assert_eq!(c.application_ids(), vec!["app_1", "app_2"]);
+        assert!(!c.has_all_applications());
+    }
+
+    #[test]
+    fn go_shape_anchor_tier_and_all_applications() {
+        let c: AccessTokenClaims = serde_json::from_value(serde_json::json!({
+            "iss": "i", "sub": "prn_1", "aud": "a", "exp": 1, "iat": 1, "nbf": 1, "jti": "j",
+            "type": "USER", "tier": "ANCHOR", "name": "A",
+            "clients": ["*"], "roles": [], "applications": ["*"], "all_applications": true
+        }))
+        .unwrap();
+        assert!(c.is_anchor());
+        assert!(c.granted_permissions().is_empty());
+        assert!(c.has_all_applications());
+        assert!(c.has_application_access("app_anything"));
+        assert!(c.application_ids().is_empty());
+    }
+
+    #[test]
+    fn go_shape_identity_token_without_scope_or_authority_deserialises() {
+        // authorization_code logins mint an identity-class token: no scope
+        // claim at all, empty authority lists.
+        let c: AccessTokenClaims = serde_json::from_value(serde_json::json!({
+            "iss": "i", "sub": "prn_1", "aud": "a", "exp": 1, "iat": 1, "nbf": 1, "jti": "j",
+            "type": "USER", "tier": "PARTNER", "name": "P",
+            "clients": [], "roles": [], "applications": [], "all_applications": false,
+            "token_use": "identity"
+        }))
+        .unwrap();
+        assert!(c.is_identity_token());
+        assert_eq!(c.tenancy_tier(), "PARTNER");
+        assert!(c.scope.is_empty());
+        assert!(c.granted_permissions().is_empty());
+    }
+
+    #[test]
+    fn legacy_scope_as_tier_token_still_reads_its_tier() {
+        let c: AccessTokenClaims = serde_json::from_value(serde_json::json!({
+            "iss": "i", "sub": "prn_1", "aud": "a", "exp": 1, "iat": 1, "nbf": 1, "jti": "j",
+            "type": "USER", "scope": "ANCHOR", "name": "L", "clients": ["*"]
+        }))
+        .unwrap();
+        assert_eq!(c.tenancy_tier(), "ANCHOR");
+        assert!(c.is_anchor());
+        assert!(c.granted_permissions().is_empty());
+    }
+
+    #[test]
+    fn serialises_back_to_go_shape() {
+        let json = serde_json::to_value(go_api_token()).unwrap();
+        assert_eq!(json["tier"], "CLIENT");
+        assert_eq!(json["scope"], "orders:order:read  orders:order:write");
+        assert_eq!(json["token_use"], "api");
+        assert_eq!(json["type"], "USER");
     }
 }

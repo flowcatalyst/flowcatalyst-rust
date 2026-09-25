@@ -159,12 +159,14 @@ fn make_session_from_refresh(
         principal: PrincipalSnapshot {
             id: auth.principal_id().to_string(),
             principal_type: auth.claims.principal_type.clone(),
+            tier: auth.claims.tier.clone(),
             scope: auth.claims.scope.clone(),
             name: auth.name().to_string(),
             email: auth.email().map(str::to_string),
             clients: auth.claims.clients.clone(),
             roles: auth.claims.roles.clone(),
             applications: auth.claims.applications.clone(),
+            all_applications: auth.claims.all_applications,
         },
         tokens: SessionTokens {
             access_token: tr.access_token.clone(),
@@ -190,12 +192,15 @@ fn build_auth_context_from_session(session: &SessionPayload) -> AuthContext {
         nbf: 0,
         jti: String::new(),
         principal_type: session.principal.principal_type.clone(),
+        tier: session.principal.tier.clone(),
         scope: session.principal.scope.clone(),
         email: session.principal.email.clone(),
         name: session.principal.name.clone(),
         clients: session.principal.clients.clone(),
         roles: session.principal.roles.clone(),
         applications: session.principal.applications.clone(),
+        all_applications: session.principal.all_applications,
+        token_use: None,
     };
     AuthContext::new(claims, session.tokens.access_token.clone())
 }
