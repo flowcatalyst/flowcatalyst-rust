@@ -98,6 +98,10 @@ enum Command {
 
     /// Download the latest fc-dev release and replace this binary.
     Upgrade(UpgradeArgs),
+
+    /// Functions: scaffold, build, publish, deploy and invoke them against
+    /// a running fc-dev (credentials from the fn-cli.json it writes).
+    Fn(fn_cli::FnArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -190,6 +194,10 @@ struct RunArgs {
     #[cfg(feature = "embedded-db")]
     #[arg(long, env = "FC_RESET_DB", default_value = "false")]
     reset_db: bool,
+
+    /// The in-process function host (on by default).
+    #[command(flatten)]
+    functions: functions::FunctionArgs,
 }
 
 #[cfg(feature = "embedded-db")]
@@ -297,7 +305,9 @@ mod embedded_pg {
 }
 
 mod banner;
+mod fn_cli;
 mod fresh;
+mod functions;
 mod init;
 mod mcp_bootstrap;
 mod outbox;
@@ -310,7 +320,21 @@ async fn main() -> Result<()> {
     // pick up values from the project's `.env.development` / `.env`. Without
     // this, env vars only resolve from the actual shell environment, and the
     // common case of "I set FC_OUTBOX_TOKEN in .env" silently doesn't work.
-    let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
+    //
+    // Not for `fc-dev fn`: a project's `.env` holds its application's
+    // service account, which must not shadow the fn CLI's own credentials.
+    if std::env::args_os().nth(1).is_none_or(|a| a != "fn") {
+        let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
+    }
+
+    // The dev app key, before the subcommands: `fc-dev init` seals the
+    // secrets it mints with it, and they must open under the server's.
+    if std::env::var("FLOWCATALYST_APP_KEY").is_err() {
+        std::env::set_var(
+            "FLOWCATALYST_APP_KEY",
+            "MpU3dI07kjZmZGROrElYfDXQgab30e3wr0KTnxQbePg=",
+        );
+    }
 
     // Subcommand fast path — handle the ones that don't need a database,
     // env vars, or anything else expensive before booting the dev server.
@@ -350,17 +374,14 @@ async fn main() -> Result<()> {
             fc_common::logging::init_logging("fc-dev outbox");
             return outbox::run(args).await;
         }
+        Some(Command::Fn(args)) => {
+            std::process::exit(fn_cli::run(args).await);
+        }
         _ => {}
     }
 
     // Set dev defaults for env vars that aren't set
     // These make fc-dev zero-config (only DB URL needed).
-    if std::env::var("FLOWCATALYST_APP_KEY").is_err() {
-        std::env::set_var(
-            "FLOWCATALYST_APP_KEY",
-            "MpU3dI07kjZmZGROrElYfDXQgab30e3wr0KTnxQbePg=",
-        );
-    }
     if std::env::var("FC_DEV_MODE").is_err() {
         std::env::set_var("FC_DEV_MODE", "true");
     }
@@ -381,37 +402,6 @@ async fn main() -> Result<()> {
             "FC_WEBAUTHN_ORIGINS",
             "http://localhost:5173,http://localhost:8080",
         );
-    }
-
-    // Function publishing works with nothing configured, as Java's
-    // `fcdev start` (StartCommand.java:391-413): dev mode on, uploaded
-    // artifacts kept in the dev cache, and signatures off (which the
-    // platform allows only in dev mode). Each is a default an operator's
-    // own value overrides.
-    if std::env::var("FLOWCATALYST_DEV_MODE").is_err() {
-        std::env::set_var("FLOWCATALYST_DEV_MODE", "true");
-    }
-    if std::env::var("FC_FN_ARTIFACT_STORE").is_err() {
-        let dir = dirs::cache_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("flowcatalyst-dev")
-            .join("fn-artifacts");
-        // Percent-encoded, as Java's Path#toUri: macOS's cache path can hold
-        // a space. A Windows path becomes `file:///C:/…`.
-        let path = dir
-            .to_string_lossy()
-            .replace('\\', "/")
-            .replace('%', "%25")
-            .replace(' ', "%20");
-        let path = if path.starts_with('/') {
-            path
-        } else {
-            format!("/{path}")
-        };
-        std::env::set_var("FC_FN_ARTIFACT_STORE", format!("file://{path}"));
-    }
-    if std::env::var("FC_FN_SIGNATURES").is_err() {
-        std::env::set_var("FC_FN_SIGNATURES", "off");
     }
 
     // Anchor the JWT keypair to an absolute dev-cache path so sessions
@@ -442,6 +432,13 @@ async fn main() -> Result<()> {
         Some(Command::Start(start_args)) => start_args,
         _ => cli.run,
     };
+
+    // Function publishing works with nothing configured, as Java's
+    // `fcdev start`: dev mode on, uploaded artifacts kept in the dev
+    // cache, signatures off, and the pool URL pointing at fc-dev's own
+    // function host (see `functions`).
+    let data_dir = functions::data_dir();
+    functions::apply_platform_defaults(&args.functions, &data_dir);
 
     info!("Starting FlowCatalyst Dev Monolith (Rust)");
     info!(
@@ -634,6 +631,21 @@ async fn main() -> Result<()> {
     if let Err(e) = mcp_bootstrap::run(&repos).await {
         warn!(error = %e, "MCP credential bootstrap skipped — `fc-dev mcp` may need manual setup");
     }
+
+    // 8c.2 The function host's and the fn CLI's OAuth clients, with fresh
+    // secrets. A failure leaves fc-dev running without functions.
+    let fn_identities = if args.functions.enabled() {
+        match functions::bootstrap_identities(&repos).await {
+            Ok(identities) => Some(identities),
+            Err(e) => {
+                warn!(error = %e, "Function clients not provisioned; starting without a function host");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let fn_host = functions::HostSlot::default();
 
     // 8b1.5 Start CQRS stream processor (projects msg_events → msg_events_read, etc.)
     let stream_handle = {
@@ -924,6 +936,11 @@ async fn main() -> Result<()> {
         )
         // Add auth middleware
         .layer(AuthLayer::new(app_state));
+    let platform_router = if fn_identities.is_some() {
+        functions::nudge_on_function_writes(platform_router, fn_host.clone())
+    } else {
+        platform_router
+    };
 
     info!("Platform APIs configured");
 
@@ -1064,12 +1081,48 @@ async fn main() -> Result<()> {
         })
     };
 
-    banner::print(args.api_port, args.metrics_port);
+    // 12. The function host, once the platform is accepting connections:
+    //     its first reconcile calls it.
+    let fn_cli_file = functions::cli_file_path();
+    if let Some(identities) = &fn_identities {
+        match functions::start_host(
+            &args.functions,
+            &format!("http://localhost:{}", args.api_port),
+            &identities.host,
+            &data_dir.join("fn-cache"),
+        )
+        .await
+        {
+            Ok(host) => {
+                fn_host.set(host);
+                let file = functions::cli_file(&args.functions, args.api_port, &identities.cli);
+                if let Err(e) = functions::write_cli_file(&fn_cli_file, &file) {
+                    warn!(error = %e, "Could not write the fn CLI's credentials");
+                }
+            }
+            Err(e) => warn!(
+                error = %e,
+                "Function host not started; fc-dev runs without one (--no-functions skips it)"
+            ),
+        }
+    }
+
+    let fn_ports = fn_host
+        .is_running()
+        .then_some((args.functions.fn_port, args.functions.fn_public_port));
+    banner::print(args.api_port, args.metrics_port, fn_ports);
     info!("Press Ctrl+C to shutdown");
 
     // Wait for shutdown signal
     fc_platform::shared::server_setup::wait_for_shutdown_signal().await;
     info!("Shutdown signal received, initiating graceful shutdown...");
+
+    // The function host stops first, so its DRAINING heartbeat still
+    // reaches the platform.
+    if fn_host.is_running() {
+        let _ = tokio::time::timeout(Duration::from_secs(30), fn_host.close()).await;
+        let _ = std::fs::remove_file(&fn_cli_file);
+    }
 
     // Broadcast shutdown to all components
     let _ = shutdown_tx.send(());

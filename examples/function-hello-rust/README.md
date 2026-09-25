@@ -50,8 +50,38 @@ is `crates/fc-fnhost-core/tests/fixtures/wasm/hello.wasm`; rebuild it with
 
 ## Publish
 
-The address used below is `shop.fulfilment.book-shipment`. With Java's
-`fcdev` CLI (it uploads any artifact, a component included):
+The address used below is `shop.fulfilment.book-shipment`.
+
+### Locally, with fc-dev
+
+`fc-dev` runs a function host beside the platform (pool `default`, private
+listener on `:8090`) and writes the `fc-dev fn` CLI's credentials, so the
+loop needs no flags. The function's application needs a service account
+with a signing secret, because the manifest declares a subscription;
+`fc-dev init` makes both.
+
+```sh
+fc-dev                                                 # platform + function host
+fc-dev init --code shop --name Shop                    # once: the application
+fc-dev fn build                                        # cargo, wasm32-wasip2
+fc-dev fn config set shop.fulfilment.book-shipment \
+    CARRIER_API_URL=https://api.carrier.example CARRIER_ACCOUNT=acct-7
+fc-dev fn secret set shop.fulfilment.book-shipment CARRIER_API_KEY < carrier-key.txt
+fc-dev fn deploy target/wasm32-wasip2/release/function_hello_rust.wasm \
+    shop.fulfilment.book-shipment                      # publish, READY, promote live
+fc-dev fn invoke shop.fulfilment.book-shipment --path /healthz
+```
+
+The first `config set` creates the function from `manifest.json` (its
+event type, `shop:orders:order:placed`, must exist for the subscription).
+`fn deploy` uploads the component, publishes a version with the manifest,
+waits for the host to report it `READY` and promotes it to `live`; deploying
+the same bytes again is a no-op. Signatures are off in fc-dev.
+
+### Against a deployed platform
+
+With Java's `fcdev` CLI (it uploads any artifact, a component included),
+or `fc-dev fn` with `--platform-url`, `--client-id` and `--client-secret`:
 
 ```sh
 fcdev fn config set shop.fulfilment.book-shipment \
@@ -87,16 +117,23 @@ curl -sf -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/
     -d '{"version": 1}' "$FN/aliases/live"
 ```
 
-The Rust platform serves the same `/api/functions*` interface as its
-publish, version and artifact routes land (plan workstreams P4 and P5).
+The Rust platform serves the same `/api/functions*` interface.
 
 ## Start a new function
 
-Copy this directory, or generate one from
-[`templates/function-rust`](../../templates/function-rust/README.md):
+Scaffold one from [`templates/function-rust`](../../templates/function-rust/README.md)
+with fc-dev (the template is built in; no `cargo generate` needed):
 
 ```sh
-cargo generate --git https://github.com/flowcatalyst/flowcatalyst-rust templates/function-rust
+fc-dev fn init --runtime wasm --lang rust my-function
+cd my-function
+fc-dev fn build
+fc-dev fn config set shop.default.my-function GREETING=Hello
+fc-dev fn deploy target/wasm32-wasip2/release/my_function.wasm shop.default.my-function
+fc-dev fn invoke shop.default.my-function --path /hello/world
 ```
 
-`fcdev fn init --runtime wasm --lang rust` does not exist yet (plan G2).
+`--pdk-path <checkout>/crates/fc-function-pdk` depends on a local PDK
+instead of the git one. `cargo generate --git
+https://github.com/flowcatalyst/flowcatalyst-rust templates/function-rust`
+renders the same template.

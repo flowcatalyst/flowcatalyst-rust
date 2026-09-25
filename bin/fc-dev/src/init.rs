@@ -55,7 +55,7 @@ use fc_platform::identity_provider::entity::{IdentityProvider, IdentityProviderT
 use fc_platform::identity_provider::repository::IdentityProviderRepository;
 use fc_platform::principal::entity::{Principal, UserScope};
 use fc_platform::principal::repository::PrincipalRepository;
-use fc_platform::service_account::entity::ServiceAccount;
+use fc_platform::service_account::entity::{ServiceAccount, WebhookCredentials};
 use fc_platform::service_account::repository::ServiceAccountRepository;
 use fc_platform::shared::encryption_service::EncryptionService;
 
@@ -282,6 +282,11 @@ pub async fn run(args: InitArgs) -> Result<()> {
     let mut sa = ServiceAccount::new(&sa_code, &sa_name, UserScope::Anchor);
     sa.description = Some(sa_description.clone());
     sa.application_id = Some(app_id.clone());
+    // Webhook credentials, as the platform's CreateServiceAccount mints
+    // them: the application's deliveries are signed with them, and a
+    // function of the application cannot declare subscriptions or
+    // schedules without the signing secret (APPLICATION_SIGNING_SECRET_REQUIRED).
+    sa.webhook_credentials = generate_webhook_credentials()?;
 
     // ServiceAccount.id is the principal id (CLAUDE.md note); insert a
     // matching Principal::new_service row first so the SA's FK is valid.
@@ -520,6 +525,34 @@ fn generate_client_secret() -> Result<(String, String)> {
     })?;
     let stored_ref = enc.hash_secret(&plaintext);
     Ok((plaintext, stored_ref))
+}
+
+/// A bearer token and a signing secret, each stored `encrypted:` (the
+/// platform's CreateServiceAccount shapes and seals them the same way).
+fn generate_webhook_credentials() -> Result<WebhookCredentials> {
+    use base64::Engine;
+    let enc = EncryptionService::from_env()
+        .ok_or_else(|| anyhow::anyhow!("FLOWCATALYST_APP_KEY not configured"))?;
+    let token: String = (0..32)
+        .map(|_| {
+            let i = rand::Rng::random_range(&mut rand::rng(), 0..36u8);
+            if i < 10 {
+                (b'0' + i) as char
+            } else {
+                (b'a' + i - 10) as char
+            }
+        })
+        .collect();
+    let mut signing = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rng(), &mut signing);
+    let signing = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signing);
+    let seal = |v: &str| {
+        enc.encrypt_ref(v)
+            .map_err(|e| anyhow::anyhow!("encrypting the service account's credentials: {e}"))
+    };
+    let mut credentials = WebhookCredentials::bearer_token(seal(&format!("fc_{token}"))?);
+    credentials.signing_secret = Some(seal(&signing)?);
+    Ok(credentials)
 }
 
 // ─── .env writer ───────────────────────────────────────────────────────
