@@ -167,7 +167,9 @@ impl<U: UnitOfWork> SyncSubscriptionsUseCase<U> {
         for input in &command.subscriptions {
             if let Some(ref conn_id) = input.connection_id {
                 let connection = connections.get(conn_id).ok_or_else(|| {
-                    UseCaseError::not_found(
+                    // Go's own spelling here (subscription/operations/
+                    // sync.go:223), not `Connection_NOT_FOUND`.
+                    UseCaseError::not_found_verbatim(
                         "CONNECTION_NOT_FOUND",
                         format!("Connection '{}' not found", conn_id),
                     )

@@ -186,6 +186,19 @@ impl UseCaseError {
         Self::new(ErrorKind::NotFound, code, message, HashMap::new())
     }
 
+    /// A not-found error whose code Go spells exactly so (e.g. the
+    /// subscription sync's `CONNECTION_NOT_FOUND`), exempt from the
+    /// `<Resource>_NOT_FOUND` respelling every other not-found gets on the
+    /// wire (see `PlatformError`'s rendering).
+    pub fn not_found_verbatim(code: impl Into<String>, message: impl Into<String>) -> Self {
+        let mut details = HashMap::new();
+        details.insert(
+            crate::shared::error::VERBATIM_CODE.to_string(),
+            serde_json::Value::Bool(true),
+        );
+        Self::new(ErrorKind::NotFound, code, message, details)
+    }
+
     /// Create a not found error with details.
     pub fn not_found_with_details(
         code: impl Into<String>,
@@ -310,10 +323,22 @@ impl From<PlatformError> for UseCaseError {
             e @ PlatformError::NotFound { .. } => Self::not_found("NOT_FOUND", e.to_string()),
             PlatformError::BusinessRule { code, message } => Self::business_rule(code, message),
             PlatformError::Concurrency { code, message } => Self::concurrency(code, message),
-            e @ PlatformError::Duplicate { .. } => Self::business_rule("DUPLICATE", e.to_string()),
-            e @ PlatformError::Validation { .. } => {
-                Self::validation("VALIDATION_ERROR", e.to_string())
+            PlatformError::Duplicate {
+                entity_type,
+                field,
+                value,
+            } => {
+                // Go's `<FIELD>_EXISTS` (see `PlatformError`'s rendering).
+                if field == "unique" {
+                    Self::business_rule("CONFLICT", value)
+                } else {
+                    Self::business_rule(
+                        format!("{}_EXISTS", field.to_ascii_uppercase()),
+                        format!("{entity_type} with {field} '{value}' already exists"),
+                    )
+                }
             }
+            PlatformError::Validation { message } => Self::validation("VALIDATION", message),
             PlatformError::Coded {
                 status,
                 code,
@@ -482,9 +507,8 @@ mod tests {
         assert!(err.details().contains_key("email"));
     }
 
-    /// HTTP status + JSON body of a `PlatformError` response, with `code`
-    /// checked to equal `error` and then left out (so the expectations
-    /// below read as Java's envelope).
+    /// HTTP status + JSON body of a `PlatformError` response, checked to be
+    /// Go's envelope (no `code` member).
     async fn render(err: PlatformError) -> (u16, serde_json::Value) {
         use axum::response::IntoResponse;
         let resp = err.into_response();
@@ -492,20 +516,18 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
-        let mut body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        let code = body
-            .as_object_mut()
-            .unwrap()
-            .remove("code")
-            .expect("every error body carries `code`");
-        assert_eq!(code, body["error"], "`code` equals `error`: {body}");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body.get("code").is_none(),
+            "Go's envelope has no `code`: {body}"
+        );
         (status, body)
     }
 
-    /// The raw envelope: `error`, `code`, `message` and `details`, in that
+    /// The raw envelope: Go's `error`, `message` and `details`, in that
     /// order.
     #[tokio::test]
-    async fn every_error_body_carries_code_equal_to_error() {
+    async fn every_error_body_is_gos_envelope() {
         use axum::response::IntoResponse;
         let resp = PlatformError::from(UseCaseError::validation_with_details(
             "BAD",
@@ -518,7 +540,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             std::str::from_utf8(&bytes).unwrap(),
-            r#"{"error":"BAD","code":"BAD","message":"bad","details":{"field":"name"}}"#
+            r#"{"error":"BAD","message":"bad","details":{"field":"name"}}"#
         );
     }
 
@@ -646,7 +668,7 @@ mod tests {
     async fn test_use_case_error_http_responses() {
         use serde_json::json;
         let cases = vec![
-            // Java's envelope (HttpError.java): the specific code in
+            // Go's envelope (shared/httperror): the specific code in
             // `error`, the message as written, details when there are any.
             (
                 UseCaseError::validation("NAME_REQUIRED", "Name is required"),
@@ -663,10 +685,11 @@ mod tests {
                 409,
                 json!({"error": "ROLE_IN_USE", "message": "in use"}),
             ),
+            // Go's not-found code and message (`httperror.NotFound`).
             (
                 UseCaseError::not_found("ROLE_NOT_FOUND", "Role 'r1' not found"),
                 404,
-                json!({"error": "ROLE_NOT_FOUND", "message": "Role 'r1' not found"}),
+                json!({"error": "Role_NOT_FOUND", "message": "Role not found: r1"}),
             ),
             (
                 UseCaseError::concurrency("STALE", "stale"),
@@ -681,8 +704,8 @@ mod tests {
             (
                 UseCaseError::commit("tx failed"),
                 500,
-                // The cause is logged, never sent (Go's shape).
-                json!({"error": "INTERNAL_ERROR", "message": "Internal server error"}),
+                // The cause is logged, never sent: Go's generic `INTERNAL`.
+                json!({"error": "INTERNAL", "message": "Internal server error"}),
             ),
         ];
         for (err, status, body) in cases {

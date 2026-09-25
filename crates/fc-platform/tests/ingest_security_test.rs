@@ -898,7 +898,7 @@ async fn subscriptions_and_connections_name_only_accounts_the_caller_may_use() {
             "sub-missing",
             json!({"serviceAccountId": "sac_0000000000000"}),
             StatusCode::NOT_FOUND,
-            "SERVICE_ACCOUNT_NOT_FOUND",
+            "ServiceAccount_NOT_FOUND",
         ),
         (
             "sub-conn",

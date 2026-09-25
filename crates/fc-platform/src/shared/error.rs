@@ -89,6 +89,18 @@ pub enum PlatformError {
         message: String,
         details: std::collections::HashMap<String, serde_json::Value>,
     },
+
+    /// The session endpoints' own envelope `{code, message}` (Go
+    /// auth/login/endpoint.go `writeUnauthorized` / `writeTooManyRequests`):
+    /// a 401 `UNAUTHENTICATED` carries `WWW-Authenticate: Cookie
+    /// realm="fc_session"`, a 429 `TOO_MANY_REQUESTS` carries `Retry-After`.
+    #[error("{message}")]
+    SessionEndpoint {
+        status: StatusCode,
+        code: String,
+        message: String,
+        retry_after_secs: Option<u32>,
+    },
 }
 
 impl PlatformError {
@@ -143,6 +155,29 @@ impl PlatformError {
             code: code.into(),
             message: message.into(),
             details: Default::default(),
+        }
+    }
+
+    /// Go's `writeUnauthorized` on the session endpoints: 401
+    /// `{"code": "UNAUTHENTICATED", "message"}` with `WWW-Authenticate:
+    /// Cookie realm="fc_session"`.
+    pub fn session_unauthorized(message: impl Into<String>) -> Self {
+        Self::SessionEndpoint {
+            status: StatusCode::UNAUTHORIZED,
+            code: "UNAUTHENTICATED".to_string(),
+            message: message.into(),
+            retry_after_secs: None,
+        }
+    }
+
+    /// Go's login backoff rejection (`writeTooManyRequests`): 429
+    /// `{"code": "TOO_MANY_REQUESTS", "message"}` with `Retry-After`.
+    pub fn login_backoff(retry_after_secs: u32) -> Self {
+        Self::SessionEndpoint {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "TOO_MANY_REQUESTS".to_string(),
+            message: "too many failed login attempts; try again later".to_string(),
+            retry_after_secs: Some(retry_after_secs.max(1)),
         }
     }
 
@@ -259,24 +294,314 @@ impl<T> NotFoundExt<T> for Option<T> {
     }
 }
 
-/// Error response body: `{error, code, message, details?}`. `code` always
-/// equals `error` (owner decision 5, additive): `error` is the envelope Go
-/// and Java send, `code` the name clients reach for first.
-#[derive(Debug, serde::Serialize, ToSchema)]
+/// Error response body: Go's envelope `{error, message, details?}`
+/// (shared/httperror/httperror.go:22-26, shared/httpcompat/httpcompat.go:
+/// ErrorModel). `error` carries the code. Go's huma also emits a `$schema`
+/// member; Rust does not (owner decision #30).
+#[derive(Debug, Clone, serde::Serialize, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
-    /// The same machine-readable code as `error`.
-    pub code: String,
     pub message: String,
-    /// Structured details, only when the error has some (Java's
-    /// `@JsonInclude(NON_EMPTY)` on `HttpError.details`).
+    /// Structured details, only when the error has some (Go's
+    /// `details,omitempty`).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
+/// The function-management contract's rendering of an error (owner
+/// decision #5: the function routes follow Java, with a `code` member
+/// alongside `error`, UPPER_SNAKE codes and the statuses they had).
+/// Every platform error response carries it as an extension;
+/// [`keep_function_contract`] re-renders the function routes' errors from
+/// it, so Go's envelope on the platform routes never reaches them.
+#[derive(Debug, Clone)]
+pub struct FunctionContractError {
+    pub status: StatusCode,
+    pub code: String,
+    pub message: String,
+    pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
+    pub retry_after_secs: Option<u32>,
+}
+
+/// Body of a [`FunctionContractError`]: `{error, code, message, details?}`.
+#[derive(Debug, serde::Serialize)]
+struct FunctionContractBody<'a> {
+    error: &'a str,
+    code: &'a str,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<&'a std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl FunctionContractError {
+    pub fn into_response(self) -> Response {
+        let body = FunctionContractBody {
+            error: &self.code,
+            code: &self.code,
+            message: &self.message,
+            details: self.details.as_ref(),
+        };
+        let mut response = (self.status, Json(body)).into_response();
+        if let Some(secs) = self.retry_after_secs {
+            if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, v);
+            }
+        }
+        response
+    }
+}
+
+/// Response mapper for the function-management routes: an error response
+/// that carries a [`FunctionContractError`] is re-rendered in that
+/// contract (owner decision #5). Everything else passes through.
+pub async fn keep_function_contract(response: Response) -> Response {
+    match response.extensions().get::<FunctionContractError>() {
+        Some(contract) => contract.clone().into_response(),
+        None => response,
+    }
+}
+
+/// A details key marking a code Go spells exactly as given (see
+/// [`crate::usecase::UseCaseError::not_found_verbatim`]); stripped before the
+/// body is rendered.
+pub const VERBATIM_CODE: &str = "$verbatimCode";
+
+/// Go's name for a resource in a not-found code, from the name Rust used:
+/// `APPLICATION` / `Application` → `Application`, `OAUTH_CLIENT` →
+/// `OAuthClient`, `ClientAuthConfig` → `AuthConfig`. Go builds every
+/// not-found code as `<Resource>_NOT_FOUND` with the resource spelt as
+/// written (`httperror.NotFound`, shared/httperror/httperror.go:91-96).
+/// `None` for a name Go never uses (a function-runner resource, say), which
+/// keeps its code as is.
+pub fn go_resource_name(name: &str) -> Option<&'static str> {
+    const NAMES: &[&str] = &[
+        "AnchorDomain",
+        "Application",
+        "AuditLog",
+        "AuthConfig",
+        "Client",
+        "ClientConfig",
+        "Config",
+        "Connection",
+        "CorsOrigin",
+        "Credential",
+        "DispatchJob",
+        "DispatchPool",
+        "Doc",
+        "EmailDomainMapping",
+        "Event",
+        "EventType",
+        "Grant",
+        "IdentityProvider",
+        "IdpRoleMapping",
+        "OAuthClient",
+        "OpenApiSpec",
+        "Permission",
+        "PlatformConfigAccess",
+        "PortalApp",
+        "PortalIdentity",
+        "Principal",
+        "Process",
+        "ResetApprovalRequest",
+        "Role",
+        "ScheduledJob",
+        "ScheduledJobInstance",
+        "ServiceAccount",
+        "ServiceAccountPrincipal",
+        "SpecVersion",
+        "Subscription",
+        "User",
+        "WebauthnCredential",
+    ];
+    // Rust's own names for resources Go names differently.
+    let aliased = match name {
+        "ClientAuthConfig" | "CLIENT_AUTH_CONFIG" => "AuthConfig",
+        "ApplicationClientConfig" | "APPLICATION_CLIENT_CONFIG" => "ClientConfig",
+        "CorsAllowedOrigin" | "CORS_ALLOWED_ORIGIN" | "CORS origin" => "CorsOrigin",
+        "OAuth client" | "OAUTH_CLIENT" => "OAuthClient",
+        "Mapping" | "MAPPING" | "IDP_ROLE_MAPPING" => "IdpRoleMapping",
+        "Passkey" | "PASSKEY" => "WebauthnCredential",
+        other => other,
+    };
+    let folded: String = aliased
+        .chars()
+        .filter(|c| *c != '_' && *c != ' ' && *c != '-')
+        .collect();
+    NAMES
+        .iter()
+        .find(|n| n.eq_ignore_ascii_case(&folded))
+        .copied()
+}
+
+/// Go's not-found `(code, message)` for a resource and id:
+/// `<Resource>_NOT_FOUND`, `<Resource> not found: <id>`.
+pub fn go_not_found(resource: &str, id: &str) -> (String, String) {
+    (
+        format!("{resource}_NOT_FOUND"),
+        format!("{resource} not found: {id}"),
+    )
+}
+
+/// A resource name without a qualifier: `OpenApiSpec(current)` →
+/// `OpenApiSpec`.
+fn bare_resource(name: &str) -> &str {
+    name.split('(').next().unwrap_or(name).trim()
+}
+
+/// An id without its key: `application_id=app_1` → `app_1`.
+fn bare_id(id: &str) -> &str {
+    match id.split_once('=') {
+        Some((key, value)) if !key.contains(' ') => value,
+        _ => id,
+    }
+}
+
+/// The id a Rust not-found message names: the first `'…'` segment, or what
+/// follows `not found: `.
+fn id_in_message(message: &str) -> Option<&str> {
+    if let Some(start) = message.find('\'') {
+        let rest = &message[start + 1..];
+        if let Some(end) = rest.find('\'') {
+            return Some(&rest[..end]);
+        }
+    }
+    message
+        .split_once("not found: ")
+        .map(|(_, id)| id.trim())
+        .filter(|id| !id.is_empty())
+}
+
+/// A not-found error with a code, in Go's form when Go names the resource.
+/// Rust's legacy `NOT_FOUND` + `Entity not found: X with id Y` (a
+/// [`PlatformError::NotFound`] that went through a use case) is read back
+/// into its parts.
+fn go_coded_not_found(code: &str, message: &str) -> Option<(String, String)> {
+    if code == "NOT_FOUND" {
+        if let Some(rest) = message.strip_prefix("Entity not found: ") {
+            let (entity, id) = rest.split_once(" with id ")?;
+            let resource = go_resource_name(bare_resource(entity))?;
+            return Some(go_not_found(resource, bare_id(id)));
+        }
+        // A generic code with the resource in the text: "Identity provider
+        // with ID 'x' not found", "CORS origin 'x' not found".
+        let words = message
+            .split(" with ")
+            .next()
+            .and_then(|head| head.split(" '").next())
+            .and_then(|head| head.split(" not found").next())?;
+        let resource = go_resource_name(words)?;
+        let id = id_in_message(message)?;
+        return Some(go_not_found(resource, id));
+    }
+    let raw = code.strip_suffix("_NOT_FOUND")?;
+    let resource = go_resource_name(raw)?;
+    let id = id_in_message(message);
+    Some(match id {
+        Some(id) => go_not_found(resource, id),
+        None => (format!("{resource}_NOT_FOUND"), message.to_string()),
+    })
+}
+
+/// Go's `(code, message)` for a platform error: the envelope Go's
+/// `httperror.Write` / huma `ErrorModel` render. `legacy` is the
+/// function-contract rendering, from which most codes carry over as is.
+fn go_code_and_message(
+    err: &PlatformError,
+    legacy_code: &str,
+    legacy_message: &str,
+) -> (String, String) {
+    // A resource Go never names keeps the rendering it had.
+    let named = |resource: &str, id: &str| match go_resource_name(bare_resource(resource)) {
+        Some(r) => go_not_found(r, bare_id(id)),
+        None => (legacy_code.to_string(), legacy_message.to_string()),
+    };
+    match err {
+        PlatformError::NotFound { entity_type, id } => named(entity_type, id),
+        PlatformError::EventTypeNotFound { code } => named("EventType", code),
+        PlatformError::SubscriptionNotFound { code } => named("Subscription", code),
+        PlatformError::ClientNotFound { id } => named("Client", id),
+        PlatformError::PrincipalNotFound { id } => named("Principal", id),
+        PlatformError::ServiceAccountNotFound { id } => named("ServiceAccount", id),
+        PlatformError::Duplicate {
+            entity_type,
+            field,
+            value,
+        } => {
+            if field == "unique" {
+                ("CONFLICT".to_string(), value.clone())
+            } else {
+                (
+                    format!("{}_EXISTS", field.to_ascii_uppercase()),
+                    format!("{entity_type} with {field} '{value}' already exists"),
+                )
+            }
+        }
+        PlatformError::Validation { message } => ("VALIDATION".to_string(), message.clone()),
+        PlatformError::Forbidden { message } => ("FORBIDDEN".to_string(), message.clone()),
+        PlatformError::Unauthorized { message } => ("UNAUTHORIZED".to_string(), message.clone()),
+        PlatformError::Coded {
+            status,
+            code,
+            message,
+            ..
+        } => {
+            if *status == StatusCode::NOT_FOUND {
+                if let Some(pair) = go_coded_not_found(code, message) {
+                    return pair;
+                }
+            }
+            if code == "VALIDATION_ERROR" {
+                let message = message
+                    .strip_prefix("Validation error: ")
+                    .unwrap_or(message);
+                return ("VALIDATION".to_string(), message.to_string());
+            }
+            if *status == StatusCode::INTERNAL_SERVER_ERROR {
+                return (code.clone(), "Internal server error".to_string());
+            }
+            (code.clone(), message.clone())
+        }
+        PlatformError::Sqlx(_)
+        | PlatformError::Json(_)
+        | PlatformError::Configuration { .. }
+        | PlatformError::Internal { .. } => {
+            ("INTERNAL".to_string(), "Internal server error".to_string())
+        }
+        _ => (legacy_code.to_string(), legacy_message.to_string()),
+    }
+}
+
 impl IntoResponse for PlatformError {
     fn into_response(self) -> Response {
+        if let PlatformError::SessionEndpoint {
+            status,
+            code,
+            message,
+            retry_after_secs,
+        } = self
+        {
+            let mut response = (
+                status,
+                Json(serde_json::json!({"code": code, "message": message})),
+            )
+                .into_response();
+            let headers = response.headers_mut();
+            if status == StatusCode::UNAUTHORIZED {
+                headers.insert(
+                    axum::http::header::WWW_AUTHENTICATE,
+                    axum::http::HeaderValue::from_static(r#"Cookie realm="fc_session""#),
+                );
+            }
+            if let Some(secs) = retry_after_secs {
+                if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
+                    headers.insert(axum::http::header::RETRY_AFTER, v);
+                }
+            }
+            return response;
+        }
         let (status, error_code) = match &self {
             PlatformError::NotFound { .. } => (StatusCode::NOT_FOUND, "NOT_FOUND".to_string()),
             PlatformError::Duplicate { .. } => (StatusCode::CONFLICT, "DUPLICATE".to_string()),
@@ -331,48 +656,124 @@ impl IntoResponse for PlatformError {
             tracing::error!(error = %self, "Internal server error");
         }
 
-        // 429 carries Retry-After per RFC 6585 / 7231.
-        if let PlatformError::TooManyRequests {
-            retry_after_secs, ..
-        } = &self
-        {
-            let body = ErrorResponse {
-                code: error_code.clone(),
-                error: error_code,
-                message: self.to_string(),
-                details: None,
-            };
-            return (
-                status,
-                [(
-                    axum::http::header::RETRY_AFTER,
-                    retry_after_secs.to_string(),
-                )],
-                Json(body),
-            )
-                .into_response();
-        }
-
         // A 500 carries its code and a fixed message; the cause (SQL error
         // text, internal detail) is only logged above, never sent, as in Go
         // (shared/httperror: an internal error's cause is logged, not
         // serialised).
-        let message = if status == StatusCode::INTERNAL_SERVER_ERROR {
+        let legacy_message = if status == StatusCode::INTERNAL_SERVER_ERROR {
             "Internal server error".to_string()
         } else {
             self.to_string()
         };
-        let details = match self {
-            PlatformError::Coded { details, .. } if !details.is_empty() => Some(details),
+        let verbatim = matches!(
+            &self,
+            PlatformError::Coded { details, .. } if details.contains_key(VERBATIM_CODE)
+        );
+        let (code, message) = if verbatim {
+            (error_code.clone(), legacy_message.clone())
+        } else {
+            go_code_and_message(&self, &error_code, &legacy_message)
+        };
+        // 429 carries Retry-After per RFC 6585 / 7231.
+        let retry_after_secs = match &self {
+            PlatformError::TooManyRequests {
+                retry_after_secs, ..
+            } => Some(*retry_after_secs),
             _ => None,
         };
+        let details = match self {
+            PlatformError::Coded { mut details, .. } => {
+                details.remove(VERBATIM_CODE);
+                (!details.is_empty()).then_some(details)
+            }
+            _ => None,
+        };
+        let contract = FunctionContractError {
+            status,
+            code: error_code,
+            message: legacy_message,
+            details: details.clone(),
+            retry_after_secs,
+        };
         let body = ErrorResponse {
-            code: error_code.clone(),
-            error: error_code,
+            error: code,
             message,
             details,
         };
 
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if let Some(secs) = retry_after_secs {
+            if let Ok(v) = axum::http::HeaderValue::from_str(&secs.to_string()) {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, v);
+            }
+        }
+        response.extensions_mut().insert(contract);
+        response
+    }
+}
+
+#[cfg(test)]
+mod go_envelope_tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    async fn body(err: PlatformError) -> (StatusCode, serde_json::Value) {
+        let response = err.into_response();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn not_found_is_gos_resource_code_and_message() {
+        let (status, v) = body(PlatformError::not_found("Application", "app_1")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            v,
+            serde_json::json!({"error": "Application_NOT_FOUND", "message": "Application not found: app_1"})
+        );
+    }
+
+    #[tokio::test]
+    async fn use_case_not_found_codes_take_gos_spelling() {
+        let err: PlatformError = crate::usecase::UseCaseError::not_found(
+            "OAUTH_CLIENT_NOT_FOUND",
+            "OAuth client 'oc_1' not found",
+        )
+        .into();
+        let (_, v) = body(err).await;
+        assert_eq!(v["error"], "OAuthClient_NOT_FOUND");
+        assert_eq!(v["message"], "OAuthClient not found: oc_1");
+        assert!(v.get("code").is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_resources_keep_their_code() {
+        let err = PlatformError::not_found_code("FunctionVersion", "v1");
+        let (_, v) = body(err).await;
+        assert_eq!(v["error"], "FUNCTION_VERSION_NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn the_function_contract_keeps_code_and_legacy_codes() {
+        let response =
+            keep_function_contract(PlatformError::not_found("Function", "f").into_response()).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["error"], "NOT_FOUND");
+        assert_eq!(v["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn validation_is_gos_validation_code() {
+        let (status, v) = body(PlatformError::validation("name is required")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            v,
+            serde_json::json!({"error": "VALIDATION", "message": "name is required"})
+        );
     }
 }

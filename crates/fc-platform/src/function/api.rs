@@ -1076,9 +1076,15 @@ pub fn function_routes() -> OpenApiRouter<FunctionsState> {
         .routes(routes!(super::domain_api::list_routes))
 }
 
-/// [`function_routes`] with its state.
+/// [`function_routes`] with its state. Their errors keep the function
+/// contract (owner decision #5: `code` beside `error`, UPPER_SNAKE codes),
+/// not the platform routes' Go envelope.
 pub fn functions_router(state: FunctionsState) -> OpenApiRouter {
-    function_routes().with_state(state)
+    function_routes()
+        .with_state(state)
+        .layer(axum::middleware::map_response(
+            crate::shared::error::keep_function_contract,
+        ))
 }
 
 #[cfg(test)]

@@ -79,7 +79,7 @@ async fn multi_tenant_mappings_must_pin_the_tenant_on_save() {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{pin:?}: {body}");
-        assert_eq!(body["code"], "TENANT_PIN_REQUIRED", "{body}");
+        assert_eq!(body["error"], "TENANT_PIN_REQUIRED", "{body}");
     }
     let (status, body) = read_json(
         app.post(
@@ -104,7 +104,7 @@ async fn multi_tenant_mappings_must_pin_the_tenant_on_save() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "TENANT_PIN_REQUIRED", "{body}");
+    assert_eq!(body["error"], "TENANT_PIN_REQUIRED", "{body}");
 
     // A single-tenant provider needs no pin...
     let (status, body) = read_json(
@@ -130,7 +130,7 @@ async fn multi_tenant_mappings_must_pin_the_tenant_on_save() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "TENANT_PIN_REQUIRED", "{body}");
+    assert_eq!(body["error"], "TENANT_PIN_REQUIRED", "{body}");
 
     // Switching the single-tenant provider to multi-tenant is refused while
     // its unpinned mapping exists.
@@ -144,7 +144,7 @@ async fn multi_tenant_mappings_must_pin_the_tenant_on_save() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["code"], "TENANT_PIN_REQUIRED", "{body}");
+    assert_eq!(body["error"], "TENANT_PIN_REQUIRED", "{body}");
     assert!(
         body["message"].as_str().unwrap().contains("beta.test"),
         "{body}"
