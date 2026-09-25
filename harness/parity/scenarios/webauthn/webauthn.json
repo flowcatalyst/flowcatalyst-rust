@@ -1,0 +1,260 @@
+{
+  "name": "webauthn: session gate, ceremony validation errors, decoy challenge, enumeration-safe delete",
+  "why": "auth-identity.md \u00a77.2-\u00a77.6: register/list/delete need a session (self-service, not anchor-gated); authenticate is public and answers an unknown-or-credential-less account with a shape-identical decoy rather than revealing which accounts exist; delete of a credential id that is not the caller's is 404, never 403 (no enumeration). The full register->assert->revoke->assert-fails ceremony (brief: authenticator register|assert, signing as ${admin.id}) is also attempted below via the harness's SoftAuthenticator wiring, but is expected to fail before any request is sent: Runner.runAuthenticator passes the PRIOR STEP'S WHOLE response body ({stateId, options:{publicKey:...}}) as the `options` argument to SoftAuthenticator.register()/assertion(), which then does options.get(\"publicKey\") \u2014 that is null one level too shallow (it needs lastBody.get(\"options\"), the way server/src/test/java/io/flowcatalyst/platform/passkey/PasskeyApiTest.java calls it: auth.register(b.get(\"options\"), ORIGIN)), so pk.get(\"challenge\") NPEs inside the authenticator before send() runs, on both sides identically. This looks like a parity/src/main/java/io/flowcatalyst/parity/Runner.java bug (out of scope for a scenario-only agent) rather than anything scenario JSON can route around; the six lockfile operations are still fully covered below through ordinary (non-authenticator) requests that reach the real endpoints.",
+  "covers": [
+    "listWebauthnCredentials",
+    "deleteWebauthnCredential",
+    "webauthnRegisterBegin",
+    "webauthnRegisterComplete",
+    "webauthnAuthenticateBegin",
+    "webauthnAuthenticateComplete"
+  ],
+  "steps": [
+    {
+      "id": "register-begin-unauthenticated",
+      "why": "register/begin needs a session (Auth.scoped + requireSession) \u2014 no login has happened yet on this side's cookie jar.",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/register/begin",
+        "body": {}
+      }
+    },
+    {
+      "id": "list-credentials-unauthenticated",
+      "request": {
+        "method": "GET",
+        "path": "/auth/webauthn/credentials"
+      }
+    },
+    {
+      "id": "delete-credential-unauthenticated",
+      "request": {
+        "method": "DELETE",
+        "path": "/auth/webauthn/credentials/pky_doesnotexist0"
+      }
+    },
+    {
+      "id": "login",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "${admin.email}",
+          "password": "${admin.password}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "register-begin",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/register/begin",
+        "body": {
+          "displayName": "Parity Admin"
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "regStateId": "/stateId"
+      }
+    },
+    {
+      "id": "register-complete-name-required",
+      "why": "the blank-name check runs before the ceremony is consumed (PasskeyApi#registerComplete), so this does not burn ${regStateId} \u2014 reused by the next step.",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/register/complete",
+        "body": {
+          "stateId": "${regStateId}",
+          "credential": {}
+        }
+      }
+    },
+    {
+      "id": "register-complete-unknown-state",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/register/complete",
+        "body": {
+          "stateId": "not-a-real-ceremony-state",
+          "name": "Parity Passkey",
+          "credential": {}
+        }
+      }
+    },
+    {
+      "id": "register-complete-invalid-credential",
+      "why": "a real stateId consumed with a credential shape the WebAuthn library cannot parse \u2014 400 INVALID_CREDENTIAL, and this is what actually burns ${regStateId}.",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/register/complete",
+        "body": {
+          "stateId": "${regStateId}",
+          "name": "Parity Passkey",
+          "credential": {
+            "not": "a real credential"
+          }
+        }
+      }
+    },
+    {
+      "id": "register-complete-state-already-burned",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/register/complete",
+        "body": {
+          "stateId": "${regStateId}",
+          "name": "Parity Passkey",
+          "credential": {}
+        }
+      }
+    },
+    {
+      "id": "register-begin-for-real-ceremony",
+      "why": "a fresh ceremony for the authenticator-driven attempt below, kept separate from the burned state above.",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/register/begin",
+        "body": {
+          "displayName": "Parity Admin Real"
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "realStateId": "/stateId"
+      }
+    },
+    {
+      "id": "register-complete-via-authenticator",
+      "why": "the documented ceremony flow (brief: authenticator register|assert, signing as ${admin.id}); expected to ERROR client-side per this scenario's top-level why (Runner.runAuthenticator's options-unwrapping bug) rather than reach the server on either side \u2014 not claimed in covers so that expected failure cannot produce a false covers claim.",
+      "authenticator": "register",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/register/complete",
+        "body": {
+          "stateId": "${realStateId}",
+          "name": "Parity Passkey Real"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "list-credentials-after-attempt",
+      "request": {
+        "method": "GET",
+        "path": "/auth/webauthn/credentials"
+      }
+    },
+    {
+      "id": "delete-credential-unknown",
+      "request": {
+        "method": "DELETE",
+        "path": "/auth/webauthn/credentials/pky_doesnotexist0"
+      }
+    },
+    {
+      "id": "authenticate-begin-blank-email",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/authenticate/begin",
+        "body": {
+          "email": ""
+        }
+      }
+    },
+    {
+      "id": "authenticate-begin-unknown-email",
+      "why": "spec \u00a77.3: an unknown/inactive principal or one with no usable credential gets a shape-identical decoy challenge, still 200 \u2014 never a 404 that would confirm the account does not exist.",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/authenticate/begin",
+        "body": {
+          "email": "parity-webauthn-nobody-${run}@example.com"
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "decoyStateId": "/stateId"
+      }
+    },
+    {
+      "id": "authenticate-begin-for-admin-no-credential",
+      "why": "the admin has no registered credential in this run either (registration never actually landed \u2014 see this scenario's top-level why), so this is the same decoy path, not a special case for a real account.",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/authenticate/begin",
+        "body": {
+          "email": "${admin.email}"
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "adminAuthStateId": "/stateId"
+      }
+    },
+    {
+      "id": "authenticate-complete-unknown-state",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/authenticate/complete",
+        "body": {
+          "stateId": "not-a-real-ceremony-state",
+          "credential": {}
+        }
+      }
+    },
+    {
+      "id": "authenticate-complete-decoy-state",
+      "why": "completing against a decoy's stateId (nothing was ever stored for it) is the same INVALID_CREDENTIALS path as an unknown state \u2014 pins that the decoy is a dead end at completion too, not just at begin.",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/authenticate/complete",
+        "body": {
+          "stateId": "${decoyStateId}",
+          "credential": {}
+        }
+      }
+    },
+    {
+      "id": "authenticate-begin-for-admin-with-credential",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/authenticate/begin",
+        "body": {
+          "email": "${admin.email}"
+        }
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "authStateId": "/stateId"
+      }
+    },
+    {
+      "id": "authenticate-complete-via-authenticator",
+      "why": "documented assert flow; same expected client-side ERROR as register-complete-via-authenticator above, not claimed in covers.",
+      "authenticator": "assert",
+      "request": {
+        "method": "POST",
+        "path": "/auth/webauthn/authenticate/complete",
+        "body": {
+          "stateId": "${authStateId}"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "name": "auth-configs: CRUD, INTERNAL/OIDC validation, partial update semantics, and the anchor-only gate",
+  "why": "client auth configs decide which scope and provider an e-mail domain's users get at login; spec §1 gates every route anchor-only including reads, and update's absent-field-is-untouched semantics (spec §4.2) is exactly the kind of PATCH behaviour a wire diff would silently break",
+  "covers": ["listAuthConfigs", "createAuthConfig", "updateAuthConfig", "deleteAuthConfig",
+             "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "create-internal",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "parity-${run}.example.com", "configType": "CLIENT",
+                             "authProvider": "INTERNAL", "oidcMultiTenant": false } },
+      "expect": { "status": 201 },
+      "capture": { "configId": "/id" } },
+
+    { "id": "list-contains-created",
+      "request": { "method": "GET", "path": "/api/auth-configs" },
+      "unordered": ["/items"] },
+
+    { "id": "update-add-oidc",
+      "request": { "method": "PUT", "path": "/api/auth-configs/${configId}",
+                   "body": { "authProvider": "OIDC", "oidcIssuerUrl": "https://idp.example.com", "oidcClientId": "parity-client",
+                             "oidcMultiTenant": true } } },
+
+    { "id": "list-after-oidc-update",
+      "request": { "method": "GET", "path": "/api/auth-configs" },
+      "unordered": ["/items"] },
+
+    { "id": "update-untouched-fields",
+      "why": "an absent field on PUT leaves the stored value untouched (spec §4.2) — only oidcClientSecretRef is supplied here, oidcIssuerUrl from the previous step must survive",
+      "request": { "method": "PUT", "path": "/api/auth-configs/${configId}", "body": { "oidcClientSecretRef": "ref://parity-secret" } } },
+
+    { "id": "get-list-after-untouched-update",
+      "request": { "method": "GET", "path": "/api/auth-configs" },
+      "unordered": ["/items"] },
+
+    { "id": "create-missing-email-domain",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "configType": "CLIENT", "authProvider": "INTERNAL", "oidcMultiTenant": false } } },
+
+    { "id": "create-invalid-email-domain",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "not-a-domain", "configType": "CLIENT", "authProvider": "INTERNAL", "oidcMultiTenant": false } } },
+
+    { "id": "create-invalid-config-type",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "parity-badtype-${run}.example.com", "configType": "BOGUS", "authProvider": "INTERNAL", "oidcMultiTenant": false } } },
+
+    { "id": "create-invalid-auth-provider",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "parity-badprovider-${run}.example.com", "configType": "CLIENT", "authProvider": "BOGUS", "oidcMultiTenant": false } } },
+
+    { "id": "create-oidc-missing-issuer",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "parity-oidcnoissuer-${run}.example.com", "configType": "CLIENT",
+                             "authProvider": "OIDC", "oidcClientId": "x", "oidcMultiTenant": false } } },
+
+    { "id": "create-oidc-missing-client-id",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "parity-oidcnoclient-${run}.example.com", "configType": "CLIENT",
+                             "authProvider": "OIDC", "oidcIssuerUrl": "https://idp.example.com", "oidcMultiTenant": false } } },
+
+    { "id": "duplicate-domain",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "parity-${run}.example.com", "configType": "CLIENT", "authProvider": "INTERNAL", "oidcMultiTenant": false } } },
+
+    { "id": "update-unknown",
+      "request": { "method": "PUT", "path": "/api/auth-configs/aut_doesnotexist1", "body": { "authProvider": "INTERNAL" } } },
+
+    { "id": "update-invalid-auth-provider",
+      "request": { "method": "PUT", "path": "/api/auth-configs/${configId}", "body": { "authProvider": "BOGUS" } } },
+
+    { "id": "create-doomed",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "parity-doomed-${run}.example.com", "configType": "CLIENT", "authProvider": "INTERNAL",
+                             "oidcMultiTenant": false } },
+      "expect": { "status": 201 },
+      "capture": { "doomedId": "/id" } },
+
+    { "id": "delete-doomed",
+      "request": { "method": "DELETE", "path": "/api/auth-configs/${doomedId}" } },
+
+    { "id": "delete-doomed-again",
+      "request": { "method": "DELETE", "path": "/api/auth-configs/${doomedId}" } },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Auth-Config Confinement Client", "identifier": "parity-acconf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-acconf-${run}@example.com", "name": "Parity Auth-Config Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role",
+      "why": "platform:auth-admin holds AUTH_CLIENT_AUTH_CONFIG_* permissions, but this surface never checks them (spec §1: anchor-only regardless of permission)",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:auth-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-acconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-forbidden",
+      "request": { "method": "GET", "path": "/api/auth-configs" } },
+
+    { "id": "confinement-create-forbidden",
+      "request": { "method": "POST", "path": "/api/auth-configs",
+                   "body": { "emailDomain": "should-not-exist.example.com", "configType": "CLIENT", "authProvider": "INTERNAL",
+                             "oidcMultiTenant": false } } },
+
+    { "id": "confinement-delete-forbidden",
+      "request": { "method": "DELETE", "path": "/api/auth-configs/${configId}" } }
+  ]
+}

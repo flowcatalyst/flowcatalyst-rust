@@ -1,0 +1,745 @@
+{
+  "name": "bff: dashboard admin gate, filter options, developer (anchor-only) reads, event-types SPA shape, roles/permission catalogue, scheduled-jobs paginated reads, client-scoped confinement",
+  "why": "bff.md: every /bff/* route is outside the lockfile, hand-rolled for the SPA on bffFetch, and reuses the aggregates' own operations under BFF-specific wire DTOs — a shape a wire diff on any of the seven groups here would break the frontend silently, since LockfileCoverageTest never looks at these paths. The dashboard's admin gate (D1: withdrawn permissive draft) and scheduled-jobs' D5 404-not-403 confinement are the two behaviours a careless port would get wrong.",
+  "covers": [
+    "createApplication",
+    "getApplicationByCode",
+    "createScheduledJob",
+    "createClient",
+    "createPrincipal",
+    "assignPrincipalRoles"
+  ],
+  "steps": [
+    {
+      "id": "login",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "${admin.email}",
+          "password": "${admin.password}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "dashboard-stats",
+      "request": {
+        "method": "GET",
+        "path": "/bff/dashboard/stats"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "filter-options-clients",
+      "request": {
+        "method": "GET",
+        "path": "/bff/filter-options/clients"
+      },
+      "unordered": [
+        "/clients"
+      ]
+    },
+    {
+      "id": "filter-options-event-type-applications",
+      "request": {
+        "method": "GET",
+        "path": "/bff/event-types/filters/applications"
+      },
+      "unordered": [
+        "/options"
+      ]
+    },
+    {
+      "id": "create-application",
+      "request": {
+        "method": "POST",
+        "path": "/api/applications",
+        "body": {
+          "code": "parity-s3-bff-${run}",
+          "name": "Parity S3 BFF App",
+          "description": "parity harness",
+          "type": "INTEGRATION"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "appId": "/id"
+      }
+    },
+    {
+      "id": "developer-list-applications",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications"
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "developer-get-application",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${appId}"
+      }
+    },
+    {
+      "id": "developer-get-application-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/app_doesnotexist${run}"
+      }
+    },
+    {
+      "id": "developer-current-spec-none-yet",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${appId}/openapi/current"
+      }
+    },
+    {
+      "id": "developer-list-versions-empty",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${appId}/openapi/versions"
+      }
+    },
+    {
+      "id": "developer-get-version-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${appId}/openapi/versions/spec_doesnotexist${run}"
+      }
+    },
+    {
+      "id": "developer-list-event-types-for-app-empty",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${appId}/event-types"
+      }
+    },
+    {
+      "id": "developer-sync-platform-openapi",
+      "request": {
+        "method": "POST",
+        "path": "/bff/developer/sync-platform-openapi"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "get-platform-application-id",
+      "request": {
+        "method": "GET",
+        "path": "/api/applications/by-code/platform"
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "platformAppId": "/id"
+      }
+    },
+    {
+      "id": "developer-get-platform-current-spec",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${platformAppId}/openapi/current"
+      },
+      "expect": {
+        "status": 200
+      },
+      "capture": {
+        "platformSpecId": "/id"
+      }
+    },
+    {
+      "id": "developer-list-platform-versions",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${platformAppId}/openapi/versions"
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "developer-get-platform-version",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${platformAppId}/openapi/versions/${platformSpecId}"
+      }
+    },
+    {
+      "id": "developer-get-version-belongs-to-different-app",
+      "why": "spec §4: the version route must confirm the spec belongs to the appId in the path — the platform's own spec fetched through our unrelated application's path is 404, not 403 or a cross-app leak.",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications/${appId}/openapi/versions/${platformSpecId}"
+      }
+    },
+    {
+      "id": "bff-create-event-type",
+      "request": {
+        "method": "POST",
+        "path": "/bff/event-types",
+        "body": {
+          "code": "s3bff${run}:orders:order:created",
+          "name": "S3 BFF Order Created",
+          "description": "parity harness event-type"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "etId": "/id"
+      }
+    },
+    {
+      "id": "bff-get-event-type",
+      "request": {
+        "method": "GET",
+        "path": "/bff/event-types/${etId}"
+      }
+    },
+    {
+      "id": "bff-get-event-type-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/bff/event-types/evt_doesnotexist${run}"
+      }
+    },
+    {
+      "id": "bff-list-event-types",
+      "request": {
+        "method": "GET",
+        "path": "/bff/event-types",
+        "query": {
+          "application": "s3bff${run}",
+          "subdomain": "orders",
+          "aggregate": "order"
+        }
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "bff-filter-subdomains",
+      "request": {
+        "method": "GET",
+        "path": "/bff/event-types/filters/subdomains",
+        "query": {
+          "application": "s3bff${run}"
+        }
+      },
+      "unordered": [
+        "/options"
+      ]
+    },
+    {
+      "id": "bff-filter-aggregates",
+      "request": {
+        "method": "GET",
+        "path": "/bff/event-types/filters/aggregates",
+        "query": {
+          "application": "s3bff${run}",
+          "subdomain": "orders"
+        }
+      },
+      "unordered": [
+        "/options"
+      ]
+    },
+    {
+      "id": "bff-update-event-type",
+      "request": {
+        "method": "PUT",
+        "path": "/bff/event-types/${etId}",
+        "body": {
+          "name": "S3 BFF Order Created Updated",
+          "description": "updated"
+        }
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "id": "bff-patch-event-type",
+      "why": "the SPA's own dialect (EventTypesBff class doc): PATCH mounted onto the identical update handler as the documented PUT.",
+      "request": {
+        "method": "PATCH",
+        "path": "/bff/event-types/${etId}",
+        "body": {
+          "name": "S3 BFF Order Created Patched",
+          "description": "patched"
+        }
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "id": "bff-add-schema",
+      "request": {
+        "method": "POST",
+        "path": "/bff/event-types/${etId}/schemas",
+        "body": {
+          "version": "1.0",
+          "schema": {
+            "type": "object"
+          }
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "bff-finalise-schema",
+      "request": {
+        "method": "POST",
+        "path": "/bff/event-types/${etId}/schemas/1.0/finalise"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "bff-deprecate-schema",
+      "request": {
+        "method": "POST",
+        "path": "/bff/event-types/${etId}/schemas/1.0/deprecate"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "bff-archive-event-type",
+      "request": {
+        "method": "POST",
+        "path": "/bff/event-types/${etId}/archive"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "bff-sync-platform-event-types",
+      "request": {
+        "method": "POST",
+        "path": "/bff/event-types/sync-platform",
+        "body": {
+          "applicationCode": "platform"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "bff-delete-event-type",
+      "request": {
+        "method": "DELETE",
+        "path": "/bff/event-types/${etId}"
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "id": "bff-get-event-type-after-delete",
+      "request": {
+        "method": "GET",
+        "path": "/bff/event-types/${etId}"
+      }
+    },
+    {
+      "id": "bff-create-role",
+      "request": {
+        "method": "POST",
+        "path": "/bff/roles",
+        "body": {
+          "applicationCode": "parity-s3-bff-${run}",
+          "roleName": "role-${run}",
+          "displayName": "S3 BFF Role",
+          "description": "parity harness role",
+          "permissions": [
+            "parity-s3-bff-${run}:admin:widget:view"
+          ],
+          "clientManaged": false
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "roleId": "/id"
+      }
+    },
+    {
+      "id": "bff-get-role-by-name",
+      "request": {
+        "method": "GET",
+        "path": "/bff/roles/parity-s3-bff-${run}:role-${run}"
+      }
+    },
+    {
+      "id": "bff-get-role-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/bff/roles/parity-s3-bff-${run}:no-such-role"
+      }
+    },
+    {
+      "id": "bff-list-roles",
+      "request": {
+        "method": "GET",
+        "path": "/bff/roles",
+        "query": {
+          "application": "parity-s3-bff-${run}"
+        }
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "diagnostic-roles-by-seed-application",
+      "why": "diagnostic for the S3 finding that Go's role filter lists the seed application: the by-application read shows which rows differ",
+      "request": {
+        "method": "GET",
+        "path": "/api/roles/by-application/${app.id}"
+      }
+    },
+    {
+      "id": "bff-roles-filter-applications",
+      "request": {
+        "method": "GET",
+        "path": "/bff/roles/filters/applications"
+      },
+      "unordered": [
+        "/options"
+      ],
+      "why": "every active application; Go lists them in no declared order"
+    },
+    {
+      "id": "bff-list-permissions",
+      "request": {
+        "method": "GET",
+        "path": "/bff/roles/permissions",
+        "query": {
+          "application": "parity-s3-bff-${run}"
+        }
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "bff-create-permission",
+      "request": {
+        "method": "POST",
+        "path": "/bff/roles/permissions",
+        "body": {
+          "application": "parity-s3-bff-${run}",
+          "context": "admin",
+          "aggregate": "widget",
+          "action": "manage",
+          "description": "parity harness permission"
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "id": "bff-get-permission",
+      "request": {
+        "method": "GET",
+        "path": "/bff/roles/permissions/parity-s3-bff-${run}:admin:widget:manage"
+      }
+    },
+    {
+      "id": "bff-get-permission-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/bff/roles/permissions/parity-s3-bff-${run}:admin:widget:no-such-action"
+      }
+    },
+    {
+      "id": "bff-update-role",
+      "request": {
+        "method": "PUT",
+        "path": "/bff/roles/parity-s3-bff-${run}:role-${run}",
+        "body": {
+          "displayName": "S3 BFF Role Updated",
+          "description": "updated",
+          "permissions": [
+            "parity-s3-bff-${run}:admin:widget:manage"
+          ],
+          "clientManaged": true
+        }
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "id": "bff-delete-role",
+      "request": {
+        "method": "DELETE",
+        "path": "/bff/roles/parity-s3-bff-${run}:role-${run}"
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "id": "bff-sync-platform-roles",
+      "request": {
+        "method": "POST",
+        "path": "/bff/roles/sync-platform"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "create-scheduled-job",
+      "request": {
+        "method": "POST",
+        "path": "/api/scheduled-jobs",
+        "body": {
+          "code": "s3bff-sj-${run}",
+          "name": "S3 BFF Job",
+          "crons": [
+            "0 0 * * * *"
+          ],
+          "concurrent": false,
+          "tracksCompletion": false,
+          "clientId": "${client.id}"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "jobId": "/id"
+      }
+    },
+    {
+      "id": "bff-list-scheduled-jobs",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs",
+        "query": {
+          "clientIds": "${client.id}"
+        }
+      }
+    },
+    {
+      "id": "bff-scheduled-jobs-filter-options",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs/filter-options"
+      }
+    },
+    {
+      "id": "bff-get-scheduled-job",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "bff-get-scheduled-job-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs/sj_doesnotexist${run}"
+      }
+    },
+    {
+      "id": "bff-list-job-instances-empty",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs/${jobId}/instances"
+      }
+    },
+    {
+      "id": "bff-get-instance-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs/instances/sji_doesnotexist${run}"
+      }
+    },
+    {
+      "id": "bff-get-instance-logs-unknown",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs/instances/sji_doesnotexist${run}/logs"
+      }
+    },
+    {
+      "id": "confinement-create-client",
+      "request": {
+        "method": "POST",
+        "path": "/api/clients",
+        "body": {
+          "name": "Parity S3 BFF Confinement Client",
+          "identifier": "parity-s3-bff-conf-${run}"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "confClientId": "/id"
+      }
+    },
+    {
+      "id": "confinement-create-principal",
+      "request": {
+        "method": "POST",
+        "path": "/api/principals",
+        "body": {
+          "email": "parity-s3-bff-conf-${run}@example.com",
+          "name": "S3 BFF Confinement User",
+          "scope": "CLIENT",
+          "clientId": "${confClientId}",
+          "password": "Correct-Harness-Battery-6614"
+        }
+      },
+      "expect": {
+        "status": 201
+      },
+      "capture": {
+        "confPrincipalId": "/id"
+      }
+    },
+    {
+      "id": "confinement-assign-roles",
+      "why": "platform:messaging-admin + platform:viewer give EVENT_TYPE_VIEW, SCHEDULED_JOB_VIEW and ROLE_VIEW without anchor scope — every 403/404 below comes from the coarse anchor/client-scope gate, not a missing coarse permission. Assigned one role per step: Go's setDifference iterates a map, so a two-role assignment answers `added` in random order (docs/go-mirror G2).",
+      "request": {
+        "method": "PUT",
+        "path": "/api/principals/${confPrincipalId}/roles",
+        "body": {
+          "roles": [
+            "platform:messaging-admin"
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "confinement-assign-roles-viewer",
+      "request": {
+        "method": "PUT",
+        "path": "/api/principals/${confPrincipalId}/roles",
+        "body": {
+          "roles": [
+            "platform:messaging-admin",
+            "platform:viewer"
+          ]
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "confinement-login",
+      "request": {
+        "method": "POST",
+        "path": "/auth/login",
+        "body": {
+          "email": "parity-s3-bff-conf-${run}@example.com",
+          "password": "Correct-Harness-Battery-6614"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "confinement-dashboard-forbidden",
+      "why": "bff.md D1: withdrawn permissive draft — Go's auth.IsAdmin gate is real, so a client-scoped viewer is refused, not merely shown zeros.",
+      "request": {
+        "method": "GET",
+        "path": "/bff/dashboard/stats"
+      }
+    },
+    {
+      "id": "confinement-developer-list-forbidden",
+      "why": "every /bff/developer/* route is anchor-only regardless of coarse permission (bff.md §4).",
+      "request": {
+        "method": "GET",
+        "path": "/bff/developer/applications"
+      }
+    },
+    {
+      "id": "confinement-roles-write-forbidden",
+      "why": "role/permission writes are anchor-only even with ROLE_VIEW (bff.md §6) — read below still succeeds.",
+      "request": {
+        "method": "POST",
+        "path": "/bff/roles",
+        "body": {
+          "applicationCode": "parity-s3-bff-${run}",
+          "roleName": "conf-should-fail-${run}",
+          "displayName": "x",
+          "permissions": [],
+          "clientManaged": false
+        }
+      }
+    },
+    {
+      "id": "confinement-roles-read-allowed",
+      "request": {
+        "method": "GET",
+        "path": "/bff/roles"
+      },
+      "unordered": [
+        "/items"
+      ]
+    },
+    {
+      "id": "confinement-scheduled-job-out-of-scope-is-404-not-403",
+      "why": "bff.md D5: /bff/scheduled-jobs/{id} answers 404 for an inaccessible client's job, unlike /api/scheduled-jobs/{id}'s 403 — the two families genuinely differ on the wire for the identical row.",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs/${jobId}"
+      }
+    },
+    {
+      "id": "confinement-scheduled-job-list-scoped-to-own-client",
+      "request": {
+        "method": "GET",
+        "path": "/bff/scheduled-jobs"
+      }
+    },
+    {
+      "id": "confinement-event-type-list-unfiltered-by-scope",
+      "why": "EventTypesBff#list has no client dimension in its own filter unless a row is clientScoped — a client-scoped viewer with EVENT_TYPE_VIEW sees the same platform catalogue as the anchor (eventtype.md's own confinement is per-row clientId, not blanket).",
+      "request": {
+        "method": "GET",
+        "path": "/bff/event-types"
+      },
+      "unordered": [
+        "/items"
+      ]
+    }
+  ]
+}

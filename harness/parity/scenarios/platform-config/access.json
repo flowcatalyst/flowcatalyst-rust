@@ -1,0 +1,63 @@
+{
+  "name": "platform-config: the property list, and refusal without a grant or CONFIG_VIEW",
+  "why": "CFG-PERM-2026-09-23 (docs/spec/config-permissions.md §A): the access-grant routes are withdrawn and their steps with them; what is left pins the property list, and that a principal holding neither a grant nor CONFIG_VIEW is refused on both sides",
+  "covers": ["listPlatformConfigProperties",
+             "setPlatformConfigProperty", "createClient", "createPrincipal",
+             "createRole", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "seed-a-property",
+      "request": { "method": "PUT", "path": "/api/config/parity-pc-${run}/section-a/prop",
+                   "body": { "value": "v1" } },
+      "capture": { "propAId": "/id" } },
+
+    { "id": "seed-another-property",
+      "request": { "method": "PUT", "path": "/api/config/parity-pc-${run}/section-b/prop",
+                   "body": { "value": "v2" } },
+      "capture": { "propBId": "/id" } },
+
+    { "id": "list-properties",
+      "request": { "method": "GET", "path": "/api/platform-config/parity-pc-${run}" },
+      "unordered": ["/items"] },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Platform-Config Confinement Client", "identifier": "parity-pcconf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-role",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "applicationCode": "parity", "roleName": "pc-conf-${run}", "displayName": "Config Confinement Role",
+                             "clientManaged": false } },
+      "expect": { "status": 201 } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-pcconf-${run}@example.com", "name": "Parity Platform-Config Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["parity:pc-conf-${run}"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-pcconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list-properties-refused",
+      "why": "the principal holds no grant (Go) and no CONFIG_VIEW (Java): both refuse; the envelopes differ (allow-listed, CFG-PERM-2026-09-23)",
+      "request": { "method": "GET", "path": "/api/platform-config/parity-pc-${run}" },
+      "unordered": ["/items"] }
+  ]
+}

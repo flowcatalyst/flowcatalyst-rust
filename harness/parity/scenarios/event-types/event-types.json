@@ -1,0 +1,144 @@
+{
+  "name": "event-types: schema/version routes, filters, 4xx, scope-forbidden confinement",
+  "why": "The S0 smoke scenario already pins plain CRUD. This file adds the two schema-version routes (both the canonical /versions and the historical /schemas alias must answer identically), every documented list filter, the version state-machine conflicts, and — the load-bearing part — that a CLIENT-scoped principal can never successfully write to ANY event type, even one it created itself, because clientId is never persisted (docs/spec/eventtype.md §5, 'accident?'). If Go actually lets a CLIENT-scoped writer update its own client-scoped event type, that is a real behavioural DIFF, not a wording one.",
+  "covers": ["listEventTypes", "createEventType", "getEventType", "getEventTypeByCode", "updateEventType",
+             "addEventTypeSchema", "addEventTypeVersion", "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "s1cet${run}:orders:order:created", "name": "S1C Order Created",
+                             "description": "parity harness event-type" } },
+      "expect": { "status": 201 },
+      "capture": { "etId": "/id" } },
+
+    { "id": "get-by-code",
+      "request": { "method": "GET", "path": "/api/event-types/by-code/s1cet${run}:orders:order:created" } },
+
+    { "id": "get-by-code-missing",
+      "request": { "method": "GET", "path": "/api/event-types/by-code/s1cet${run}:orders:order:nonexistent" } },
+
+    { "id": "add-schema-alias",
+      "request": { "method": "POST", "path": "/api/event-types/${etId}/schemas",
+                   "body": { "version": "1.0", "schema": { "type": "object" } } },
+      "expect": { "status": 200 } },
+
+    { "id": "add-version-canonical",
+      "request": { "method": "POST", "path": "/api/event-types/${etId}/versions",
+                   "body": { "version": "2.0", "schema": { "type": "object", "title": "v2" } } },
+      "expect": { "status": 200 } },
+
+    { "id": "add-version-conflict",
+      "request": { "method": "POST", "path": "/api/event-types/${etId}/versions",
+                   "body": { "version": "2.0", "schema": {} } } },
+
+    { "id": "add-version-schema-required",
+      "request": { "method": "POST", "path": "/api/event-types/${etId}/versions",
+                   "body": { "version": "3.0" } } },
+
+    { "id": "add-version-missing-event-type",
+      "request": { "method": "POST", "path": "/api/event-types/evt_doesnotexist${run}/versions",
+                   "body": { "version": "1.0", "schema": {} } } },
+
+    { "id": "list-by-subdomain",
+      "request": { "method": "GET", "path": "/api/event-types",
+                   "query": { "application": "s1cet${run}", "subdomain": "orders" } },
+      "unordered": ["/items"] },
+
+    { "id": "list-by-aggregate",
+      "request": { "method": "GET", "path": "/api/event-types",
+                   "query": { "application": "s1cet${run}", "aggregate": "order" } },
+      "unordered": ["/items"] },
+
+    { "id": "list-by-status",
+      "request": { "method": "GET", "path": "/api/event-types",
+                   "query": { "application": "s1cet${run}", "status": "CURRENT" } },
+      "unordered": ["/items"] },
+
+    { "id": "list-by-client-id-filters-nothing",
+      "request": { "method": "GET", "path": "/api/event-types",
+                   "query": { "application": "s1cet${run}", "clientId": "${client.id}" } },
+      "unordered": ["/items"] },
+
+    { "id": "update-name-required",
+      "request": { "method": "PUT", "path": "/api/event-types/${etId}", "body": { "name": "" } } },
+
+    { "id": "update-missing-event-type",
+      "request": { "method": "PUT", "path": "/api/event-types/evt_doesnotexist${run}",
+                   "body": { "name": "X" } } },
+
+    { "id": "create-code-required",
+      "request": { "method": "POST", "path": "/api/event-types", "body": { "code": "", "name": "X" } } },
+
+    { "id": "create-name-required",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "s1cet${run}:orders:order:noname", "name": "" } } },
+
+    { "id": "create-invalid-code-format-wrong-segment-count",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "only:three:parts", "name": "X" } } },
+
+    { "id": "create-invalid-code-format-blank-segment",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "s1cet${run}::order:created", "name": "X" } } },
+
+    { "id": "create-duplicate-conflict",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "s1cet${run}:orders:order:created", "name": "Dup" } } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "S1C EventTypes Second Client", "identifier": "s1c-et-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "s1c-et-b-${run}@example.com", "name": "S1C EventTypes B User",
+                             "scope": "CLIENT", "clientId": "${clientBId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:messaging-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "login-as-b",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "s1c-et-b-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "b-cannot-create-platform-wide",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "s1cetb${run}:orders:order:platform", "name": "X" } } },
+
+    { "id": "b-cannot-create-scoped-to-foreign-client",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "s1cetb${run}:orders:order:foreign", "name": "X",
+                             "clientId": "${client.id}" } } },
+
+    { "id": "b-can-create-scoped-to-own-client",
+      "request": { "method": "POST", "path": "/api/event-types",
+                   "body": { "code": "s1cetb${run}:orders:order:own", "name": "X",
+                             "clientId": "${clientBId}" } },
+      "expect": { "status": 201 },
+      "capture": { "ownEtId": "/id" } },
+
+    { "id": "b-cannot-update-even-its-own-client-scoped-event-type",
+      "request": { "method": "PUT", "path": "/api/event-types/${ownEtId}", "body": { "name": "Touched" } } },
+
+    { "id": "b-cannot-add-schema-to-anchors-event-type",
+      "request": { "method": "POST", "path": "/api/event-types/${etId}/schemas",
+                   "body": { "version": "9.0", "schema": {} } } },
+
+    { "id": "b-can-read-anchors-event-type-because-client-id-never-persisted",
+      "request": { "method": "GET", "path": "/api/event-types/${etId}" } }
+  ]
+}

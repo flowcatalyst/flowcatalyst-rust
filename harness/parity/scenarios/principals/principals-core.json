@@ -1,0 +1,204 @@
+{
+  "name": "principals: create/read/update/roles/status lifecycle, validation, tenant confinement",
+  "why": "the principal aggregate's core CRUD, role mutation set-semantics, and the PR-4 out-of-scope-is-not-found rule are the highest-blast-radius surface in the platform — a wire diff here is a security regression, not a display bug",
+  "covers": ["listPrincipals", "createPrincipal", "getPrincipal", "updatePrincipal", "getPrincipalVersion",
+             "activatePrincipal", "deactivatePrincipal", "deletePrincipal", "listPrincipalRoles",
+             "assignPrincipalRoles", "addPrincipalRole", "removePrincipalRole", "resetPrincipalPassword",
+             "sendPrincipalPasswordReset", "resetPrincipalTwoFactor", "createClient"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-pcore-${run}@example.test", "name": "Parity Core Principal",
+                             "scope": "CLIENT", "clientId": "${client.id}", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "pId": "/id" } },
+
+    { "id": "get-created",
+      "request": { "method": "GET", "path": "/api/principals/${pId}" } },
+
+    { "id": "get-version",
+      "request": { "method": "GET", "path": "/api/principals/${pId}/version" } },
+
+    { "id": "list-all",
+      "request": { "method": "GET", "path": "/api/principals" },
+      "unordered": ["/principals"] },
+
+    { "id": "list-by-client",
+      "request": { "method": "GET", "path": "/api/principals", "query": { "clientId": "${client.id}" } },
+      "unordered": ["/principals"] },
+
+    { "id": "list-by-active",
+      "request": { "method": "GET", "path": "/api/principals", "query": { "active": "true" } },
+      "unordered": ["/principals"] },
+
+    { "id": "list-by-type",
+      "request": { "method": "GET", "path": "/api/principals", "query": { "type": "USER" } },
+      "unordered": ["/principals"] },
+
+    { "id": "list-by-q",
+      "request": { "method": "GET", "path": "/api/principals", "query": { "q": "Parity Core" } },
+      "unordered": ["/principals"] },
+
+    { "id": "list-sorted-desc",
+      "request": { "method": "GET", "path": "/api/principals", "query": { "sortField": "name", "sortOrder": "desc" } } },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/principals/${pId}",
+                   "body": { "name": "Parity Core Principal Updated" } } },
+
+    { "id": "get-updated",
+      "request": { "method": "GET", "path": "/api/principals/${pId}" } },
+
+    { "id": "assign-roles",
+      "request": { "method": "PUT", "path": "/api/principals/${pId}/roles",
+                   "body": { "roles": ["platform:developer"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-roles",
+      "request": { "method": "GET", "path": "/api/principals/${pId}/roles" } },
+
+    { "id": "add-role",
+      "request": { "method": "POST", "path": "/api/principals/${pId}/roles",
+                   "body": { "role": "platform:messaging-admin" } } },
+
+    { "id": "list-by-roles",
+      "request": { "method": "GET", "path": "/api/principals", "query": { "roles": "platform:messaging-admin" } },
+      "unordered": ["/principals"] },
+
+    { "id": "remove-role",
+      "request": { "method": "DELETE", "path": "/api/principals/${pId}/roles/platform:messaging-admin" } },
+
+    { "id": "reset-password",
+      "request": { "method": "POST", "path": "/api/principals/${pId}/reset-password",
+                   "body": { "newPassword": "Different-Harness-Battery-9931" } },
+      "expect": { "status": 200 } },
+
+    { "id": "send-password-reset",
+      "request": { "method": "POST", "path": "/api/principals/${pId}/send-password-reset" } },
+
+    { "id": "reset-2fa",
+      "why": "MFA is not configured for either side in the parity harness (spec §2 leaves it out of scope) — this pins the shape of the resulting error, whatever it is, rather than asserting a status",
+      "request": { "method": "POST", "path": "/api/principals/${pId}/reset-2fa" } },
+
+    { "id": "deactivate",
+      "request": { "method": "POST", "path": "/api/principals/${pId}/deactivate" } },
+
+    { "id": "activate",
+      "request": { "method": "POST", "path": "/api/principals/${pId}/activate" } },
+
+    { "id": "delete",
+      "request": { "method": "DELETE", "path": "/api/principals/${pId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "delete-again",
+      "request": { "method": "DELETE", "path": "/api/principals/${pId}" } },
+
+    { "id": "get-deleted",
+      "request": { "method": "GET", "path": "/api/principals/${pId}" } },
+
+    { "id": "get-unknown-id",
+      "request": { "method": "GET", "path": "/api/principals/prn_doesnotexist99" } },
+
+    { "id": "create-invalid-scope",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-badscope-${run}@example.test", "scope": "BOGUS", "clientId": "${client.id}" } } },
+
+    { "id": "create-missing-client",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-noclient-${run}@example.test", "scope": "CLIENT" } } },
+
+    { "id": "create-for-duplicate",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-dup-${run}@example.test", "scope": "CLIENT", "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "dupId": "/id" } },
+
+    { "id": "create-duplicate-email",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-dup-${run}@example.test", "scope": "CLIENT", "clientId": "${client.id}" } } },
+
+    { "id": "confinement-create-target",
+      "why": "the tenant-confinement anchor: a principal that belongs to the anchor client, which the second tenant's administrator must never reach",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-pcore-target-${run}@example.test", "name": "Confinement Target",
+                             "scope": "CLIENT", "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "confId": "/id" } },
+
+    { "id": "confinement-create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Core Second Client", "identifier": "parity-pcore-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "confinement-create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-pcore-b-${run}@example.test", "name": "Parity Core B Admin",
+                             "scope": "CLIENT", "clientId": "${clientBId}", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalBId": "/id" } },
+
+    { "id": "confinement-grant-client-admin-role",
+      "why": "platform:client-admin is the seeded role for delegated, client-bounded user management (PlatformRoles) — assigning it as anchor bypasses the non-anchor platform-role restriction that would otherwise block this",
+      "request": { "method": "PUT", "path": "/api/principals/${principalBId}/roles",
+                   "body": { "roles": ["platform:client-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login-as-b",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-pcore-b-${run}@example.test", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-read-out-of-scope",
+      "why": "PR-4: an out-of-scope target must answer the same 404 Principal_NOT_FOUND a missing id would, never a distinguishing 403 (ledger PR-4, ruled 2026-09-01) — the status/body shape is exactly what a wire diff would break, so no expect here",
+      "request": { "method": "GET", "path": "/api/principals/${confId}" } },
+
+    { "id": "confinement-write-out-of-scope-roles",
+      "request": { "method": "PUT", "path": "/api/principals/${confId}/roles",
+                   "body": { "roles": [] } } },
+
+    { "id": "confinement-list-hides-other-tenant",
+      "why": "the list must be client-scoped for a non-anchor caller — the confinement target must not appear",
+      "request": { "method": "GET", "path": "/api/principals" },
+      "unordered": ["/principals"] },
+
+    { "id": "relogin-as-admin",
+      "why": "the confinement block above signed in as the second tenant's admin; the invitation steps below need the anchor session back, and creating principals needs admin auth",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "invite-create-with-link",
+      "why": "app-managed-invitations §1: POST /api/principals with returnInviteLink:true on a passwordless create answers CreatePrincipalResponse{id, inviteLink} (status unchanged at 201)",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-pcore-invite-${run}@example.test", "name": "Parity Core Invite Principal",
+                             "scope": "CLIENT", "clientId": "${client.id}", "returnInviteLink": true } },
+      "expect": { "status": 201 },
+      "capture": { "coreInviteId": "/id", "coreInviteLink": "/inviteLink", "coreInviteToken": "param:/inviteLink?token" } },
+
+    { "id": "invite-redirect-uri-invalid",
+      "why": "app-managed-invitations §1a: a malformed inviteRedirectUri (not an absolute http(s) URL) is refused before any write — 400 INVITE_REDIRECT_URI_INVALID, not a silently dropped value",
+      "request": { "method": "POST", "path": "/api/principals/users",
+                   "body": { "email": "parity-pcore-badredirect-${run}@example.test", "name": "Parity Core Bad Redirect",
+                             "scope": "CLIENT", "clientId": "${client.id}", "returnInviteLink": true,
+                             "inviteRedirectUri": "javascript:alert(1)" } },
+      "expect": { "status": 400 } },
+
+    { "id": "invite-confirm-establishes-session",
+      "why": "app-managed-invitations §4: confirming that INVITE token on a domain without 2FA signs the user in inline — sessionEstablished:true and a Set-Cookie fc_session the way login's does. This step's Set-Cookie overwrites the runner's cookie jar with the new user's session, so it must stay last in this file.",
+      "request": { "method": "POST", "path": "/auth/password-reset/confirm",
+                   "body": { "token": "${coreInviteToken}", "password": "Correct-Harness-Battery-5591" } },
+      "expect": { "status": 200 },
+      "capture": { "inviteSess": "cookie:fc_session" } },
+
+    { "id": "invite-confirm-session-authenticates-me",
+      "why": "the cookie the confirm step just set must actually authenticate, not merely be present",
+      "request": { "method": "GET", "path": "/auth/me" },
+      "expect": { "status": 200 } }
+  ]
+}

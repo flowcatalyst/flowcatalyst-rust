@@ -1,0 +1,100 @@
+{
+  "name": "me-public-config: unauthenticated public/config/openapi/health surface, then /api/me and its client sub-routes, with client-scope confinement",
+  "why": "bff.md §8 (/api/me*) and publicapi.md §2 (/api/public/*, the legacy /api/config/platform alias) are outside the lockfile and outside auth entirely for the public half — a wire diff on the pre-login documents or on WhoAmIResponse's accessible-set narrowing would break the SPA's boot sequence and its per-client picker respectively.",
+  "covers": ["createClient", "createPrincipal"],
+  "steps": [
+    { "id": "health", "request": { "method": "GET", "path": "/health" }, "expect": { "status": 200 } },
+
+    { "id": "public-platform", "request": { "method": "GET", "path": "/api/public/platform" } },
+
+    { "id": "public-login-theme", "request": { "method": "GET", "path": "/api/public/login-theme" } },
+
+    { "id": "config-platform-legacy-alias",
+      "why": "publicapi.md §9 Q1: the SPA's platformConfig store fetches this legacy path — it must be the byte-identical PlatformResponse as /api/public/platform.",
+      "request": { "method": "GET", "path": "/api/config/platform" } },
+
+    { "id": "openapi-json",
+      "why": "each side generates its own OpenAPI document from its own route table (huma vs the Java lockfile generator) — a structural DIFF here is expected and not a wire contract break by itself (harness spec §10's $schema owner question lives on this exact document); reported verbatim regardless.",
+      "request": { "method": "GET", "path": "/api/openapi.json" } },
+
+    { "id": "openapi-yaml",
+      "request": { "method": "GET", "path": "/api/openapi.yaml" } },
+
+    { "id": "q-openapi-alias",
+      "request": { "method": "GET", "path": "/q/openapi" } },
+
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "me", "request": { "method": "GET", "path": "/api/me" }, "expect": { "status": 200 } },
+
+    { "id": "me-applications",
+      "request": { "method": "GET", "path": "/api/me/applications" },
+      "unordered": ["/applications"] },
+
+    { "id": "me-clients",
+      "request": { "method": "GET", "path": "/api/me/clients" },
+      "unordered": ["/clients"] },
+
+    { "id": "me-client-by-id",
+      "request": { "method": "GET", "path": "/api/me/clients/${client.id}" } },
+
+    { "id": "me-client-unknown",
+      "request": { "method": "GET", "path": "/api/me/clients/cl_doesnotexist${run}" } },
+
+    { "id": "me-client-applications",
+      "request": { "method": "GET", "path": "/api/me/clients/${client.id}/applications" },
+      "unordered": ["/applications"] },
+
+    { "id": "me-client-applications-unknown",
+      "request": { "method": "GET", "path": "/api/me/clients/cl_doesnotexist${run}/applications" } },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity S3 Me Confinement Client", "identifier": "parity-s3-me-conf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-s3-me-conf-${run}@example.com", "name": "S3 Me Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}", "password": "Correct-Harness-Battery-2247" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role",
+      "why": "a role-less USER is refused outright by the profile-only gate (portal-apps.md §6) on /api/me/clients*, which would turn the confinement steps below into gate steps; one role makes them test confinement again.",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:messaging-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-s3-me-conf-${run}@example.com", "password": "Correct-Harness-Battery-2247" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-me",
+      "why": "accessibleClientIds must narrow to the caller's own client, not the whole platform (MeApi#whoami reads straight off the token/claims resolver).",
+      "request": { "method": "GET", "path": "/api/me" },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-me-client-own",
+      "request": { "method": "GET", "path": "/api/me/clients/${confClientId}" } },
+
+    { "id": "confinement-me-client-of-anchor-forbidden",
+      "why": "MeApi#accessibleClient: 404, not 403, for an inaccessible client (bff.md §8) — the same PR-3-style 404 the scheduled-jobs BFF confinement pins.",
+      "request": { "method": "GET", "path": "/api/me/clients/${client.id}" } },
+
+    { "id": "confinement-me-clients-list-narrowed",
+      "request": { "method": "GET", "path": "/api/me/clients" },
+      "unordered": ["/clients"] },
+
+    { "id": "logout", "request": { "method": "POST", "path": "/auth/logout" } },
+
+    { "id": "unauthenticated-me",
+      "why": "MeApi#requireAuthenticated: a null AuthContext is the platform's own UNAUTHENTICATED shape (bff.md §1: same envelope as every other route).",
+      "request": { "method": "GET", "path": "/api/me" } }
+  ]
+}

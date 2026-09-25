@@ -1,0 +1,197 @@
+{
+  "name": "applications: CRUD, client-config enable/disable, roles listing, provisioning, and confinement",
+  "why": "the application aggregate is platform-level (no client dimension) and gates provisioning/attach anchor-only while create/update/delete are gated by any-write-permission; a wire diff here would break the admin console's application management screen and the provisioning flow SDKs bootstrap against",
+  "covers": ["listApplications", "createApplication", "getApplicationByCode", "getApplication", "updateApplication",
+             "activateApplication", "deactivateApplication", "deleteApplication", "listApplicationClientConfigs",
+             "getApplicationClientConfig", "enableApplicationForClient", "disableApplicationForClient",
+             "listApplicationRoles", "attachApplicationServiceAccount", "provisionApplicationServiceAccount",
+             "provisionApplicationLoginClient", "createClient", "createPrincipal", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "create",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "parity-app-${run}", "name": "Parity App", "description": "parity harness",
+                             "website": "https://example.test/app", "type": "INTEGRATION" } },
+      "expect": { "status": 201 },
+      "capture": { "appId": "/id" } },
+
+    { "id": "get-by-id",
+      "request": { "method": "GET", "path": "/api/applications/${appId}" } },
+
+    { "id": "get-by-code",
+      "request": { "method": "GET", "path": "/api/applications/by-code/parity-app-${run}" } },
+
+    { "id": "list-by-type",
+      "request": { "method": "GET", "path": "/api/applications", "query": { "type": "INTEGRATION" } },
+      "unordered": ["/applications"] },
+
+    { "id": "list-active-true",
+      "request": { "method": "GET", "path": "/api/applications", "query": { "active": "true" } },
+      "unordered": ["/applications"] },
+
+    { "id": "update",
+      "request": { "method": "PUT", "path": "/api/applications/${appId}",
+                   "body": { "name": "Parity App Updated", "iconUrl": "https://example.test/icon.png" } } },
+
+    { "id": "get-after-update",
+      "request": { "method": "GET", "path": "/api/applications/${appId}" } },
+
+    { "id": "update-blank-name",
+      "request": { "method": "PUT", "path": "/api/applications/${appId}", "body": { "name": " " } } },
+
+    { "id": "deactivate",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/deactivate" } },
+
+    { "id": "list-active-false-after-deactivate",
+      "request": { "method": "GET", "path": "/api/applications", "query": { "active": "false" } },
+      "unordered": ["/applications"] },
+
+    { "id": "list-active-true-after-deactivate",
+      "request": { "method": "GET", "path": "/api/applications", "query": { "active": "true" } },
+      "unordered": ["/applications"] },
+
+    { "id": "activate",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/activate" } },
+
+    { "id": "activate-unknown",
+      "request": { "method": "POST", "path": "/api/applications/app_doesnotexist1/activate" } },
+
+    { "id": "roles-listing-empty",
+      "request": { "method": "GET", "path": "/api/applications/by-id/${appId}/roles" } },
+
+    { "id": "create-config-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity App Config Client", "identifier": "parity-appcfg-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "cfgClientId": "/id" } },
+
+    { "id": "client-config-missing",
+      "request": { "method": "GET", "path": "/api/applications/${appId}/clients/${cfgClientId}" } },
+
+    { "id": "clients-empty",
+      "request": { "method": "GET", "path": "/api/applications/${appId}/clients" } },
+
+    { "id": "enable-for-client",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/clients/${cfgClientId}/enable" } },
+
+    { "id": "client-config-after-enable",
+      "request": { "method": "GET", "path": "/api/applications/${appId}/clients/${cfgClientId}" },
+      "capture": { "clientConfigId": "/id" } },
+
+    { "id": "disable-for-client",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/clients/${cfgClientId}/disable" } },
+
+    { "id": "clients-after-disable",
+      "request": { "method": "GET", "path": "/api/applications/${appId}/clients" } },
+
+    { "id": "enable-unknown-client",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/clients/clt_doesnotexist1/enable" } },
+
+    { "id": "clients-of-unknown-application",
+      "request": { "method": "GET", "path": "/api/applications/app_doesnotexist1/clients" } },
+
+    { "id": "attach-service-account-before-provision",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/service-account",
+                   "body": { "serviceAccountId": "sac_doesnotexist1", "serviceAccountCode": "parity:x" } } },
+
+    { "id": "provision-service-account",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/provision-service-account" },
+      "expect": { "status": 201 },
+      "capture": { "provisionedPrincipalId": "/serviceAccount/principalId" } },
+
+    { "id": "provision-service-account-again",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/provision-service-account" } },
+
+    { "id": "get-after-provision",
+      "request": { "method": "GET", "path": "/api/applications/${appId}" } },
+
+    { "id": "provision-login-client-validation",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/provision-login-client",
+                   "body": { "redirectUris": [] } } },
+
+    { "id": "provision-login-client-unknown-app",
+      "request": { "method": "POST", "path": "/api/applications/app_doesnotexist1/provision-login-client",
+                   "body": { "redirectUris": ["https://a.example/cb"] } } },
+
+    { "id": "provision-login-client-public",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/provision-login-client",
+                   "body": { "redirectUris": ["https://a.example/cb"] } },
+      "expect": { "status": 201 } },
+
+    { "id": "get-after-login-client",
+      "request": { "method": "GET", "path": "/api/applications/${appId}" } },
+
+    { "id": "provision-login-client-confidential",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/provision-login-client",
+                   "body": { "redirectUris": ["https://b.example/cb"], "clientType": "CONFIDENTIAL" } },
+      "expect": { "status": 201 } },
+
+    { "id": "create-invalid-code",
+      "request": { "method": "POST", "path": "/api/applications", "body": { "code": "1bad", "name": "X" } } },
+
+    { "id": "create-missing-name",
+      "request": { "method": "POST", "path": "/api/applications", "body": { "code": "parity-noname-${run}" } } },
+
+    { "id": "create-for-duplicate",
+      "request": { "method": "POST", "path": "/api/applications", "body": { "code": "parity-dup-${run}", "name": "Dup Base" } },
+      "expect": { "status": 201 } },
+
+    { "id": "create-duplicate-code",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "PARITY-DUP-${run}", "name": "Dup Again" } } },
+
+    { "id": "create-doomed",
+      "request": { "method": "POST", "path": "/api/applications", "body": { "code": "parity-doomed-${run}", "name": "Doomed" } },
+      "expect": { "status": 201 },
+      "capture": { "doomedId": "/id" } },
+
+    { "id": "delete-doomed",
+      "request": { "method": "DELETE", "path": "/api/applications/${doomedId}" } },
+
+    { "id": "get-doomed-after-delete",
+      "request": { "method": "GET", "path": "/api/applications/${doomedId}" } },
+
+    { "id": "delete-doomed-again",
+      "request": { "method": "DELETE", "path": "/api/applications/${doomedId}" } },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Confinement Client", "identifier": "parity-appconf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-appconf-${run}@example.com", "name": "Parity Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-readonly-role",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["platform:admin-readonly"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-appconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-read-succeeds",
+      "request": { "method": "GET", "path": "/api/applications/${appId}" } },
+
+    { "id": "confinement-write-forbidden",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "parity-appconf-write-${run}", "name": "Should not be created" } } },
+
+    { "id": "confinement-anchor-only-forbidden",
+      "request": { "method": "POST", "path": "/api/applications/${appId}/service-account",
+                   "body": { "serviceAccountId": "sac_whatever", "serviceAccountCode": "x" } } }
+  ]
+}

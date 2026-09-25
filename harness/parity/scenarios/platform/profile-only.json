@@ -1,0 +1,110 @@
+{
+  "name": "profile-only gate: a role-less USER principal is confined to /auth/*, /portal/*, and GET /api/me",
+  "why": "portal-apps.md §6/§9.9: the gate is a filter installed immediately after authentication, ahead of every /api/* and /bff/* handler's own check — several of those handlers had no permission check at all before this filter existed, and an anchor-tier short-circuit used to let a zero-role ANCHOR user through almost everything. A wire diff here would mean the filter either over-blocks (breaking the profile page for every real user) or under-blocks (reopening the gap the spec closes).",
+  "covers": ["createPrincipal", "createApplication", "provisionApplicationServiceAccount"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-role-less-user",
+      "why": "a plain POST /api/principals with no roles field and no subsequent role assignment: role-less by construction (spec §6: 'role-less ⇔ type is USER and roles are empty and permissions are empty').",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-profile-only-${run}@example.com", "name": "Parity Profile Only",
+                             "scope": "CLIENT", "clientId": "${client.id}",
+                             "password": "Correct-Harness-Battery-5521" } },
+      "expect": { "status": 201 },
+      "capture": { "roleLessId": "/id" } },
+
+    { "id": "login-as-role-less-user",
+      "why": "the harness's cookie jar now carries this principal's session for every unauthenticated-looking step below (parity-harness.md §3: 'a jar per side').",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-profile-only-${run}@example.com", "password": "Correct-Harness-Battery-5521" } },
+      "expect": { "status": 200 } },
+
+    { "id": "gated-bff-roles",
+      "why": "spec §9.9: a role-less CLIENT-scoped user gets 403 NO_PLATFORM_ROLE (the exact envelope) on /bff/roles.",
+      "request": { "method": "GET", "path": "/bff/roles" } },
+
+    { "id": "gated-api-clients",
+      "why": "spec §9.9: same on /api/clients.",
+      "request": { "method": "GET", "path": "/api/clients" } },
+
+    { "id": "allowed-api-me",
+      "why": "spec §9.9/§6 allowlist: GET /api/me passes — the one /api/* route the profile page itself calls.",
+      "request": { "method": "GET", "path": "/api/me" },
+      "expect": { "status": 200 } },
+
+    { "id": "auth-me",
+      "why": "spec §6 allowlist: every /auth/* path passes.",
+      "request": { "method": "GET", "path": "/auth/me" },
+      "expect": { "status": 200 } },
+
+    { "id": "restore-admin-session",
+      "why": "hand the session back to the anchor admin before the anchor-role-less and confinement checks below, which need to create/assign roles.",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-role-less-anchor-domain-user",
+      "why": "spec §9.9: 'a role-less … ANCHOR user' also gets 403 — the gate is keyed on roles/permissions, never on anchor-domain membership (the pre-existing bug this filter closes: a zero-role ANCHOR user's tier short-circuit let it through almost everything). `scope: ANCHOR` (UserScopeDerivation) needs an anchor-domain email; `example.com` is `${admin.email}`'s own domain (`parity-admin@example.com`, parity-harness.md §2), the anchor domain the bootstrap admin lives in.",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-profile-only-anchor-${run}@example.com", "name": "Parity Profile Only Anchor",
+                             "scope": "ANCHOR", "password": "Correct-Harness-Battery-6631" } },
+      "expect": { "status": 201 },
+      "capture": { "roleLessAnchorId": "/id" } },
+
+    { "id": "login-as-role-less-anchor-user",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-profile-only-anchor-${run}@example.com", "password": "Correct-Harness-Battery-6631" } },
+      "expect": { "status": 200 } },
+
+    { "id": "gated-bff-roles-anchor",
+      "why": "spec §9.9: the role-less ANCHOR user, not just the role-less CLIENT one, is refused — the anchor-tier short-circuit this filter closes.",
+      "request": { "method": "GET", "path": "/bff/roles" } },
+
+    { "id": "gated-api-clients-anchor",
+      "request": { "method": "GET", "path": "/api/clients" } },
+
+    { "id": "allowed-api-me-anchor",
+      "request": { "method": "GET", "path": "/api/me" },
+      "expect": { "status": 200 } },
+
+    { "id": "restore-admin-session-again",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-app-for-service-account",
+      "why": "spec §6: 'Pass through untouched: … SERVICE principals' — a client_credentials access token's `type` claim is SERVICE (auth-core.md), never gated here (it authorizes through its applications claim, not roles); this pins that the filter does not accidentally start gating service/application bearers. `provisionApplicationServiceAccount` (below) is the only way to mint a client_credentials-capable OAuth client — a plain POST /api/oauth-clients has no linked principal and the token endpoint refuses it (OAuthTokenApi: 'Client is not configured for this grant').",
+      "request": { "method": "POST", "path": "/api/applications",
+                   "body": { "code": "parity-profile-only-app-${run}", "name": "Parity Profile Only App ${run}", "type": "APPLICATION" } },
+      "expect": { "status": 201 },
+      "capture": { "serviceAppId": "/id" } },
+
+    { "id": "provision-service-account",
+      "request": { "method": "POST", "path": "/api/applications/${serviceAppId}/provision-service-account" },
+      "expect": { "status": 201 },
+      "capture": { "serviceClientId": "/serviceAccount/oauthClient/clientId", "serviceClientSecret": "/serviceAccount/oauthClient/clientSecret" } },
+
+    { "id": "service-token",
+      "request": { "method": "POST", "path": "/oauth/token",
+                   "form": { "grant_type": "client_credentials", "client_id": "${serviceClientId}", "client_secret": "${serviceClientSecret}" } },
+      "expect": { "status": 200 },
+      "capture": { "serviceToken": "/access_token" } },
+
+    { "id": "service-passes-gated-route",
+      "why": "a SERVICE bearer reaching PAST the profile-only gate — proof the gate is principal-type-scoped, not path-scoped. Since permissions-from-roles.md (2026-09-13) a service account holds exactly its role's permissions, so Java answers this with the ROUTE's own 403 PERMISSION_REQUIRED (platform:application-service has no client:view), never the gate's NO_PLATFORM_ROLE — which is the proof; Go's anchor bypass still answers 200. Java-first, allow-listed. (An empty event-type sync as the service actor would have been the positive case, but it 500s AUDIT_WRITE on both sides — docs/backlog.md.)",
+      "request": { "method": "GET", "path": "/api/clients", "auth": "${serviceToken}", "headers": { "Cookie": "" } } },
+
+    { "id": "unauthenticated-passes-through",
+      "why": "spec §6: 'Pass through untouched: unauthenticated requests (handlers apply their own checks)' — no bearer, no cookie; the 401 below comes from the route's own authenticator requirement, not NO_PLATFORM_ROLE.",
+      "request": { "method": "GET", "path": "/api/clients", "headers": { "Cookie": "" } } },
+
+    { "id": "admin-passes-gated-route",
+      "why": "the anchor admin (roles non-empty) is never role-less — sanity check that the gate above was specific to the role-less principal, not a blanket refusal of /bff/roles.",
+      "request": { "method": "GET", "path": "/bff/roles" },
+      "expect": { "status": 200 } }
+  ]
+}

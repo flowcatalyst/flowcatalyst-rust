@@ -1,0 +1,78 @@
+{
+  "name": "login-attempts: anchor-only read, cursor pagination, filters, anchor confinement",
+  "why": "login-attempt is a single read-only, anchor-only route (spec §2) over a keyset-cursor page — a wire diff here would be a diagnostic screen silently showing the wrong attempts or the wrong next-page token.",
+  "covers": ["listLoginAttempts", "createPrincipal"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "seed-a-failed-attempt",
+      "why": "a wrong password on a real account is the cheapest way to put a real row in iam_login_attempts without touching mail-carried flows.",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "definitely-the-wrong-password" } } },
+
+    { "id": "re-login-as-admin",
+      "why": "the failed attempt above did not disturb the admin session cookie (login failures never set fc_session), but re-authenticating keeps this scenario independent of that assumption.",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-default",
+      "request": { "method": "GET", "path": "/api/login-attempts" } },
+
+    { "id": "list-filter-attempt-type",
+      "request": { "method": "GET", "path": "/api/login-attempts", "query": { "attemptType": "USER_LOGIN" } } },
+
+    { "id": "list-filter-outcome",
+      "request": { "method": "GET", "path": "/api/login-attempts", "query": { "outcome": "FAILURE" } } },
+
+    { "id": "list-filter-identifier",
+      "request": { "method": "GET", "path": "/api/login-attempts", "query": { "identifier": "${admin.email}" } } },
+
+    { "id": "list-filter-date-range",
+      "request": { "method": "GET", "path": "/api/login-attempts",
+                   "query": { "dateFrom": "2020-01-01T00:00:00Z", "dateTo": "2999-01-01T00:00:00Z" } } },
+
+    { "id": "list-page-size-1",
+      "request": { "method": "GET", "path": "/api/login-attempts", "query": { "pageSize": "1" } },
+      "capture": { "nextCursor": "/nextCursor" } },
+
+    { "id": "list-next-page",
+      "request": { "method": "GET", "path": "/api/login-attempts", "query": { "pageSize": "1", "after": "${nextCursor}" } } },
+
+    { "id": "list-page-size-out-of-range",
+      "why": "spec §3 open question 3: pageSize outside 1..200 falls back to the default rather than clamping.",
+      "request": { "method": "GET", "path": "/api/login-attempts", "query": { "pageSize": "0" } } },
+
+    { "id": "list-page-size-not-an-integer",
+      "request": { "method": "GET", "path": "/api/login-attempts", "query": { "pageSize": "not-a-number" } } },
+
+    { "id": "list-malformed-cursor",
+      "why": "spec §3 open question 4: this route's policy for a malformed cursor is to ignore it (first page), unlike the audit-log list's 400 CURSOR.",
+      "request": { "method": "GET", "path": "/api/login-attempts", "query": { "after": "not-a-real-cursor" } } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Login Attempts Confinement Client", "identifier": "parity-la-conf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "create-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-la-conf-${run}@example.com", "name": "Parity Login Attempts Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 } },
+
+    { "id": "login-as-b",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-la-conf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-list",
+      "why": "the only route on this aggregate is anchor-only, no per-tenant filter — a non-anchor caller must be refused entirely, not shown an empty or filtered page.",
+      "request": { "method": "GET", "path": "/api/login-attempts" } }
+  ]
+}

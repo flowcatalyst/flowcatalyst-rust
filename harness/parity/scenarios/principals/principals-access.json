@@ -1,0 +1,199 @@
+{
+  "name": "principals: client-access grants, client association, developer credential, application access, SDK endpoints",
+  "why": "the secondary principal surfaces (partner client grants, developer credential issuance, application entitlement) each carry their own business-rule refusals and are exercised far less than the core CRUD, so a wire diff here is easy to miss without a dedicated scenario",
+  "covers": ["listPrincipalClientAccess", "grantPrincipalClientAccess", "revokePrincipalClientAccess",
+             "setPrincipalClientAssociation", "setPrincipalDeveloperCredential", "revokePrincipalDeveloperCredential",
+             "listPrincipalApplicationAccess", "assignPrincipalApplicationAccess", "listPrincipalAvailableApplications",
+             "checkPrincipalEmailDomain", "listDeveloperUsers", "createUser", "bulkImportUsers", "syncUsers",
+             "createClient"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Access Second Client", "identifier": "parity-pacc-b-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientBId": "/id" } },
+
+    { "id": "create-partner-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-partner-${run}@example.test", "name": "Parity Partner",
+                             "scope": "PARTNER", "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "partnerId": "/id" } },
+
+    { "id": "grant-client-access",
+      "request": { "method": "POST", "path": "/api/principals/${partnerId}/client-access",
+                   "body": { "clientId": "${clientBId}" } },
+      "expect": { "status": 200 },
+      "capture": { "grantId": "/id" } },
+
+    { "id": "list-client-access",
+      "request": { "method": "GET", "path": "/api/principals/${partnerId}/client-access" } },
+
+    { "id": "grant-client-access-again-conflict",
+      "why": "documented business rule: a second grant of the same (principal, client) pair is GRANT_EXISTS",
+      "request": { "method": "POST", "path": "/api/principals/${partnerId}/client-access",
+                   "body": { "clientId": "${clientBId}" } } },
+
+    { "id": "revoke-client-access",
+      "request": { "method": "DELETE", "path": "/api/principals/${partnerId}/client-access/${clientBId}" },
+      "expect": { "status": 204 } },
+
+    { "id": "revoke-client-access-again",
+      "why": "documented business rule: revoking a grant that no longer exists is Grant_NOT_FOUND (404)",
+      "request": { "method": "DELETE", "path": "/api/principals/${partnerId}/client-access/${clientBId}" } },
+
+    { "id": "grant-client-access-unknown-client",
+      "request": { "method": "POST", "path": "/api/principals/${partnerId}/client-access",
+                   "body": { "clientId": "clt_doesnotexist99" } } },
+
+    { "id": "create-association-target",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-assoc-${run}@example.test", "name": "Parity Association Target",
+                             "scope": "CLIENT", "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "assocId": "/id" } },
+
+    { "id": "set-client-association",
+      "request": { "method": "PUT", "path": "/api/principals/${assocId}/client-association",
+                   "body": { "clientId": "${clientBId}", "mode": "CHANGE_CLIENT" } },
+      "expect": { "status": 200 } },
+
+    { "id": "set-client-association-missing-mode",
+      "why": "documented validation: a specific clientId with no recognised mode is 400 MODE_REQUIRED",
+      "request": { "method": "PUT", "path": "/api/principals/${assocId}/client-association",
+                   "body": { "clientId": "${client.id}" } } },
+
+    { "id": "create-developer-target",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-dev-${run}@example.test", "name": "Parity Developer",
+                             "scope": "CLIENT", "clientId": "${client.id}" } },
+      "expect": { "status": 201 },
+      "capture": { "devId": "/id" } },
+
+    { "id": "grant-developer-role",
+      "request": { "method": "PUT", "path": "/api/principals/${devId}/roles",
+                   "body": { "roles": ["platform:developer"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "set-developer-credential",
+      "request": { "method": "POST", "path": "/api/principals/${devId}/developer-credential" },
+      "expect": { "status": 200 },
+      "capture": { "devClientSecret": "/clientSecret" } },
+
+    { "id": "revoke-developer-credential",
+      "request": { "method": "DELETE", "path": "/api/principals/${devId}/developer-credential" },
+      "expect": { "status": 204 } },
+
+    { "id": "set-developer-credential-not-a-developer",
+      "why": "documented business rule: a principal without platform:developer cannot mint a developer credential",
+      "request": { "method": "POST", "path": "/api/principals/${assocId}/developer-credential" } },
+
+    { "id": "list-developer-users",
+      "request": { "method": "GET", "path": "/api/principals/developer-users" },
+      "unordered": ["/principals"] },
+
+    { "id": "list-available-applications",
+      "request": { "method": "GET", "path": "/api/principals/${devId}/available-applications" } },
+
+    { "id": "list-application-access",
+      "request": { "method": "GET", "path": "/api/principals/${devId}/application-access" } },
+
+    { "id": "assign-application-access",
+      "request": { "method": "PUT", "path": "/api/principals/${devId}/application-access",
+                   "body": { "applicationIds": ["${app.id}"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "check-email-domain-new",
+      "request": { "method": "GET", "path": "/api/principals/check-email-domain",
+                   "query": { "email": "parity-checknew-${run}@example.test" } } },
+
+    { "id": "check-email-domain-existing",
+      "request": { "method": "GET", "path": "/api/principals/check-email-domain",
+                   "query": { "email": "parity-dev-${run}@example.test" } } },
+
+    { "id": "check-email-domain-missing",
+      "request": { "method": "GET", "path": "/api/principals/check-email-domain" } },
+
+    { "id": "check-email-domain-invalid",
+      "request": { "method": "GET", "path": "/api/principals/check-email-domain", "query": { "email": "not-an-email" } } },
+
+    { "id": "create-user-sdk",
+      "request": { "method": "POST", "path": "/api/principals/users",
+                   "body": { "email": "parity-sdkuser-${run}@example.test", "name": "Parity SDK User",
+                             "password": "Correct-Harness-Battery-2381", "scope": "CLIENT", "clientId": "${client.id}" } },
+      "capture": { "sdkUserId": "/id" } },
+
+    { "id": "create-user-no-invite",
+      "why": "app-managed-invitations §1: sendInvitation:false on a passwordless createUser suppresses all platform mail; without returnInviteLink the response carries no inviteLink key",
+      "request": { "method": "POST", "path": "/api/principals/users",
+                   "body": { "email": "parity-noinvite-${run}@example.test", "name": "Parity No Invite User",
+                             "scope": "CLIENT", "clientId": "${client.id}", "sendInvitation": false } },
+      "expect": { "status": 200 },
+      "capture": { "noInviteUserId": "/id" } },
+
+    { "id": "create-user-return-invite-link",
+      "why": "app-managed-invitations §1: returnInviteLink on a passwordless createUser mints the 72h INVITE token and returns it as inviteLink; the token is a random value, captured the way portal.json's inviteUrl/inviteToken pair is (the auto-capture in Runner#autoCapture already masks the whole inviteLink field since its name matches .*Link, so the extra explicit capture here is only to pull the raw token out for reuse)",
+      "request": { "method": "POST", "path": "/api/principals/users",
+                   "body": { "email": "parity-returninvite-${run}@example.test", "name": "Parity Return Invite User",
+                             "scope": "CLIENT", "clientId": "${client.id}", "returnInviteLink": true } },
+      "expect": { "status": 200 },
+      "capture": { "returnInviteUserId": "/id", "returnInviteLink": "/inviteLink", "returnInviteToken": "param:/inviteLink?token" } },
+
+    { "id": "bulk-import-users",
+      "request": { "method": "POST", "path": "/api/principals/bulk-import",
+                   "body": { "clientId": "${client.id}",
+                             "users": [ { "name": "Parity Bulk One", "email": "parity-bulk1-${run}@example.test", "roles": [] },
+                                        { "name": "Parity Bulk Two", "email": "parity-bulk2-${run}@example.test", "roles": [] } ] } },
+      "expect": { "status": 200 } },
+
+    { "id": "bulk-import-missing-client",
+      "request": { "method": "POST", "path": "/api/principals/bulk-import",
+                   "body": { "users": [ { "name": "X", "email": "parity-bulknoclient-${run}@example.test", "roles": [] } ] } } },
+
+    { "id": "bulk-import-no-rows",
+      "request": { "method": "POST", "path": "/api/principals/bulk-import",
+                   "body": { "clientId": "${client.id}", "users": [] } } },
+
+    { "id": "sync-users",
+      "request": { "method": "POST", "path": "/api/principals/sync",
+                   "body": { "principals": [ { "email": "parity-sync-${run}@example.test", "name": "Parity Sync User",
+                                                "roles": [], "active": true } ] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-second-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Access Confinement Client", "identifier": "parity-pacc-c-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientCId": "/id" } },
+
+    { "id": "confinement-second-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-pacc-c-${run}@example.test", "name": "Parity Access C Admin",
+                             "scope": "CLIENT", "clientId": "${clientCId}", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "principalCId": "/id" } },
+
+    { "id": "confinement-grant-client-admin-role",
+      "request": { "method": "PUT", "path": "/api/principals/${principalCId}/roles",
+                   "body": { "roles": ["platform:client-admin"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-pacc-c-${run}@example.test", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-application-access-out-of-scope",
+      "why": "PR-4: the application-access sub-route is client-scoped the same way the by-id read is (spec, ledger PR-4) — an out-of-scope target is the same not-found a missing id would give",
+      "request": { "method": "GET", "path": "/api/principals/${devId}/application-access" } },
+
+    { "id": "confinement-client-access-anchor-only",
+      "why": "listPrincipalClientAccess and grantPrincipalClientAccess are anchor-only regardless of tenant (Checks.requireAnchor) — the refusal here is a tier check, not a scope check",
+      "request": { "method": "GET", "path": "/api/principals/${partnerId}/client-access" } }
+  ]
+}

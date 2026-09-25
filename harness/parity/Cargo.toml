@@ -1,0 +1,34 @@
+[package]
+name = "fc-parity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "API parity harness: the same scenarios against Go's and Rust's fc-server on cloned seed databases"
+publish = false
+
+[[bin]]
+name = "fc-parity"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+anyhow = { workspace = true }
+regex = { workspace = true }
+indexmap = { workspace = true, features = ["serde"] }
+url = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+hex = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4.5", features = ["derive", "env"] }
+base64 = "0.22"
+sha1 = "0.10"
+data-encoding = "2"
+rsa = { version = "0.9", features = ["pem"] }
+p256 = { version = "0.13", features = ["ecdsa", "std"] }

@@ -1,0 +1,107 @@
+{
+  "name": "config: single-property get/set/delete, GLOBAL vs CLIENT coordinates, secret masking, and refusal without CONFIG_VIEW",
+  "why": "the SPA's per-property config editor and every app reading its own settings go through this coordinate; a wire diff in the query-clientId-overrides-body-clientId rule (spec §4) or the SECRET masking rule would leak a secret to a non-anchor or silently drop a client-scoped write",
+  "covers": ["getPlatformConfigProperty", "setPlatformConfigProperty", "deletePlatformConfigProperty",
+             "createClient", "createPrincipal", "createRole", "assignPrincipalRoles"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 },
+      "capture": { "sess": "cookie:fc_session" } },
+
+    { "id": "set-global",
+      "request": { "method": "PUT", "path": "/api/config/parity-${run}/section-a/prop-one",
+                   "body": { "value": "hello", "description": "d" } },
+      "expect": { "status": 200 },
+      "capture": { "configId": "/id" } },
+
+    { "id": "get-global",
+      "request": { "method": "GET", "path": "/api/config/parity-${run}/section-a/prop-one" } },
+
+    { "id": "set-global-again-updates-in-place",
+      "request": { "method": "PUT", "path": "/api/config/parity-${run}/section-a/prop-one", "body": { "value": "hello again" } } },
+
+    { "id": "get-global-after-update",
+      "request": { "method": "GET", "path": "/api/config/parity-${run}/section-a/prop-one" } },
+
+    { "id": "set-secret",
+      "request": { "method": "PUT", "path": "/api/config/parity-${run}/section-a/secret-one",
+                   "body": { "value": "s3kret", "valueType": "SECRET" } },
+      "capture": { "secretConfigId": "/id" } },
+
+    { "id": "get-secret-as-anchor-unmasked",
+      "why": "an anchor caller always sees the real value (spec §4); this is the baseline the confinement step below contrasts against",
+      "request": { "method": "GET", "path": "/api/config/parity-${run}/section-a/secret-one" } },
+
+    { "id": "set-client-scoped",
+      "request": { "method": "PUT", "path": "/api/config/parity-${run}/section-a/prop-one", "query": { "clientId": "${client.id}" },
+                   "body": { "value": "client value" } },
+      "capture": { "clientScopedConfigId": "/id" } },
+
+    { "id": "get-client-scoped",
+      "request": { "method": "GET", "path": "/api/config/parity-${run}/section-a/prop-one", "query": { "clientId": "${client.id}" } } },
+
+    { "id": "get-global-still-unaffected-by-client-scoped-write",
+      "request": { "method": "GET", "path": "/api/config/parity-${run}/section-a/prop-one" } },
+
+    { "id": "set-missing-value",
+      "request": { "method": "PUT", "path": "/api/config/parity-${run}/section-a/prop-two", "body": { "description": "no value" } } },
+
+    { "id": "get-not-found",
+      "request": { "method": "GET", "path": "/api/config/parity-${run}/section-a/never-set" } },
+
+    { "id": "delete-global",
+      "request": { "method": "DELETE", "path": "/api/config/parity-${run}/section-a/prop-one" } },
+
+    { "id": "get-after-delete",
+      "request": { "method": "GET", "path": "/api/config/parity-${run}/section-a/prop-one" } },
+
+    { "id": "delete-again-is-idempotent",
+      "request": { "method": "DELETE", "path": "/api/config/parity-${run}/section-a/prop-one" } },
+
+    { "id": "confinement-create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Config Confinement Client", "identifier": "parity-cfgconf-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "confClientId": "/id" } },
+
+    { "id": "confinement-create-role",
+      "request": { "method": "POST", "path": "/api/roles",
+                   "body": { "applicationCode": "parity", "roleName": "cfg-reader-${run}", "displayName": "Config Reader",
+                             "clientManaged": false } },
+      "expect": { "status": 201 } },
+
+    { "id": "confinement-create-principal",
+      "request": { "method": "POST", "path": "/api/principals",
+                   "body": { "email": "parity-cfgconf-${run}@example.com", "name": "Parity Config Confinement User",
+                             "scope": "CLIENT", "clientId": "${confClientId}",
+                             "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 201 },
+      "capture": { "confPrincipalId": "/id" } },
+
+    { "id": "confinement-assign-role",
+      "request": { "method": "PUT", "path": "/api/principals/${confPrincipalId}/roles",
+                   "body": { "roles": ["parity:cfg-reader-${run}"] } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "parity-cfgconf-${run}@example.com", "password": "Correct-Harness-Battery-2381" } },
+      "expect": { "status": 200 } },
+
+    { "id": "confinement-read-secret-is-masked",
+      "why": "no grant (Go) and no CONFIG_VIEW (Java): refused on both sides; masking for a view-only holder is pinned in PlatformConfigApiTest",
+      "request": { "method": "GET", "path": "/api/config/parity-${run}/section-a/secret-one" } },
+
+    { "id": "confinement-write-forbidden",
+      "request": { "method": "PUT", "path": "/api/config/parity-${run}/section-a/secret-one", "body": { "value": "should not apply" } } },
+
+    { "id": "confinement-delete-forbidden",
+      "request": { "method": "DELETE", "path": "/api/config/parity-${run}/section-a/secret-one" } },
+
+    { "id": "confinement-read-other-app-forbidden",
+      "why": "refused on both sides for the same reason as the steps above",
+      "request": { "method": "GET", "path": "/api/config/parity-other-${run}/section-a/prop-one" } }
+  ]
+}

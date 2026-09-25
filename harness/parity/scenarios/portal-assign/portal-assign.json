@@ -1,0 +1,114 @@
+{
+  "name": "portal-assign: assign-unassigned, the unassigned filter, unassignedUsers (portal-apps.md §3.2a, §4.2, §4.4, §9 scenario 9)",
+  "why": "the gap-closer for identities that hold no portal app: once their OAuth client is linked to an app the login gate refuses them. One transaction grants the app to every unassigned identity (status untouched, holders of another app untouched); the list reports the count only for a given client; the filter conflicts with portalAppCode.",
+  "covers": ["assignUnassignedPortalUsers", "listPortalApps", "listPortalUsers", "ensurePortalUser", "deactivatePortalUser",
+             "createPortalApp", "updatePortalApp", "createClient"],
+  "steps": [
+    { "id": "login",
+      "request": { "method": "POST", "path": "/auth/login",
+                   "body": { "email": "${admin.email}", "password": "${admin.password}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "create-client",
+      "request": { "method": "POST", "path": "/api/clients",
+                   "body": { "name": "Parity Portal Assign Client", "identifier": "parity-passign-${run}" } },
+      "expect": { "status": 201 },
+      "capture": { "clientId": "/id" } },
+
+    { "id": "create-app-a",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "assign-a-${run}", "name": "Assign A", "clientType": "PUBLIC",
+                             "redirectUris": ["https://assign-a-${run}.example.com/callback"] } },
+      "expect": { "status": 201 },
+      "capture": { "appA": "/portalApp/id" } },
+
+    { "id": "create-app-b",
+      "request": { "method": "POST", "path": "/api/portal-apps",
+                   "body": { "clientId": "${clientId}", "code": "assign-b-${run}", "name": "Assign B", "clientType": "PUBLIC",
+                             "redirectUris": ["https://assign-b-${run}.example.com/callback"] } },
+      "expect": { "status": 201 },
+      "capture": { "appB": "/portalApp/id" } },
+
+    { "id": "ensure-unassigned-1",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${clientId}", "email": "passign-one-${run}@example.com", "name": "Assign One",
+                             "returnInviteLink": true } },
+      "expect": { "status": 200 },
+      "capture": { "user1": "/identityId" } },
+
+    { "id": "ensure-unassigned-2",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${clientId}", "email": "passign-two-${run}@example.com", "name": "Assign Two",
+                             "returnInviteLink": true } },
+      "expect": { "status": 200 },
+      "capture": { "user2": "/identityId" } },
+
+    { "id": "suspend-unassigned-2",
+      "request": { "method": "POST", "path": "/api/portal-users/${user2}/deactivate",
+                   "body": { "clientId": "${clientId}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "ensure-holder-of-b",
+      "request": { "method": "POST", "path": "/api/portal-users",
+                   "body": { "clientId": "${clientId}", "email": "passign-bee-${run}@example.com", "name": "Assign Bee",
+                             "portalAppCode": "assign-b-${run}", "returnInviteLink": true } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-apps-unassigned-count",
+      "why": "unassignedUsers = 2: the two identities with no grant, the suspended one included.",
+      "request": { "method": "GET", "path": "/api/portal-apps", "query": { "clientId": "${clientId}" } },
+      "expect": { "status": 200 },
+      "unordered": ["/portalApps"] },
+
+    { "id": "list-apps-without-client-id",
+      "why": "unassignedUsers is present only when clientId is given (anchor listing every client's apps).",
+      "request": { "method": "GET", "path": "/api/portal-apps" },
+      "expect": { "status": 200 },
+      "unordered": ["/portalApps"] },
+
+    { "id": "list-users-unassigned",
+      "request": { "method": "GET", "path": "/api/portal-users", "query": { "clientId": "${clientId}", "unassigned": "true" } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-users-unassigned-with-app-code",
+      "why": "unassigned + portalAppCode -> 400 FILTER_CONFLICT.",
+      "request": { "method": "GET", "path": "/api/portal-users",
+                   "query": { "clientId": "${clientId}", "unassigned": "true", "portalAppCode": "assign-a-${run}" } },
+      "expect": { "status": 400 } },
+
+    { "id": "assign-unassigned-to-a",
+      "request": { "method": "POST", "path": "/api/portal-apps/${appA}/assign-unassigned",
+                   "body": { "clientId": "${clientId}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-users-after-assign",
+      "why": "both unassigned identities now hold A (the suspended one still SUSPENDED); the B holder does not hold A.",
+      "request": { "method": "GET", "path": "/api/portal-users", "query": { "clientId": "${clientId}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "list-apps-after-assign",
+      "request": { "method": "GET", "path": "/api/portal-apps", "query": { "clientId": "${clientId}" } },
+      "expect": { "status": 200 },
+      "unordered": ["/portalApps"] },
+
+    { "id": "assign-again-assigns-none",
+      "request": { "method": "POST", "path": "/api/portal-apps/${appA}/assign-unassigned",
+                   "body": { "clientId": "${clientId}" } },
+      "expect": { "status": 200 } },
+
+    { "id": "deactivate-app-b",
+      "request": { "method": "PUT", "path": "/api/portal-apps/${appB}",
+                   "body": { "clientId": "${clientId}", "active": false } },
+      "expect": { "status": 200 } },
+
+    { "id": "assign-to-inactive-app",
+      "request": { "method": "POST", "path": "/api/portal-apps/${appB}/assign-unassigned",
+                   "body": { "clientId": "${clientId}" } },
+      "expect": { "status": 400 } },
+
+    { "id": "assign-missing-client-id",
+      "request": { "method": "POST", "path": "/api/portal-apps/${appA}/assign-unassigned",
+                   "body": { "clientId": "" } },
+      "expect": { "status": 400 } }
+  ]
+}
