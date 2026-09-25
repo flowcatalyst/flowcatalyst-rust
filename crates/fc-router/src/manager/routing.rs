@@ -40,6 +40,14 @@ fn broker_scope_key(queue_identifier: &str, broker_id: &str) -> String {
     format!("{queue_identifier}\0{broker_id}")
 }
 
+/// Bound on one ack/nack broker call made by a callback. A broker call that
+/// never returns would otherwise pin the pool worker — and, for an ordered
+/// group, every message behind it — indefinitely. An ack that times out is
+/// treated like a failed ack (the broker id goes to pending-delete, so its
+/// redelivery is deleted on sight); a nack that times out leaves the message
+/// to the broker's own visibility timeout. Go sets no such bound.
+const BROKER_OP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
 /// redelivery), performs the broker operation, then cleans up tracking.
@@ -208,7 +216,12 @@ impl MessageCallback for QueueMessageCallback {
             }
         };
 
-        if let Err(e) = self.consumer().ack(&handle).await {
+        let acked =
+            match tokio::time::timeout(BROKER_OP_TIMEOUT, self.consumer().ack(&handle)).await {
+                Ok(r) => r.map_err(|e| e.to_string()),
+                Err(_) => Err(format!("ack did not complete within {BROKER_OP_TIMEOUT:?}")),
+            };
+        if let Err(e) = acked {
             if let Some(ref bid) = broker_id {
                 warn!(
                     broker_message_id = %bid,
@@ -252,7 +265,22 @@ impl MessageCallback for QueueMessageCallback {
             }
         };
         if let Some(handle) = handle {
-            let _ = self.consumer().nack(&handle, delay_seconds).await;
+            match tokio::time::timeout(
+                BROKER_OP_TIMEOUT,
+                self.consumer().nack(&handle, delay_seconds),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    debug!(app_message_id = %self.app_message_id, error = %e, "NACK failed; the broker redelivers at its own timeout")
+                }
+                Err(_) => warn!(
+                    app_message_id = %self.app_message_id,
+                    "NACK did not complete within {:?}; the broker redelivers at its own timeout",
+                    BROKER_OP_TIMEOUT
+                ),
+            }
         }
 
         // Clean up tracking AFTER the broker operation
@@ -1247,6 +1275,42 @@ mod callback_drop_tests {
         assert!(e.last_retry_at.is_some());
         drop(e);
         cb.ack().await;
+    }
+
+    /// A broker ack that never returns is bounded: the callback gives up
+    /// after BROKER_OP_TIMEOUT, books the broker id for pending-delete, and
+    /// clears tracking, instead of pinning the worker for ever.
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_ack_is_bounded_and_booked_for_pending_delete() {
+        struct HangingAck;
+        #[async_trait]
+        impl QueueConsumer for HangingAck {
+            fn identifier(&self) -> &str {
+                "hang"
+            }
+            async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> QueueResult<()> {
+                std::future::pending().await
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+                std::future::pending().await
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            async fn stop(&self) {}
+        }
+        let (mut cb, in_pipeline, _app) = build_callback(Arc::new(RecordingConsumer::default()));
+        cb.origin = Arc::new(HangingAck);
+        let pending = cb.pending_delete.clone();
+        cb.ack().await; // paused clock auto-advances past the timeout
+        assert!(in_pipeline.is_empty());
+        assert_eq!(pending.len(), 1);
     }
 
     /// Regression: every pool's mediator the manager builds must record
