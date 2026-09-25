@@ -121,6 +121,17 @@ impl PlatformError {
         }
     }
 
+    /// A 403 with a specific code (Go's `usecase.Authorization`, rendered
+    /// by shared/httperror/httperror.go:55-80 as `{"error": code, "message"}`).
+    pub fn forbidden_code(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Coded {
+            status: StatusCode::FORBIDDEN,
+            code: code.into(),
+            message: message.into(),
+            details: Default::default(),
+        }
+    }
+
     pub fn validation(message: impl Into<String>) -> Self {
         Self::Validation {
             message: message.into(),

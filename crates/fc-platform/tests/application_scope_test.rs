@@ -669,11 +669,11 @@ fn token(app: &TestApp, principal: &Principal) -> String {
         .expect("token")
 }
 
-/// A removeUnlisted sweep needs only the sync permission and the application,
-/// as in Java (SyncDispatchPools.java:52): no anchor requirement on top.
+/// Dispatch pools are platform-global, so a removeUnlisted sweep needs anchor
+/// (or the super-admin wildcard) on top of the sync permission, as in Go.
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn dispatch_pool_sweep_needs_only_the_sync_permission() {
+async fn dispatch_pool_sweep_needs_anchor() {
     use fc_platform::role::entity::{permissions, AuthRole};
 
     let app = TestApp::setup().await;
@@ -711,15 +711,14 @@ async fn dispatch_pool_sweep_needs_only_the_sync_permission() {
     };
 
     assert_eq!(sync(syncer_token.clone(), false).await, StatusCode::OK);
-    assert_eq!(sync(syncer_token, true).await, StatusCode::OK);
+    assert_eq!(sync(syncer_token, true).await, StatusCode::FORBIDDEN);
 
-    // Without the sync permission the sweep is still refused.
-    let mut other = Principal::new_user("sweep-none@flowcatalyst.test", UserScope::Anchor);
-    other.roles = vec![];
+    let mut anchor = Principal::new_user("sweep-anchor@flowcatalyst.test", UserScope::Anchor);
+    anchor.roles = vec![RoleAssignment::new(role.name.clone())];
     app.repos
         .principal_repo
-        .insert(&other)
+        .insert(&anchor)
         .await
-        .expect("insert principal");
-    assert_eq!(sync(token(&app, &other), true).await, StatusCode::FORBIDDEN);
+        .expect("insert anchor");
+    assert_eq!(sync(token(&app, &anchor), true).await, StatusCode::OK);
 }
