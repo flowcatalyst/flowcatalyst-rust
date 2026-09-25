@@ -623,6 +623,90 @@ mod tests {
         );
     }
 
+    fn document() -> Document {
+        Document {
+            pool: "edge".into(),
+            functions: vec![entry()],
+            unload: vec![UnloadEntry {
+                address: "a.b.old".into(),
+                version: 2,
+            }],
+            public_routes: vec![PublicRouteEntry {
+                hostname: "a.example.com".into(),
+                path_prefix: "/".into(),
+                address: "a.b.c".into(),
+                alias_prefixes: vec!["qa".into()],
+            }],
+        }
+    }
+
+    /// The ETag is opaque to the hosts: what matters is that the same state
+    /// always gives the same one and any change gives another.
+    #[test]
+    fn the_same_document_gives_the_same_etag_and_any_change_another() {
+        let tag = |d: &Document| etag(&d.to_bytes());
+        let base = tag(&document());
+        assert_eq!(tag(&document()), base, "the same state, the same ETag");
+
+        type Change = fn(&mut Document);
+        let changes: &[(&str, Change)] = &[
+            ("pool", |d| d.pool = "other".into()),
+            ("address", |d| d.functions[0].address = "a.b.d".into()),
+            ("functionId", |d| {
+                d.functions[0].function_id = "fnc_2".into()
+            }),
+            ("versionId", |d| d.functions[0].version_id = "fnv_2".into()),
+            ("version", |d| d.functions[0].version = 2),
+            ("role", |d| d.functions[0].role = Role::Candidate),
+            ("mode", |d| d.functions[0].mode = "warm"),
+            ("digest", |d| d.functions[0].digest = "sha256:01".into()),
+            ("artifactRef", |d| {
+                d.functions[0].artifact_ref = "oci://y".into()
+            }),
+            ("signatureBundle", |d| {
+                d.functions[0].signature_bundle = None
+            }),
+            ("manifest", |d| {
+                d.functions[0].manifest = JsonNode::parse(r#"{"warm":true}"#).unwrap()
+            }),
+            ("signer", |d| {
+                d.functions[0].signer = Some(SignerIdentity::new("https://issuer", "sub"))
+            }),
+            ("webhookSigningSecret", |d| {
+                d.functions[0].webhook_signing_secret = Some("other".into())
+            }),
+            ("applicationId", |d| {
+                d.functions[0].application_id = "app_2".into()
+            }),
+            ("clientId", |d| {
+                d.functions[0].client_id = Some("clt_1".into())
+            }),
+            ("config", |d| {
+                d.functions[0]
+                    .config
+                    .insert("PLAIN".into(), "changed".into());
+            }),
+            ("secrets", |d| {
+                d.functions[0]
+                    .secrets
+                    .insert("API_KEY".into(), "rotated".into());
+            }),
+            ("missingSettings", |d| {
+                d.functions[0].missing_settings.push("X".into())
+            }),
+            ("aliases", |d| d.functions[0].aliases.push("qa".into())),
+            ("unload", |d| d.unload[0].version = 3),
+            ("publicRoutes", |d| {
+                d.public_routes[0].alias_prefixes.clear()
+            }),
+        ];
+        for (field, change) in changes {
+            let mut d = document();
+            change(&mut d);
+            assert_ne!(tag(&d), base, "{field}");
+        }
+    }
+
     #[test]
     fn the_etag_is_the_quoted_sha256_of_the_body() {
         assert_eq!(
