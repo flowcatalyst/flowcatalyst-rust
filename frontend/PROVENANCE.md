@@ -69,3 +69,7 @@ platform-granted sources.
 - `api/client.ts` (Go's) gains two additive changes the function pages need: `ApiError.details` (the
   envelope's raw `details`, for per-field errors) and a caller-set `Content-Type` is kept (the
   artifact upload sends `application/octet-stream`).
+- The function pages (`pages/functions/`, `pages/function-domains/`, `pages/function-policies/`),
+  their routes, a "Functions" nav group, their `ROUTE_PERMISSIONS` entries, `/function-policies` in
+  `ANCHOR_ROUTES`, and Rust's function tests (`tests/functions/`, adjusted to Go's permission rule:
+  the permissions `/auth/me` sends decide, a role name alone grants nothing).

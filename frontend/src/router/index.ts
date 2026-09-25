@@ -492,6 +492,54 @@ const router = createRouter({
 						},
 					],
 				},
+				// Functions (Go has none; Java's function UI, as Rust's SPA had it)
+				{
+					path: "functions",
+					name: "functions",
+					component: () => import("@/pages/functions/FunctionListPage.vue"),
+				},
+				{
+					path: "functions/new",
+					name: "function-create",
+					component: () =>
+						import("@/pages/functions/FunctionCreatePage.vue"),
+				},
+				{
+					path: "functions/:address",
+					name: "function-detail",
+					component: () =>
+						import("@/pages/functions/FunctionDetailPage.vue"),
+				},
+				{
+					path: "functions/:address/manifest",
+					name: "function-manifest-editor",
+					component: () =>
+						import("@/pages/functions/FunctionManifestEditorPage.vue"),
+				},
+				{
+					path: "function-domains",
+					name: "function-domains",
+					component: () =>
+						import("@/pages/function-domains/FunctionDomainListPage.vue"),
+				},
+				{
+					path: "function-domains/:hostname",
+					name: "function-domain-detail",
+					component: () =>
+						import("@/pages/function-domains/FunctionDomainDetailPage.vue"),
+				},
+				{
+					path: "function-policies",
+					name: "function-policies",
+					component: () =>
+						import("@/pages/function-policies/FunctionPolicyListPage.vue"),
+				},
+				{
+					path: "function-policies/:owner",
+					name: "function-policy-detail",
+					component: () =>
+						import("@/pages/function-policies/FunctionPolicyDetailPage.vue"),
+				},
 				// Events
 				{
 					path: "events",

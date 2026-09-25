@@ -208,6 +208,13 @@ export const ROUTE_PERMISSIONS: Record<string, RoutePermission> = {
 	// Events (messaging events)
 	"/events": "platform:messaging:event:view",
 
+	// Functions (the list reads with function:view; function:domain:manage
+	// and the other function permissions gate in-page actions)
+	"/functions": "platform:function:function:view",
+	"/functions/new": "platform:function:function:manage",
+	"/function-domains": "platform:function:function:view",
+	"/function-policies": "platform:function:policy:manage",
+
 	// Portal plane (client-delegable via platform:portal-administrator)
 	"/identity/portal-users": "platform:iam:portal-user:view",
 	"/identity/portal-apps": "platform:iam:portal-user:view",
@@ -305,7 +312,7 @@ export function describeRoutePermission(path: string): string {
  * Pages whose main endpoint needs anchor reach on top of its permission (the
  * backend's `anchorWith` reads: clients, identity providers, email-domain
  * mappings, OAuth clients, CORS origins, login attempts; Rust also keeps
- * anchor on audit logs). A detail or `new` page inherits its list's entry, as
+ * anchor on audit logs and function policies). A detail or `new` page inherits its list's entry, as
  * with ROUTE_PERMISSIONS. Owner decision #8: the SPA hides what the user
  * can't use, so a client-tier user holding the permission doesn't see a page
  * whose every call 403s.
@@ -318,6 +325,7 @@ export const ANCHOR_ROUTES: string[] = [
 	"/platform/cors",
 	"/platform/audit-log",
 	"/platform/login-attempts",
+	"/function-policies",
 ];
 
 /** Whether `path` (or its nearest listed ancestor) is an anchor-only page. */
