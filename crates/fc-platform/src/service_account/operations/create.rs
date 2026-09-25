@@ -313,8 +313,6 @@ impl<U: UnitOfWork> UseCase for CreateServiceAccountUseCase<U> {
             &service_account.id,
             &service_account.code,
             &service_account.name,
-            service_account.application_id.as_deref(),
-            service_account.client_ids.clone(),
         );
 
         // Create result with one-time secrets

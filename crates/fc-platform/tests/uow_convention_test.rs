@@ -23,6 +23,8 @@ const UOW_PATTERNS: &[&str] = &[
     "unit_of_work.commit_delete(",
     "unit_of_work.commit_all(",
     "unit_of_work.emit_event(",
+    "unit_of_work.emit_events(",
+    "unit_of_work.commit_all_with_events(",
 ];
 
 /// File-level skip list: use-case files that don't own writes (e.g. pure

@@ -97,7 +97,7 @@ impl<U: UnitOfWork> DeactivateApplicationUseCase<U> {
         application.deactivate();
 
         // Create domain event
-        let event = ApplicationDeactivated::new(ctx, &application.id, &application.code);
+        let event = ApplicationDeactivated::new(ctx, &application.id);
         Ok((application, event))
     }
 }

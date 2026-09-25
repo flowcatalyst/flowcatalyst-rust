@@ -245,20 +245,11 @@ impl<U: UnitOfWork> UseCase for CreateSubscriptionUseCase<U> {
         }
 
         // Create domain event
-        let event_type_codes: Vec<String> = subscription
-            .event_types
-            .iter()
-            .map(|b| b.event_type_code.clone())
-            .collect();
-
         let event = SubscriptionCreated::new(
             &ctx,
             &subscription.id,
             &subscription.code,
             &subscription.name,
-            &subscription.endpoint,
-            event_type_codes,
-            subscription.client_id.as_deref(),
         );
 
         // Atomic commit

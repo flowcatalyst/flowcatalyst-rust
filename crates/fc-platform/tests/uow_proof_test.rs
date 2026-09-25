@@ -60,7 +60,8 @@ async fn create_client_emits_event_and_audit_log() {
         client_id
     );
     assert_eq!(
-        app.event_count_by_type("platform:iam:client:created").await,
+        app.event_count_by_type("platform:admin:client:created")
+            .await,
         1,
         "expected one client:created event"
     );
@@ -109,7 +110,8 @@ async fn update_client_emits_second_event_and_audit_log() {
         "expected two aud_logs rows (created + updated)"
     );
     assert_eq!(
-        app.event_count_by_type("platform:iam:client:updated").await,
+        app.event_count_by_type("platform:admin:client:updated")
+            .await,
         1,
     );
 }
@@ -139,7 +141,7 @@ async fn create_anchor_domain_emits_event_and_audit_log() {
     assert_eq!(app.event_count_for(&anchor_id).await, 1);
     assert_eq!(app.audit_count_for(&anchor_id).await, 1);
     assert_eq!(
-        app.event_count_by_type("platform:iam:anchor-domain:created")
+        app.event_count_by_type("platform:admin:anchor-domain:created")
             .await,
         1
     );
@@ -176,7 +178,7 @@ async fn delete_anchor_domain_emits_event_and_audit_log() {
     assert_eq!(app.event_count_for(&id).await, 2);
     assert_eq!(app.audit_count_for(&id).await, 2);
     assert_eq!(
-        app.event_count_by_type("platform:iam:anchor-domain:deleted")
+        app.event_count_by_type("platform:admin:anchor-domain:deleted")
             .await,
         1
     );
@@ -329,7 +331,108 @@ async fn create_idp_role_mapping_emits_event_and_audit_log() {
     assert_eq!(app.event_count_for(&id).await, 1);
     assert_eq!(app.audit_count_for(&id).await, 1);
     assert_eq!(
-        app.event_count_by_type("platform:iam:idp-role-mapping:created")
+        app.event_count_by_type("platform:admin:idp-role-mapping:created")
+            .await,
+        1
+    );
+}
+
+// ── Go's dispatch-pool suspend / activate and role permission events ───────
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn suspend_and_activate_dispatch_pool_emit_go_events() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+
+    let resp = app
+        .post(
+            "/api/dispatch-pools",
+            &token,
+            json!({ "code": "uow-suspend", "name": "UoW suspend" }),
+        )
+        .await;
+    let body = assert_status(resp, StatusCode::CREATED).await;
+    let pool_id = body["id"].as_str().expect("id").to_string();
+
+    let resp = app
+        .post(
+            &format!("/api/dispatch-pools/{pool_id}/suspend"),
+            &token,
+            json!({}),
+        )
+        .await;
+    let body = assert_status(resp, StatusCode::OK).await;
+    assert_eq!(body["status"], "SUSPENDED", "{body}");
+    assert_eq!(
+        app.event_count_by_type("platform:admin:dispatch-pool:suspended")
+            .await,
+        1
+    );
+
+    let resp = app
+        .post(
+            &format!("/api/dispatch-pools/{pool_id}/activate"),
+            &token,
+            json!({}),
+        )
+        .await;
+    let body = assert_status(resp, StatusCode::OK).await;
+    assert_eq!(body["status"], "ACTIVE", "{body}");
+    assert_eq!(
+        app.event_count_by_type("platform:admin:dispatch-pool:activated")
+            .await,
+        1
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn role_permission_grant_and_revoke_emit_go_events() {
+    let app = TestApp::setup().await;
+    let token = app.anchor_admin_token().await;
+
+    let resp = app
+        .post(
+            "/api/roles",
+            &token,
+            json!({
+                "applicationCode": "platform", "roleName": "uow-helper",
+                "displayName": "UoW helper", "permissions": []
+            }),
+        )
+        .await;
+    assert_status(resp, StatusCode::CREATED).await;
+
+    let resp = app
+        .post(
+            "/api/roles/platform:uow-helper/permissions",
+            &token,
+            json!({ "permission": "platform:iam:user:view" }),
+        )
+        .await;
+    let body = assert_status(resp, StatusCode::OK).await;
+    assert!(
+        body["permissions"]
+            .as_array()
+            .is_some_and(|p| p.iter().any(|v| v == "platform:iam:user:view")),
+        "{body}"
+    );
+    assert_eq!(
+        app.event_count_by_type("platform:admin:role:permission-granted")
+            .await,
+        1
+    );
+
+    let resp = app
+        .delete(
+            "/api/roles/platform:uow-helper/permissions/platform:iam:user:view",
+            &token,
+        )
+        .await;
+    assert_status(resp, StatusCode::OK).await;
+    assert_eq!(
+        app.event_count_by_type("platform:admin:role:permission-revoked")
             .await,
         1
     );

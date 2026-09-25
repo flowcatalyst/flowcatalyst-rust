@@ -90,9 +90,13 @@ impl<U: UnitOfWork> UseCase for CreateIdpRoleMappingUseCase<U> {
             &command.idp_role_name,
             &command.platform_role_name,
         );
-        let idp_role = format!("{}:{}", mapping.idp_type, mapping.idp_role_name);
-        let event =
-            IdpRoleMappingCreated::new(&ctx, &mapping.id, &idp_role, &mapping.platform_role_name);
+        let event = IdpRoleMappingCreated::new(
+            &ctx,
+            &mapping.id,
+            &mapping.idp_type,
+            &mapping.idp_role_name,
+            &mapping.platform_role_name,
+        );
 
         self.unit_of_work
             .commit(&mapping, &*self.idp_role_mapping_repo, event, &command)

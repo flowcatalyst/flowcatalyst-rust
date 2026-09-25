@@ -117,7 +117,7 @@ impl<U: UnitOfWork> UseCase for CreateClientUseCase<U> {
 
         let client = Client::new(command.name.trim(), &identifier);
 
-        let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier, None);
+        let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier);
 
         self.unit_of_work
             .commit(&client, &*self.client_repo, event, &command)

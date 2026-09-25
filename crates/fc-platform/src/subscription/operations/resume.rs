@@ -108,7 +108,7 @@ impl<U: UnitOfWork> ResumeSubscriptionUseCase<U> {
         subscription.resume();
 
         // Create domain event
-        let event = SubscriptionResumed::new(ctx, &subscription.id, &subscription.code);
+        let event = SubscriptionResumed::new(ctx, &subscription.id);
         Ok((subscription, event))
     }
 }

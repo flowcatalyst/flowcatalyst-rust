@@ -112,7 +112,7 @@ impl<U: UnitOfWork> AddClientNoteUseCase<U> {
         let note = ClientNote::new(category, text).with_author(&ctx.principal_id);
         client.add_note(note);
 
-        let event = ClientNoteAdded::new(ctx, &client.id, category, text, &ctx.principal_id);
+        let event = ClientNoteAdded::new(ctx, &client.id, category, text);
         Ok((client, event))
     }
 }

@@ -115,31 +115,24 @@ impl<U: UnitOfWork> UpdateProcessUseCase<U> {
             ));
         }
 
-        let mut changed_name: Option<String> = None;
-        let mut changed_description: Option<String> = None;
-        let mut body_changed = false;
-        let mut changed_tags: Option<Vec<String>> = None;
         let mut any_change = false;
 
         if let Some(name) = command.name.as_ref() {
             let trimmed = name.trim();
             if trimmed != process.name {
                 process.name = trimmed.to_string();
-                changed_name = Some(trimmed.to_string());
                 any_change = true;
             }
         }
         if let Some(desc) = command.description.as_ref() {
             if process.description.as_deref() != Some(desc.as_str()) {
                 process.description = Some(desc.clone());
-                changed_description = Some(desc.clone());
                 any_change = true;
             }
         }
         if let Some(body) = command.body.as_ref() {
             if &process.body != body {
                 process.body = body.clone();
-                body_changed = true;
                 any_change = true;
             }
         }
@@ -153,7 +146,6 @@ impl<U: UnitOfWork> UpdateProcessUseCase<U> {
         if let Some(tags) = command.tags.as_ref() {
             if &process.tags != tags {
                 process.tags = tags.clone();
-                changed_tags = Some(tags.clone());
                 any_change = true;
             }
         }
@@ -167,14 +159,7 @@ impl<U: UnitOfWork> UpdateProcessUseCase<U> {
 
         process.updated_at = chrono::Utc::now();
 
-        let event = ProcessUpdated {
-            metadata: ProcessUpdated::metadata_for(ctx, &process.id),
-            process_id: process.id.clone(),
-            name: changed_name,
-            description: changed_description,
-            body_changed: body_changed.then_some(true),
-            tags: changed_tags,
-        };
+        let event = ProcessUpdated::new(ctx, &process.id, &process.name);
         Ok((process, event))
     }
 }

@@ -203,14 +203,7 @@ impl<U: UnitOfWork> UpdateScheduledJobUseCase<U> {
 
         job.record_update(Some(ctx.principal_id.clone()));
 
-        let event = ScheduledJobUpdated::new(
-            ctx,
-            &job.id,
-            job.client_id.as_deref(),
-            &job.code,
-            changed,
-            job.version,
-        );
+        let event = ScheduledJobUpdated::new(ctx, &job.id, &job.code);
         Ok((job, event))
     }
 }

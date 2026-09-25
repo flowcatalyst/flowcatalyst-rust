@@ -449,13 +449,13 @@ pub async fn authenticate_complete(
         }
     };
 
-    let principal = match state.principal_repo.find_by_id(&event.principal_id).await {
+    let principal = match state.principal_repo.find_by_id(&event.user_id).await {
         Ok(Some(p)) => p,
         _ => {
             record_user_login_attempt(
                 &state.login_attempt_repo,
                 None,
-                Some(&event.principal_id),
+                Some(&event.user_id),
                 ip,
                 LoginOutcome::Failure,
                 Some("PRINCIPAL_NOT_FOUND"),

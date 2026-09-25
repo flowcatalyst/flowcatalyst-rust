@@ -562,7 +562,7 @@ async fn test_unit_of_work_commit() {
     // Commit an event via UnitOfWork
     let uow = PgUnitOfWork::new(pool.clone());
     let ctx = ExecutionContext::create("test-principal-id");
-    let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier, None);
+    let event = ClientCreated::new(&ctx, &client.id, &client.name, &client.identifier);
 
     #[derive(serde::Serialize)]
     struct CreateClientCommand {
@@ -582,7 +582,7 @@ async fn test_unit_of_work_commit() {
     // Verify event was persisted (use find_by_type since find_all doesn't exist)
     let event_repo = EventRepository::new(&pool);
     let events = event_repo
-        .find_by_type("platform:iam:client:created", 10)
+        .find_by_type("platform:admin:client:created", 10)
         .await
         .expect("Failed to query events");
     assert!(!events.is_empty(), "At least one event should exist");
@@ -623,7 +623,7 @@ async fn test_unit_of_work_unique_violation_is_duplicate_key() {
         let repo = &client_repo;
         let ctx = &ctx;
         async move {
-            let event = ClientCreated::new(ctx, &client.id, &client.name, &client.identifier, None);
+            let event = ClientCreated::new(ctx, &client.id, &client.name, &client.identifier);
             let command = CreateClientCommand {
                 name: client.name.clone(),
             };
@@ -945,7 +945,8 @@ async fn test_sync_rollup_audit_fits_a_long_application_code() {
     assert!(result.is_ok(), "the rollup commits: {:?}", result.err());
 
     let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM aud_logs WHERE entity_type = 'Application' AND entity_id = $1",
+        // Go's subject `platform.eventtypes.{code}`: entity type `Eventtypes`.
+        "SELECT COUNT(*) FROM aud_logs WHERE entity_type = 'Eventtypes' AND entity_id = $1",
     )
     .bind(code)
     .fetch_one(&pool)
@@ -1254,6 +1255,13 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
         .insert(&idp)
         .await
         .unwrap();
+    // A secret-manager reference is a pointer, not a secret: never encrypted.
+    let mut idp_ref = IdentityProvider::new("google", "Google", IdentityProviderType::Oidc);
+    idp_ref.oidc_client_secret_ref = Some("aws-sm://prod/fc/google-oidc".to_string());
+    IdentityProviderRepository::new(&pool)
+        .insert(&idp_ref)
+        .await
+        .unwrap();
     let mut idp_done = IdentityProvider::new("entra", "Entra", IdentityProviderType::Oidc);
     let already = enc.encrypt_ref("idp-done").unwrap();
     idp_done.oidc_client_secret_ref = Some(already.clone());
@@ -1338,6 +1346,22 @@ async fn test_secret_backfill_encrypts_plaintext_idempotently() {
     )
     .await;
     assert_eq!(idp_done_secret, already, "encrypted rows are untouched");
+    let idp_ref_secret = stored(
+        "SELECT oidc_client_secret_ref FROM oauth_identity_providers WHERE id = $1",
+        idp_ref.id.clone(),
+    )
+    .await;
+    assert_eq!(
+        idp_ref_secret, "aws-sm://prod/fc/google-oidc",
+        "a secret reference is never encrypted"
+    );
+    assert_eq!(
+        applied
+            .iter()
+            .map(|r| (r.column.as_str(), r.references))
+            .find(|(c, _)| *c == "oauth_identity_providers.oidc_client_secret_ref"),
+        Some(("oauth_identity_providers.oidc_client_secret_ref", 1))
+    );
     let token = stored(
         "SELECT wh_auth_token_ref FROM iam_service_accounts WHERE id = $1",
         sa.id.clone(),
@@ -1595,7 +1619,9 @@ async fn test_postgres_rate_limit_store_allows_exactly_the_limit() {
                 .unwrap(),
         );
     }
-    assert!(decisions[..3].iter().all(|d| *d == RateLimitDecision::Allow));
+    assert!(decisions[..3]
+        .iter()
+        .all(|d| *d == RateLimitDecision::Allow));
     assert!(matches!(decisions[3], RateLimitDecision::Reject { .. }));
     assert_eq!(
         store
@@ -1605,4 +1631,64 @@ async fn test_postgres_rate_limit_store_allows_exactly_the_limit() {
         RateLimitDecision::Allow,
         "each key has its own budget"
     );
+}
+
+// ─── Platform event-type catalogue seeding ───────────────────────────────
+
+/// Startup seeding writes the catalogue as Go's seeder does: every code
+/// once, source UI and status CURRENT, a `1.0` schema when one is supplied,
+/// and a re-run only refreshes names (never duplicates, never a second
+/// schema version).
+#[tokio::test]
+#[ignore = "requires Docker"]
+async fn platform_event_type_catalogue_seeds_as_go() {
+    let (pool, _container) = setup_test_db().await;
+    let defs = fc_platform::seed::platform_event_types::definitions();
+
+    fc_platform::shared::database::seed_platform_event_types(&pool)
+        .await
+        .expect("first seed");
+    sqlx::query(
+        "UPDATE msg_event_types SET name = 'stale' WHERE code = 'platform:admin:client:created'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    fc_platform::shared::database::seed_platform_event_types(&pool)
+        .await
+        .expect("second seed");
+
+    let codes: Vec<String> = defs.iter().map(|d| d.code.clone()).collect();
+    let (count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM msg_event_types WHERE code = ANY($1)")
+            .bind(&codes)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count as usize, defs.len());
+
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT name, source, status FROM msg_event_types WHERE code = 'platform:admin:client:created'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        Some((
+            "Client Created".to_string(),
+            "UI".to_string(),
+            "CURRENT".to_string()
+        ))
+    );
+
+    let (versions,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM msg_event_type_spec_versions sv \
+         JOIN msg_event_types et ON et.id = sv.event_type_id \
+         WHERE et.code = 'platform:iam:user:created'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(versions, 1, "one 1.0 schema, attached once");
 }

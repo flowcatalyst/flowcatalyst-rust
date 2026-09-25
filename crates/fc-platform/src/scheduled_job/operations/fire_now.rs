@@ -137,13 +137,7 @@ impl<U: UnitOfWork> FireScheduledJobUseCase<U> {
             )));
         }
 
-        let event = ScheduledJobFiredManually::new(
-            ctx,
-            &job.id,
-            job.client_id.as_deref(),
-            &job.code,
-            &instance.id,
-        );
+        let event = ScheduledJobFiredManually::new(ctx, &job.id, &job.code, &instance.id);
         Ok(event)
     }
 }

@@ -127,15 +127,8 @@ impl<U: UnitOfWork> UseCase for CreateApplicationUseCase<U> {
         }
 
         // Create domain event
-        let app_type = application.application_type.as_str();
-
-        let event = ApplicationCreated::new(
-            &ctx,
-            &application.id,
-            &application.code,
-            &application.name,
-            app_type,
-        );
+        let event =
+            ApplicationCreated::new(&ctx, &application.id, &application.code, &application.name);
 
         // Atomic commit
         self.unit_of_work

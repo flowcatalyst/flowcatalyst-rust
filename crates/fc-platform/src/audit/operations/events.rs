@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuditLogsRedacted {
-    #[serde(flatten)]
+    #[serde(skip)]
     pub metadata: EventMetadata,
 
     pub scanned: u64,

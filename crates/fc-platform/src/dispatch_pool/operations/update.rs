@@ -103,9 +103,6 @@ impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
                 format!("Dispatch pool with ID '{}' not found", command.id),
             )?;
 
-        // Track changes for event
-        let mut updated_name: Option<String> = None;
-
         // Apply name update
         if let Some(ref name) = command.name {
             let name = name.trim();
@@ -117,7 +114,6 @@ impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
             }
             if pool.name != name {
                 pool.name = name.to_string();
-                updated_name = Some(name.to_string());
             }
         }
 
@@ -139,13 +135,7 @@ impl<U: UnitOfWork> UpdateDispatchPoolUseCase<U> {
         pool.updated_at = Utc::now();
 
         // Create domain event
-        let event = DispatchPoolUpdated::new(
-            ctx,
-            &pool.id,
-            updated_name.as_deref(),
-            command.rate_limit,
-            command.concurrency,
-        );
+        let event = DispatchPoolUpdated::new(ctx, &pool.id, &pool.name);
         Ok((pool, event))
     }
 }

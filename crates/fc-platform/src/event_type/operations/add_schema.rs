@@ -161,13 +161,7 @@ impl<U: UnitOfWork> AddSchemaUseCase<U> {
         event_type.add_schema_version(spec_version);
 
         // Create domain event
-        let event = SchemaAdded::new(
-            ctx,
-            &event_type.id,
-            version,
-            &command.mime_type,
-            command.schema_type.unwrap_or_default().as_str(),
-        );
+        let event = SchemaAdded::new(ctx, &event_type.id, version);
         Ok((event_type, event))
     }
 }

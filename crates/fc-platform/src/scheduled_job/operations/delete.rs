@@ -80,7 +80,7 @@ impl<U: UnitOfWork> DeleteScheduledJobUseCase<U> {
                 format!("ScheduledJob '{}' not found", cmd.scheduled_job_id),
             )?;
 
-        let event = ScheduledJobDeleted::new(ctx, &job.id, job.client_id.as_deref(), &job.code);
+        let event = ScheduledJobDeleted::new(ctx, &job.id, &job.code);
         Ok((job, event))
     }
 }

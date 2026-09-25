@@ -108,7 +108,7 @@ impl<U: UnitOfWork> PauseSubscriptionUseCase<U> {
         subscription.pause();
 
         // Create domain event
-        let event = SubscriptionPaused::new(ctx, &subscription.id, &subscription.code);
+        let event = SubscriptionPaused::new(ctx, &subscription.id);
         Ok((subscription, event))
     }
 }

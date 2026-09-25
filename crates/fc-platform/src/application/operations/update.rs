@@ -112,23 +112,17 @@ impl<U: UnitOfWork> UpdateApplicationUseCase<U> {
                 format!("Application with ID '{}' not found", command.id),
             )?;
 
-        // Track changes for event
-        let mut updated_name: Option<String> = None;
-        let mut updated_description: Option<String> = None;
-
         // Apply name update
         if let Some(ref name) = command.name {
             let name = name.trim();
             if application.name != name {
                 application.name = name.to_string();
-                updated_name = Some(name.to_string());
             }
         }
 
         // Apply description update
         if let Some(ref description) = command.description {
             application.description = Some(description.clone());
-            updated_description = Some(description.clone());
         }
 
         // Apply URL updates
@@ -151,12 +145,7 @@ impl<U: UnitOfWork> UpdateApplicationUseCase<U> {
         application.updated_at = Utc::now();
 
         // Create domain event
-        let event = ApplicationUpdated::new(
-            ctx,
-            &application.id,
-            updated_name.as_deref(),
-            updated_description.as_deref(),
-        );
+        let event = ApplicationUpdated::new(ctx, &application.id, &application.name);
         Ok((application, event))
     }
 }

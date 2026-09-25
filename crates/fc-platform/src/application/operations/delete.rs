@@ -134,8 +134,7 @@ impl<U: UnitOfWork> DeleteApplicationUseCase<U> {
             ));
         }
 
-        let event =
-            ApplicationDeleted::new(ctx, &application.id, &application.code, &application.name);
+        let event = ApplicationDeleted::new(ctx, &application.id, &application.code);
         Ok((application, event))
     }
 }

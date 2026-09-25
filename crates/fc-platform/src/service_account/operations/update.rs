@@ -3,7 +3,6 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::client_reach::{dedupe_client_ids, require_clients_exist};
@@ -119,12 +118,6 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
                 format!("Service account with ID '{}' not found", command.id),
             )?;
 
-        // Track changes for event
-        let mut updated_name: Option<String> = None;
-        let mut updated_description: Option<String> = None;
-        let mut client_ids_added: Vec<String> = Vec::new();
-        let mut client_ids_removed: Vec<String> = Vec::new();
-
         // Apply name update
         if let Some(ref name) = command.name {
             let name = name.trim();
@@ -136,7 +129,6 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
             }
             if service_account.name != name {
                 service_account.name = name.to_string();
-                updated_name = Some(name.to_string());
             }
         }
 
@@ -149,7 +141,6 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
                 ));
             }
             service_account.description = Some(description.clone());
-            updated_description = Some(description.clone());
         }
 
         // As Go's UpdateServiceAccount (serviceaccount/operations/update.go:
@@ -163,27 +154,13 @@ impl<U: UnitOfWork> UpdateServiceAccountUseCase<U> {
         if let Some(ref client_ids) = command.client_ids {
             let links = dedupe_client_ids(client_ids.clone());
             require_clients_exist(&self.client_repo, &links).await?;
-
-            let current_set: HashSet<String> = service_account.client_ids.iter().cloned().collect();
-            let new_set: HashSet<String> = links.iter().cloned().collect();
-
-            client_ids_added = new_set.difference(&current_set).cloned().collect();
-            client_ids_removed = current_set.difference(&new_set).cloned().collect();
-
             service_account.link_clients(links);
         }
 
         service_account.updated_at = Utc::now();
 
         // Create domain event
-        let event = ServiceAccountUpdated::new(
-            ctx,
-            &service_account.id,
-            updated_name.as_deref(),
-            updated_description.as_deref(),
-            client_ids_added,
-            client_ids_removed,
-        );
+        let event = ServiceAccountUpdated::new(ctx, &service_account.id, &service_account.name);
         Ok((service_account, event))
     }
 }

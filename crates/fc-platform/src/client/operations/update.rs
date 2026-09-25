@@ -146,7 +146,7 @@ impl<U: UnitOfWork> UpdateClientUseCase<U> {
         client.updated_at = chrono::Utc::now();
 
         // Create domain event
-        let event = ClientUpdated::new(ctx, &client.id, updated_name, None);
+        let event = ClientUpdated::new(ctx, &client.id, &client.name);
         Ok((client, event))
     }
 }

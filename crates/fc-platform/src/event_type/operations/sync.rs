@@ -6,9 +6,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::events::EventTypesSynced;
+use super::events::{EventTypeCreated, EventTypeDeleted, EventTypeUpdated, EventTypesSynced};
 use crate::event_type::entity::{EventType, EventTypeSource, SpecVersion};
-use crate::usecase::{ExecutionContext, UnitOfWork, UseCase, UseCaseError, UseCaseResult};
+use crate::usecase::{
+    ExecutionContext, RecordedEvent, UnitOfWork, UseCase, UseCaseError, UseCaseResult,
+};
 use crate::EventTypeRepository;
 
 /// A single event type definition in the sync payload.
@@ -93,12 +95,14 @@ impl<U: UnitOfWork> UseCase for SyncEventTypesUseCase<U> {
         command: SyncEventTypesCommand,
         ctx: ExecutionContext,
     ) -> UseCaseResult<EventTypesSynced> {
-        let event = match self.prepare(&command, &ctx).await {
+        let (rows, event) = match self.prepare(&command, &ctx).await {
             Ok(v) => v,
             Err(e) => return UseCaseResult::failure(e),
         };
 
-        self.unit_of_work.emit_event(event, &command).await
+        // Go's usecaseop.Sync: a created/updated/deleted event per synced
+        // event type, then the rollup.
+        self.unit_of_work.emit_events(rows, event, &command).await
     }
 }
 
@@ -107,7 +111,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
         &self,
         command: &SyncEventTypesCommand,
         ctx: &ExecutionContext,
-    ) -> Result<EventTypesSynced, UseCaseError> {
+    ) -> Result<(Vec<RecordedEvent>, EventTypesSynced), UseCaseError> {
         // Fetch existing event types for this application
         let existing = self
             .event_type_repo
@@ -121,6 +125,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
         let mut schemas_created = 0u32;
         let mut schemas_updated = 0u32;
         let mut schemas_unchanged = 0u32;
+        let mut rows: Vec<RecordedEvent> = Vec::new();
 
         // Process each input event type
         for input in &command.event_types {
@@ -140,6 +145,12 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                                 input.code, e
                             )));
                         }
+                        rows.push(RecordedEvent::of(&EventTypeUpdated::new(
+                            ctx,
+                            &updated.id,
+                            &updated.name,
+                            updated.description.as_deref(),
+                        ))?);
                         updated_count += 1;
                     }
                     et.id.clone()
@@ -157,6 +168,18 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                             input.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&EventTypeCreated {
+                        metadata: EventTypeCreated::metadata_for(ctx, &et.id),
+                        event_type_id: et.id.clone(),
+                        code: et.code.clone(),
+                        name: et.name.clone(),
+                        description: et.description.clone(),
+                        application: et.application.clone(),
+                        subdomain: et.subdomain.clone(),
+                        aggregate: et.aggregate.clone(),
+                        event_name: et.event_name.clone(),
+                        client_id: et.client_id.clone(),
+                    })?);
                     created_count += 1;
                     et.id.clone()
                 }
@@ -217,6 +240,9 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
                             et.code, e
                         )));
                     }
+                    rows.push(RecordedEvent::of(&EventTypeDeleted::new(
+                        ctx, &et.id, &et.code,
+                    ))?);
                     deleted_count += 1;
                 }
             }
@@ -233,7 +259,7 @@ impl<U: UnitOfWork> SyncEventTypesUseCase<U> {
             schemas_updated,
             schemas_unchanged,
         };
-        Ok(event)
+        Ok((rows, event))
     }
 }
 

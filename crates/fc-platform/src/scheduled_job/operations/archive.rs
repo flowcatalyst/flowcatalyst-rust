@@ -87,7 +87,7 @@ impl<U: UnitOfWork> ArchiveScheduledJobUseCase<U> {
         }
 
         job.archive();
-        let event = ScheduledJobArchived::new(ctx, &job.id, job.client_id.as_deref(), &job.code);
+        let event = ScheduledJobArchived::new(ctx, &job.id, &job.code);
         Ok((job, event))
     }
 }

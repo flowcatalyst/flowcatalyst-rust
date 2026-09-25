@@ -5,12 +5,17 @@
 pub mod create;
 pub mod delete;
 pub mod events;
+pub mod permissions;
 pub mod sync;
 pub mod update;
 
 pub use create::{CreateRoleCommand, CreateRoleUseCase};
 pub use delete::{DeleteRoleCommand, DeleteRoleUseCase};
 pub use events::*;
+pub use permissions::{
+    GrantRolePermissionCommand, GrantRolePermissionUseCase, RevokeRolePermissionCommand,
+    RevokeRolePermissionUseCase,
+};
 pub use sync::{SyncRoleInput, SyncRolesCommand, SyncRolesUseCase};
 pub use update::{UpdateRoleCommand, UpdateRoleUseCase};
 
