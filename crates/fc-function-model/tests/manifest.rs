@@ -564,3 +564,72 @@ fn read_stored_limits_default_per_field() {
     let jvm = stored(r#"{"runtime":"jvm","entrypoint":"a.B"}"#);
     assert_eq!(jvm.limits.wasm_memory_mb, None);
 }
+
+// ── runtime: component (owner decision 5, beyond Java) ──────────────────
+
+#[test]
+fn a_component_manifest_defaults_its_entrypoint() {
+    let m = parse(
+        r#"{"runtime": "component"}"#,
+        Runtime::Component,
+        &unrestricted(),
+    )
+    .unwrap();
+    assert_eq!(m.runtime, Runtime::Component);
+    assert_eq!(m.entrypoint, "wasi:http/incoming-handler");
+    assert_eq!(
+        m.limits.wasm_memory_mb,
+        Some(FunctionLimits::DEFAULT_WASM_MEMORY_MB)
+    );
+    // Stored, it reads back the same, and so does one stored without it.
+    assert_eq!(Manifest::read_stored(&m.to_json()).unwrap(), m);
+    assert_eq!(
+        Manifest::read_stored(&tree(r#"{"runtime": "component"}"#))
+            .unwrap()
+            .entrypoint,
+        "wasi:http/incoming-handler"
+    );
+    for entrypoint in [
+        "wasi:http/incoming-handler",
+        "wasi:http/incoming-handler@0.2.3",
+        "wasi_http_incoming_handler",
+    ] {
+        let json = format!(r#"{{"runtime": "component", "entrypoint": "{entrypoint}"}}"#);
+        let m = parse(&json, Runtime::Component, &unrestricted()).unwrap();
+        assert_eq!(m.entrypoint, entrypoint);
+    }
+    let (code, _) = parse(
+        r#"{"runtime": "component", "entrypoint": "handle"}"#,
+        Runtime::Component,
+        &unrestricted(),
+    )
+    .unwrap_err();
+    assert_eq!(code, "ENTRYPOINT_INVALID");
+}
+
+#[test]
+fn wasm_and_component_functions_take_each_others_manifests_not_jvm() {
+    let component = r#"{"runtime": "component"}"#;
+    let wasm = r#"{"runtime": "wasm", "entrypoint": "wasi_http_incoming_handler"}"#;
+    assert_eq!(
+        parse(component, Runtime::Wasm, &unrestricted())
+            .unwrap()
+            .runtime,
+        Runtime::Component
+    );
+    assert_eq!(
+        parse(wasm, Runtime::Component, &unrestricted())
+            .unwrap()
+            .runtime,
+        Runtime::Wasm
+    );
+    let (code, message) = parse(component, Runtime::Jvm, &unrestricted()).unwrap_err();
+    assert_eq!(code, "RUNTIME_MISMATCH");
+    assert_eq!(
+        message,
+        "manifest runtime 'component' does not match the function's runtime 'jvm'"
+    );
+    // A wasm manifest still needs its entrypoint: only a component has a default.
+    let (code, _) = parse(r#"{"runtime": "wasm"}"#, Runtime::Wasm, &unrestricted()).unwrap_err();
+    assert_eq!(code, "ENTRYPOINT_REQUIRED");
+}

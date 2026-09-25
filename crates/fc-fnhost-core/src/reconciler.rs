@@ -688,6 +688,7 @@ impl Reconciler {
                 HostState::Active
             },
             loaded,
+            runtimes: self.loaders.runtimes(),
         }
     }
 

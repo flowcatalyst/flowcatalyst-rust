@@ -465,11 +465,22 @@ pub struct FunctionHost {
     pub pool: String,
     pub state: HostState,
     pub loaded: Vec<LoadedVersion>,
+    /// The runtimes the host says it loads (lower-case manifest spellings,
+    /// sorted); `None` when its heartbeat did not say (Java's hosts, older
+    /// Rust hosts): nothing is assumed about it.
+    pub runtimes: Option<Vec<String>>,
     pub started_at: DateTime<Utc>,
     pub last_heartbeat: DateTime<Utc>,
 }
 
 impl FunctionHost {
+    /// Whether this host can load `runtime`: `None` when it never said.
+    pub fn supports(&self, runtime: Runtime) -> Option<bool> {
+        self.runtimes
+            .as_ref()
+            .map(|r| r.iter().any(|name| name == runtime.wire_value()))
+    }
+
     /// Three missed 15 s beats (Java `FunctionHost.LIVE_WINDOW`).
     pub fn live_window() -> Duration {
         Duration::seconds(45)
@@ -489,6 +500,7 @@ impl FunctionHost {
             pool: pool.into(),
             state: HostState::Active,
             loaded: Vec::new(),
+            runtimes: None,
             started_at: now,
             last_heartbeat: now,
         }
@@ -506,6 +518,13 @@ impl FunctionHost {
         self.state = state;
         self.loaded = loaded;
         self.last_heartbeat = now;
+        self
+    }
+
+    /// What this beat says the host loads, replacing what the last one
+    /// said (`None`: this beat did not say).
+    pub fn reporting_runtimes(mut self, runtimes: Option<Vec<String>>) -> Self {
+        self.runtimes = runtimes;
         self
     }
 }

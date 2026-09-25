@@ -246,7 +246,11 @@ function parseList(text: string | undefined): string[] | undefined {
 // Each option list is the key set of a Record over the generated union, so
 // the compiler refuses a missing or an extra value.
 const optionsOf = <T extends string>(all: Record<T, true>): T[] => Object.keys(all) as T[];
-const runtimeOptions = optionsOf<ManifestModel["runtime"]>({ jvm: true, wasm: true });
+const runtimeOptions = optionsOf<ManifestModel["runtime"]>({
+	component: true,
+	wasm: true,
+	jvm: true,
+});
 const authOptions = optionsOf<Endpoint["auth"]>({ webhook: true, platform: true, none: true });
 const methodOptions = optionsOf<NonNullable<Endpoint["methods"]>[number]>({
 	GET: true,
@@ -394,9 +398,14 @@ function onPublished(published: PublishResponse) {
                   <small v-if="topFieldError('runtime')" class="field-error">{{ topFieldError("runtime") }}</small>
                 </div>
                 <div class="form-field">
-                  <label>Entrypoint <span class="required">*</span></label>
+                  <label>
+                    Entrypoint <span v-if="model.runtime !== 'component'" class="required">*</span>
+                  </label>
                   <InputText v-model="model.entrypoint" class="full-width" data-testid="manifest-entrypoint-input" />
                   <small v-if="topFieldError('entrypoint')" class="field-error">{{ topFieldError("entrypoint") }}</small>
+                  <small v-else-if="model.runtime === 'component'" class="hint">
+                    Optional: <code>wasi:http/incoming-handler</code> when blank.
+                  </small>
                   <small v-else-if="model.runtime === 'wasm'" class="hint">
                     A component's <code>wasi_http_incoming_handler</code> (or
                     <code>wasi:http/incoming-handler</code>).
@@ -435,7 +444,7 @@ function onPublished(published: PublishResponse) {
                       @update:modelValue="(v: number | null) => (model.limits!.maxConcurrency = v ?? undefined)"
                     />
                   </div>
-                  <div v-if="model.runtime === 'wasm'" class="form-field">
+                  <div v-if="model.runtime !== 'jvm'" class="form-field">
                     <label>Wasm memory (MB)</label>
                     <InputNumber
                       :modelValue="model.limits.wasmMemoryMb ?? null"

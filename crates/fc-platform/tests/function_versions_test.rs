@@ -122,6 +122,7 @@ fn router(
                 functions: app.repos.function_repo.clone(),
                 domains: app.repos.function_domain_repo.clone(),
                 routes: app.repos.function_route_repo.clone(),
+                hosts: app.repos.function_host_repo.clone(),
                 limits,
             },
             unit_of_work: app.unit_of_work.clone(),
@@ -858,9 +859,56 @@ async fn publish_checks_and_the_manifest_check() {
             "pool": {"action": "create", "key": pool, "changedFields": []},
             "subscriptions": [], "schedules": [],
             "publicRoutes": {"action": "unchanged", "added": [], "removed": []},
-            "conflicts": []}})
+            "conflicts": [],
+            "warnings": [{"code": "POOL_HAS_NO_LIVE_HOSTS",
+                "message": "no host in pool 'default' has sent a heartbeat recently; the version stays PUBLISHED until one loads it"}]}})
     );
     assert_eq!(version_count(&app, &fid).await, 0);
+
+    // A pool whose every live host reports its runtimes, none this one, is
+    // refused; one host that says nothing makes it a warning instead.
+    sqlx::query(
+        "INSERT INTO fn_hosts (id, pool, state, loaded, runtimes) \
+         VALUES ('jvm-host', 'default', 'ACTIVE', '[]', '[\"jvm\"]')",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (_, refused) = post(
+        &r,
+        &format!("{path}/manifest/check"),
+        &t,
+        json!({"manifest": manifest()}),
+    )
+    .await;
+    assert_eq!(refused["valid"], false, "{refused}");
+    assert_eq!(refused["errors"][0]["code"], "POOL_RUNTIME_UNSUPPORTED");
+    assert_eq!(
+        refused["errors"][0]["message"],
+        "no live host in pool 'default' can load runtime 'wasm'"
+    );
+    sqlx::query(
+        "INSERT INTO fn_hosts (id, pool, state, loaded) VALUES ('silent-host', 'default', 'ACTIVE', '[]')",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let (_, unknown) = post(
+        &r,
+        &format!("{path}/manifest/check"),
+        &t,
+        json!({"manifest": manifest()}),
+    )
+    .await;
+    assert_eq!(unknown["valid"], true, "{unknown}");
+    assert_eq!(
+        unknown["plan"]["warnings"][0]["code"],
+        "POOL_RUNTIME_UNKNOWN"
+    );
+    sqlx::query("DELETE FROM fn_hosts WHERE id IN ('jvm-host', 'silent-host')")
+        .execute(&app.pool)
+        .await
+        .unwrap();
 
     // Resolve both: the event type exists, the application signs.
     sqlx::query(

@@ -239,6 +239,9 @@ pub struct PromotePlanResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_routes: Option<PublicRoutesActionResponse>,
     pub conflicts: Vec<ConflictResponse>,
+    /// Beyond Java: what would not stop the publish but may stop the
+    /// version running (`POOL_HAS_NO_LIVE_HOSTS`, `POOL_RUNTIME_UNKNOWN`).
+    pub warnings: Vec<ConflictResponse>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -308,6 +311,7 @@ impl PromotePlanResponse {
             schedules: Vec::new(),
             public_routes: None,
             conflicts,
+            warnings: Vec::new(),
         };
         match &plan.wiring {
             Wiring::HttpOnly => base(true),
@@ -661,7 +665,19 @@ pub async fn check_manifest(
                     .trigger_sync
                     .plan(&f, &manifest, next, alias, &caller)
                     .await?;
-                plan_response = Some(PromotePlanResponse::of(&plan));
+                let mut response = PromotePlanResponse::of(&plan);
+                response.warnings = state
+                    .ops
+                    .publish_checks
+                    .pool_warnings(&manifest)
+                    .await?
+                    .into_iter()
+                    .map(|w| ConflictResponse {
+                        code: w.code.to_string(),
+                        message: w.message,
+                    })
+                    .collect();
+                plan_response = Some(response);
             }
         }
     }

@@ -1,7 +1,10 @@
 //! The body of `POST /control/functions/heartbeat` (Java
 //! `fnhost/reconcile/HeartbeatReport.java`; wire shape from
 //! `HttpControlPlane.toWire`): `{hostId, pool, state, loaded: [{address,
-//! version, state, error?}]}`, keys in that order, `error` only on `FAILED`.
+//! version, state, error?}], runtimes}`, keys in that order, `error` only on
+//! `FAILED`. `runtimes` (the manifest runtimes this host loads, sorted) is
+//! beyond Java (owner decision 5): the platform reads it tolerantly, and a
+//! platform that predates it ignores it.
 
 use fc_function_abi::FunctionAddress;
 use serde::Serialize;
@@ -32,6 +35,8 @@ pub struct HeartbeatReport {
     pub pool: String,
     pub state: HostState,
     pub loaded: Vec<LoadedEntry>,
+    /// The manifest runtimes this host has a loader for, sorted.
+    pub runtimes: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -41,6 +46,7 @@ struct WireReport<'a> {
     pool: &'a str,
     state: &'static str,
     loaded: Vec<WireEntry<'a>>,
+    runtimes: &'a [String],
 }
 
 #[derive(Serialize)]
@@ -78,6 +84,7 @@ impl HeartbeatReport {
                     },
                 })
                 .collect(),
+            runtimes: &self.runtimes,
         };
         serde_json::to_string(&wire).expect("a heartbeat always serialises")
     }
@@ -105,10 +112,12 @@ mod tests {
                     state: LoadState::Failed("RUNTIME_UNSUPPORTED".into()),
                 },
             ],
+            runtimes: vec!["component".into(), "wasm".into()],
         };
+        // Java's shape, then `runtimes` (beyond Java).
         assert_eq!(
             report.to_json(),
-            r#"{"hostId":"h-1","pool":"default","state":"DRAINING","loaded":[{"address":"a.b.c","version":2,"state":"LOADED"},{"address":"a.b.d","version":1,"state":"FAILED","error":"RUNTIME_UNSUPPORTED"}]}"#
+            r#"{"hostId":"h-1","pool":"default","state":"DRAINING","loaded":[{"address":"a.b.c","version":2,"state":"LOADED"},{"address":"a.b.d","version":1,"state":"FAILED","error":"RUNTIME_UNSUPPORTED"}],"runtimes":["component","wasm"]}"#
         );
     }
 }

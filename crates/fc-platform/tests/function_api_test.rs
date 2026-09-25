@@ -294,6 +294,7 @@ fn function_router(app: &TestApp, encryption: Option<Arc<EncryptionService>>) ->
                 functions: app.repos.function_repo.clone(),
                 domains: app.repos.function_domain_repo.clone(),
                 routes: app.repos.function_route_repo.clone(),
+                hosts: app.repos.function_host_repo.clone(),
                 limits: FunctionLimits::defaults(),
             },
             unit_of_work: app.unit_of_work.clone(),

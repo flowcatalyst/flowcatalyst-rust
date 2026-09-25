@@ -208,14 +208,30 @@ impl Drop for GuestRuntime {
     }
 }
 
-/// The [`FunctionLoader`] for `runtime: wasm`.
+/// The [`FunctionLoader`] for `runtime: component`, and for `runtime:
+/// wasm` when the artifact is a component (it is sniffed; a core module is
+/// `WASM_CORE_MODULE_UNSUPPORTED`).
 pub struct WasmLoader {
     runtime: Arc<WasmRuntime>,
 }
 
 impl WasmLoader {
+    /// The manifest runtimes this loader serves.
+    pub const RUNTIMES: [&'static str; 2] = ["component", "wasm"];
+
     pub fn new(runtime: Arc<WasmRuntime>) -> Self {
         Self { runtime }
+    }
+
+    /// `loaders` plus this loader for each of [`WasmLoader::RUNTIMES`].
+    pub fn register(
+        self: Arc<Self>,
+        mut loaders: crate::loader::Loaders,
+    ) -> crate::loader::Loaders {
+        for runtime in Self::RUNTIMES {
+            loaders = loaders.with(runtime, self.clone());
+        }
+        loaders
     }
 
     pub fn runtime(&self) -> &Arc<WasmRuntime> {

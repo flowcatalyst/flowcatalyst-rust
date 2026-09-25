@@ -28,7 +28,7 @@ export type CreateFunctionRequest = {
     applicationCode: string;
     serviceName: string;
     name: string;
-    runtime: 'jvm' | 'wasm';
+    runtime: 'jvm' | 'wasm' | 'component';
     description?: string;
     clientId?: string;
 };
@@ -51,7 +51,7 @@ export type FunctionResponse = {
     name: string;
     applicationId: string;
     clientId?: string;
-    runtime: 'jvm' | 'wasm';
+    runtime: 'jvm' | 'wasm' | 'component';
     description?: string;
     status: 'ACTIVE' | 'DISABLED';
     live?: FunctionResponseLive;
@@ -82,8 +82,11 @@ export type SignerResponse = {
  * The publish-time manifest, as parsed by Manifest#parseStrict — only runtime/entrypoint are mandatory, everything else defaults.
  */
 export type PublishManifestRequest = {
-    runtime: 'jvm' | 'wasm';
-    entrypoint: string;
+    runtime: 'jvm' | 'wasm' | 'component';
+    /**
+     * Optional for runtime component (default wasi:http/incoming-handler); required otherwise.
+     */
+    entrypoint?: string;
     pool?: string;
     warm?: boolean;
     limits?: {
@@ -218,7 +221,7 @@ export type ManifestDbRef = {
  * The resolved manifest as the server writes it back (Manifest#toJson) — every key always present.
  */
 export type Manifest = {
-    runtime: 'jvm' | 'wasm';
+    runtime: 'jvm' | 'wasm' | 'component';
     entrypoint: string;
     pool: string;
     warm: boolean;
@@ -365,6 +368,10 @@ export type PromotePlanResponse = {
     schedules?: Array<ScheduleActionResponse>;
     publicRoutes?: PublicRoutesActionResponse;
     conflicts: Array<ConflictResponse>;
+    /**
+     * What would not stop the publish but may stop the version running: POOL_HAS_NO_LIVE_HOSTS, POOL_RUNTIME_UNKNOWN.
+     */
+    warnings: Array<ConflictResponse>;
 };
 
 export type AliasResponse = {
@@ -463,7 +470,7 @@ export type SetSecretRequest = {
 export type PolicySignerRequest = {
     issuer: string;
     subject: string;
-    runtimes?: Array<'jvm' | 'wasm'>;
+    runtimes?: Array<'jvm' | 'wasm' | 'component'>;
 };
 
 export type PolicyCeilingsRequest = {
@@ -481,7 +488,7 @@ export type PutPolicyRequest = {
 export type PolicySignerResponse = {
     issuer: string;
     subject: string;
-    runtimes: Array<'jvm' | 'wasm'>;
+    runtimes: Array<'jvm' | 'wasm' | 'component'>;
 };
 
 export type PolicyCeilingsResponse = {
@@ -537,6 +544,10 @@ export type HeartbeatRequest = {
     pool: string;
     state: 'ACTIVE' | 'DRAINING';
     loaded?: Array<HeartbeatLoadedEntry>;
+    /**
+     * Beyond Java: the manifest runtimes this host loads (e.g. ["component","wasm"]). Read tolerantly; absent means the host does not say, and publish then assumes nothing about its pool.
+     */
+    runtimes?: Array<string>;
 };
 
 export type EmitEventItem = {
@@ -931,11 +942,11 @@ export type PublishFunctionVersionErrors = {
      */
     404: ErrorResponse;
     /**
-     * FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the same digest under a different manifest; details.version names the existing version)
+     * FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the same digest under a different manifest; details.version names the existing version), POOL_RUNTIME_UNSUPPORTED (every live host of the pool reports its runtimes, none this one)
      */
     409: ErrorResponse;
     /**
-     * ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED
+     * ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED, ARTIFACT_RUNTIME_MISMATCH (runtime component and the uploaded artifact is not a WASI component)
      */
     422: ErrorResponse;
     /**

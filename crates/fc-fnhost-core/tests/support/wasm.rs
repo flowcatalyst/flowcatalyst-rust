@@ -173,7 +173,7 @@ impl WasmHarness {
             control.clone(),
             Arc::new(artifacts),
             Signatures::Off,
-            Loaders::none().with("wasm", Arc::new(WasmLoader::new(runtime.clone()))),
+            Arc::new(WasmLoader::new(runtime.clone())).register(Loaders::none()),
             registry.clone(),
         ));
         let metrics = Arc::new(FnMetrics::new(registry));

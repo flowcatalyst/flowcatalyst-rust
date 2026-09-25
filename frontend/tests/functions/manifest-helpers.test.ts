@@ -47,6 +47,13 @@ describe("manifestModel", () => {
 		expect(roundTripped).toEqual(model);
 	});
 
+	it("starts a component function with the entrypoint left to its default", () => {
+		expect(newManifestModel()).toEqual({
+			runtime: "component",
+			endpoints: [{ path: "/hello", auth: "platform", methods: ["GET"] }],
+		});
+	});
+
 	it("starts a wasm function from a component template, not an Extism module", () => {
 		expect(newManifestModel("wasm")).toEqual({
 			runtime: "wasm",
@@ -64,6 +71,7 @@ describe("renderPlanLines", () => {
 		settingsMissing: [],
 		httpOnly: false,
 		conflicts: [],
+		warnings: [],
 	};
 
 	it("renders create, update, delete, conflicts and missing settings", () => {
@@ -92,6 +100,15 @@ describe("renderPlanLines", () => {
 			"! conflict: PUBLIC_ROUTE_TAKEN: taken",
 			"! settings missing: API_KEY",
 		]);
+	});
+
+	it("appends the pool warnings after everything else", () => {
+		expect(
+			renderPlanLines({
+				...base,
+				warnings: [{ code: "POOL_HAS_NO_LIVE_HOSTS", message: "no host" }],
+			}),
+		).toEqual(["no changes", "! warning: POOL_HAS_NO_LIVE_HOSTS: no host"]);
 	});
 
 	it("says no changes for an empty live plan and names an HTTP-only alias", () => {

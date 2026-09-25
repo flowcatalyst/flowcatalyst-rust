@@ -3,10 +3,12 @@
 //! `shared/openapi/FunctionManifestSchemaRoutes.java`, registered at
 //! `server/Platform.java:724-727`).
 //!
-//! The file is a byte-identical copy of Java's
-//! `server/src/main/resources/schemas/function-manifest.schema.json`. It is an
-//! editor aid: an author points `$schema` at it to get validation while
-//! typing. The route is unauthenticated because an editor has no token.
+//! The file began as a byte-identical copy of Java's
+//! `server/src/main/resources/schemas/function-manifest.schema.json`; it now
+//! adds `runtime: component` (owner decision 5), whose `entrypoint` is
+//! optional. It is an editor aid: an author points `$schema` at it to get
+//! validation while typing. The route is unauthenticated because an editor
+//! has no token.
 
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
@@ -91,7 +93,13 @@ mod drift_tests {
         let mut top = set(TOP_KEYS.iter().copied());
         top.insert("$schema".into());
         assert_eq!(properties(&schema), top);
-        assert_eq!(required(&schema), set(["runtime", "entrypoint"]));
+        // `entrypoint` is required unless the runtime is `component`
+        // (the `allOf` conditional).
+        assert_eq!(required(&schema), set(["runtime"]));
+        assert_eq!(
+            schema["allOf"][1]["else"]["required"],
+            serde_json::json!(["entrypoint"])
+        );
         assert_eq!(
             properties(&schema["properties"]["limits"]),
             set(LIMITS_KEYS.iter().copied())
@@ -160,21 +168,24 @@ mod drift_tests {
         }
     }
 
-    /// The copy is byte-identical to Java's, when the Java checkout is next
-    /// to this repo.
+    /// Java's schema plus `component`, when the Java checkout is next to
+    /// this repo: the same properties, and Java's runtimes a subset of ours.
     #[test]
-    fn is_javas_file_byte_for_byte() {
+    fn extends_javas_file() {
         let java = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
             "../../../flowcatalyst-javalin/server/src/main/resources/schemas/function-manifest.schema.json",
         );
-        match std::fs::read(&java) {
-            Ok(bytes) => assert!(
-                bytes == FUNCTION_MANIFEST_SCHEMA,
-                "{} differs",
-                java.display()
-            ),
-            Err(_) => eprintln!("skipped: {} not found", java.display()),
-        }
+        let Ok(bytes) = std::fs::read(&java) else {
+            eprintln!("skipped: {} not found", java.display());
+            return;
+        };
+        let java: Value = serde_json::from_slice(&bytes).unwrap();
+        let ours = schema();
+        assert_eq!(properties(&java), properties(&ours));
+        let theirs = enum_values(&java["properties"]["runtime"]);
+        let mine = enum_values(&ours["properties"]["runtime"]);
+        assert!(theirs.is_subset(&mine), "{theirs:?} ⊄ {mine:?}");
+        assert_eq!(&mine - &theirs, set(["component"]));
     }
 }
 

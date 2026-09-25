@@ -564,7 +564,7 @@
             }
           },
           "409": {
-            "description": "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the same digest under a different manifest; details.version names the existing version)",
+            "description": "FUNCTION_DISABLED, VERSION_DIGEST_EXISTS (the same digest under a different manifest; details.version names the existing version), POOL_RUNTIME_UNSUPPORTED (every live host of the pool reports its runtimes, none this one)",
             "content": {
               "application/json": {
                 "schema": {
@@ -574,7 +574,7 @@
             }
           },
           "422": {
-            "description": "ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED",
+            "description": "ARTIFACT_REF_MISMATCH, ARTIFACT_NOT_UPLOADED, ARTIFACT_RUNTIME_MISMATCH (runtime component and the uploaded artifact is not a WASI component)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2493,7 +2493,8 @@
             "type": "string",
             "enum": [
               "jvm",
-              "wasm"
+              "wasm",
+              "component"
             ]
           },
           "description": {
@@ -2571,7 +2572,8 @@
             "type": "string",
             "enum": [
               "jvm",
-              "wasm"
+              "wasm",
+              "component"
             ]
           },
           "description": {
@@ -2667,11 +2669,13 @@
             "type": "string",
             "enum": [
               "jvm",
-              "wasm"
+              "wasm",
+              "component"
             ]
           },
           "entrypoint": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional for runtime component (default wasi:http/incoming-handler); required otherwise."
           },
           "pool": {
             "type": "string"
@@ -2895,8 +2899,7 @@
           }
         },
         "required": [
-          "runtime",
-          "entrypoint"
+          "runtime"
         ],
         "additionalProperties": false
       },
@@ -3183,7 +3186,8 @@
             "type": "string",
             "enum": [
               "jvm",
-              "wasm"
+              "wasm",
+              "component"
             ]
           },
           "entrypoint": {
@@ -3658,6 +3662,13 @@
             "items": {
               "$ref": "#/components/schemas/ConflictResponse"
             }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConflictResponse"
+            },
+            "description": "What would not stop the publish but may stop the version running: POOL_HAS_NO_LIVE_HOSTS, POOL_RUNTIME_UNKNOWN."
           }
         },
         "required": [
@@ -3665,7 +3676,8 @@
           "toVersion",
           "settingsMissing",
           "httpOnly",
-          "conflicts"
+          "conflicts",
+          "warnings"
         ],
         "additionalProperties": false
       },
@@ -4033,7 +4045,8 @@
               "type": "string",
               "enum": [
                 "jvm",
-                "wasm"
+                "wasm",
+                "component"
               ]
             }
           }
@@ -4092,7 +4105,8 @@
               "type": "string",
               "enum": [
                 "jvm",
-                "wasm"
+                "wasm",
+                "component"
               ]
             }
           }
@@ -4291,6 +4305,13 @@
             "items": {
               "$ref": "#/components/schemas/HeartbeatLoadedEntry"
             }
+          },
+          "runtimes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Beyond Java: the manifest runtimes this host loads (e.g. [\"component\",\"wasm\"]). Read tolerantly; absent means the host does not say, and publish then assumes nothing about its pool."
           }
         },
         "required": [

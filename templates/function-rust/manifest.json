@@ -1,6 +1,5 @@
 {
-  "runtime": "wasm",
-  "entrypoint": "wasi_http_incoming_handler",
+  "runtime": "component",
   "limits": {
     "maxConcurrency": 8,
     "wasmMemoryMb": 32

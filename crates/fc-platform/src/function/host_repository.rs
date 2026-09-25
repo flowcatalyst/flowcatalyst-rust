@@ -24,6 +24,7 @@ struct HostRow {
     pool: String,
     state: String,
     loaded: Value,
+    runtimes: Option<Value>,
     started_at: DateTime<Utc>,
     last_heartbeat: DateTime<Utc>,
 }
@@ -46,7 +47,7 @@ impl FunctionHostRepository {
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<FunctionHost>> {
         let row = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, started_at, last_heartbeat FROM fn_hosts WHERE id = $1",
+            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fn_hosts WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -63,7 +64,7 @@ impl FunctionHostRepository {
         seen_since: DateTime<Utc>,
     ) -> Result<Vec<FunctionHost>> {
         let rows = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, started_at, last_heartbeat FROM fn_hosts \
+            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fn_hosts \
              WHERE pool = $1 AND last_heartbeat >= $2 ORDER BY id ASC",
         )
         .bind(pool)
@@ -89,17 +90,19 @@ impl FunctionHostRepository {
             .await?
             .rows_affected();
         sqlx::query(
-            "INSERT INTO fn_hosts (id, pool, state, loaded, started_at, last_heartbeat) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
+            "INSERT INTO fn_hosts (id, pool, state, loaded, runtimes, started_at, last_heartbeat) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
              ON CONFLICT (id) DO UPDATE SET \
                 state = EXCLUDED.state, \
                 loaded = EXCLUDED.loaded, \
+                runtimes = EXCLUDED.runtimes, \
                 last_heartbeat = EXCLUDED.last_heartbeat",
         )
         .bind(&host.id)
         .bind(&host.pool)
         .bind(host.state.as_str())
         .bind(write_loaded(&host.loaded))
+        .bind(host.runtimes.as_ref().map(|r| serde_json::json!(r)))
         .bind(host.started_at)
         .bind(host.last_heartbeat)
         .execute(&mut *tx)
@@ -114,7 +117,7 @@ impl FunctionHostRepository {
     pub async fn list_reporting(&self, address: &FunctionAddress) -> Result<Vec<FunctionHost>> {
         let probe = serde_json::json!([{ "address": address.render() }]);
         let rows = sqlx::query_as::<_, HostRow>(
-            "SELECT id, pool, state, loaded, started_at, last_heartbeat FROM fn_hosts \
+            "SELECT id, pool, state, loaded, runtimes, started_at, last_heartbeat FROM fn_hosts \
              WHERE loaded @> $1 ORDER BY id ASC",
         )
         .bind(probe)
@@ -144,12 +147,29 @@ fn to_entity(row: HostRow) -> Result<FunctionHost> {
     let state: HostState = decode(&row.state, "fn_hosts", "state", &row.id)?;
     Ok(FunctionHost {
         loaded: read_loaded(&row.loaded),
+        runtimes: row.runtimes.as_ref().and_then(read_runtimes),
         id: row.id,
         pool: row.pool,
         state,
         started_at: row.started_at,
         last_heartbeat: row.last_heartbeat,
     })
+}
+
+/// The runtimes a host reported, read tolerantly (its heartbeat and the
+/// stored column alike): an array's string entries, lower-cased, sorted and
+/// deduplicated; anything that is not an array reads as "did not say".
+pub fn read_runtimes(node: &Value) -> Option<Vec<String>> {
+    let entries = node.as_array()?;
+    let mut runtimes: Vec<String> = entries
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|r| r.trim().to_ascii_lowercase())
+        .filter(|r| !r.is_empty())
+        .collect();
+    runtimes.sort();
+    runtimes.dedup();
+    Some(runtimes)
 }
 
 /// `[{address, version, state, error?}]`, `error` only on `FAILED` (Java
@@ -244,6 +264,17 @@ mod tests {
             ])
         );
         assert_eq!(read_loaded(&json), loaded);
+    }
+
+    #[test]
+    fn runtimes_are_read_tolerantly() {
+        assert_eq!(
+            read_runtimes(&json!(["wasm", "Component", 3, "", "wasm"])),
+            Some(vec!["component".to_string(), "wasm".to_string()])
+        );
+        assert_eq!(read_runtimes(&json!([])), Some(vec![]));
+        assert_eq!(read_runtimes(&json!("wasm")), None);
+        assert_eq!(read_runtimes(&Value::Null), None);
     }
 
     #[test]

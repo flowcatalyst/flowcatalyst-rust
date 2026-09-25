@@ -312,7 +312,11 @@ fn the_plan_is_javas() {
     let plans = plans();
     assert_eq!(plans.len(), java.len());
     for (name, plan) in plans {
-        let rust = serde_json::to_value(PromotePlanResponse::of(&plan)).unwrap();
+        let mut rust = serde_json::to_value(PromotePlanResponse::of(&plan)).unwrap();
+        // `warnings` is Rust's own (owner decision 5), filled in by the
+        // manifest check; a plan alone has none.
+        let warnings = rust.as_object_mut().unwrap().remove("warnings");
+        assert_eq!(warnings, Some(serde_json::json!([])), "{name}");
         let java: Value = serde_json::from_str(java[name].as_str().unwrap()).unwrap();
         assert_eq!(rust, java, "{name}");
     }

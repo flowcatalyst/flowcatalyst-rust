@@ -28,6 +28,13 @@ export function renderPlanLines(plan: PromotePlanResponse): string[] {
 		lines.push("no changes");
 	}
 
+	// Rust only: nothing that stops the publish, but maybe the version
+	// running (no live host in the pool, or none that says it loads the
+	// runtime). Absent from an older platform's plan.
+	for (const w of plan.warnings ?? []) {
+		lines.push(`! warning: ${w.code}: ${w.message}`);
+	}
+
 	return lines;
 }
 

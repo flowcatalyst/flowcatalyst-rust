@@ -9,6 +9,14 @@
 //! route conflict. Publish rejects with the first; the manifest check route
 //! returns them all.
 //!
+//! Beyond Java (owner decision 5), last: the manifest's `pool` must have a
+//! host that can load its runtime. Only a pool whose live hosts all report
+//! their runtimes, none of them this one, is refused
+//! (`POOL_RUNTIME_UNSUPPORTED`); a pool with no live host, or with hosts
+//! that do not report runtimes (Java's), is not, since a host may come up
+//! or already cope. The manifest check's plan warns about those instead
+//! ([`PublishChecks::pool_warnings`]).
+//!
 //! In Java these live on `TriggerSync`, the promote wiring seam; they need
 //! none of the wiring, so they stay apart from [`super::TriggerSync`],
 //! which shares [`routes_taken`] with them.
@@ -20,7 +28,8 @@ use super::access::Caller;
 use crate::event_type::entity::EventTypeStatus;
 use crate::event_type::repository::EventTypeRepository;
 use crate::function::domain_repository::FunctionDomainRepository;
-use crate::function::entity::{Function, FunctionRoute};
+use crate::function::entity::{Function, FunctionHost, FunctionRoute};
+use crate::function::host_repository::FunctionHostRepository;
 use crate::function::repository::FunctionRepository;
 use crate::function::route_repository::FunctionRouteRepository;
 use crate::function::schedule_check::{parse_cron, zone_id_valid};
@@ -37,7 +46,42 @@ pub struct PublishChecks {
     pub functions: Arc<FunctionRepository>,
     pub domains: Arc<FunctionDomainRepository>,
     pub routes: Arc<FunctionRouteRepository>,
+    pub hosts: Arc<FunctionHostRepository>,
     pub limits: FunctionLimits,
+}
+
+/// Something the manifest check's plan points out without refusing: the
+/// publish would go through, but nothing may run the version yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolWarning {
+    pub code: &'static str,
+    pub message: String,
+}
+
+/// What the pool's live hosts say about a runtime.
+enum PoolSupport {
+    /// No host heartbeated inside the live window.
+    NoLiveHosts,
+    /// At least one live host reports it.
+    Supported,
+    /// Every live host reports its runtimes, none this one.
+    Unsupported,
+    /// No host reports it, but some do not report runtimes at all.
+    Unknown,
+}
+
+fn pool_support(hosts: &[FunctionHost], runtime: crate::function::Runtime) -> PoolSupport {
+    if hosts.is_empty() {
+        return PoolSupport::NoLiveHosts;
+    }
+    let answers: Vec<Option<bool>> = hosts.iter().map(|h| h.supports(runtime)).collect();
+    if answers.contains(&Some(true)) {
+        PoolSupport::Supported
+    } else if answers.iter().all(Option::is_some) {
+        PoolSupport::Unsupported
+    } else {
+        PoolSupport::Unknown
+    }
 }
 
 impl PublishChecks {
@@ -120,7 +164,55 @@ impl PublishChecks {
         }
 
         errors.extend(self.check_public_routes(f, manifest, caller).await?);
+
+        if let PoolSupport::Unsupported =
+            pool_support(&self.live_hosts(manifest).await?, manifest.runtime)
+        {
+            errors.push(UseCaseError::business_rule(
+                "POOL_RUNTIME_UNSUPPORTED",
+                format!(
+                    "no live host in pool '{}' can load runtime '{}'",
+                    manifest.pool.value(),
+                    manifest.runtime.wire_value()
+                ),
+            ));
+        }
         Ok(errors)
+    }
+
+    async fn live_hosts(&self, manifest: &Manifest) -> Result<Vec<FunctionHost>, UseCaseError> {
+        let since = chrono::Utc::now() - FunctionHost::live_window();
+        Ok(self.hosts.list_live(manifest.pool.value(), since).await?)
+    }
+
+    /// What the manifest check's plan warns about for a manifest that would
+    /// publish: its pool has no live host, or none that says it loads the
+    /// runtime (while some say nothing).
+    pub async fn pool_warnings(
+        &self,
+        manifest: &Manifest,
+    ) -> Result<Vec<PoolWarning>, UseCaseError> {
+        let pool = manifest.pool.value();
+        let runtime = manifest.runtime.wire_value();
+        Ok(
+            match pool_support(&self.live_hosts(manifest).await?, manifest.runtime) {
+                PoolSupport::NoLiveHosts => vec![PoolWarning {
+                    code: "POOL_HAS_NO_LIVE_HOSTS",
+                    message: format!(
+                    "no host in pool '{pool}' has sent a heartbeat recently; the version stays \
+                     PUBLISHED until one loads it"
+                ),
+                }],
+                PoolSupport::Unknown => vec![PoolWarning {
+                    code: "POOL_RUNTIME_UNKNOWN",
+                    message: format!(
+                    "no live host in pool '{pool}' reports runtime '{runtime}'; some report no \
+                     runtimes at all"
+                ),
+                }],
+                PoolSupport::Supported | PoolSupport::Unsupported => Vec::new(),
+            },
+        )
     }
 
     /// Each `public[]` entry's hostname must be under a domain claimed by
@@ -211,4 +303,41 @@ pub(crate) async fn routes_taken(
             Some(UseCaseError::business_rule("PUBLIC_ROUTE_TAKEN", message))
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::function::entity::HostState;
+    use crate::function::Runtime;
+
+    fn host(runtimes: Option<&[&str]>) -> FunctionHost {
+        FunctionHost::register("h", "default", chrono::Utc::now())
+            .heartbeat(HostState::Active, Vec::new(), chrono::Utc::now())
+            .reporting_runtimes(runtimes.map(|r| r.iter().map(|s| s.to_string()).collect()))
+    }
+
+    #[test]
+    fn a_pool_supports_a_runtime_when_any_live_host_says_so() {
+        let support = |hosts: &[FunctionHost], r| match pool_support(hosts, r) {
+            PoolSupport::NoLiveHosts => "none",
+            PoolSupport::Supported => "yes",
+            PoolSupport::Unsupported => "no",
+            PoolSupport::Unknown => "unknown",
+        };
+        let rust = host(Some(&["component", "wasm"]));
+        let java = host(None);
+        assert_eq!(support(&[], Runtime::Component), "none");
+        assert_eq!(
+            support(std::slice::from_ref(&rust), Runtime::Component),
+            "yes"
+        );
+        assert_eq!(support(std::slice::from_ref(&rust), Runtime::Jvm), "no");
+        assert_eq!(
+            support(&[rust.clone(), java.clone()], Runtime::Jvm),
+            "unknown"
+        );
+        assert_eq!(support(&[java.clone(), rust], Runtime::Wasm), "yes");
+        assert_eq!(support(&[java], Runtime::Component), "unknown");
+    }
 }

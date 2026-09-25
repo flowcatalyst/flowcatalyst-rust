@@ -21,8 +21,9 @@ const applicationCode = ref("");
 const serviceName = ref("");
 const name = ref("");
 const description = ref("");
-const runtime = ref<FunctionRuntime>("wasm");
+const runtime = ref<FunctionRuntime>("component");
 const runtimeOptions: Array<{ label: string; value: FunctionRuntime }> = [
+	{ label: "Component (WASI 0.2)", value: "component" },
 	{ label: "WASM", value: "wasm" },
 	{ label: "JVM", value: "jvm" },
 ];
@@ -177,7 +178,12 @@ async function onSubmit() {
               optionValue="value"
               class="full-width"
             />
-            <small v-if="runtime === 'wasm'" class="hint">
+            <small v-if="runtime === 'component'" class="hint">
+              A WASI 0.2 component exporting <code>wasi:http/incoming-handler</code>, run by a Rust
+              function host. The platform checks an uploaded artifact is a component when you
+              publish.
+            </small>
+            <small v-else-if="runtime === 'wasm'" class="hint">
               On a Rust function host, a WASM function is a WASI 0.2 component exporting
               <code>wasi:http/incoming-handler</code> (entrypoint
               <code>wasi_http_incoming_handler</code>). Core Wasm modules (the Extism style) run on

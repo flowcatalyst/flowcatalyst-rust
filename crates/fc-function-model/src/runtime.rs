@@ -1,12 +1,15 @@
-//! Java `function/Runtime.java`.
+//! Java `function/Runtime.java`, plus `component`.
 //!
-//! Java has exactly `jvm` and `wasm`, and so does this. The set is kept
-//! extensible on purpose (owner ruling, 2026-09-24: the guest contract is
-//! being decided separately): a new runtime is one line in the
-//! `runtimes!` table below. What else a new runtime needs outside this
-//! file: a migration widening `fn_functions_runtime_check`, and the
-//! `runtime` enum of `function-manifest.schema.json` (which Java owns, so
-//! that is a change made in Java first).
+//! Java has exactly `jvm` and `wasm`. Rust adds **`component`** (owner
+//! decision 5, 2026-09-25): a WASI 0.2 component exporting
+//! `wasi:http/incoming-handler`, said explicitly instead of left to the
+//! host sniffing a `wasm` artifact. `wasm` keeps working exactly as before
+//! (a Rust host still loads a component published under it, entrypoint
+//! `wasi_http_incoming_handler`), and the two are compatible with each
+//! other ([`Runtime::accepts_manifest`]). A new runtime is one line in the
+//! `runtimes!` table below, plus a migration widening
+//! `fn_functions_runtime_check` and the `runtime` enum of
+//! `function-manifest.schema.json`.
 
 use crate::enum_str::str_enum;
 use crate::ValidationError;
@@ -18,7 +21,20 @@ pub enum EntrypointRule {
     BinaryClassName,
     /// A WASM export name: `^[A-Za-z_]\w*$`.
     WasmExport,
+    /// The component's handler: `wasi:http/incoming-handler`, optionally
+    /// `@0.2.<patch>`, or its manifest-safe alias
+    /// [`INCOMING_HANDLER_ALIAS`].
+    ComponentHandler,
 }
+
+/// The one export a `component` function has, and its default
+/// `entrypoint`.
+pub const INCOMING_HANDLER: &str = "wasi:http/incoming-handler";
+
+/// The manifest-safe name of [`INCOMING_HANDLER`], which Java's wasm rule
+/// (`[A-Za-z_]\w*`) accepts: how a component is published as `runtime:
+/// wasm`.
+pub const INCOMING_HANDLER_ALIAS: &str = "wasi_http_incoming_handler";
 
 impl EntrypointRule {
     /// Whether `raw` fits the rule (`\w` is ASCII, as in Java).
@@ -39,6 +55,16 @@ impl EntrypointRule {
                     .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
                     && chars.all(word)
             }
+            EntrypointRule::ComponentHandler => {
+                raw == INCOMING_HANDLER_ALIAS
+                    || match raw.strip_prefix(INCOMING_HANDLER) {
+                        Some("") => true,
+                        Some(version) => version.strip_prefix("@0.2.").is_some_and(|patch| {
+                            !patch.is_empty() && patch.bytes().all(|b| b.is_ascii_digit())
+                        }),
+                        None => false,
+                    }
+            }
         }
     }
 
@@ -47,6 +73,43 @@ impl EntrypointRule {
         match self {
             EntrypointRule::BinaryClassName => "entrypoint must be a binary class name",
             EntrypointRule::WasmExport => "entrypoint must be a wasm export name",
+            EntrypointRule::ComponentHandler => {
+                "entrypoint must be wasi:http/incoming-handler (optionally @0.2.x) or wasi_http_incoming_handler"
+            }
+        }
+    }
+}
+
+/// What a WASM artifact is, from its first 8 bytes: the `\0asm` magic,
+/// then a 16-bit version and a 16-bit layer (0: a core module, 1: a
+/// component), both little-endian. A header check, not a parse: enough to
+/// refuse a mismatched runtime at publish instead of at load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WasmKind {
+    Component,
+    CoreModule,
+    /// Not WASM at all, or shorter than a header.
+    NotWasm,
+}
+
+impl WasmKind {
+    /// How many leading bytes [`WasmKind::sniff`] needs.
+    pub const HEADER_LEN: usize = 8;
+
+    pub fn sniff(bytes: &[u8]) -> WasmKind {
+        match bytes {
+            [0x00, 0x61, 0x73, 0x6d, _, _, 0x00, 0x00, ..] => WasmKind::CoreModule,
+            [0x00, 0x61, 0x73, 0x6d, _, _, 0x01, 0x00, ..] => WasmKind::Component,
+            _ => WasmKind::NotWasm,
+        }
+    }
+
+    /// How a refusal names it.
+    pub fn describe(self) -> &'static str {
+        match self {
+            WasmKind::Component => "a WASI component",
+            WasmKind::CoreModule => "a core wasm module",
+            WasmKind::NotWasm => "not wasm",
         }
     }
 }
@@ -94,9 +157,38 @@ macro_rules! runtimes {
 runtimes! {
     Jvm => "JVM", "jvm", BinaryClassName, wasm_memory: false;
     Wasm => "WASM", "wasm", WasmExport, wasm_memory: true;
+    Component => "COMPONENT", "component", ComponentHandler, wasm_memory: true;
 }
 
 impl Runtime {
+    /// The `entrypoint` an absent one normalises to: only a component has
+    /// one (its only export); everywhere else it is required.
+    pub fn default_entrypoint(self) -> Option<&'static str> {
+        match self {
+            Runtime::Component => Some(INCOMING_HANDLER),
+            Runtime::Jvm | Runtime::Wasm => None,
+        }
+    }
+
+    /// Whether a manifest saying `manifest` may be published to a function
+    /// of this runtime (`RUNTIME_MISMATCH` otherwise): the same runtime, or
+    /// `wasm` and `component` either way round. Both are WASM; `component`
+    /// only says which kind, and the platform checks the artifact at
+    /// publish.
+    pub fn accepts_manifest(self, manifest: Runtime) -> bool {
+        self == manifest
+            || matches!(
+                (self, manifest),
+                (Runtime::Wasm, Runtime::Component) | (Runtime::Component, Runtime::Wasm)
+            )
+    }
+
+    /// Whether an artifact of this runtime must be a WASI component (not a
+    /// core module): `component` always. `wasm` may be either (Java's hosts
+    /// run core modules), `jvm` is not WASM at all.
+    pub fn requires_component(self) -> bool {
+        self == Runtime::Component
+    }
     /// `runtime is required and must be jvm or wasm`, listing every runtime.
     pub fn invalid_message() -> String {
         let names: Vec<&str> = Runtime::ALL.iter().map(|r| r.wire_value()).collect();
@@ -141,9 +233,61 @@ mod tests {
     }
 
     #[test]
+    fn a_components_entrypoint_is_the_incoming_handler_or_its_alias() {
+        let rule = Runtime::Component.entrypoint_rule();
+        for ok in [
+            "wasi:http/incoming-handler",
+            "wasi:http/incoming-handler@0.2.0",
+            "wasi:http/incoming-handler@0.2.12",
+            "wasi_http_incoming_handler",
+        ] {
+            assert!(rule.matches(ok), "{ok}");
+        }
+        for bad in [
+            "handle",
+            "wasi:http/incoming-handler@0.3.0",
+            "wasi:http/incoming-handler@0.2.",
+            "wasi:http/incoming-handler@0.2.x",
+            "wasi:http/outgoing-handler",
+            "",
+        ] {
+            assert!(!rule.matches(bad), "{bad}");
+        }
+        assert_eq!(
+            Runtime::Component.default_entrypoint(),
+            Some("wasi:http/incoming-handler")
+        );
+        assert_eq!(Runtime::Wasm.default_entrypoint(), None);
+        assert_eq!(Runtime::Jvm.default_entrypoint(), None);
+    }
+
+    #[test]
+    fn a_wasm_header_says_component_or_core_module() {
+        let core = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01];
+        let component = [0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00];
+        assert_eq!(WasmKind::sniff(&core), WasmKind::CoreModule);
+        assert_eq!(WasmKind::sniff(&component), WasmKind::Component);
+        assert_eq!(WasmKind::sniff(b"PK\x03\x04 a jar"), WasmKind::NotWasm);
+        assert_eq!(WasmKind::sniff(&component[..6]), WasmKind::NotWasm);
+        assert_eq!(WasmKind::sniff(&[]), WasmKind::NotWasm);
+    }
+
+    #[test]
+    fn wasm_and_component_accept_each_others_manifests() {
+        assert!(Runtime::Wasm.accepts_manifest(Runtime::Component));
+        assert!(Runtime::Component.accepts_manifest(Runtime::Wasm));
+        assert!(Runtime::Component.accepts_manifest(Runtime::Component));
+        assert!(!Runtime::Jvm.accepts_manifest(Runtime::Wasm));
+        assert!(!Runtime::Component.accepts_manifest(Runtime::Jvm));
+        assert!(Runtime::Component.requires_component());
+        assert!(!Runtime::Wasm.requires_component());
+    }
+
+    #[test]
     fn stored_parse_is_exact() {
         assert_eq!("JVM".parse::<Runtime>().unwrap(), Runtime::Jvm);
         assert_eq!("WASM".parse::<Runtime>().unwrap(), Runtime::Wasm);
+        assert_eq!("COMPONENT".parse::<Runtime>().unwrap(), Runtime::Component);
         assert!("jvm".parse::<Runtime>().is_err());
         assert_eq!(Runtime::Jvm.as_str(), "JVM");
     }
@@ -160,7 +304,10 @@ mod tests {
         for raw in ["dotnet", "", " jvm"] {
             let err = Runtime::parse_strict(raw).unwrap_err();
             assert_eq!(err.code(), "RUNTIME_INVALID");
-            assert_eq!(err.message(), "runtime is required and must be jvm or wasm");
+            assert_eq!(
+                err.message(),
+                "runtime is required and must be jvm, wasm or component"
+            );
         }
     }
 
@@ -170,12 +317,17 @@ mod tests {
         assert_eq!(Runtime::Wasm.wire_value(), "wasm");
     }
 
-    /// Exactly Java's set, until the owner adds one.
+    /// Java's set plus `component` (owner decision 5).
     #[test]
-    fn exactly_javas_runtimes() {
-        assert_eq!(Runtime::ALL, [Runtime::Jvm, Runtime::Wasm]);
+    fn javas_runtimes_and_component() {
+        assert_eq!(
+            Runtime::ALL,
+            [Runtime::Jvm, Runtime::Wasm, Runtime::Component]
+        );
         assert!(!Runtime::Jvm.takes_wasm_memory());
         assert!(Runtime::Wasm.takes_wasm_memory());
+        assert!(Runtime::Component.takes_wasm_memory());
+        assert_eq!(Runtime::Component.wire_value(), "component");
     }
 
     #[test]

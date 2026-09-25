@@ -196,6 +196,15 @@ impl<U: UnitOfWork> PublishVersionUseCase<U> {
             &ceilings,
         )?;
 
+        check_artifact_kind(
+            self.artifacts.as_deref(),
+            &artifact_ref,
+            &function,
+            &manifest,
+            &digest,
+        )
+        .await?;
+
         let signer = resolve_signer(
             &self.signatures,
             command.signature_bundle.as_deref(),
@@ -309,6 +318,41 @@ async fn check_platform_ref(
         return Err(artifact::not_uploaded());
     }
     Ok(())
+}
+
+/// Beyond Java (owner decision 5): a `component` runtime (the manifest's
+/// or the function's) must publish a WASI component, so a core module or a
+/// jar fails here (`422 ARTIFACT_RUNTIME_MISMATCH`) instead of at load on
+/// every host. Only an uploaded (`platform://`) artifact can be read; an
+/// `oci://`, `s3://` or `file://` one is left to the host's own check.
+async fn check_artifact_kind(
+    store: Option<&dyn ArtifactBlobStore>,
+    artifact_ref: &str,
+    function: &Function,
+    manifest: &Manifest,
+    digest: &Digest,
+) -> Result<(), UseCaseError> {
+    let runtime = if manifest.runtime.requires_component() {
+        manifest.runtime
+    } else if function.runtime.requires_component() {
+        function.runtime
+    } else {
+        return Ok(());
+    };
+    let Some(store) = store.filter(|_| artifact_ref.starts_with("platform://")) else {
+        return Ok(());
+    };
+    match artifact::sniff(store, &function.id, digest).await {
+        Ok(crate::function::WasmKind::Component) => Ok(()),
+        Ok(other) => Err(artifact::runtime_mismatch(runtime, other)),
+        Err(e) => {
+            tracing::error!(function_id = %function.id, error = %e, "reading an uploaded artifact's header failed");
+            Err(UseCaseError::internal(
+                "ARTIFACT_STORE_ERROR",
+                "reading the uploaded artifact failed",
+            ))
+        }
+    }
 }
 
 /// Java's step 5. `Off` stores whatever bundle was sent, unverified, with

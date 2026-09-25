@@ -73,6 +73,7 @@ fn ops() -> FunctionOperations<InMemoryUnitOfWork> {
             functions,
             domains,
             routes,
+            hosts: Arc::new(crate::function::host_repository::FunctionHostRepository::new(&pool)),
             limits,
         },
         unit_of_work: Arc::new(InMemoryUnitOfWork::new()),

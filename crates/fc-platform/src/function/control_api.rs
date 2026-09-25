@@ -150,6 +150,10 @@ struct HeartbeatRequest {
     pool: Option<String>,
     state: Option<String>,
     loaded: Option<Vec<Option<LoadedEntry>>>,
+    /// Beyond Java (owner decision 5): the runtimes the host loads. Read
+    /// tolerantly; absent or not an array means the host did not say.
+    #[serde(default)]
+    runtimes: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -259,6 +263,11 @@ pub async fn heartbeat(
         .map(|(i, e)| parse_loaded_entry(e.as_ref(), i))
         .collect::<Result<Vec<_>, _>>()?;
 
+    let runtimes = req
+        .runtimes
+        .as_ref()
+        .and_then(super::host_repository::read_runtimes);
+
     let now = Utc::now();
     let host = match state.hosts.find_by_id(&host_id).await? {
         Some(existing) => existing.heartbeat(host_state, loaded.clone(), now),
@@ -267,7 +276,8 @@ pub async fn heartbeat(
             loaded.clone(),
             now,
         ),
-    };
+    }
+    .reporting_runtimes(runtimes);
     let purged = state
         .hosts
         .heartbeat(&host, now - FunctionHost::purge_after())

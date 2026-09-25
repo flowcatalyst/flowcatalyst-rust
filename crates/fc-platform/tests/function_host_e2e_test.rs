@@ -18,7 +18,12 @@
 //!    decrypted secret desired state delivered.
 //! 5. The guest's emit reaches `msg_events` through
 //!    `/control/functions/events`, as `function:<address>`.
-//! 6. Disabling the function unloads it from the host; deleting it leaves
+//! 6. `runtime: component` (owner decision 5): a core module is refused at
+//!    publish; the example component is published as version 2 with no
+//!    entrypoint (it defaults), becomes READY on the host (whose heartbeat
+//!    reports the runtimes it loads), is promoted with an `expectedVersion`
+//!    precondition and serves; republishing it is a 200 no-op.
+//! 7. Disabling the function unloads it from the host; deleting it leaves
 //!    the pool's document empty.
 //!
 //! Requires Docker. Its own test binary: it sets process environment.
@@ -56,8 +61,13 @@ const EVENT_TYPE: &str = "fixture:pdk:thing:happened";
 const HOST_ID: &str = "e2e-host-1";
 
 fn guest() -> Vec<u8> {
+    guest_fixture("pdk.wasm")
+}
+
+fn guest_fixture(name: &str) -> Vec<u8> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fc-fnhost-core/tests/fixtures/wasm/pdk.wasm");
+        .join("../fc-fnhost-core/tests/fixtures/wasm")
+        .join(name);
     std::fs::read(path).expect("the committed PDK guest")
 }
 
@@ -165,11 +175,28 @@ async fn start_host(
     ]))
     .expect("host environment");
     let wasm = WasmRuntime::new(WasmSettings::from_env(&env)).expect("wasm runtime");
-    let loaders = Loaders::none().with("wasm", Arc::new(WasmLoader::new(wasm)));
+    let loaders = Arc::new(WasmLoader::new(wasm)).register(Loaders::none());
     let listener: Arc<dyn Listener> = Arc::new(FnListener::from_env(&env));
     let mut host = FnHost::new(env, loaders, Some(listener)).expect("host");
     host.start().await.expect("host starts");
     host
+}
+
+/// Uploads `bytes` as the function's artifact: its `platform://` ref and
+/// digest.
+async fn upload_artifact(app: &TestApp, token: &str, bytes: &[u8]) -> (String, String) {
+    let digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(bytes)));
+    let request = Request::builder()
+        .method(Method::PUT)
+        .uri(format!("/api/functions/{ADDRESS}/artifacts/{digest}"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/octet-stream")
+        .header("content-length", bytes.len())
+        .body(Body::from(bytes.to_vec()))
+        .unwrap();
+    let (status, body) = read_json(app.router.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    (body["artifactRef"].as_str().unwrap().to_string(), digest)
 }
 
 async fn version_state(app: &TestApp, token: &str, version: i32) -> String {
@@ -415,7 +442,111 @@ async fn a_function_published_on_the_platform_runs_on_the_host() {
     assert_eq!(row.4, json!({"n": 1}));
     assert_eq!(row.5.as_deref(), Some("corr-e2e"));
 
-    // ── 6. Disable: the host unloads it. Delete: nothing left to serve ───
+    // ── 6. runtime: component ────────────────────────────────────────────
+    // The host says what it loads.
+    let (runtimes,): (Value,) = sqlx::query_as("SELECT runtimes FROM fn_hosts WHERE id = $1")
+        .bind(HOST_ID)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(runtimes, json!(["component", "wasm"]));
+    let component_manifest = json!({
+        "runtime": "component",
+        "pool": POOL,
+        "endpoints": [{"path": "/*", "auth": "none"}],
+    });
+    // A core module is not a component: refused at publish, not at load.
+    let core_module = b"\0asm\x01\0\0\0".to_vec();
+    let core_ref = upload_artifact(&app, &admin, &core_module).await;
+    let (status, body) = api(
+        &app,
+        Method::POST,
+        &format!("/api/functions/{ADDRESS}/versions"),
+        &admin,
+        Some(json!({"artifactRef": core_ref.0, "digest": core_ref.1, "manifest": component_manifest})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"], "ARTIFACT_RUNTIME_MISMATCH");
+    // The manifest check's plan: the pool has a live host that loads it.
+    let (status, body) = api(
+        &app,
+        Method::POST,
+        &format!("/api/functions/{ADDRESS}/manifest/check"),
+        &admin,
+        Some(json!({"manifest": component_manifest})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["valid"], true, "{body}");
+    assert_eq!(body["plan"]["warnings"], json!([]), "{body}");
+
+    let hello = upload_artifact(&app, &admin, &guest_fixture("hello.wasm")).await;
+    let publish_hello =
+        json!({"artifactRef": hello.0, "digest": hello.1, "manifest": component_manifest});
+    let (status, published) = api(
+        &app,
+        Method::POST,
+        &format!("/api/functions/{ADDRESS}/versions"),
+        &admin,
+        Some(publish_hello.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{published}");
+    assert_eq!(published["version"], 2);
+    let (_, v2) = api(
+        &app,
+        Method::GET,
+        &format!("/api/functions/{ADDRESS}/versions/2"),
+        &admin,
+        None,
+    )
+    .await;
+    assert_eq!(v2["manifest"]["runtime"], "component");
+    assert_eq!(v2["manifest"]["entrypoint"], "wasi:http/incoming-handler");
+    // Republishing the same bytes and manifest: the same version, 200.
+    let (status, again) = api(
+        &app,
+        Method::POST,
+        &format!("/api/functions/{ADDRESS}/versions"),
+        &admin,
+        Some(publish_hello),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["version"], 2);
+
+    host.reconciler().reconcile_once(Utc::now()).await;
+    assert_eq!(version_state(&app, &admin, 2).await, "READY");
+    // Promote with the precondition: live is at 1, as the caller expects.
+    let (status, body) = api(
+        &app,
+        Method::PUT,
+        &format!("/api/functions/{ADDRESS}/aliases/live"),
+        &admin,
+        Some(json!({"version": 2, "expectedVersion": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["previousVersion"], 1);
+    host.reconciler().reconcile_once(Utc::now()).await;
+    let health = http
+        .get(format!("{base}/functions/{ADDRESS}/healthz"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status().as_u16(), 200);
+    assert_eq!(health.json::<Value>().await.unwrap(), json!({"ok": true}));
+    assert_eq!(
+        host.reconciler()
+            .registry()
+            .peek(&document_address())
+            .map(|f| f.version()),
+        Some(2),
+        "the component serves; version 1 is closed"
+    );
+
+    // ── 7. Disable: the host unloads it. Delete: nothing left to serve ───
     let (status, body) = api(
         &app,
         Method::PUT,

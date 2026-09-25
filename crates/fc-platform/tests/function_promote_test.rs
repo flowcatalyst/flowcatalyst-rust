@@ -101,6 +101,7 @@ fn router_hashing(app: &TestApp, hasher: fn(&str) -> String) -> Router {
                 functions: app.repos.function_repo.clone(),
                 domains: app.repos.function_domain_repo.clone(),
                 routes: app.repos.function_route_repo.clone(),
+                hosts: app.repos.function_host_repo.clone(),
                 limits,
             },
             unit_of_work: app.unit_of_work.clone(),

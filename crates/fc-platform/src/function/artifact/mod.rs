@@ -241,6 +241,37 @@ pub fn ref_mismatch() -> UseCaseError {
     )
 }
 
+/// The kind of WASM an uploaded blob is, from its first bytes (the rest is
+/// never read).
+pub async fn sniff(
+    store: &dyn ArtifactBlobStore,
+    function_id: &str,
+    digest: &Digest,
+) -> Result<super::WasmKind, ArtifactError> {
+    use tokio::io::AsyncReadExt;
+    let mut stream = store.open(function_id, digest).await?;
+    let mut header = Vec::with_capacity(super::WasmKind::HEADER_LEN);
+    (&mut stream)
+        .take(super::WasmKind::HEADER_LEN as u64)
+        .read_to_end(&mut header)
+        .await
+        .map_err(|e| ArtifactError::Transport(e.to_string()))?;
+    Ok(super::WasmKind::sniff(&header))
+}
+
+/// `422 ARTIFACT_RUNTIME_MISMATCH` (beyond Java): the runtime needs a WASI
+/// component and the uploaded artifact is something else.
+pub fn runtime_mismatch(runtime: super::Runtime, found: super::WasmKind) -> UseCaseError {
+    UseCaseError::unprocessable(
+        "ARTIFACT_RUNTIME_MISMATCH",
+        format!(
+            "runtime '{}' needs a WASI 0.2 component; the uploaded artifact is {}",
+            runtime.wire_value(),
+            found.describe()
+        ),
+    )
+}
+
 /// `422 ARTIFACT_NOT_UPLOADED`: the right function and digest, but nothing
 /// was ever uploaded for them.
 pub fn not_uploaded() -> UseCaseError {

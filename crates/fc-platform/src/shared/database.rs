@@ -421,6 +421,12 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "035_scheduled_jobs_application_id",
             include_str!("../../../../migrations/035_scheduled_jobs_application_id.sql"),
         ),
+        // Owner decision 5: `runtime: component`, and the runtimes a host
+        // reports in its heartbeat.
+        (
+            "037_function_component_runtime",
+            include_str!("../../../../migrations/037_function_component_runtime.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -556,6 +562,16 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
              WHERE table_schema = 'public' \
                AND table_name = 'msg_scheduled_jobs' \
                AND column_name = 'application_id')",
+        ),
+        // Both effects: the widened CHECK and the hosts' runtimes column.
+        (
+            "037_function_component_runtime",
+            "SELECT EXISTS (SELECT 1 FROM pg_constraint \
+             WHERE conname = 'fn_functions_runtime_check' \
+               AND pg_get_constraintdef(oid) LIKE '%COMPONENT%') \
+             AND EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'fn_hosts' \
+               AND column_name = 'runtimes')",
         ),
     ];
 

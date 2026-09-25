@@ -153,6 +153,34 @@ async fn a_component_that_does_not_compile_is_invalid() {
     assert_eq!(state, "FAILED:LOAD:WASM_INVALID");
 }
 
+/// `runtime: component` (owner decision 5) loads through the same runtime,
+/// with its entrypoint left to the default; the heartbeat says so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_component_runtime_loads_with_the_default_entrypoint() {
+    let mut m = manifest(json!({"runtime": "component"}));
+    m.as_object_mut().unwrap().remove("entrypoint");
+    let h = WasmHarness::start(vec![entry(ADDR, 1, &guest("echo"), m, json!({}))]).await;
+    assert_eq!(h.heartbeat_states()[0].2, "LOADED");
+    assert_eq!(h.get("/echo/1").await.status, 200);
+    assert_eq!(
+        h.control.last_heartbeat().runtimes,
+        ["component", "wasm"],
+        "the heartbeat names both runtimes"
+    );
+}
+
+/// A core module under `runtime: component` is refused like one under
+/// `wasm` (the platform refuses it at publish when it can read it).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_core_module_under_component_is_refused() {
+    let (state, _) = load(
+        &wat::parse_str("(module (func (export \"handle\")))").unwrap(),
+        json!({"runtime": "component"}),
+    )
+    .await;
+    assert_eq!(state, "FAILED:LOAD:WASM_CORE_MODULE_UNSUPPORTED");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_jvm_version_stays_runtime_unsupported() {
     let dir = tempfile::tempdir().unwrap();
