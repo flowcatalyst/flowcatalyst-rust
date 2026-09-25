@@ -872,41 +872,23 @@ async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::tas
         }
     }
 
+    // Losing leadership only pauses polling (owner ruling; as `fc-router`):
+    // the manager starts once and follows the leadership watch, so in-flight
+    // work finishes and a regained lead resumes the same consumers. Shutting
+    // the manager down on a lost lead and calling `start()` again never
+    // recovered a shut-down manager.
+    queue_manager.set_leader(*active_rx.borrow());
+    let follower = queue_manager.clone();
+    tokio::spawn(async move {
+        while active_rx.changed().await.is_ok() {
+            let leader = *active_rx.borrow();
+            follower.set_leader(leader);
+        }
+    });
     let manager = queue_manager.clone();
     let handle = tokio::spawn(async move {
-        loop {
-            // Wait until we're active (leader)
-            if !*active_rx.borrow() {
-                info!("Router: waiting for leadership...");
-                loop {
-                    if active_rx.changed().await.is_err() {
-                        return;
-                    }
-                    if *active_rx.borrow() {
-                        break;
-                    }
-                }
-                info!("Router: acquired leadership, starting processing");
-            }
-
-            // Process until leadership lost or shutdown
-            let mut lost_rx = active_rx.clone();
-            tokio::select! {
-                result = manager.clone().start() => {
-                    if let Err(e) = result {
-                        error!("QueueManager error: {}", e);
-                    }
-                }
-                _ = async {
-                    loop {
-                        if lost_rx.changed().await.is_err() { return; }
-                        if !*lost_rx.borrow() { return; }
-                    }
-                } => {
-                    warn!("Router: lost leadership, pausing");
-                    manager.shutdown().await;
-                }
-            }
+        if let Err(e) = manager.start().await {
+            error!("QueueManager error: {}", e);
         }
     });
 

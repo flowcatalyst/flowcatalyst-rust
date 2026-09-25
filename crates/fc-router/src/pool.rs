@@ -1166,6 +1166,15 @@ impl ProcessPool {
                     return;
                 }
 
+                // Go `InFlightTracker.EnsureTracked`: a different copy of this
+                // message now owns the pipeline, so this one is acked, not
+                // delivered twice.
+                if !task.callback.ensure_tracked() {
+                    guard.release_slot();
+                    task.callback.ack().await;
+                    return;
+                }
+
                 // Acquire a concurrency slot FIRST, then pace on the rate
                 // limiter while holding it — see `wait_for_rate_limit_permit`
                 // for why this order matters.
@@ -1218,6 +1227,9 @@ impl ProcessPool {
                     }
                     BrokerAction::Retry => {
                         task.attempts += 1;
+                        // Go `InFlightTracker.MarkRetrying`: the reaper and
+                        // stall detector leave a live retry alone.
+                        task.callback.mark_retrying();
                         guard.reserve_slot();
                         tokio::select! {
                             biased;
@@ -1325,6 +1337,12 @@ impl ProcessPool {
                     continue;
                 }
 
+                // Go `InFlightTracker.EnsureTracked` (see the immediate path).
+                if !task.callback.ensure_tracked() {
+                    task.callback.ack().await;
+                    continue;
+                }
+
                 // Acquire a concurrency slot FIRST, then pace on the rate
                 // limiter while holding it — see `wait_for_rate_limit_permit`
                 // for why this order matters.
@@ -1415,6 +1433,9 @@ impl ProcessPool {
                         // attempted, then wait out the backoff holding no
                         // concurrency slot. Later arrivals queue behind it.
                         task.attempts += 1;
+                        // Go `InFlightTracker.MarkRetrying`: the reaper and
+                        // stall detector leave a live retry alone.
+                        task.callback.mark_retrying();
                         let head_delay = disposition.nack_delay_secs();
                         let homeless = match group_handlers.get(&group_id) {
                             Some(entry) => {
