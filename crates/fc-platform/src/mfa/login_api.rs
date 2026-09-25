@@ -439,6 +439,7 @@ impl TwoFactorLogin {
             .secure(self.session_cookie.secure)
             .same_site(SameSite::Strict)
             .max_age(time::Duration::days(days))
+            .expires(time::OffsetDateTime::now_utc() + time::Duration::days(days))
             .build();
         self.notifier
             .new_trusted_device(&email_of(p), label.as_deref().unwrap_or(""))
