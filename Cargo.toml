@@ -95,7 +95,10 @@ governor = "0.8"
 hdrhistogram = "7.5"
 rust-embed = "8.7"
 nonzero_ext = "0.3"
-redis = { version = "0.29", features = ["tokio-comp", "connection-manager"] }
+# TLS (`rediss://`) as Go's go-redis accepts it: production's REDIS_URL is an
+# ElastiCache `rediss://` endpoint. The rustls config it builds needs a
+# process-level crypto provider, which the binaries install at startup.
+redis = { version = "0.29", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp", "tls-rustls-webpki-roots"] }
 parking_lot = "0.12"
 futures = "0.3"
 bytes = "1.10"

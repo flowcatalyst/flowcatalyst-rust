@@ -73,6 +73,32 @@ pub fn init_logging(_service_name: &str) {
     }
 }
 
+/// Initialize logging for a production server, as Go's fc-server logs:
+/// JSON unless `LOG_FORMAT` says otherwise (`text`), and the level from
+/// `RUST_LOG`, else Go's `FC_LOG_LEVEL` (`debug`/`info`/`warn`/`error`), else
+/// info.
+pub fn init_production_logging(_service_name: &str) {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        let level = match std::env::var("FC_LOG_LEVEL")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "debug" => "debug",
+            "warn" | "warning" => "warn",
+            "error" => "error",
+            _ => "info",
+        };
+        EnvFilter::new(level)
+    });
+    let format = std::env::var("LOG_FORMAT").unwrap_or_default();
+    if format.is_empty() || format.eq_ignore_ascii_case("json") {
+        init_json_logging(env_filter);
+    } else {
+        init_text_logging(env_filter);
+    }
+}
+
 /// Initialize JSON logging for production.
 fn init_json_logging(env_filter: EnvFilter) {
     tracing_subscriber::registry()

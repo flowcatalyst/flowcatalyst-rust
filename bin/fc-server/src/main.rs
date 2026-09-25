@@ -12,21 +12,30 @@
 //!
 //! ## Environment Variables
 //!
+//! Every variable is read with Go's name and semantics (flowcatalyst-go
+//! `internal/server/envcfg.go`); the production task definitions
+//! (`inhance/iac/compute/flowcatalyst.ts`) run unchanged. The full table,
+//! Go vs Rust, is `docs/parity/platform-env-vs-go.md`.
+//!
 //! ### Core
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
-//! | `FC_API_PORT` | `3000` | HTTP API port |
+//! | `FC_API_PORT` / `PORT` | `8080` | HTTP API port |
 //! | `FC_METRICS_PORT` | `9090` | Metrics/health port |
-//! | `FC_DATABASE_URL` | `postgresql://localhost:5432/flowcatalyst` | PostgreSQL URL |
+//! | `FC_DATABASE_URL` / `DATABASE_URL` | - | Full PostgreSQL URL (wins over the rest) |
+//! | `DB_HOST` + `DB_SECRET_ARN` (+ `DB_SECRET_PROVIDER=aws`, `DB_NAME`, `DB_PORT`) | - | Credentials from AWS Secrets Manager, refreshed every `DB_SECRET_REFRESH_INTERVAL_MS` (5 min) on every pool |
+//! | `DB_HOST` + `DB_USERNAME` + `DB_PASSWORD` (+ `DB_NAME`, `DB_PORT`) | - | Explicit credentials |
+//! | `FC_STATIC_DIR` | `/app/frontend/dist` when present | The SPA served by the platform |
 //!
 //! ### Subsystem Toggles
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
-//! | `FC_PLATFORM_ENABLED` | `true` | Run the platform API server |
-//! | `FC_ROUTER_ENABLED` | `false` | Run the SQS message router |
-//! | `FC_SCHEDULER_ENABLED` | `false` | Run the dispatch scheduler |
-//! | `FC_STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor |
-//! | `FC_OUTBOX_ENABLED` | `false` | Run the outbox processor |
+//! | `FC_PLATFORM_ENABLED` / `PLATFORM_ENABLED` | `true` | Run the platform API server |
+//! | `FC_ROUTER_ENABLED` / `MESSAGE_ROUTER_ENABLED` | `false` | Run the SQS message router |
+//! | `FC_SCHEDULER_ENABLED` / `DISPATCH_SCHEDULER_ENABLED` | `false` | Run the dispatch scheduler |
+//! | `FC_SCHEDULED_JOB_ENABLED` / `SCHEDULED_JOB_SCHEDULER_ENABLED` | `false` | Run the scheduled-job cron engine |
+//! | `FC_STREAM_PROCESSOR_ENABLED` / `STREAM_PROCESSOR_ENABLED` | `false` | Run the CQRS stream processor |
+//! | `FC_OUTBOX_ENABLED` / `OUTBOX_PROCESSOR_ENABLED` | `false` | Run the outbox processor |
 //!
 //! ### Dispatch scheduler (Go's names; the scheduler refuses to start without a queue)
 //! | Variable | Default | Description |
@@ -41,8 +50,8 @@
 //! ### Standby / HA
 //! | Variable | Default | Description |
 //! |----------|---------|-------------|
-//! | `FC_STANDBY_ENABLED` | `false` | Enable Redis leader election |
-//! | `FC_STANDBY_REDIS_URL` | `redis://127.0.0.1:6379` | Redis URL |
+//! | `FC_STANDBY_ENABLED` / `STANDBY_ENABLED` | `false` | Enable Redis leader election |
+//! | `FC_STANDBY_REDIS_URL` / `REDIS_URL` | `redis://127.0.0.1:6379` | Redis URL (`rediss://` for TLS) |
 //! | `FC_STANDBY_LOCK_KEY` | `fc:server:leader` | Redis lock key |
 //!
 //! ### ALB (requires `alb` feature)
@@ -71,77 +80,82 @@ use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
 use fc_platform::usecase::PgUnitOfWork;
 
-use fc_common::config::{
-    env_bool, env_bool_alias, env_or, env_or_alias, env_or_alias_parse, env_or_parse,
-};
+use fc_common::config::{env_bool, env_first, env_first_parse, env_or, env_or_parse};
 
 /// Resolve database URL and (optionally) the live `SecretProvider` it came from.
 ///
-/// Supports three modes:
-/// 1. `FC_DATABASE_URL` / `DATABASE_URL` — full connection string (preferred for Rust)
-/// 2. `DB_HOST` + `DB_NAME` + `DB_SECRET_ARN` — AWS Secrets Manager (TS compatibility)
+/// Go's precedence (`fc_platform::shared::database::database_source`):
+/// 1. `FC_DATABASE_URL` / `DATABASE_URL` — full connection string
+/// 2. `DB_HOST` + `DB_NAME` + `DB_SECRET_ARN` — AWS Secrets Manager
+///    (`DB_SECRET_PROVIDER=aws`, the default; anything else is refused)
 /// 3. `DB_HOST` + `DB_NAME` + `DB_USERNAME` + `DB_PASSWORD` — explicit credentials
+/// 4. nothing — the local default `postgresql://postgres@localhost:5432/flowcatalyst`
 ///
-/// When mode 2 is used the returned `SecretProvider` is also returned so the
-/// caller can spawn the background credential-refresh task.
+/// When mode 2 is used the `SecretProvider` is also returned so the caller
+/// can register the credential-refresh task on every pool it opens.
 async fn resolve_database_url() -> Result<(
     String,
     Option<Arc<dyn fc_platform::shared::database::SecretProvider>>,
 )> {
-    // Mode 1: Full connection string
-    if let Ok(url) = std::env::var("FC_DATABASE_URL").or_else(|_| std::env::var("DATABASE_URL")) {
-        return Ok((url, None));
-    }
-
-    // Mode 2/3: Build from components
-    let host = std::env::var("DB_HOST").map_err(|_| {
-        anyhow::anyhow!("No database config found. Set FC_DATABASE_URL or DB_HOST+DB_NAME")
-    })?;
-    let name = env_or("DB_NAME", "flowcatalyst");
-    let port = env_or("DB_PORT", "5432");
-
-    // Try AWS Secrets Manager
-    if let Ok(secret_arn) = std::env::var("DB_SECRET_ARN") {
-        let provider_kind = env_or("DB_SECRET_PROVIDER", "aws");
-        if provider_kind == "aws" {
+    use fc_platform::shared::database::{
+        database_source_from_env, AwsSecretProvider, DatabaseSource, SecretProvider,
+    };
+    match database_source_from_env()? {
+        DatabaseSource::Url(url) => Ok((url, None)),
+        DatabaseSource::AwsSecretsManager {
+            secret_arn,
+            host,
+            db_name,
+            fallback_port,
+        } => {
             info!(secret_arn = %secret_arn, "Resolving database credentials from AWS Secrets Manager");
-            let provider = Arc::new(fc_platform::shared::database::AwsSecretProvider::new(
+            let provider = Arc::new(AwsSecretProvider::new(
                 secret_arn,
                 host.clone(),
-                name.clone(),
-                port.clone(),
+                db_name.clone(),
+                fallback_port,
             ));
-            let url = fc_platform::shared::database::SecretProvider::get_db_url(provider.as_ref())
-                .await?;
+            let url = provider.get_db_url().await?;
             info!(
                 "Database URL resolved from Secrets Manager (host: {}, db: {})",
-                host, name
+                host, db_name
             );
-            return Ok((
-                url,
-                Some(provider as Arc<dyn fc_platform::shared::database::SecretProvider>),
-            ));
+            Ok((url, Some(provider as Arc<dyn SecretProvider>)))
         }
     }
+}
 
-    // Mode 3: Explicit credentials
-    let username = env_or("DB_USERNAME", "postgres");
-    let password = env_or("DB_PASSWORD", "");
-    let host_port = if host.contains(':') {
-        host.clone()
-    } else {
-        format!("{}:{}", host, port)
-    };
-    let url = if password.is_empty() {
-        format!("postgresql://{}@{}/{}", username, host_port, name)
-    } else {
-        let password_encoded = urlencoding::encode(&password);
-        format!(
-            "postgresql://{}:{}@{}/{}",
-            username, password_encoded, host_port, name
-        )
-    };
-    Ok((url, None))
+/// A subsystem toggle read as Go's `envBoolAlias` reads it: the primary
+/// name when it is set (non-empty), else the alias; `1`/`true`/`yes`/`on`
+/// and `0`/`false`/`no`/`off` (any case), anything else the default.
+fn toggle(primary: &str, alias: &str, default: bool) -> bool {
+    let raw = std::env::var(primary)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var(alias).ok().filter(|v| !v.is_empty()));
+    match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("1" | "true" | "yes" | "on") => true,
+        Some("0" | "false" | "no" | "off") => false,
+        _ => default,
+    }
+}
+
+/// The built SPA to serve, when the platform API runs: `FC_STATIC_DIR`, else
+/// the image's `/app/frontend/dist` when it holds an `index.html`. Go embeds
+/// the SPA in the binary and serves it whenever the platform is enabled; the
+/// Rust image ships it beside the binary, and the production task definition
+/// sets no directory, so the image path is the default.
+fn static_dir() -> Option<String> {
+    const IMAGE_SPA_DIR: &str = "/app/frontend/dist";
+    std::env::var("FC_STATIC_DIR")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::path::Path::new(IMAGE_SPA_DIR)
+                .join("index.html")
+                .is_file()
+                .then(|| IMAGE_SPA_DIR.to_string())
+        })
 }
 
 // ── Maintenance ──────────────────────────────────────────────────────────────
@@ -182,7 +196,14 @@ async fn backfill_secrets(args: &[String]) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    fc_common::logging::init_logging("fc-server");
+    // JSON logs by default, as Go's fc-server writes them (CloudWatch).
+    fc_common::logging::init_production_logging("fc-server");
+
+    // Both rustls crypto backends are compiled into this binary (the AWS SDK
+    // brings aws-lc-rs, others ring), so a client that asks rustls for "the
+    // default" provider — the `rediss://` Redis connection behind standby and
+    // the rate-limit store — would panic without a process-level choice.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // Maintenance subcommands run instead of the server.
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -195,32 +216,39 @@ async fn main() -> Result<()> {
     // ── Configuration ────────────────────────────────────────────────────────
     // Each env var supports both the Rust name (FC_ prefix) and the TS name for
     // compatibility with existing ECS task definitions.
-    let api_port: u16 = env_or_alias_parse("FC_API_PORT", "PORT", 3000);
+    // Go's defaults: the API on 8080 (the port the ECS task maps and the
+    // worker task, which sets no PORT, listens on), metrics on 9090.
+    let api_port: u16 = env_first_parse(&["FC_API_PORT", "PORT"], 8080);
     let metrics_port: u16 = env_or_parse("FC_METRICS_PORT", 9090);
     let (database_url, secret_provider) = resolve_database_url().await?;
     // JWT issuer should be the external base URL per OIDC spec
-    let jwt_issuer = std::env::var("FC_JWT_ISSUER")
-        .or_else(|_| std::env::var("FC_EXTERNAL_BASE_URL"))
-        .or_else(|_| std::env::var("EXTERNAL_BASE_URL"))
-        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let jwt_issuer = env_first(
+        &["FC_JWT_ISSUER", "FC_EXTERNAL_BASE_URL", "EXTERNAL_BASE_URL"],
+        &format!("http://localhost:{api_port}"),
+    );
 
     // Subsystem toggles (TS names: PLATFORM_ENABLED, MESSAGE_ROUTER_ENABLED, etc.)
-    let platform_enabled = env_bool_alias("FC_PLATFORM_ENABLED", "PLATFORM_ENABLED", true);
-    let router_enabled = env_bool_alias("FC_ROUTER_ENABLED", "MESSAGE_ROUTER_ENABLED", false);
-    let scheduler_enabled =
-        env_bool_alias("FC_SCHEDULER_ENABLED", "DISPATCH_SCHEDULER_ENABLED", false);
-    let stream_enabled = env_bool_alias(
+    let platform_enabled = toggle("FC_PLATFORM_ENABLED", "PLATFORM_ENABLED", true);
+    let router_enabled = toggle("FC_ROUTER_ENABLED", "MESSAGE_ROUTER_ENABLED", false);
+    let scheduler_enabled = toggle("FC_SCHEDULER_ENABLED", "DISPATCH_SCHEDULER_ENABLED", false);
+    // The scheduled-job cron engine has its own toggle, as in Go (the worker
+    // task sets FC_SCHEDULED_JOB_ENABLED=true beside the dispatch scheduler).
+    let scheduled_job_enabled = toggle(
+        "FC_SCHEDULED_JOB_ENABLED",
+        "SCHEDULED_JOB_SCHEDULER_ENABLED",
+        false,
+    );
+    let stream_enabled = toggle(
         "FC_STREAM_PROCESSOR_ENABLED",
         "STREAM_PROCESSOR_ENABLED",
         false,
     );
-    let outbox_enabled = env_bool_alias("FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED", false);
+    let outbox_enabled = toggle("FC_OUTBOX_ENABLED", "OUTBOX_PROCESSOR_ENABLED", false);
 
     // Standby / HA
-    let standby_enabled = env_bool_alias("FC_STANDBY_ENABLED", "STANDBY_ENABLED", false);
-    let standby_redis_url = env_or_alias(
-        "FC_STANDBY_REDIS_URL",
-        "REDIS_URL",
+    let standby_enabled = toggle("FC_STANDBY_ENABLED", "STANDBY_ENABLED", false);
+    let standby_redis_url = env_first(
+        &["FC_STANDBY_REDIS_URL", "REDIS_URL"],
         "redis://127.0.0.1:6379",
     );
     let standby_lock_key = env_or("FC_STANDBY_LOCK_KEY", "fc:server:leader");
@@ -229,11 +257,17 @@ async fn main() -> Result<()> {
         platform = platform_enabled,
         router = router_enabled,
         scheduler = scheduler_enabled,
+        scheduled_job = scheduled_job_enabled,
         stream = stream_enabled,
         outbox = outbox_enabled,
         standby = standby_enabled,
         "Subsystem configuration"
     );
+
+    // A malformed FLOWCATALYST_APP_KEY is fatal at boot, as in Go (an unset
+    // one is the documented "encryption disabled" state).
+    fc_platform::shared::encryption_service::EncryptionService::from_env_checked()
+        .map_err(|e| anyhow::anyhow!("FLOWCATALYST_APP_KEY: {e}"))?;
 
     // ── Database ─────────────────────────────────────────────────────────────
     info!("Connecting to PostgreSQL...");
@@ -285,10 +319,9 @@ async fn main() -> Result<()> {
     // update the pool's connect options when the password rotates. This avoids
     // the failure mode where AWS rotates the password and the pool keeps using
     // the now-stale credentials. Mirrors the TS implementation.
-    let secret_refresh_interval = std::time::Duration::from_millis(env_or_parse::<u64>(
-        "DB_SECRET_REFRESH_INTERVAL_MS",
-        300_000,
-    ));
+    // DB_SECRET_REFRESH_INTERVAL_MS (default 5 min; zero or negative: off).
+    // Every pool opened from these credentials registers its own refresh.
+    let secret_refresh_interval = fc_platform::shared::database::secret_refresh_interval_from_env();
     if let Some(provider) = secret_provider.clone() {
         fc_platform::shared::database::start_secret_refresh(
             provider,
@@ -397,8 +430,11 @@ async fn main() -> Result<()> {
     // Auth services
     let auth_init_config = fc_platform::shared::server_setup::AuthInitConfig {
         issuer: jwt_issuer,
-        ..fc_platform::shared::server_setup::AuthInitConfig::from_env("http://localhost:3000")
+        ..fc_platform::shared::server_setup::AuthInitConfig::from_env("http://localhost:8080")
     };
+    // The session cookie lives as long as the session JWT (Go: both from
+    // OIDC_SESSION_TTL).
+    let session_ttl_secs = auth_init_config.session_token_expiry_secs;
     let auth_services =
         fc_platform::shared::server_setup::init_auth_services(&repos, auth_init_config)?;
     info!("Auth services initialized");
@@ -434,14 +470,16 @@ async fn main() -> Result<()> {
 
     // Clear lapsed OAuth secret-rotation overlaps every minute (Go's auth
     // purger does the same).
-    fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
-        repos.oauth_client_repo.clone(),
-    );
+    if platform_enabled {
+        fc_platform::shared::server_setup::spawn_lapsed_previous_secret_purge(
+            repos.oauth_client_repo.clone(),
+        );
+    }
 
     // Hourly prune of the Postgres rate-limit table (no-op for Redis — TTLs
     // age keys out automatically). Keeps row count bounded at peak-QPS ×
     // max-policy-window.
-    {
+    if platform_enabled {
         let store = rate_limit_store.clone();
         let max_window = rate_limit_policies.max_window();
         tokio::spawn(async move {
@@ -470,6 +508,7 @@ async fn main() -> Result<()> {
             platform_application_id,
             rate_limit_store.clone(),
             rate_limit_policies.clone(),
+            session_ttl_secs,
         )
     } else {
         // Minimal app with just health + metrics
@@ -497,6 +536,11 @@ async fn main() -> Result<()> {
     if scheduler_enabled {
         info!("Starting scheduler subsystem...");
         spawn_scheduler(&pg_pool, active_rx.clone(), api_port).await?;
+    }
+
+    // Scheduled-job cron engine (its own toggle, as Go)
+    if scheduled_job_enabled {
+        info!("Starting scheduled-job scheduler subsystem...");
         spawn_scheduled_job_scheduler(&repos, active_rx.clone()).await?;
     }
 
@@ -566,6 +610,7 @@ async fn main() -> Result<()> {
         platform_enabled,
         router_enabled,
         scheduler_enabled,
+        scheduled_job_enabled,
         stream_enabled,
         outbox_enabled,
         is_leader: Arc::new(is_leader_for_health),
@@ -580,7 +625,13 @@ async fn main() -> Result<()> {
                 move || combined_health_handler(state.clone())
             }),
         )
-        .route("/ready", get(ready_handler));
+        .route(
+            "/ready",
+            get({
+                let state = health_state.clone();
+                move || ready_handler(state.clone())
+            }),
+        );
 
     let metrics_listener = TcpListener::bind(&metrics_addr).await?;
     let metrics_task = tokio::spawn(async move {
@@ -608,6 +659,14 @@ async fn main() -> Result<()> {
     info!(
         "  Scheduler:    {}",
         if scheduler_enabled {
+            "ENABLED"
+        } else {
+            "DISABLED"
+        }
+    );
+    info!(
+        "  Scheduled jobs: {}",
+        if scheduled_job_enabled {
             "ENABLED"
         } else {
             "DISABLED"
@@ -669,6 +728,7 @@ fn build_platform_app(
     platform_application_id: String,
     rate_limit_store: Arc<dyn fc_platform::shared::rate_limit_store::RateLimitStore>,
     rate_limit_policies: Arc<fc_platform::shared::rate_limit_store::RateLimitPolicies>,
+    session_ttl_secs: i64,
 ) -> Router {
     let app_state = AppState {
         auth_service: auth_services.auth.clone(),
@@ -684,12 +744,14 @@ fn build_platform_app(
             rate_limit_store,
             rate_limit_policies,
             session_cookie_secure: true,
-            session_cookie_same_site: std::env::var("FC_SESSION_COOKIE_SAME_SITE")
-                .unwrap_or_else(|_| fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string()),
-            session_token_expiry_secs: std::env::var("FC_SESSION_TOKEN_EXPIRY_SECS")
-                .ok().and_then(|v| v.parse().ok())
-                .unwrap_or(fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SESSION_EXPIRY_SECS),
-            static_dir: std::env::var("FC_STATIC_DIR").ok(),
+            session_cookie_same_site: std::env::var("FC_SESSION_COOKIE_SAME_SITE").unwrap_or_else(
+                |_| {
+                    fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE
+                        .to_string()
+                },
+            ),
+            session_token_expiry_secs: session_ttl_secs,
+            static_dir: static_dir(),
             oidc_login_external_base_url: std::env::var("FC_EXTERNAL_BASE_URL")
                 .or_else(|_| std::env::var("EXTERNAL_BASE_URL"))
                 .ok(),
@@ -1253,6 +1315,7 @@ struct HealthState {
     platform_enabled: bool,
     router_enabled: bool,
     scheduler_enabled: bool,
+    scheduled_job_enabled: bool,
     stream_enabled: bool,
     outbox_enabled: bool,
     is_leader: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -1268,6 +1331,7 @@ async fn combined_health_handler(state: HealthState) -> Json<serde_json::Value> 
             "platform": if state.platform_enabled { "UP" } else { "DISABLED" },
             "router": if state.router_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "scheduler": if state.scheduler_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
+            "scheduled_job": if state.scheduled_job_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "stream_processor": if state.stream_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
             "outbox": if state.outbox_enabled { if leader { "UP" } else { "STANDBY" } } else { "DISABLED" },
         }
@@ -1285,8 +1349,18 @@ async fn metrics_handler() -> &'static str {
     "# HELP fc_server_up Server is up\n# TYPE fc_server_up gauge\nfc_server_up 1\n"
 }
 
-async fn ready_handler() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "READY" }))
+/// Go's metrics-port `/ready`: the status plus which subsystems run.
+async fn ready_handler(state: HealthState) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ready",
+        "platform": state.platform_enabled,
+        "router": state.router_enabled,
+        "scheduler": state.scheduler_enabled,
+        "scheduled_job": state.scheduled_job_enabled,
+        "stream": state.stream_enabled,
+        "outbox": state.outbox_enabled,
+        "mcp": false,
+    }))
 }
 
 // ── Consumer factory: dispatch by queue URI scheme (item 1) ─────────────────

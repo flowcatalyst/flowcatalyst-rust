@@ -35,6 +35,7 @@ aws-config = { workspace = true }
 aws-sdk-sqs = { workspace = true }
 aws-sdk-secretsmanager = { workspace = true }
 reqwest = { workspace = true }
+rustls = "0.23"
 urlencoding = "2.1"
 regex = { workspace = true }
 utoipa = { workspace = true }
@@ -44,3 +45,8 @@ utoipa-axum = { workspace = true }
 [features]
 default = []
 alb = ["fc-router/alb"]
+
+[dev-dependencies]
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
+rsa = { version = "0.9", features = ["pem"] }
