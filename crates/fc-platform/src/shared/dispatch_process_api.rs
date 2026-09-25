@@ -13,8 +13,12 @@
 //! 2. loads the job; a missing or terminal job is ACKed without delivery;
 //! 3. holds a BLOCK_ON_ERROR job whose group has an earlier held job: back
 //!    to PENDING, ACKed, no budget spent;
-//! 4. claims it conditionally (`PENDING/QUEUED → PROCESSING`): a duplicate
-//!    that loses the claim is ACKed without delivering;
+//! 4. claims it conditionally (`PENDING/QUEUED → PROCESSING`). A copy that
+//!    loses the claim to a live attempt is deferred (`ack:false` +
+//!    `delaySeconds`) until that attempt's lease ends; one that finds the
+//!    lease run out takes the claim over and delivers (the attempt died with
+//!    its process); one that finds the job finished or back to PENDING is
+//!    ACKed without delivering;
 //! 5. delivers the webhook, records the attempt, and advances the job:
 //!    COMPLETED; rescheduled without spending budget on a cooperative
 //!    deferral (`ack:false`, 429); FAILED at once on 401/403 or when the
@@ -32,6 +36,14 @@
 //! target's permanent answer and ACKs the message away, which would leave
 //! the job QUEUED until stale recovery; a 503 is retried (review R-57).
 //! This endpoint never answers 500.
+//!
+//! A second one: a job left PROCESSING by an attempt that never finished is
+//! recovered by the next copy of its message once the attempt's lease
+//! ([`claim_lease`]) runs out, where Go acks that copy away and the job
+//! stays PROCESSING for good. The delivery itself runs on its own task, so
+//! a router hanging up mid-call never cuts an attempt short; only a dying
+//! process leaves a claim behind. At-least-once: after such a death the
+//! subscriber may see the message twice.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -69,6 +81,11 @@ const DEFAULT_DELIVERY_TIMEOUT: Duration = Duration::from_secs(30);
 /// The client's outer ceiling (Go's `http.Client.Timeout`).
 const DELIVERY_CLIENT_CEILING: Duration = Duration::from_secs(120);
 
+/// Slack on top of a delivery's own bound before its claim counts as dead
+/// (see [`claim_lease`]): the credential lookup before it and the attempt
+/// and status writes after it.
+const CLAIM_LEASE_MARGIN: Duration = Duration::from_secs(30);
+
 /// The backoff after a just-finished attempt `n` (1-based), clamped to the
 /// last step (Go `retryBackoff`).
 const RETRY_BACKOFF_SECS: [u64; 5] = [5, 15, 30, 60, 120];
@@ -93,6 +110,13 @@ pub struct ProcessRequest {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProcessResponse {
     pub ack: bool,
+    /// With `ack: false`: retry no sooner than this (the router's floor).
+    #[serde(
+        rename = "delaySeconds",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub delay_seconds: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub message: Option<String>,
 }
@@ -102,7 +126,22 @@ fn reply(status: StatusCode, ack: bool, message: Option<&str>) -> Response {
         status,
         Json(ProcessResponse {
             ack,
+            delay_seconds: None,
             message: message.map(str::to_string),
+        }),
+    )
+        .into_response()
+}
+
+/// `200 {"ack": false, "delaySeconds": n}`: keep the message, ask again in
+/// `n` seconds (the router's cooperative deferral; no retry budget spent).
+fn deferred(delay_seconds: u32, message: &str) -> Response {
+    (
+        StatusCode::OK,
+        Json(ProcessResponse {
+            ack: false,
+            delay_seconds: Some(delay_seconds),
+            message: Some(message.to_string()),
         }),
     )
         .into_response()
@@ -285,27 +324,67 @@ async fn process_dispatch(
     // win?". A claim error means ownership is unknown, so never deliver.
     match repo.claim_for_delivery(&job.id, job.created_at).await {
         Ok(true) => {}
-        Ok(false) => {
-            info!(job_id = %job_id, "dispatch process: already claimed, skipping duplicate delivery");
-            return reply(StatusCode::OK, true, Some("already claimed"));
-        }
+        Ok(false) => match lost_claim(repo, &job_id).await {
+            Ok(taken_over) => return run_claimed(&state, taken_over).await,
+            Err(answer) => return answer,
+        },
         Err(e) => {
             error!(job_id = %job_id, error = %e, "dispatch process: claim failed");
             return reply(StatusCode::SERVICE_UNAVAILABLE, false, Some("claim failed"));
         }
     }
+    run_claimed(&state, job).await
+}
 
+/// Deliver a job this call has claimed, record the attempt and advance it.
+///
+/// The work runs on a task of its own, so a caller that hangs up (a router
+/// restarting mid-call) does not cancel it half way: once claimed, the
+/// webhook's outcome is always recorded. Only a process that dies leaves a
+/// claim behind, and [`lost_claim`] recovers that.
+async fn run_claimed(state: &DispatchProcessState, job: DispatchJob) -> Response {
+    let job_id = job.id.clone();
+    let state = state.clone();
+    match tokio::spawn(async move { deliver_and_record(&state, &job).await }).await {
+        Ok(true) => reply(StatusCode::OK, true, None),
+        // The job is still PROCESSING with its outcome unwritten. Go acks
+        // here and the job stays PROCESSING; keep the message instead, so
+        // its next copy takes the claim over once the lease runs out
+        // (at-least-once) rather than waiting for stale recovery.
+        Ok(false) => reply(
+            StatusCode::SERVICE_UNAVAILABLE,
+            false,
+            Some("status update failed"),
+        ),
+        Err(e) => {
+            // A panic: the claim stays until its lease runs out, then a
+            // redelivery takes it over.
+            error!(job_id = %job_id, error = %e, "dispatch process: delivery task failed");
+            reply(
+                StatusCode::SERVICE_UNAVAILABLE,
+                false,
+                Some("delivery failed"),
+            )
+        }
+    }
+}
+
+/// `false` when the outcome could not be written (the job is still
+/// PROCESSING).
+async fn deliver_and_record(state: &DispatchProcessState, job: &DispatchJob) -> bool {
+    let repo = &state.dispatch_job_repo;
+    let job_id = job.id.as_str();
     let attempt_number = job.attempt_count + 1;
     let attempted_at = Utc::now();
     let started = Instant::now();
-    let result = deliver(&state, &job).await;
+    let result = deliver(state, job).await;
     let completed_at = Utc::now();
     let duration_ms = started.elapsed().as_millis() as i64;
 
     // Best effort: a recording failure never changes the outcome.
     let request_info = serde_json::to_value(&result.request).ok();
     let attempt = NewDispatchAttempt {
-        dispatch_job_id: &job.id,
+        dispatch_job_id: job_id,
         attempt_number,
         status: if result.success {
             DispatchAttemptStatus::Success
@@ -330,18 +409,96 @@ async fn process_dispatch(
         warn!(job_id = %job_id, error = %e, "dispatch process: record attempt failed");
     }
 
-    advance(repo, &job, attempt_number, &result, duration_ms).await;
-    reply(StatusCode::OK, true, None)
+    advance(repo, job, attempt_number, &result, duration_ms).await
 }
 
-/// Move the job on from one attempt's outcome (Go `advance`).
+/// How long a claimed attempt may hold its job before a redelivery may take
+/// it over: the delivery's own bound (the job's timeout, capped by the
+/// client's ceiling) plus [`CLAIM_LEASE_MARGIN`] for the recording writes.
+pub fn claim_lease(job: &DispatchJob) -> Duration {
+    let delivery = if job.timeout_seconds > 0 {
+        Duration::from_secs(job.timeout_seconds as u64)
+    } else {
+        DEFAULT_DELIVERY_TIMEOUT
+    };
+    delivery.min(DELIVERY_CLIENT_CEILING) + CLAIM_LEASE_MARGIN
+}
+
+/// This call lost the claim. Go acks such a copy without delivering, which
+/// is right while another attempt is live — and loses the job for good
+/// when that attempt died with its process (a platform killed mid-delivery:
+/// the webhook went out, the outcome was never written, the job stays
+/// PROCESSING and the router's retry is acked away; delivery run 3,
+/// `platform-down`). So:
+/// - the job is PROCESSING and its claim is within [`claim_lease`]: an
+///   attempt may be live. Answer `ack:false` with `delaySeconds` until the
+///   lease ends, so the router keeps the message (and the group behind it)
+///   and asks again;
+/// - the lease has run out: that attempt is dead. Take the claim over and
+///   deliver again — at-least-once; the subscriber may see it twice;
+/// - anything else (finished, or already back to PENDING for a retry the
+///   poller owns): ack without delivering, as Go.
+///
+/// `Ok` is the job, taken over and ready to deliver; `Err` is the answer.
+async fn lost_claim(repo: &DispatchJobRepository, job_id: &str) -> Result<DispatchJob, Response> {
+    let job = match repo.find_by_id(job_id).await {
+        Ok(Some(job)) => job,
+        Ok(None) => return Err(reply(StatusCode::OK, true, Some("job not found"))),
+        Err(e) => {
+            error!(job_id = %job_id, error = %e, "dispatch process: reload after a lost claim failed");
+            return Err(reply(
+                StatusCode::SERVICE_UNAVAILABLE,
+                false,
+                Some("load failed"),
+            ));
+        }
+    };
+    if job.status != crate::dispatch_job::entity::DispatchStatus::Processing {
+        info!(job_id = %job_id, status = ?job.status, "dispatch process: already claimed, skipping duplicate delivery");
+        return Err(reply(StatusCode::OK, true, Some("already claimed")));
+    }
+    let lease = claim_lease(&job);
+    let claimed_at = job.last_attempt_at.unwrap_or(job.updated_at);
+    let lease_ends = claimed_at + to_chrono(lease);
+    let now = Utc::now();
+    if now < lease_ends {
+        let wait = (lease_ends - now).num_milliseconds().max(0) as u64;
+        let delay = wait.div_ceil(1000).max(1) as u32;
+        info!(job_id = %job_id, delay_seconds = delay, "dispatch process: delivery in progress elsewhere; asking the router to retry");
+        return Err(deferred(delay, "delivery in progress"));
+    }
+    // `claimed_before` is the claim this call saw expire: a taker that got
+    // there first has re-stamped it, and this one loses.
+    match repo
+        .reclaim_stale_delivery(&job.id, job.created_at, now - to_chrono(lease))
+        .await
+    {
+        Ok(true) => {
+            warn!(job_id = %job_id, claimed_at = %claimed_at, lease_secs = lease.as_secs(),
+                "dispatch process: the previous attempt never finished; delivering again");
+            Ok(job)
+        }
+        Ok(false) => Err(deferred(1, "delivery in progress")),
+        Err(e) => {
+            error!(job_id = %job_id, error = %e, "dispatch process: reclaim failed");
+            Err(reply(
+                StatusCode::SERVICE_UNAVAILABLE,
+                false,
+                Some("claim failed"),
+            ))
+        }
+    }
+}
+
+/// Move the job on from one attempt's outcome (Go `advance`). `false` when
+/// the status write failed and the job is still PROCESSING.
 async fn advance(
     repo: &DispatchJobRepository,
     job: &DispatchJob,
     attempt_number: u32,
     res: &DeliveryResult,
     duration_ms: i64,
-) {
+) -> bool {
     let id = job.id.as_str();
     let outcome = if res.success {
         debug!(job_id = %id, status = ?res.status, attempt = attempt_number, "dispatch delivered");
@@ -375,8 +532,12 @@ async fn advance(
         )
         .await
     };
-    if let Err(e) = outcome {
-        warn!(job_id = %id, error = %e, "dispatch process: status update failed");
+    match outcome {
+        Ok(()) => true,
+        Err(e) => {
+            warn!(job_id = %id, error = %e, "dispatch process: status update failed");
+            false
+        }
     }
 }
 

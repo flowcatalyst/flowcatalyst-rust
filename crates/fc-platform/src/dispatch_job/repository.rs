@@ -1240,6 +1240,32 @@ impl DispatchJobRepository {
         Ok(r.rows_affected() == 1)
     }
 
+    /// Take over a delivery whose attempt died: `PROCESSING → PROCESSING`
+    /// with a fresh claim time, only when the current claim was made before
+    /// `claimed_before` (the attempt's lease has run out). Like
+    /// [`Self::claim_for_delivery`], the affected-row count answers "did I
+    /// win?": the winner's new claim time takes every other taker out of
+    /// the condition.
+    pub async fn reclaim_stale_delivery(
+        &self,
+        id: &str,
+        created_at: DateTime<Utc>,
+        claimed_before: DateTime<Utc>,
+    ) -> Result<bool> {
+        let r = sqlx::query(
+            "UPDATE msg_dispatch_jobs \
+                SET last_attempt_at = NOW(), updated_at = NOW() \
+              WHERE id = $1 AND created_at = $2 AND status = 'PROCESSING' \
+                AND COALESCE(last_attempt_at, updated_at) < $3",
+        )
+        .bind(id)
+        .bind(created_at)
+        .bind(claimed_before)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() == 1)
+    }
+
     /// `→ COMPLETED`, stamping `completed_at` and the attempt's duration.
     pub async fn mark_completed(
         &self,
