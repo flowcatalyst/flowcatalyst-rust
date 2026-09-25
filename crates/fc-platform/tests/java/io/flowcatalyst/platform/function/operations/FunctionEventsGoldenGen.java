@@ -1,15 +1,21 @@
 package io.flowcatalyst.platform.function.operations;
 
+import io.flowcatalyst.platform.function.ClientCeilings;
 import io.flowcatalyst.platform.function.ClientPolicy;
+import io.flowcatalyst.platform.function.Digest;
 import io.flowcatalyst.platform.function.DnsLabel;
 import io.flowcatalyst.platform.function.Function;
 import io.flowcatalyst.platform.function.FunctionAddress;
 import io.flowcatalyst.platform.function.FunctionDomain;
+import io.flowcatalyst.platform.function.FunctionLimits;
 import io.flowcatalyst.platform.function.FunctionOwner;
 import io.flowcatalyst.platform.function.FunctionStatus;
+import io.flowcatalyst.platform.function.FunctionVersion;
 import io.flowcatalyst.platform.function.Hostname;
+import io.flowcatalyst.platform.function.Manifest;
 import io.flowcatalyst.platform.function.Runtime;
 import io.flowcatalyst.platform.function.SecretValue;
+import io.flowcatalyst.platform.function.SignerIdentity;
 import io.flowcatalyst.platform.shared.json.Json;
 import io.flowcatalyst.sdk.usecase.DomainEvent;
 import io.flowcatalyst.sdk.usecase.ExecutionContext;
@@ -81,6 +87,20 @@ public final class FunctionEventsGoldenGen {
         add(events, "domain-claimed/platform", FunctionEvents.DomainClaimed.of(ec, platformDomain));
         add(events, "domain-claimed/client", FunctionEvents.DomainClaimed.of(ec, clientDomain));
         add(events, "domain-released/client", FunctionEvents.DomainReleased.of(ec, clientDomain));
+
+        FunctionLimits defaults = FunctionLimits.defaults();
+        Manifest manifest = Manifest.parseStrict(
+                Json.MAPPER.readTree("{\"runtime\":\"wasm\",\"entrypoint\":\"handle\",\"pool\":\"edge\"}"),
+                Runtime.WASM, defaults, ClientCeilings.of(defaults));
+        Digest digest = Digest.parse("sha256:" + "b".repeat(64));
+        FunctionVersion signed = new FunctionVersion("fnv_3", "fnc_1", 3, "platform://fnc_1/abc", digest, "{}", null,
+                new SignerIdentity("https://issuer", "repo:acme/fn"), manifest,
+                new FunctionVersion.VersionState.Published(), "prn_1", T);
+        FunctionVersion unsigned = new FunctionVersion("fnv_4", "fnc_2", 4, "oci://r/a", digest, null, null, null,
+                manifest, new FunctionVersion.VersionState.Published(), "prn_1", T);
+        add(events, "version-published/signed", FunctionEvents.VersionPublished.of(ec, platformFn, signed));
+        add(events, "version-published/unsigned", FunctionEvents.VersionPublished.of(ec, clientFn, unsigned));
+        add(events, "version-retired/client", FunctionEvents.VersionRetired.of(ec, clientFn, unsigned));
 
         out.put("secretValue", Json.write(new SecretValue("sk_live_MARKER")));
 
