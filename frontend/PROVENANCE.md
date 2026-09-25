@@ -46,3 +46,10 @@ On top of it:
   mappings, OAuth clients, CORS, login attempts, audit log) also need anchor tier.
 - The tier is read from `/auth/me`'s `scope` (a Rust addition to Go's body) into `User.scope`; when
   present it decides `userScope` / `isUnscopedUser`, else Go's "no home client" inference stands.
+
+### Dashboard: temporary audit-log redact card
+
+Rust's b36bc522, onto Go's dashboard: an "Audit logs" card in Platform Sync that confirms, then calls
+`POST /bff/audit-logs/redact-existing` and toasts the counts (not part of Sync All; remove with the
+backend route). `api/audit-logs.ts` gains `redactExistingAuditLogs`. Tests that mount components use
+`@vue/test-utils` and `jsdom` (devDependencies added to Go's `package.json` / lockfile).

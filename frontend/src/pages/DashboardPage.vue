@@ -1,17 +1,25 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { useConfirm } from "primevue/useconfirm";
 import { useAuthStore } from "@/stores/auth";
 import { eventTypesApi } from "@/api/event-types";
 import { rolesApi } from "@/api/roles";
 import { developerApi } from "@/api/developer";
+import { redactExistingAuditLogs } from "@/api/audit-logs";
 import { dashboardApi, type DashboardStats } from "@/api/dashboard";
 import { toast } from "@/utils/errorBus";
 
 const authStore = useAuthStore();
+const confirm = useConfirm();
 
 const syncingEvents = ref(false);
 const syncingRoles = ref(false);
 const syncingOpenApi = ref(false);
+// TEMPORARY (docs/spec/audit-redaction.md in the Java repo, "Temporary: redact
+// existing rows from the dashboard"; remove this card + handler once the sweep is no
+// longer needed): deliberately NOT part of `syncAllPlatform` — this is a
+// one-off cleanup action on existing rows, not a re-apply-on-every-deploy sync.
+const redactingAuditLogs = ref(false);
 
 // Platform Overview stat cards. `null` = loading / failed; rendered as "—".
 // One round-trip to /bff/dashboard/stats replaces three separate list
@@ -112,6 +120,34 @@ async function syncAllPlatform() {
 		syncPlatformRoles(),
 		syncPlatformOpenApi(),
 	]);
+}
+
+// TEMPORARY (docs/spec/audit-redaction.md, Java repo): confirms, then runs the one-off
+// sweep of already-stored `aud_logs` rows, and toasts the counts.
+function confirmRedactExistingAuditLogs() {
+	confirm.require({
+		message:
+			"Redact passwords and secrets from existing audit rows? This rewrites matching rows in place and cannot be undone.",
+		header: "Redact Audit Logs",
+		icon: "pi pi-exclamation-triangle",
+		acceptLabel: "Redact",
+		acceptClass: "p-button-danger",
+		accept: runRedactExistingAuditLogs,
+	});
+}
+
+async function runRedactExistingAuditLogs() {
+	redactingAuditLogs.value = true;
+	try {
+		const result = await redactExistingAuditLogs();
+		toast.success(
+			"Audit Logs Redacted",
+			`${result.redacted} of ${result.scanned} rows redacted`,
+		);
+	} catch {
+	} finally {
+		redactingAuditLogs.value = false;
+	}
 }
 
 const dashboardCards = [
@@ -255,6 +291,25 @@ const dashboardCards = [
             outlined
             :loading="syncingOpenApi"
             @click="syncPlatformOpenApi"
+          />
+        </div>
+        <!-- TEMPORARY (docs/spec/audit-redaction.md in the Java repo, "Temporary:
+             redact existing rows from the dashboard"): not part of Sync All — a one-off cleanup
+             of already-stored rows, remove this card once the sweep is no
+             longer needed. -->
+        <div class="sync-card">
+          <div class="sync-icon bg-red"><i class="pi pi-lock text-red"></i></div>
+          <div class="sync-info">
+            <h3 class="sync-title">Audit logs</h3>
+            <p class="sync-description">Redact passwords and secrets from existing audit rows.</p>
+          </div>
+          <Button
+            label="Redact"
+            icon="pi pi-lock"
+            severity="danger"
+            outlined
+            :loading="redactingAuditLogs"
+            @click="confirmRedactExistingAuditLogs"
           />
         </div>
       </div>
@@ -410,6 +465,13 @@ const dashboardCards = [
 }
 .card-icon.bg-teal .text-teal {
   color: #0d9488;
+}
+
+.sync-icon.bg-red {
+  background: #fee2e2;
+}
+.sync-icon.bg-red .text-red {
+  color: #dc2626;
 }
 
 .card-info {
