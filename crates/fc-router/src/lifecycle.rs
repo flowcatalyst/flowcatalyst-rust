@@ -450,7 +450,9 @@ impl LifecycleManager {
         self.standby.as_ref().is_none_or(|s| s.is_leader())
     }
 
-    /// Signal shutdown to all lifecycle tasks, then bounded-join them.
+    /// Signal shutdown to all lifecycle tasks, bounded-join them, then
+    /// release leadership. Call this AFTER the queue manager's shutdown
+    /// (which stops polling and drains), as Go's `Server.Run` does.
     ///
     /// Cancels the token (every task's `token.cancelled()` resolves immediately,
     /// including tokens cloned after this call — level-triggered, unlike a
@@ -461,11 +463,6 @@ impl LifecycleManager {
     /// `send()`, never less.
     pub async fn shutdown(&mut self) {
         info!("Lifecycle manager shutting down...");
-
-        // Shutdown standby processor first
-        if let Some(ref standby) = self.standby {
-            standby.shutdown().await;
-        }
 
         // Signal all tasks to stop
         self.shutdown.cancel();
@@ -486,6 +483,13 @@ impl LifecycleManager {
                     "Lifecycle tasks did not all stop within timeout — leaving remainder to process exit"
                 ),
             }
+        }
+
+        // Leadership is released last (Go: election.Stop after the manager's
+        // shutdown): releasing it while this instance was still draining let
+        // a standby start polling the same queues underneath it.
+        if let Some(ref standby) = self.standby {
+            standby.shutdown().await;
         }
     }
 

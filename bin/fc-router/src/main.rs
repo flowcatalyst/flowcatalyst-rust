@@ -433,7 +433,8 @@ async fn main() -> Result<()> {
     // Signal the manager loop to exit
     let _ = manager_shutdown_tx.send(());
 
-    lifecycle.shutdown().await;
+    // Go's order: stop polling, drain, tear the manager down; only then
+    // stop the lifecycle tasks and release leadership.
     // FC_DRAIN_TIMEOUT_SECONDS makes the pool-drain budget operator/env
     // tunable instead of the crate's hardcoded 60s default
     // (QueueManager::DEFAULT_DRAIN_TIMEOUT).
@@ -442,6 +443,7 @@ async fn main() -> Result<()> {
     queue_manager
         .shutdown_with_timeout(Duration::from_secs(drain_timeout_secs))
         .await;
+    lifecycle.shutdown().await;
 
     server_task.abort();
 

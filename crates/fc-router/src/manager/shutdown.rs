@@ -163,34 +163,21 @@ impl QueueManager {
         })
     }
 
-    /// Graceful shutdown.
+    /// Graceful shutdown, in Go's order (`Server.Run`'s shutdown sequence):
     ///
-    /// Cancels [`Self::shutdown_token`]'s parent (level-triggered — every
-    /// consumer poll task and background watcher observes it immediately,
-    /// even one spawned after this call started), stops consumers, drains
-    /// every pool (active and already-draining), and waits — bounded by a
-    /// 60s drain budget — for tracked pool work to finish via
-    /// [`ProcessPool::wait_drained`], instead of polling a "drained?" flag
-    /// on a fixed sleep interval.
+    /// 1. **Stop polling** ([`Self::stop_polling`]): intake ends, but every
+    ///    consumer stays alive, so work already routed can still be acked.
+    /// 2. **Drain**: pools stop admitting, each group's *buffered* remainder
+    ///    is released back to the broker (R-49 — shutdown never works
+    ///    through a backlog against a slow target), and the in-hand
+    ///    deliveries are awaited, bounded by the drain budget.
+    /// 3. **Tear down**: only now are the consumers stopped and the registry
+    ///    emptied, and the pools shut down.
     ///
-    /// **R-49 (ruled 2026-09-02):** the intended semantic is narrower than
-    /// what this currently does. A worker should finish only the message
-    /// it's in the middle of (its in-hand delivery), then immediately
-    /// release the rest of its group's *buffered* backlog back to the
-    /// broker (NACK, undelivered) rather than continuing to drain it —
-    /// draining the whole backlog against a slow target could take
-    /// arbitrarily long, past any drain budget, right up to the point the
-    /// orchestrator's SIGKILL severs everything mid-flight anyway.
-    ///
-    /// R-49 (ledger): shutdown finishes the message currently in the air
-    /// and RELEASES each group's buffered remainder back to the broker —
-    /// it never drains a whole backlog against a slow target, and never
-    /// abandons buffered work to visibility-timeout limbo. The sequencing:
-    /// `pool.drain()` stops admission, then `pool.release_remainder()`
-    /// empties every group buffer with explicit NACKs, so a drain task
-    /// mid-loop finds its queue empty after the in-hand task and exits.
-    /// The bounded `wait_drained` below therefore only ever waits on
-    /// in-hand deliveries, not backlogs.
+    /// Consumers used to be stopped first. For NATS that discarded the
+    /// pending-ack map, so the acks of deliveries that then completed during
+    /// the drain failed and the work was redelivered after `ack_wait` — long
+    /// after the router's duplicate guard had expired.
     ///
     /// Uses the default 60s drain budget ([`Self::DEFAULT_DRAIN_TIMEOUT`]).
     /// Callers that want the budget to be operator/env-tunable (`bin/fc-router`
@@ -201,10 +188,35 @@ impl QueueManager {
             .await
     }
 
-    /// Default drain budget for [`Self::shutdown`] — 60s, matching the
-    /// value this crate has always used. `bin/fc-router`'s
-    /// `FC_DRAIN_TIMEOUT_SECONDS` also defaults to this.
+    /// Default drain budget for [`Self::shutdown`] — 60s, matching Go's
+    /// `DrainTimeout` default. `bin/fc-router`'s `FC_DRAIN_TIMEOUT_SECONDS`
+    /// also defaults to this.
     pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// End every consumer's poll loop while leaving work already in the
+    /// pipeline running and ackable (Go: `StopPolling`). Latched: the
+    /// stalled-consumer watchdog will not respawn what this stopped, and a
+    /// config reload will not start new consumers. Idempotent.
+    pub fn stop_polling(&self) {
+        self.polling_stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        for rc in self
+            .consumers
+            .active()
+            .into_iter()
+            .chain(self.consumers.detaching())
+        {
+            rc.stop_poll.cancel();
+        }
+        // Wake loops parked on the capacity gate so they see the cancel.
+        self.capacity_notify().notify_waiters();
+    }
+
+    /// Whether [`Self::stop_polling`] has run.
+    pub fn polling_stopped(&self) -> bool {
+        self.polling_stopped
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
 
     /// Same as [`Self::shutdown`], but with an explicit drain budget instead
     /// of the [`Self::DEFAULT_DRAIN_TIMEOUT`] default — the bounded wait for
@@ -213,29 +225,12 @@ impl QueueManager {
     pub async fn shutdown_with_timeout(&self, drain_timeout: Duration) {
         info!(
             drain_timeout_secs = drain_timeout.as_secs(),
+            in_flight = self.in_pipeline.len(),
             "QueueManager shutting down..."
         );
-        self.running
-            .store(false, std::sync::atomic::Ordering::SeqCst);
 
-        // Signal all consumer loops / background watchers to stop.
-        self.shutdown.cancel();
-
-        // Stop all consumers. Clone the Arcs and drop the read guard before
-        // awaiting `stop()` on each — never hold `consumers` across an
-        // `.await` (see the field's doc comment / item 4 of the manager
-        // shutdown convention).
-        // Go's Shutdown: every consumer — active or still detaching — is
-        // stopped and the registry emptied.
-        for rc in self
-            .consumers
-            .drain_active()
-            .into_iter()
-            .chain(self.consumers.drain_detaching())
-        {
-            rc.stop_poll.cancel();
-            rc.consumer.stop().await;
-        }
+        // 1. Stop polling; consumers stay alive for the drain's acks.
+        self.stop_polling();
 
         // Collect every pool — active, already-draining, AND any
         // predecessor orphaned into `orphaned_draining` by a later Active
@@ -251,7 +246,8 @@ impl QueueManager {
             self.pools.iter().map(|e| e.value().pool.clone()).collect();
         pools.extend(self.orphaned_draining.lock().iter().cloned());
 
-        // Drain all pools (non-blocking: flips `running`, closes the tracker).
+        // 2. Drain all pools (non-blocking: flips `running`, closes the
+        //    tracker).
         for pool in &pools {
             pool.drain().await;
         }
@@ -286,6 +282,23 @@ impl QueueManager {
                 timeout_secs = drain_timeout.as_secs(),
                 "Shutdown drain timed out — some pools still had in-flight work"
             );
+        }
+
+        // 3. Tear down. From here nothing more is routed or reconfigured.
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.shutdown.cancel();
+
+        // Go's Shutdown: every consumer — active or still detaching — is
+        // stopped and the registry emptied.
+        for rc in self
+            .consumers
+            .drain_active()
+            .into_iter()
+            .chain(self.consumers.drain_detaching())
+        {
+            rc.stop_poll.cancel();
+            rc.consumer.stop().await;
         }
 
         // Log any remaining in-flight messages (they'll be NACKed when tasks are dropped)

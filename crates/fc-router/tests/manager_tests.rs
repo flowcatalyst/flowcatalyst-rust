@@ -2255,3 +2255,110 @@ async fn detached_consumer_acks_its_in_flight_message_then_retires() {
     assert_eq!(manager.retire_detached_consumers(), 1);
     manager.shutdown().await;
 }
+
+/// Consumer whose ack fails once it has been stopped — the old NATS
+/// behaviour (stop() cleared the pending-ack map). Hands out one message.
+struct AckFailsAfterStopConsumer {
+    inner: MockQueueConsumer,
+    ack_errors: AtomicU32,
+}
+
+#[async_trait]
+impl QueueConsumer for AckFailsAfterStopConsumer {
+    fn identifier(&self) -> &str {
+        self.inner.identifier()
+    }
+    async fn poll(&self, max: u32) -> fc_queue::Result<Vec<QueuedMessage>> {
+        self.inner.poll(max).await
+    }
+    async fn ack(&self, receipt_handle: &str) -> fc_queue::Result<()> {
+        if self.inner.was_stopped() {
+            self.ack_errors.fetch_add(1, Ordering::SeqCst);
+            return Err(QueueError::NotFound(receipt_handle.to_string()));
+        }
+        self.inner.ack(receipt_handle).await
+    }
+    async fn nack(&self, receipt_handle: &str, delay: Option<u32>) -> fc_queue::Result<()> {
+        self.inner.nack(receipt_handle, delay).await
+    }
+    async fn extend_visibility(&self, _: &str, _: u32) -> fc_queue::Result<()> {
+        Ok(())
+    }
+    fn is_healthy(&self) -> bool {
+        true
+    }
+    async fn stop(&self) {
+        self.inner.stop().await
+    }
+}
+
+/// H8 (Go: StopPolling → drain → Shutdown): shutdown stops polling first,
+/// lets the in-flight delivery finish and ack, and only then stops the
+/// consumer. It used to stop consumers first, so the ack of a delivery that
+/// completed during the drain failed (NATS: redelivered after ack_wait).
+#[tokio::test]
+async fn shutdown_stops_polling_drains_then_stops_consumers() {
+    let mediator = Arc::new(SlowMockMediator::new(Duration::from_millis(300)));
+    let manager = Arc::new(QueueManager::with_shared_mediator_for_testing(
+        mediator.clone(),
+    ));
+    manager
+        .apply_config(RouterConfig {
+            processing_pools: vec![PoolConfig {
+                code: "P".to_string(),
+                concurrency: 2,
+                rate_limit_per_minute: None,
+            }],
+            queues: vec![],
+        })
+        .await
+        .unwrap();
+    let consumer = Arc::new(AckFailsAfterStopConsumer {
+        inner: MockQueueConsumer::with_messages("q", vec![create_queued_message("m1", "P", "q")]),
+        ack_errors: AtomicU32::new(0),
+    });
+    manager.add_consumer(consumer.clone()).await;
+    let start_task = tokio::spawn(manager.clone().start());
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while mediator.call_count() == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(mediator.call_count(), 1);
+
+    manager.shutdown().await;
+    assert!(manager.polling_stopped());
+    assert_eq!(
+        consumer.ack_errors.load(Ordering::SeqCst),
+        0,
+        "the in-flight delivery must be acked before its consumer is stopped"
+    );
+    assert_eq!(consumer.inner.acked.lock().len(), 1);
+    assert!(
+        consumer.inner.was_stopped(),
+        "consumers are stopped at the end"
+    );
+    let _ = tokio::time::timeout(Duration::from_secs(2), start_task).await;
+}
+
+/// Once polling is stopped for shutdown, a config reload must not start new
+/// consumers (Go: Watch is cancelled before the drain).
+#[tokio::test]
+async fn reload_after_stop_polling_is_refused() {
+    let factory = Arc::new(ScriptedConsumerFactory::new(vec![]));
+    let manager = Arc::new(
+        QueueManager::builder_with_shared_mediator(Arc::new(MockMediator::new()))
+            .consumer_factory(factory.clone())
+            .build(),
+    );
+    manager.stop_polling();
+    let applied = manager
+        .reload_config(RouterConfig {
+            processing_pools: vec![],
+            queues: vec![queue_config("late")],
+        })
+        .await
+        .unwrap();
+    assert!(!applied);
+    assert!(factory.built().is_empty());
+}
