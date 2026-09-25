@@ -1,0 +1,23 @@
+[workspace]
+
+[package]
+name = "{{project-name}}"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+# The cdylib is the component: target/wasm32-wasip2/release/{{crate_name}}.wasm
+crate-type = ["cdylib"]
+
+[dependencies]
+fc-function-pdk = { git = "https://github.com/flowcatalyst/flowcatalyst-rust" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

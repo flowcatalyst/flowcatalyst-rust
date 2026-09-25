@@ -336,23 +336,46 @@ interface is Java's, unchanged: no new manifest runtime value, desired state, or
 
 ### Track G: guests
 
-**G1: `crates/fc-function-pdk`** (about 900)
-- *Since H4:* target the `wit/flowcatalyst-function` package (world `imports`) plus `wasi:http` on
-  `wasm32-wasip2`, not `extism-pdk`. The list below is the Java-era scope. The helpers carry over; the
-  transport changes.
-- A Rust guest SDK over `extism-pdk` 1.4, built for `wasm32-unknown-unknown` and `wasm32-wasip1`, kept out of the default workspace build.
-- It covers:
-  - request helpers (body, text, json, case-insensitive headers)
-  - `Caller` helpers
-  - result builders `ack` / `retry(Duration)` / `fail` / `json` / `http`
-  - a `#[handler]` macro
-  - `ctx.config` / `secrets` / `http` (status 0 → `HttpDenied`) / `events.emit` (`ok:false` → `EventEmitError`) / `log` / `now`
-  - `Webhook::event` and `Webhook::schedule`
-- Tests from H1.
+**G1: `crates/fc-function-pdk`** (done; the Java-era `extism-pdk` scope is superseded by H4)
 
-**G2: examples and templates**
-- `examples/function-hello-rust` (a Rust WASM guest) plus a `fc-dev fn init --runtime wasm --lang rust` template.
-- Java has no WASM hello yet (`examples/function-hello` is a JVM jar). This can go back to Java as its W5 fixture.
+As built: the Rust guest SDK for WASI 0.2 components (`wasm32-wasip2`) exporting
+`wasi:http/incoming-handler` and importing `flowcatalyst:function@0.1.0`. Its own Cargo workspace
+(with `macros/`), excluded from the root one; it also compiles for the host target, so its tests and a
+function author's run natively. Bindings: `wasip2 =1.0.4` (WASI 0.2.12, as the host) for `wasi:http`,
+and `wit-bindgen =0.57.1` over `wit/flowcatalyst-function` (world `imports`).
+
+- `#[handler]` on `async fn handle(req: Request, ctx: Context) -> Result<Response, E>` (or sync, or
+  `(req)` only; `E: Display`) exports the incoming handler. An `Err` is logged at ERROR and answers
+  Java's `fail`: `500 {"error":"<error and causes>"}`.
+- `Request`: method, path, raw and decoded query (the host's decoding), case-insensitive headers,
+  `body`/`text`/`json`, `path_param` and `caller` (from the invocation). `Webhook::event(&req)` /
+  `Webhook::schedule(&req)` (fc-function-abi's parsers now take `impl AsRef<[u8]>`).
+- `Context`: `invocation()` (ids, `FunctionAddress`, version, `Caller`, correlation/causation, original
+  host/path, remote address, path params), `config()`/`secrets()` `get`/`require` (Java's
+  `MissingKey` messages), `events().emit` (`EmitError::{Invalid, Refused{code,status}, Unavailable}`
+  with Java's codes, `into` `EventEmitError`), `logger()` plus a `log`-crate bridge, `http()` over
+  `wasi:http/outgoing-handler` (`HttpCall`/`HttpReply`; `HttpError::Denied(HttpDenied)` for a policy
+  refusal), `now()`.
+- `Response` and the rest of `fc-function-abi` are re-exported; `json(status, &value)` and
+  `OutboundEventExt::with_json` for serde.
+- A small single-threaded executor over `wasi:io/poll`, so concurrent outbound calls (`join!`) work.
+- Features: `flowcatalyst` (default; off = a pure `wasi:http/proxy` component, checked on
+  `wasmtime serve` and by the host's import inspection), `json`, `log`.
+- `testing::TestHost`: config, secrets, invocation, HTTP and emit responders, fixed clock, and a record
+  of events, calls and log lines, for native unit tests.
+- Tests: the PDK's own (`cargo test`, and `cargo test --target wasm32-wasip2` in wasmtime, which also
+  runs the executor on real pollables); end to end on the real host in
+  `crates/fc-fnhost-core/tests/wasm_pdk.rs` against the committed `pdk.wasm` and `pdk-pure.wasm`.
+
+**G2: examples and templates** (done, except `fc-dev fn init`)
+
+- `examples/function-hello-rust`: an adapter (signed webhook in, JSON mapped, HTTPS call to an allowed
+  carrier, event out, `retry` on outages) with `manifest.json` (`runtime: wasm`,
+  `entrypoint: wasi_http_incoming_handler`), native unit tests and a README with build and publish
+  steps. `wasm_pdk.rs` runs it, with its own manifest, on the real host (`hello.wasm`).
+- `templates/function-rust`: a `cargo generate` template.
+- Not built: `fc-dev fn init --runtime wasm --lang rust` (waits on H8's fc-dev integration).
+- Java has no WASM hello yet (`examples/function-hello` is a JVM jar); this one runs on Rust hosts only.
 
 ## 6. Following Java work that hasn't landed
 

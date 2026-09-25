@@ -1,0 +1,30 @@
+# A FlowCatalyst function in Rust: see README.md.
+#
+# Its own workspace, so it builds (and can be copied out) on its own.
+[workspace]
+
+[package]
+name = "function-hello-rust"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+
+[lib]
+# The cdylib is the component (target/wasm32-wasip2/release/function_hello_rust.wasm).
+crate-type = ["cdylib"]
+
+[dependencies]
+# Outside this repository, point at the repository instead:
+# fc-function-pdk = { git = "https://github.com/flowcatalyst/flowcatalyst-rust" }
+fc-function-pdk = { path = "../../crates/fc-function-pdk" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# Small artifacts: every loaded function costs host memory in proportion.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

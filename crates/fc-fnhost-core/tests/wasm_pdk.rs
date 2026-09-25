@@ -1,7 +1,8 @@
 //! Guests written with the Rust guest SDK (`crates/fc-function-pdk`, plan
-//! G1), end to end on the real host: the reconciler loads the committed
-//! components (`tests/fixtures/wasm/{pdk,pdk-pure}.wasm`, rebuilt with
-//! `tests/guests/build.sh pdk pdk-pure`), and real HTTP calls reach them
+//! G1) and its example (`examples/function-hello-rust`, G2), end to end on
+//! the real host: the reconciler loads the committed components
+//! (`tests/fixtures/wasm/{pdk,hello}.wasm`, rebuilt with
+//! `tests/guests/build.sh pdk hello`), and real HTTP calls reach them
 //! through the listener, with a fake control plane taking their events.
 //!
 //! Its own test binary, because it captures the process-wide log subscriber
@@ -371,6 +372,133 @@ async fn without_the_flowcatalyst_feature_a_pdk_guest_is_a_plain_wasi_http_compo
     let bad = h.post("/x", b"nope", &[]).await;
     assert_eq!(bad.status, 500);
     assert!(bad.error().starts_with("expected ident"), "{}", bad.text());
+    h.close().await;
+}
+
+// ── the example: examples/function-hello-rust ────────────────────────────
+
+/// The example's own `manifest.json` (its entrypoint is the manifest-safe
+/// alias `wasi_http_incoming_handler`), pointed at a loopback carrier.
+fn hello_manifest() -> Value {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/function-hello-rust/manifest.json"
+    );
+    let mut manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    manifest.as_object_mut().unwrap().remove("$schema");
+    assert_eq!(manifest["entrypoint"], "wasi_http_incoming_handler");
+    assert_eq!(manifest["httpAllow"], json!(["api.carrier.example"]));
+    manifest["httpAllow"] = json!(["127.0.0.1"]);
+    manifest
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_example_books_a_shipment_and_announces_it() {
+    let carrier = Upstream::start(|request| {
+        if request.starts_with("POST /v1/shipments ") {
+            (
+                201,
+                r#"{"shipmentId":"shp-9","trackingNumber":"TRK-1"}"#.into(),
+            )
+        } else {
+            (404, String::new())
+        }
+    });
+    let address = "shop.fulfilment.book-shipment";
+    let h = WasmHarness::start(vec![entry(
+        address,
+        3,
+        &guest("hello"),
+        hello_manifest(),
+        json!({
+            "webhookSigningSecret": "wh-hello",
+            "clientId": "clt_1",
+            "config": {
+                "CARRIER_API_URL": format!("http://127.0.0.1:{}", carrier.port),
+                "CARRIER_ACCOUNT": "acct-7",
+            },
+            "secrets": {"CARRIER_API_KEY": "k-123"},
+        }),
+    )])
+    .await;
+    assert_eq!(
+        h.heartbeat_states(),
+        [(address.to_owned(), 3, "LOADED".to_owned())]
+    );
+
+    let body = json!({
+        "id": "evt-1", "type": "shop:orders:order:placed", "attemptNumber": 1,
+        "correlationId": "flow-1",
+        "data": {
+            "orderId": "ord-42", "currency": "eur",
+            "customer": {"name": "Ada Lovelace", "address": {
+                "line1": "1 Analytical Way", "city": "London",
+                "postcode": "nw1 6xe", "country": "gb"}},
+            "lines": [{"sku": "ENGINE", "quantity": 2, "unitPriceCents": 1050}],
+        },
+    })
+    .to_string();
+    let ts = timestamp(chrono::Utc::now());
+    let resp = h
+        .send(
+            h.client
+                .post(format!(
+                    "{}/functions/{address}/events/order-placed",
+                    h.base
+                ))
+                .header(
+                    "X-FlowCatalyst-Signature",
+                    signed("wh-hello", &ts, body.as_bytes()),
+                )
+                .header("X-FlowCatalyst-Timestamp", &ts)
+                .body(body),
+        )
+        .await;
+    assert_eq!(resp.status, 200, "{}", resp.text());
+    assert!(resp.body.is_empty(), "Response::ack()");
+
+    let requests = carrier.requests.lock().clone();
+    assert_eq!(requests.len(), 1);
+    let request = requests[0].to_lowercase();
+    assert!(request.contains("authorization: bearer k-123"), "{request}");
+    assert!(
+        request.contains("idempotency-key: order-ord-42"),
+        "{request}"
+    );
+    let sent: Value = serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(sent["recipient"]["postalCode"], "NW16XE");
+    assert_eq!(sent["recipient"]["countryCode"], "GB");
+    assert_eq!(
+        sent["declaredValue"],
+        json!({"amount": "21.00", "currency": "EUR"})
+    );
+
+    let emits = h.control.emits.lock().clone();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].version, 3);
+    let event = &emits[0].events[0];
+    assert_eq!(event.event_type, "shop:fulfilment:shipment:requested");
+    assert_eq!(event.dedup_id, "shipment-requested-ord-42");
+    assert_eq!(event.message_group.as_deref(), Some("order-ord-42"));
+    assert_eq!(event.data["trackingNumber"], "TRK-1");
+    assert_eq!(
+        (
+            event.correlation_id.as_deref(),
+            event.causation_id.as_deref()
+        ),
+        (Some("flow-1"), Some("evt-1")),
+        "the inbound event's ids by default"
+    );
+
+    let health = h
+        .send(
+            h.client
+                .get(format!("{}/functions/{address}/healthz", h.base)),
+        )
+        .await;
+    assert_eq!(health.status, 200);
+    assert_eq!(health.json(), json!({"ok": true}));
     h.close().await;
 }
 
