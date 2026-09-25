@@ -20,8 +20,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use fc_platform::api::AppState;
 use fc_platform::auth::auth_api::AuthState;
-use fc_platform::auth::login_backoff::BackoffPolicy;
-use fc_platform::auth::session_cookie::SessionCookieConfig;
+use fc_platform::auth::oidc_login_api::PasswordSetupHint;
 use fc_platform::repository::Repositories;
 use fc_platform::shared::server_setup::AuthServices;
 use fc_platform::{
@@ -42,6 +41,7 @@ pub use topcoat::router::request::Request as WebRequest;
 pub struct WebDeps {
     pub(crate) app_state: AppState,
     pub(crate) auth_state: AuthState,
+    pub(crate) password_setup_hint: Option<PasswordSetupHint>,
     pub(crate) unit_of_work: Arc<PgUnitOfWork>,
     pub(crate) audit_log_repo: Arc<AuditLogRepository>,
     pub(crate) principal_repo: Arc<PrincipalRepository>,
@@ -63,34 +63,25 @@ pub struct WebDeps {
 }
 
 impl WebDeps {
-    /// Build from the same pieces every binary already has, the way
-    /// `build_platform_routes` builds the API states.
-    /// `session_cookie_secure` mirrors `PlatformRoutesConfig::session_cookie_secure`.
+    /// Build from the same pieces every binary already has. `auth_state`
+    /// and `password_setup_hint` are the ones `build_platform_routes` built
+    /// for `/auth/login` and `/auth/check-domain` (`PlatformRoutes::auth`,
+    /// `PlatformRoutes::oidc_login`), so the form signs in exactly as the API:
+    /// the same backoff policy, session cookie and second-factor gate.
     pub fn new(
         repos: &Repositories,
         auth: &AuthServices,
         unit_of_work: Arc<PgUnitOfWork>,
-        session_cookie_secure: bool,
+        auth_state: AuthState,
+        password_setup_hint: Option<PasswordSetupHint>,
     ) -> Self {
-        let auth_state = AuthState {
-            auth_service: auth.auth.clone(),
-            principal_repo: repos.principal_repo.clone(),
-            role_repo: repos.role_repo.clone(),
-            password_service: auth.password.clone(),
-            refresh_token_repo: repos.refresh_token_repo.clone(),
-            email_domain_mapping_repo: repos.edm_repo.clone(),
-            identity_provider_repo: repos.idp_repo.clone(),
-            login_attempt_repo: repos.login_attempt_repo.clone(),
-            backoff_policy: Arc::new(BackoffPolicy::from_env()),
-            // Same cookie as password login through `/auth/login`.
-            session_cookie: SessionCookieConfig::password_login(session_cookie_secure),
-        };
         Self {
             app_state: AppState {
                 auth_service: auth.auth.clone(),
                 authz_service: auth.authz.clone(),
             },
             auth_state,
+            password_setup_hint,
             unit_of_work,
             audit_log_repo: repos.audit_log_repo.clone(),
             principal_repo: repos.principal_repo.clone(),

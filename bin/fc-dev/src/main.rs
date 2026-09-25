@@ -926,6 +926,14 @@ async fn main() -> Result<()> {
 
     // Event fan-out runs inside the stream processor (fc-stream) configured
     // above; nothing to start here.
+
+    // The Topcoat UI trial signs in through the same states `/auth/login`
+    // and `/auth/check-domain` use.
+    #[cfg(feature = "web")]
+    let web_auth = (
+        routes.auth.clone(),
+        routes.oidc_login.password_setup_hint.clone(),
+    );
     let (platform_app, platform_openapi) = routes.build();
 
     // Dev-only auto-sync of the Developer portal artefacts. Idempotent —
@@ -1020,7 +1028,8 @@ async fn main() -> Result<()> {
         &repos,
         &auth_services,
         unit_of_work.clone(),
-        false,
+        web_auth.0,
+        web_auth.1,
     ));
     #[cfg(feature = "web")]
     info!("Topcoat UI trial mounted at /ui");

@@ -1,13 +1,25 @@
-//! Sign-in: email first, then password or a redirect to the federated IdP,
-//! or a passkey. Plain HTML forms with Post/Redirect/Get; the only browser
-//! script is the WebAuthn ceremony, which no server can do for you.
+//! Sign-in, as the SPA's `LoginPage.vue`: email first, then the password
+//! (or a redirect to the federated IdP, or a passkey), then a second factor
+//! when one is owed. Plain HTML forms; the browser script covers what only
+//! the platform's own JSON endpoints do (the WebAuthn ceremony, the 2FA
+//! verify and email-code steps, the password-setup email).
 //!
 //! Reuses the API's own logic: `resolve_auth_method` (what `/auth/check-domain`
-//! answers), `password_login` (what `/auth/login` runs), and the same
+//! answers) with the same password-setup hint, `password_login` (what
+//! `/auth/login` runs, including its second-factor gate), and the same
 //! `fc_session` cookie.
+//!
+//! - `mfa_required`: the challenge step (TwoFactorChallenge.vue) posts the
+//!   code to `POST /auth/2fa/verify`, which sets the session cookie.
+//! - `enrollment_required`: enrolment (TOTP QR, email confirm) is left to
+//!   the SPA's sign-in, which the step links to.
+//! - `passwordSetupRequired`: the step emails the set-password link through
+//!   `POST /auth/password-setup/request`.
 
-use fc_platform::auth::auth_api::password_login;
+use axum_extra::extract::cookie::CookieJar;
+use fc_platform::auth::auth_api::{PasswordLogin, password_login};
 use fc_platform::auth::oidc_login_api::{AuthMethod, AuthMethodError, resolve_auth_method};
+use fc_platform::mfa::login_api::SecondFactor;
 use fc_platform::shared::middleware::extract_trusted_client_ip;
 use fc_platform::shared::public_api::{LoginThemeResponse, load_login_theme};
 use serde::Deserialize;
@@ -49,10 +61,26 @@ fn safe_next(next: Option<&str>) -> String {
     }
 }
 
-/// The two steps of the form.
+/// The steps of the form (the SPA's `step`).
 enum Step {
     Email,
-    Password { email: String },
+    Password {
+        email: String,
+    },
+    /// An internal user who has never set a password.
+    Setup {
+        email: String,
+    },
+    /// `mfa_required`.
+    TwoFactor {
+        mfa_token: String,
+        methods: Vec<String>,
+        remember_device_allowed: bool,
+    },
+    /// `enrollment_required`.
+    Enroll {
+        email: String,
+    },
 }
 
 #[page([GET, POST] "/ui/login")]
@@ -71,10 +99,28 @@ async fn login(cx: &Cx, form: Option<Form<LoginForm>>) -> Result<impl View> {
         // Step 2: a password was submitted.
         let email = form.email.unwrap_or_default().trim().to_owned();
         let ip = extract_trusted_client_ip(headers(cx));
-        match password_login(&deps.auth_state, &email, &password, ip.as_deref()).await {
-            Ok((_principal, token)) => {
-                cookies(cx).add(deps.auth_state.session_cookie.build_cookie(token));
+        // The trusted-device cookie (remember this device) rides along.
+        let jar = CookieJar::from_headers(headers(cx));
+        match password_login(&deps.auth_state, &jar, &email, &password, ip.as_deref()).await {
+            Ok(PasswordLogin::Session { session_token, .. }) => {
+                cookies(cx).add(deps.auth_state.session_cookie.build_cookie(session_token));
                 return Err(see_other(next).into());
+            }
+            Ok(PasswordLogin::SecondFactor(SecondFactor::Challenge {
+                mfa_token,
+                methods,
+                remember_device_allowed,
+            })) => (
+                Step::TwoFactor {
+                    mfa_token,
+                    methods,
+                    remember_device_allowed,
+                },
+                None,
+                StatusCode::OK,
+            ),
+            Ok(PasswordLogin::SecondFactor(SecondFactor::Enrollment { .. })) => {
+                (Step::Enroll { email }, None, StatusCode::OK)
             }
             Err(e) => {
                 let status = e.status_code();
@@ -102,7 +148,23 @@ async fn login(cx: &Cx, form: Option<Form<LoginForm>>) -> Result<impl View> {
         )
         .await
         {
-            Ok(AuthMethod::Internal) => (Step::Password { email }, None, StatusCode::OK),
+            Ok(AuthMethod::Internal) => {
+                // The check-domain hint: a user who has never set a password
+                // gets the set-password step instead of a password prompt.
+                let ip = extract_trusted_client_ip(headers(cx));
+                let setup = match &deps.password_setup_hint {
+                    Some(hint) => {
+                        hint.required_for(&email.to_lowercase(), ip.as_deref())
+                            .await
+                    }
+                    None => false,
+                };
+                if setup {
+                    (Step::Setup { email }, None, StatusCode::OK)
+                } else {
+                    (Step::Password { email }, None, StatusCode::OK)
+                }
+            }
             Ok(AuthMethod::External { login_url, .. }) => {
                 // `/auth/oidc/login` carries `return_url` through the IdP
                 // round trip and lands the browser back here with the cookie set.
@@ -158,6 +220,9 @@ async fn login_screen(
     let title = match step {
         Step::Email => "Sign in to your account",
         Step::Password { .. } => "Enter your password",
+        Step::Setup { .. } => "Create your password",
+        Step::TwoFactor { .. } => "Verify it's you",
+        Step::Enroll { .. } => "Set up two-factor authentication",
     };
     let show_password = signal(cx, || false);
     let forgot_href = |email: &str| {
@@ -272,6 +337,72 @@ async fn login_screen(
                                 </button>
                                 <p data-passkey-error="" hidden="" class="-mt-3 text-sm text-[#dc2626]"></p>
                             }
+                            Step::Setup { email } => {
+                                <div class="flex items-center justify-between rounded-lg bg-[#f8fafc] px-4 py-3">
+                                    <div class="flex min-w-0 items-center gap-3">
+                                        <span class="fc-login-avatar">(email.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default())</span>
+                                        <span class="truncate text-sm text-[#475569]">(&email)</span>
+                                    </div>
+                                    <a href=(&change_href) class="fc-login-link text-sm font-medium">"Use a different email"</a>
+                                </div>
+                                <div data-setup="" data-email=(&email) class="flex flex-col gap-4">
+                                    <p data-setup-ask="" class="text-sm leading-relaxed text-[#475569]">
+                                        "This is your first time signing in. We'll email you a link to create your password — this confirms it's really you."
+                                    </p>
+                                    <button type="button" data-setup-send="" class="fc-btn fc-btn-block fc-login-submit">"Email me a link"</button>
+                                    <div data-setup-sent="" hidden="" class="fc-banner fc-banner-success">
+                                        <p>"We sent a link to " <strong>(&email)</strong> ". Open it on this device to create your password. The link expires in 72 hours."</p>
+                                    </div>
+                                    <p data-setup-error="" hidden="" class="text-sm text-[#dc2626]"></p>
+                                </div>
+                            }
+                            Step::TwoFactor { mfa_token, methods, remember_device_allowed } => {
+                                let first = methods.first().cloned().unwrap_or_else(|| "RECOVERY_CODE".to_owned());
+                                let has_totp = methods.iter().any(|m| m == "TOTP");
+                                let has_email = methods.iter().any(|m| m == "EMAIL_PIN");
+                                <div data-tfa="" data-token=(&mfa_token) data-active=(&first) data-next=(&next) class="flex flex-col gap-4 text-left">
+                                    <div data-tfa-error="" hidden="" class="rounded-md border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-sm text-[#b91c1c]"></div>
+                                    <p data-tfa-panel="TOTP" hidden="" class="text-sm text-[#64748b]">"Enter the 6-digit code from your authenticator app."</p>
+                                    <div data-tfa-panel="EMAIL_PIN" hidden="" class="flex flex-col gap-3">
+                                        <p data-tfa-email-ask="" class="text-sm text-[#64748b]">"We'll email a one-time code to your address."</p>
+                                        <p data-tfa-email-sent="" hidden="" class="text-sm text-[#64748b]">"Enter the code we emailed you."</p>
+                                        <button type="button" data-tfa-send="" class="fc-btn fc-btn-block fc-login-submit">
+                                            icon(data: iconify_icon!("lucide:mail"), size: Length::rem(1.0))
+                                            "Email me a code"
+                                        </button>
+                                    </div>
+                                    <p data-tfa-panel="RECOVERY_CODE" hidden="" class="text-sm text-[#64748b]">"Enter one of your recovery codes."</p>
+                                    <div data-tfa-entry="" class="flex flex-col gap-4">
+                                        <input data-tfa-code="" class="fc-input" placeholder="123456" inputmode="text" autocomplete="one-time-code" aria-label="Code">
+                                        if remember_device_allowed {
+                                            <label class="flex items-center gap-2 text-sm text-[#64748b]">
+                                                <input type="checkbox" data-tfa-remember="">
+                                                "Remember this device for 30 days"
+                                            </label>
+                                        }
+                                        <button type="button" data-tfa-verify="" class="fc-btn fc-btn-block fc-login-submit">"Verify"</button>
+                                    </div>
+                                    <div class="mt-1 flex flex-col gap-1.5 text-sm">
+                                        if has_totp {
+                                            <a href="#" data-tfa-switch="TOTP" class="fc-login-link">"Use authenticator app"</a>
+                                        }
+                                        if has_email {
+                                            <a href="#" data-tfa-switch="EMAIL_PIN" class="fc-login-link">"Use an email code"</a>
+                                        }
+                                        <a href="#" data-tfa-switch="RECOVERY_CODE" class="fc-login-link">"Use a recovery code"</a>
+                                    </div>
+                                </div>
+                            }
+                            Step::Enroll { email } => {
+                                // Enrolment (authenticator QR or email
+                                // confirmation) runs in the SPA's sign-in.
+                                <p class="text-sm leading-relaxed text-[#475569]">
+                                    "Your organization requires two-factor authentication for "
+                                    <strong>(&email)</strong>
+                                    ". Set it up to finish signing in."
+                                </p>
+                                <a href="/auth/login" class="fc-btn fc-btn-block fc-login-submit">"Continue to set up"</a>
+                            }
                         }
                     </form>
                 </div>
@@ -282,5 +413,6 @@ async fn login_screen(
             </div>
         </main>
         <script type="module" src=(asset!("./passkey.js"))></script>
+        <script type="module" src=(asset!("./login_steps.js"))></script>
     })
 }

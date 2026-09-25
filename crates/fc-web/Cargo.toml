@@ -29,6 +29,8 @@ form_urlencoded = "1"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
+# The login form hands the trusted-device cookie to `password_login`.
+axum-extra = { version = "0.10", features = ["cookie"] }
 
 [build-dependencies]
 topcoat = { version = "=0.9.0", default-features = false, features = ["tailwind", "icon-iconify"] }

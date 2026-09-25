@@ -375,8 +375,8 @@ mechanical diff:
 2. In `bin/fc-dev/Cargo.toml`, remove the `fc-web` optional dependency and
    the `web` feature.
 3. In `bin/fc-dev/src/main.rs`, remove every `#[cfg(feature = "web")]` item
-   (`grep -n 'feature = "web"'`): the `WebDeps` construction and its log
-   line, the two `fallback_service(fc_web::service(…))` branches (keep the
+   (`grep -n 'feature = "web"'`): the `web_auth` capture, the `WebDeps`
+   construction and its log line, the two `fallback_service(fc_web::service(…))` branches (keep the
    `#[cfg(not(feature = "web"))]` fallback, minus its attribute, in the
    embedded branch), and the `notify_dev_ready` spawn.
 4. In the root `Cargo.toml`, remove `"crates/fc-web"` (and its comment) from
