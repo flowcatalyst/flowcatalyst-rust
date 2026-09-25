@@ -1,0 +1,39 @@
+{
+  "name": "ordered-group-20",
+  "description": "20 events in one message group, target answers 200 after 50ms: delivered one at a time in order 1-20 (FIFO per group).",
+  "covers": [
+    "H3",
+    "H5"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "script": {
+        "default": {
+          "status": 200,
+          "body": {
+            "ack": true
+          },
+          "delayMs": 50
+        }
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 20,
+      "groups": [
+        "ordered"
+      ]
+    }
+  ],
+  "settle": {
+    "timeoutMs": 90000
+  },
+  "invariants": {
+    "groupOrder": true
+  }
+}

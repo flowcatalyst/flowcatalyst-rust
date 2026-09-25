@@ -1,0 +1,46 @@
+{
+  "name": "block-on-error-group",
+  "description": "BLOCK_ON_ERROR, one group of 6: seq 2 fails twice (500) then succeeds (maxRetries 5). Seq 3-6 must not be delivered until seq 2 is accepted; acceptance order 1-6.",
+  "covers": [
+    "H3",
+    "H4"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "BLOCK_ON_ERROR",
+      "maxRetries": 5,
+      "script": {
+        "bySeq": [
+          {
+            "seq": 2,
+            "attempts": [
+              1,
+              2
+            ],
+            "respond": {
+              "status": 500
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 6,
+      "groups": [
+        "g1"
+      ]
+    }
+  ],
+  "settle": {
+    "timeoutMs": 120000
+  },
+  "invariants": {
+    "groupOrder": true,
+    "maxAttempts": 3
+  }
+}

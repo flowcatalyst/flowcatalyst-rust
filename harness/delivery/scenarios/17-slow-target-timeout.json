@@ -1,0 +1,46 @@
+{
+  "name": "slow-target-timeout",
+  "description": "Subscription timeout 2s; on attempt 1 the target answers only after 4s, by which time the platform has hung up (so that answer never goes out); attempt 2 is answered at once. The target sees the message twice, accepts it once; the job ends COMPLETED.",
+  "covers": [
+    "duplicate/redelivery",
+    "H12"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 3,
+      "timeoutSeconds": 2,
+      "script": {
+        "byAttempt": [
+          {
+            "attempts": [
+              1,
+              1
+            ],
+            "respond": {
+              "status": 200,
+              "body": {
+                "ack": true
+              },
+              "delayMs": 4000
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 3
+    }
+  ],
+  "settle": {
+    "timeoutMs": 90000
+  },
+  "invariants": {
+    "maxAttempts": 2
+  }
+}

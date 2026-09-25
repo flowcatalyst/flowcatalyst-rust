@@ -1,0 +1,46 @@
+{
+  "name": "next-on-error-group",
+  "description": "NEXT_ON_ERROR (the X-01 default), one group of 6: seq 2 fails twice (500) then succeeds (maxRetries 5). The rest of the group keeps flowing past the failing member; everything is accepted exactly once.",
+  "covers": [
+    "H4",
+    "X-01"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR",
+      "maxRetries": 5,
+      "script": {
+        "bySeq": [
+          {
+            "seq": 2,
+            "attempts": [
+              1,
+              2
+            ],
+            "respond": {
+              "status": 500
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "events",
+      "target": "main",
+      "count": 6,
+      "groups": [
+        "g1"
+      ]
+    }
+  ],
+  "settle": {
+    "timeoutMs": 120000
+  },
+  "invariants": {
+    "groupOrder": false,
+    "maxAttempts": 3
+  }
+}

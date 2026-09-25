@@ -1,0 +1,31 @@
+{
+  "name": "outbox-events",
+  "description": "10 events written as rows of the SDK outbox table (2 groups), forwarded by the side's outbox processor to /api/events/batch, then delivered; the outbox table is empty afterwards.",
+  "covers": [
+    "C3",
+    "H6"
+  ],
+  "targets": [
+    {
+      "name": "main",
+      "dispatchMode": "NEXT_ON_ERROR"
+    }
+  ],
+  "stimuli": [
+    {
+      "kind": "outboxEvents",
+      "target": "main",
+      "count": 10,
+      "groups": [
+        "g1",
+        "g2"
+      ]
+    }
+  ],
+  "settle": {
+    "timeoutMs": 90000
+  },
+  "invariants": {
+    "groupOrder": true
+  }
+}
