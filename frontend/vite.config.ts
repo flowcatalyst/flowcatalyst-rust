@@ -4,7 +4,7 @@ import Components from "unplugin-vue-components/vite";
 import { PrimeVueResolver } from "@primevue/auto-import-resolver";
 import { fileURLToPath, URL } from "node:url";
 
-// Go backend port (fcdev default: 8080)
+// Rust backend port (fc-dev default: 8080)
 const BACKEND_PORT = process.env.VITE_BACKEND_PORT ?? "8080";
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 

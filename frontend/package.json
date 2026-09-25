@@ -1,11 +1,12 @@
 {
 	"name": "@flowcatalyst/platform-frontend",
+	"license": "AGPL-3.0-or-later",
 	"version": "0.0.1",
 	"type": "module",
 	"packageManager": "pnpm@10.27.0",
 	"scripts": {
 		"dev": "vite",
-		"dev:full": "concurrently -k -n go,vite -c blue,green \"cd .. && FC_API_PORT=${FC_API_PORT:-8080} make dev\" \"wait-on tcp:${FC_API_PORT:-8080} && VITE_BACKEND_PORT=${FC_API_PORT:-8080} vite\"",
+		"dev:full": "concurrently -k -n rust,vite -c blue,green \"cd .. && FC_API_PORT=${FC_API_PORT:-8080} FC_DATABASE_URL=${FC_DATABASE_URL:-postgresql://flowcatalyst:flowcatalyst@localhost:5432/flowcatalyst} cargo watch -w crates -w bin -x 'run --bin fc-dev'\" \"wait-on tcp:${FC_API_PORT:-8080} && VITE_BACKEND_PORT=${FC_API_PORT:-8080} vite\"",
 		"build": "vue-tsc -b && vite build",
 		"preview": "vite preview",
 		"api:generate": "openapi-ts",

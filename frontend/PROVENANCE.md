@@ -18,3 +18,15 @@ follow this one. Anything in this directory that is not Go's is listed below.
 ## Changes on top of Go's SPA
 
 (Kept current by each commit that diverges from Go.)
+
+### Build and tooling glue
+
+- `package.json`: `license` (AGPL-3.0-or-later) and `dev:full` runs `fc-dev` with `cargo watch`
+  instead of Go's `make dev`. `vite.config.ts`: the proxy comment names the Rust backend. Vite's
+  `base` and `outDir` are Go's defaults (`/`, `dist/`), which `bin/fc-dev` embeds and `serve_spa`
+  serves unchanged.
+- `openapi/openapi.json` is a verbatim copy of flowcatalyst-go's `api/openapi.lock.json` at the same
+  commit, the document Go generates `src/api/generated/` from (Go's `frontend/openapi/openapi.json`
+  was a stale snapshot). `openapi-ts.config.ts` reads it there instead of `../api/openapi.lock.json`;
+  `pnpm api:generate` reproduces Go's committed `src/api/generated/` byte for byte. The root
+  `justfile`'s `regen-sdks` no longer overwrites it with Rust's `/q/openapi`.
