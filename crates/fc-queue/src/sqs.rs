@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::{debug, error, info, warn};
 
-use crate::{QueueConsumer, QueueError, QueueMetrics, Result};
+use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
 use fc_common::{Message, QueuedMessage};
 
 /// AWS SQS queue consumer
@@ -34,6 +34,8 @@ pub struct SqsQueueConsumer {
     total_nacked: AtomicU64,
     /// Total messages deferred (rate limiting, capacity - not failures)
     total_deferred: AtomicU64,
+    /// Messages deleted because they could not be decoded.
+    rejected: RejectedLog,
 }
 
 impl SqsQueueConsumer {
@@ -65,6 +67,7 @@ impl SqsQueueConsumer {
             total_acked: AtomicU64::new(0),
             total_nacked: AtomicU64::new(0),
             total_deferred: AtomicU64::new(0),
+            rejected: RejectedLog::default(),
         }
     }
 
@@ -204,6 +207,8 @@ impl QueueConsumer for SqsQueueConsumer {
                         error = %e,
                         "Failed to parse SQS message"
                     );
+                    self.rejected
+                        .record(sqs_msg.message_id().map(str::to_string), e.to_string());
                     // ACK the malformed message to prevent infinite retries
                     if let Some(handle) = sqs_msg.receipt_handle() {
                         let _ = self.ack(handle).await;
@@ -346,6 +351,10 @@ impl QueueConsumer for SqsQueueConsumer {
     async fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         info!(queue = %self.queue_name, "SQS queue consumer stopped");
+    }
+
+    fn take_rejected(&self) -> Vec<RejectedMessage> {
+        self.rejected.take()
     }
 
     fn get_counters(&self) -> Option<QueueMetrics> {

@@ -19,7 +19,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::{QueueConsumer, QueueError, QueueMetrics, Result};
+use crate::{QueueConsumer, QueueError, QueueMetrics, RejectedLog, RejectedMessage, Result};
 use fc_common::QueuedMessage;
 
 /// Configuration for the NATS JetStream consumer
@@ -253,6 +253,8 @@ pub struct NatsQueueConsumer {
     /// resubscribing keeps failing — its stall watchdog rebuilds the whole
     /// consumer.
     subscription_healthy: Arc<AtomicBool>,
+    /// Messages terminated because their payload could not be decoded.
+    rejected: Arc<RejectedLog>,
 }
 
 /// Open the standing pull subscription with the options every
@@ -308,6 +310,7 @@ struct Forwarder {
     cancel: CancellationToken,
     last_delivery: Arc<Mutex<Instant>>,
     healthy: Arc<AtomicBool>,
+    rejected: Arc<RejectedLog>,
     tx: mpsc::Sender<QueuedMessage>,
 }
 
@@ -422,6 +425,8 @@ async fn forward(mut f: Forwarder) {
                     error = %e,
                     "Failed to parse NATS message payload, terminating message"
                 );
+                let seq = js_msg.info().ok().map(|i| i.stream_sequence.to_string());
+                f.rejected.record(seq, e.to_string());
                 let _ = js_msg.ack_with(AckKind::Term).await;
                 continue;
             }
@@ -598,6 +603,7 @@ impl NatsQueueConsumer {
                 )
             })?;
         let subscription_healthy = Arc::new(AtomicBool::new(true));
+        let rejected = Arc::new(RejectedLog::default());
 
         tokio::spawn(forward(Forwarder {
             stream: jetstream_stream,
@@ -610,6 +616,7 @@ impl NatsQueueConsumer {
             cancel: stream_cancel.clone(),
             last_delivery: last_delivery.clone(),
             healthy: subscription_healthy.clone(),
+            rejected: rejected.clone(),
             tx,
         }));
 
@@ -628,6 +635,7 @@ impl NatsQueueConsumer {
             total_deferred: AtomicU64::new(0),
             last_delivery,
             subscription_healthy,
+            rejected,
         })
     }
 
@@ -830,6 +838,10 @@ impl QueueConsumer for NatsQueueConsumer {
     /// `NakWithDelay` never holds a delayed head's successors back.
     fn honours_delayed_return(&self) -> bool {
         false
+    }
+
+    fn take_rejected(&self) -> Vec<RejectedMessage> {
+        self.rejected.take()
     }
 
     fn is_healthy(&self) -> bool {

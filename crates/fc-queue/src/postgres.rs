@@ -9,7 +9,10 @@ use tracing::{debug, info, warn};
 /// verbatim once per quarantined row.
 const MAX_QUARANTINE_ERROR_LEN: usize = 1000;
 
-use crate::{EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, Result};
+use crate::{
+    EmbeddedQueue, QueueConsumer, QueueError, QueueMetrics, QueuePublisher, RejectedLog,
+    RejectedMessage, Result,
+};
 use fc_common::{Message, QueuedMessage};
 
 /// Postgres-backed queue that mimics SQS FIFO semantics for local development.
@@ -25,6 +28,8 @@ pub struct PostgresQueue {
     total_acked: AtomicU64,
     total_nacked: AtomicU64,
     total_deferred: AtomicU64,
+    /// Rows quarantined because their payload could not be decoded.
+    rejected: RejectedLog,
 }
 
 impl PostgresQueue {
@@ -38,6 +43,7 @@ impl PostgresQueue {
             total_acked: AtomicU64::new(0),
             total_nacked: AtomicU64::new(0),
             total_deferred: AtomicU64::new(0),
+            rejected: RejectedLog::default(),
         }
     }
 
@@ -367,6 +373,7 @@ impl QueueConsumer for PostgresQueue {
         for (id, reason) in poisoned {
             match self.quarantine(&id, &reason).await {
                 Ok(()) => {
+                    self.rejected.record(Some(id.clone()), reason.clone());
                     warn!(
                         queue = %self.queue_name,
                         message_id = %id,
@@ -522,6 +529,10 @@ impl QueueConsumer for PostgresQueue {
             total_nacked: self.total_nacked.load(Ordering::Relaxed),
             total_deferred: self.total_deferred.load(Ordering::Relaxed),
         }))
+    }
+
+    fn take_rejected(&self) -> Vec<RejectedMessage> {
+        self.rejected.take()
     }
 
     fn get_counters(&self) -> Option<QueueMetrics> {

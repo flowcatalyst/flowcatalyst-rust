@@ -15,7 +15,6 @@
 
 use std::time::Duration;
 
-use chrono::Utc;
 use fc_common::{MediationType, Message};
 use fc_queue::{
     activemq::{ActiveMqConfig, ActiveMqConsumer, ActiveMqPublisher},
@@ -47,6 +46,8 @@ fn create_test_message(id: &str) -> Message {
         mediation_target: "http://localhost:8080/test".to_string(),
         message_group_id: None,
         high_priority: false,
+        dispatch_mode: fc_common::DispatchMode::default(),
+        dispatch_mode_specified: true,
     }
 }
 

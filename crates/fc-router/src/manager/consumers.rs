@@ -195,7 +195,9 @@ impl QueueManager {
                     info!(consumer = %id, "Capacity returned; resuming poll");
                 }
 
-                match manager.bounded_poll(&rc).await {
+                let polled = manager.bounded_poll(&rc).await;
+                manager.report_rejected(&rc);
+                match polled {
                     PollOutcome::Cancelled => break,
                     PollOutcome::Messages(messages) => {
                         rc.beat();
@@ -227,6 +229,35 @@ impl QueueManager {
             }
             debug!(consumer = %id, generation = rc.generation, "Poll loop exited");
         })
+    }
+
+    /// Raise a CONFIGURATION/ERROR warning for every message the consumer
+    /// removed at its parse boundary since the last poll (SQS deleted it,
+    /// NATS terminated it, Postgres quarantined it). Such a message is
+    /// never delivered, and the cause — a producer sending something this
+    /// router cannot read, such as an unsupported mediation type — is one
+    /// an operator can fix; Go warns on it (corpus case
+    /// `unsupported-mediation-type`). It used to be a log line only.
+    fn report_rejected(&self, rc: &RunningConsumer) {
+        for rejected in rc.consumer.take_rejected() {
+            error!(
+                queue = %rc.identifier(),
+                broker_message_id = ?rejected.broker_message_id,
+                reason = %rejected.reason,
+                "Malformed message removed from the queue without delivery"
+            );
+            self.warning_service.add_warning(
+                WarningCategory::Configuration,
+                WarningSeverity::Error,
+                format!(
+                    "Malformed message {} on queue {} removed without delivery: {}",
+                    rejected.broker_message_id.as_deref().unwrap_or("(no id)"),
+                    rc.identifier(),
+                    rejected.reason
+                ),
+                "QueueManager".to_string(),
+            );
+        }
     }
 
     /// Point the health service at this manager for consumer liveness (Go:
@@ -691,6 +722,61 @@ mod consumer_liveness_tests {
         let rc = manager.consumers.get(c.id).unwrap();
         manager.spawn_consumer_poll_task(rc.clone());
         rc
+    }
+
+    /// A message the backend removed at its parse boundary raises a
+    /// CONFIGURATION/ERROR warning (Go warns; corpus
+    /// `unsupported-mediation-type`).
+    #[tokio::test]
+    async fn malformed_messages_removed_by_the_backend_raise_a_config_error() {
+        struct Rejecting {
+            log: fc_queue::RejectedLog,
+        }
+        #[async_trait]
+        impl QueueConsumer for Rejecting {
+            fn identifier(&self) -> &str {
+                "rejecting"
+            }
+            async fn poll(&self, _: u32) -> QueueResult<Vec<QueuedMessage>> {
+                self.log.record(
+                    Some("m-1".to_string()),
+                    "unknown variant `SMTP`, expected `HTTP`",
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok(vec![])
+            }
+            async fn ack(&self, _: &str) -> QueueResult<()> {
+                Ok(())
+            }
+            async fn nack(&self, _: &str, _: Option<u32>) -> QueueResult<()> {
+                Ok(())
+            }
+            async fn extend_visibility(&self, _: &str, _: u32) -> QueueResult<()> {
+                Ok(())
+            }
+            fn is_healthy(&self) -> bool {
+                true
+            }
+            fn take_rejected(&self) -> Vec<fc_queue::RejectedMessage> {
+                self.log.take()
+            }
+            async fn stop(&self) {}
+        }
+        let (manager, _hs) = manager_with(None);
+        let c = Arc::new(Rejecting {
+            log: fc_queue::RejectedLog::default(),
+        });
+        manager.add_consumer(c).await;
+        let rc = manager.consumers.get("rejecting").unwrap();
+        manager.spawn_consumer_poll_task(rc);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let warnings = manager
+            .warning_service
+            .get_warnings_by_category(WarningCategory::Configuration);
+        assert!(!warnings.is_empty());
+        assert_eq!(warnings[0].severity, WarningSeverity::Error);
+        assert!(warnings[0].message.contains("SMTP"));
+        manager.shutdown().await;
     }
 
     /// A leadership-paused consumer must never read as stalled: the poll

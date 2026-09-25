@@ -141,6 +141,12 @@ async fn test_poison_row_quarantined_healthy_row_still_delivers() {
     // A second poll never sees the poison row again.
     let messages = queue.poll(10).await.unwrap();
     assert!(messages.is_empty());
+
+    // The quarantine is reported once, so the router can warn about it.
+    let rejected = queue.take_rejected();
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].broker_message_id.as_deref(), Some("poison-1"));
+    assert!(queue.take_rejected().is_empty());
 }
 
 // A-07: a second failure for the same id overwrites the first — the latest
