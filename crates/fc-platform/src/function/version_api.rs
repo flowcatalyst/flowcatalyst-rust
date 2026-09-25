@@ -1,10 +1,12 @@
-//! Versions, the manifest check and artifact upload (Java
+//! Versions, aliases, the manifest check and artifact upload (Java
 //! `function/api/FunctionApi.java`: `publish` :246-255, `checkManifest`
 //! :272-301, `uploadArtifact` :319-375, `listVersions`/`getVersion`/`retire`
-//! :395-423, and their DTOs).
+//! :395-423, `promote`/`removeAlias`/`listAliases` :434-468, and their DTOs
+//! :931-1062).
 //!
 //! Publish, retire, the check and the upload are all gated by
-//! `platform:function:version:publish`; the version reads by
+//! `platform:function:version:publish`; promote and alias removal by
+//! `platform:function:alias:promote`; the reads by
 //! `platform:function:function:view`. A function out of reach is
 //! `404 Function_NOT_FOUND` everywhere, never a 403.
 
@@ -20,10 +22,14 @@ use super::api::{address_from_path, parse_version_number, reachable_function, Fu
 use super::artifact::{self, PlatformArtifactRef};
 use super::entity::{FunctionVersion, SignerIdentity};
 use super::operations::events::VersionPublished;
-use super::operations::{PublishCommand, RetireCommand};
+use super::operations::promote_plan::{
+    Conflict, PoolAction, PromotePlan, PublicRoutesAction, RouteKey, ScheduleAction,
+    SubscriptionAction, Wiring,
+};
+use super::operations::{PromoteCommand, PublishCommand, RemoveAliasCommand, RetireCommand};
 use super::wire::{micros_opt_ser, micros_ser, parse_body};
 use super::{ClientCeilings, Digest, JsonNode, Manifest};
-use crate::permissions::function::{FUNCTION_PUBLISH, FUNCTION_VIEW};
+use crate::permissions::function::{FUNCTION_PROMOTE, FUNCTION_PUBLISH, FUNCTION_VIEW};
 use crate::shared::authorization_service::checks;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
@@ -191,12 +197,281 @@ impl ManifestErrorResponse {
     }
 }
 
-/// `200` of the manifest check. `plan` (what promoting would do) is absent
-/// until promote wiring lands (P5).
+/// `200` of the manifest check. `plan` (what promoting the manifest, as the
+/// next version, to `alias` would do) is present only when `valid`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CheckManifestResponse {
     pub valid: bool,
     pub errors: Vec<ManifestErrorResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PromotePlanResponse>,
+}
+
+/// A [`PromotePlan`] on the wire (Java `PromotePlanResponse`). For a named
+/// alias `httpOnly` is true, `pool` and `publicRoutes` are absent and the
+/// lists empty; `settingsMissing` and `conflicts` are always computed.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PromotePlanResponse {
+    pub alias: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_version: Option<i32>,
+    pub to_version: i32,
+    pub settings_missing: Vec<String>,
+    pub http_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pool: Option<PoolActionResponse>,
+    pub subscriptions: Vec<SubscriptionActionResponse>,
+    pub schedules: Vec<ScheduleActionResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_routes: Option<PublicRoutesActionResponse>,
+    pub conflicts: Vec<ConflictResponse>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PoolActionResponse {
+    /// `create`, `update` or `unchanged`.
+    pub action: &'static str,
+    pub key: String,
+    pub changed_fields: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionActionResponse {
+    /// `create`, `update`, `delete` or `unchanged`.
+    pub action: &'static str,
+    pub trigger_key: String,
+    pub event_type: String,
+    pub changed_fields: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleActionResponse {
+    /// `create`, `update`, `delete` or `unchanged`.
+    pub action: &'static str,
+    pub trigger_key: String,
+    pub cron: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    pub changed_fields: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PublicRoutesActionResponse {
+    /// `replace` or `unchanged`.
+    pub action: &'static str,
+    pub added: Vec<RouteKeyResponse>,
+    pub removed: Vec<RouteKeyResponse>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteKeyResponse {
+    pub hostname: String,
+    pub path_prefix: String,
+    pub alias_prefixes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConflictResponse {
+    pub code: String,
+    pub message: String,
+}
+
+impl PromotePlanResponse {
+    pub fn of(plan: &PromotePlan) -> PromotePlanResponse {
+        let conflicts = plan.conflicts.iter().map(ConflictResponse::of).collect();
+        let base = |http_only| PromotePlanResponse {
+            alias: plan.alias.clone(),
+            from_version: plan.from_version,
+            to_version: plan.to_version,
+            settings_missing: plan.settings_missing.clone(),
+            http_only,
+            pool: None,
+            subscriptions: Vec::new(),
+            schedules: Vec::new(),
+            public_routes: None,
+            conflicts,
+        };
+        match &plan.wiring {
+            Wiring::HttpOnly => base(true),
+            Wiring::Live {
+                pool,
+                subscriptions,
+                schedules,
+                public_routes,
+            } => PromotePlanResponse {
+                pool: Some(PoolActionResponse::of(pool)),
+                subscriptions: subscriptions
+                    .iter()
+                    .map(SubscriptionActionResponse::of)
+                    .collect(),
+                schedules: schedules.iter().map(ScheduleActionResponse::of).collect(),
+                public_routes: Some(PublicRoutesActionResponse::of(public_routes)),
+                ..base(false)
+            },
+        }
+    }
+}
+
+impl PoolActionResponse {
+    fn of(a: &PoolAction) -> PoolActionResponse {
+        let (action, key, changed_fields) = match a {
+            PoolAction::Create { key } => ("create", key, Vec::new()),
+            PoolAction::Update {
+                key,
+                changed_fields,
+            } => ("update", key, changed_fields.clone()),
+            PoolAction::Unchanged { key } => ("unchanged", key, Vec::new()),
+        };
+        PoolActionResponse {
+            action,
+            key: key.clone(),
+            changed_fields,
+        }
+    }
+}
+
+impl SubscriptionActionResponse {
+    fn of(a: &SubscriptionAction) -> SubscriptionActionResponse {
+        let (action, trigger_key, event_type, changed_fields) = match a {
+            SubscriptionAction::Create {
+                trigger_key,
+                event_type,
+            } => ("create", trigger_key, event_type, Vec::new()),
+            SubscriptionAction::Update {
+                trigger_key,
+                event_type,
+                changed_fields,
+            } => ("update", trigger_key, event_type, changed_fields.clone()),
+            SubscriptionAction::Delete {
+                trigger_key,
+                event_type,
+            } => ("delete", trigger_key, event_type, Vec::new()),
+            SubscriptionAction::Unchanged {
+                trigger_key,
+                event_type,
+            } => ("unchanged", trigger_key, event_type, Vec::new()),
+        };
+        SubscriptionActionResponse {
+            action,
+            trigger_key: trigger_key.clone(),
+            event_type: event_type.clone(),
+            changed_fields,
+        }
+    }
+}
+
+impl ScheduleActionResponse {
+    fn of(a: &ScheduleAction) -> ScheduleActionResponse {
+        let (action, trigger_key, cron, timezone, changed_fields) = match a {
+            ScheduleAction::Create {
+                trigger_key,
+                cron,
+                timezone,
+            } => ("create", trigger_key, cron, timezone, Vec::new()),
+            ScheduleAction::Update {
+                trigger_key,
+                cron,
+                timezone,
+                changed_fields,
+            } => (
+                "update",
+                trigger_key,
+                cron,
+                timezone,
+                changed_fields.clone(),
+            ),
+            ScheduleAction::Delete {
+                trigger_key,
+                cron,
+                timezone,
+            } => ("delete", trigger_key, cron, timezone, Vec::new()),
+            ScheduleAction::Unchanged {
+                trigger_key,
+                cron,
+                timezone,
+            } => ("unchanged", trigger_key, cron, timezone, Vec::new()),
+        };
+        ScheduleActionResponse {
+            action,
+            trigger_key: trigger_key.clone(),
+            cron: cron.clone(),
+            timezone: timezone.clone(),
+            changed_fields,
+        }
+    }
+}
+
+impl PublicRoutesActionResponse {
+    fn of(a: &PublicRoutesAction) -> PublicRoutesActionResponse {
+        match a {
+            PublicRoutesAction::Replace { added, removed } => PublicRoutesActionResponse {
+                action: "replace",
+                added: added.iter().map(RouteKeyResponse::of).collect(),
+                removed: removed.iter().map(RouteKeyResponse::of).collect(),
+            },
+            PublicRoutesAction::Unchanged => PublicRoutesActionResponse {
+                action: "unchanged",
+                added: Vec::new(),
+                removed: Vec::new(),
+            },
+        }
+    }
+}
+
+impl RouteKeyResponse {
+    fn of(k: &RouteKey) -> RouteKeyResponse {
+        RouteKeyResponse {
+            hostname: k.hostname.clone(),
+            path_prefix: k.path_prefix.clone(),
+            alias_prefixes: k.alias_prefixes.clone(),
+        }
+    }
+}
+
+impl ConflictResponse {
+    fn of(c: &Conflict) -> ConflictResponse {
+        ConflictResponse {
+            code: c.code.clone(),
+            message: c.message.clone(),
+        }
+    }
+}
+
+/// Body of `PUT …/aliases/{alias}`. An absent `version` is 0, which names
+/// no version (Java's `int` record component).
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub struct PromoteRequest {
+    #[serde(default)]
+    pub version: i32,
+}
+
+/// `200` of a promote: `previousVersion` is the prior target's number,
+/// absent on a first promotion.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PromoteResponse {
+    pub alias: String,
+    pub version: i32,
+    pub version_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_version: Option<i32>,
+}
+
+/// One alias.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AliasResponse {
+    pub alias: String,
+    pub version: i32,
+    pub version_id: String,
+    pub updated_by: String,
+    #[serde(serialize_with = "micros_ser")]
+    pub updated_at: DateTime<Utc>,
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
@@ -281,6 +556,7 @@ pub async fn check_manifest(
         None => ClientCeilings::of(&state.limits),
     };
     let mut errors = Vec::new();
+    let mut plan_response = None;
     match Manifest::check(req.manifest.as_ref(), f.runtime, &state.limits, &ceilings) {
         Err(rejected) => {
             for problem in rejected.problems() {
@@ -294,13 +570,28 @@ pub async fn check_manifest(
                 .check(&f, &manifest, &caller)
                 .await?;
             errors.extend(problems.iter().map(ManifestErrorResponse::of));
-            // TODO(P5): with no errors, add `plan`: TriggerSync.plan for
-            // promoting this manifest, as the next version, to `alias`.
+            if errors.is_empty() {
+                // A plain max-plus-one read: nothing is reserved, so it may
+                // go stale under a concurrent publish, which a dry run allows.
+                let next = state.versions.next_version_preview(&f.id).await?;
+                let alias = req
+                    .alias
+                    .as_deref()
+                    .filter(|a| !crate::function::java_is_blank(a))
+                    .unwrap_or(crate::function::LIVE_ALIAS);
+                let plan = state
+                    .ops
+                    .trigger_sync
+                    .plan(&f, &manifest, next, alias, &caller)
+                    .await?;
+                plan_response = Some(PromotePlanResponse::of(&plan));
+            }
         }
     }
     Ok(Json(CheckManifestResponse {
         valid: errors.is_empty(),
         errors,
+        plan: plan_response,
     }))
 }
 
@@ -419,6 +710,134 @@ pub async fn retire_version(
     let f = reachable_function(&state, &address, &caller).await?;
     let v = version_or_not_found(&state, &f, number).await?;
     Ok(Json(VersionResponse::summary(&v, f.is_live(&v.id))))
+}
+
+/// Point an alias at a version. For `live` this also reconciles the
+/// function's wiring to that version's manifest, in the same transaction.
+#[utoipa::path(
+    put, path = "/api/functions/{address}/aliases/{alias}", tag = "functions",
+    operation_id = "putApiFunctionsByAddressAliasesByAlias",
+    params(
+        ("address" = String, Path, description = "app.service.name"),
+        ("alias" = String, Path, description = "`live` or a named alias"),
+    ),
+    request_body = PromoteRequest,
+    responses(
+        (status = 200, body = PromoteResponse),
+        (status = 400, description = "ALIAS_INVALID, ADDRESS_INVALID or INVALID_JSON"),
+        (status = 403),
+        (status = 404, description = "Function_NOT_FOUND or FunctionVersion_NOT_FOUND"),
+        (status = 409, description = "VERSION_NOT_READY, SETTINGS_MISSING, VERSION_RETIRED, FUNCTION_DISABLED, ALIAS_UNCHANGED or PUBLIC_ROUTE_TAKEN"),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn promote(
+    State(state): State<FunctionsState>,
+    auth: Authenticated,
+    Path((address, alias)): Path<(String, String)>,
+    body: Bytes,
+) -> Result<Json<PromoteResponse>, PlatformError> {
+    checks::require_permission(&auth.0, FUNCTION_PROMOTE)?;
+    let address = address_from_path(&address)?;
+    let req: PromoteRequest = parse_body(&body)?;
+    let command = PromoteCommand {
+        address,
+        alias,
+        version: req.version,
+    };
+    let caller = state.caller(&auth.0).await?;
+    let ctx = ExecutionContext::from_auth(&auth.0);
+    // One transaction for the alias change and the wiring, as Java's
+    // TxOperation.
+    let ops = state.ops.clone();
+    let event = state
+        .ops
+        .unit_of_work
+        .run(move |scoped| async move { ops.promote_in(caller, scoped).run(command, ctx).await })
+        .await
+        .into_result()?;
+    let previous_version = match &event.previous_version_id {
+        Some(id) => state.versions.find_by_id(id).await?.map(|v| v.version),
+        None => None,
+    };
+    Ok(Json(PromoteResponse {
+        alias: event.alias,
+        version: event.version,
+        version_id: event.version_id,
+        previous_version,
+    }))
+}
+
+/// Remove a named alias; `live` cannot be removed.
+#[utoipa::path(
+    delete, path = "/api/functions/{address}/aliases/{alias}", tag = "functions",
+    operation_id = "deleteApiFunctionsByAddressAliasesByAlias",
+    params(
+        ("address" = String, Path, description = "app.service.name"),
+        ("alias" = String, Path, description = "A named alias"),
+    ),
+    responses(
+        (status = 204),
+        (status = 400, description = "ADDRESS_INVALID"),
+        (status = 403),
+        (status = 404, description = "Function_NOT_FOUND or Alias_NOT_FOUND"),
+        (status = 409, description = "ALIAS_PROTECTED"),
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn remove_alias(
+    State(state): State<FunctionsState>,
+    auth: Authenticated,
+    Path((address, alias)): Path<(String, String)>,
+) -> Result<StatusCode, PlatformError> {
+    checks::require_permission(&auth.0, FUNCTION_PROMOTE)?;
+    let address = address_from_path(&address)?;
+    let caller = state.caller(&auth.0).await?;
+    state
+        .ops
+        .remove_alias(caller)
+        .run(
+            RemoveAliasCommand { address, alias },
+            ExecutionContext::from_auth(&auth.0),
+        )
+        .await
+        .into_result()?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// A function's aliases and the versions they point at.
+#[utoipa::path(
+    get, path = "/api/functions/{address}/aliases", tag = "functions",
+    operation_id = "getApiFunctionsByAddressAliases",
+    params(("address" = String, Path, description = "app.service.name")),
+    responses((status = 200, body = Vec<AliasResponse>), (status = 400), (status = 403), (status = 404)),
+    security(("bearer_auth" = []))
+)]
+pub async fn list_aliases(
+    State(state): State<FunctionsState>,
+    auth: Authenticated,
+    Path(address): Path<String>,
+) -> Result<Json<Vec<AliasResponse>>, PlatformError> {
+    checks::require_permission(&auth.0, FUNCTION_VIEW)?;
+    let address = address_from_path(&address)?;
+    let caller = state.caller(&auth.0).await?;
+    let f = reachable_function(&state, &address, &caller).await?;
+    let ids: Vec<String> = f.aliases.iter().map(|a| a.version_id.clone()).collect();
+    let versions = state.versions.find_by_ids(&ids).await?;
+    Ok(Json(
+        f.aliases
+            .iter()
+            .filter_map(|a| {
+                versions.get(&a.version_id).map(|v| AliasResponse {
+                    alias: a.alias.clone(),
+                    version: v.version,
+                    version_id: a.version_id.clone(),
+                    updated_by: a.updated_by.clone(),
+                    updated_at: a.updated_at,
+                })
+            })
+            .collect(),
+    ))
 }
 
 /// Upload an artifact: the raw body, streamed to a temp file and hashed as

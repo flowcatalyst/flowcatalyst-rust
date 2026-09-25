@@ -1,6 +1,9 @@
-//! Java `function/operations/DeleteFunction.java`. The database cascades to
-//! the function's versions, aliases, routes, config, secrets and
-//! trigger-object links; the objects those links name are [`TriggerSync`]'s.
+//! Java `function/operations/DeleteFunction.java`. The linked pool,
+//! subscriptions and jobs are deleted first, each with its own event
+//! ([`TriggerSync::on_delete`]), then the function; the database cascades to
+//! its versions, aliases, routes, config, secrets and trigger-object links.
+//! One transaction-scoped unit of work (`PgUnitOfWork::run`) for all of it,
+//! as Java's `TxOperation`.
 
 use std::sync::Arc;
 
@@ -75,7 +78,9 @@ impl<U: UnitOfWork> DeleteFunctionUseCase<U> {
         ctx: &ExecutionContext,
     ) -> Result<Function, UseCaseError> {
         let function = function_by_address(&self.functions, &command.address, &self.caller).await?;
-        self.trigger_sync.on_delete(&function, ctx).await?;
+        self.trigger_sync
+            .on_delete(&*self.unit_of_work, &function, ctx)
+            .await?;
         Ok(function)
     }
 }

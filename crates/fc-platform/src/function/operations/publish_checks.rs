@@ -9,9 +9,9 @@
 //! route conflict. Publish rejects with the first; the manifest check route
 //! returns them all.
 //!
-//! In Java these live on `TriggerSync`, the promote wiring seam. They need
-//! none of that wiring, so they are ported here, ahead of it; P5 folds them
-//! into the ported `FunctionTriggerSync`.
+//! In Java these live on `TriggerSync`, the promote wiring seam; they need
+//! none of the wiring, so they stay apart from [`super::TriggerSync`],
+//! which shares [`routes_taken`] with them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ use crate::function::repository::FunctionRepository;
 use crate::function::route_repository::FunctionRouteRepository;
 use crate::function::schedule_check::{parse_cron, zone_id_valid};
 use crate::function::version_repository::FunctionVersionRepository;
-use crate::function::{FunctionLimits, Manifest};
+use crate::function::{FunctionLimits, Manifest, PublicRoute};
 use crate::service_account::repository::ServiceAccountRepository;
 use crate::usecase::UseCaseError;
 
@@ -140,28 +140,14 @@ impl PublishChecks {
             return Ok(Vec::new());
         }
         let hostnames: Vec<_> = routes.iter().map(|r| &r.hostname).collect();
-        let keys: Vec<_> = routes
-            .iter()
-            .map(|r| (&r.hostname, &r.path_prefix))
-            .collect();
+        let wanted: Vec<_> = routes.iter().collect();
         let (claims, taken) = tokio::try_join!(
-            self.domains.covering_each(&hostnames),
-            self.routes.find_public_each(&keys),
+            async { Ok::<_, UseCaseError>(self.domains.covering_each(&hostnames).await?) },
+            routes_taken(&self.routes, &self.functions, f, &wanted, caller),
         )?;
-        let taken: Vec<&FunctionRoute> = taken.iter().filter(|r| r.function_id != f.id).collect();
-        let mut holder_ids: Vec<String> = taken.iter().map(|r| r.function_id.clone()).collect();
-        holder_ids.sort();
-        holder_ids.dedup();
-        let holders: HashMap<String, Function> = self
-            .functions
-            .find_by_ids(&holder_ids)
-            .await?
-            .into_iter()
-            .map(|h| (h.id.clone(), h))
-            .collect();
 
         let mut errors = Vec::new();
-        for (route, claim) in routes.iter().zip(claims) {
+        for ((route, claim), taken) in routes.iter().zip(claims).zip(taken) {
             if claim.is_none_or(|d| d.owner != f.owner) {
                 errors.push(UseCaseError::validation(
                     "PUBLIC_HOSTNAME_NOT_CLAIMED",
@@ -172,22 +158,57 @@ impl PublishChecks {
                 ));
                 continue;
             }
-            let existing = taken.iter().find(|r| {
-                r.hostname == route.hostname && r.path_prefix.value() == route.path_prefix.value()
-            });
-            if let Some(existing) = existing {
-                let text = format!("{}{}", route.hostname.value(), route.path_prefix.value());
-                // Named only when the caller could see that function anyway.
-                let message = match holders.get(&existing.function_id) {
-                    Some(other) if caller.can_reach(other) => format!(
-                        "route '{text}' is already taken by function '{}'",
-                        other.address.render()
-                    ),
-                    _ => format!("route '{text}' is already taken"),
-                };
-                errors.push(UseCaseError::business_rule("PUBLIC_ROUTE_TAKEN", message));
-            }
+            errors.extend(taken);
         }
         Ok(errors)
     }
+}
+
+/// For each of `wanted`, the `409 PUBLIC_ROUTE_TAKEN` it meets when another
+/// function already holds its `(hostname, pathPrefix)` (Java
+/// `FunctionTriggerSync.publicRouteTakenError`): naming that function only
+/// when `caller` could reach it anyway. Publish and the promote plan share
+/// it. Two queries however many routes.
+pub(crate) async fn routes_taken(
+    routes: &FunctionRouteRepository,
+    functions: &FunctionRepository,
+    f: &Function,
+    wanted: &[&PublicRoute],
+    caller: &Caller,
+) -> Result<Vec<Option<UseCaseError>>, UseCaseError> {
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let keys: Vec<_> = wanted
+        .iter()
+        .map(|r| (&r.hostname, &r.path_prefix))
+        .collect();
+    let taken = routes.find_public_each(&keys).await?;
+    let taken: Vec<&FunctionRoute> = taken.iter().filter(|r| r.function_id != f.id).collect();
+    let mut holder_ids: Vec<String> = taken.iter().map(|r| r.function_id.clone()).collect();
+    holder_ids.sort();
+    holder_ids.dedup();
+    let holders: HashMap<String, Function> = functions
+        .find_by_ids(&holder_ids)
+        .await?
+        .into_iter()
+        .map(|h| (h.id.clone(), h))
+        .collect();
+    Ok(wanted
+        .iter()
+        .map(|route| {
+            let existing = taken.iter().find(|r| {
+                r.hostname == route.hostname && r.path_prefix.value() == route.path_prefix.value()
+            })?;
+            let text = format!("{}{}", route.hostname.value(), route.path_prefix.value());
+            let message = match holders.get(&existing.function_id) {
+                Some(other) if caller.can_reach(other) => format!(
+                    "route '{text}' is already taken by function '{}'",
+                    other.address.render()
+                ),
+                _ => format!("route '{text}' is already taken"),
+            };
+            Some(UseCaseError::business_rule("PUBLIC_ROUTE_TAKEN", message))
+        })
+        .collect())
 }

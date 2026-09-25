@@ -85,6 +85,20 @@ impl DispatchPoolRepository {
         row.map(DispatchPool::try_from).transpose()
     }
 
+    /// Every pool named by `ids`; an id with no row is simply absent.
+    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<DispatchPool>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_as::<_, DispatchPoolRow>(
+            "SELECT * FROM msg_dispatch_pools WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(DispatchPool::try_from).collect()
+    }
+
     pub async fn find_by_code(
         &self,
         code: &str,

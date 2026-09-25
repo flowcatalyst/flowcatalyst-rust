@@ -1006,6 +1006,15 @@ pub fn build_platform_routes(
         .unwrap_or_else(|e| panic!("invalid function artifact store: {e}"));
     let function_signatures = crate::function::artifact::signatures_from_env()
         .unwrap_or_else(|e| panic!("invalid function signature settings: {e}"));
+    // FC_FN_POOL_URL is resolved once; a bad template refuses to start, as
+    // in Java (Env.java, PoolUrlTemplate).
+    let function_pool_url = crate::function::PoolUrlTemplate::from_env()
+        .unwrap_or_else(|e| panic!("invalid function pool URL: {e}"));
+    let trigger_sync = crate::function::operations::TriggerSync::from_repositories(
+        repos,
+        function_settings.clone(),
+        function_pool_url,
+    );
     let functions_state = crate::function::api::FunctionsState {
         functions: repos.function_repo.clone(),
         versions: repos.function_version_repo.clone(),
@@ -1026,7 +1035,7 @@ pub fn build_platform_routes(
             policies: repos.function_policy_repo.clone(),
             domains: repos.function_domain_repo.clone(),
             routes: repos.function_route_repo.clone(),
-            trigger_sync: crate::function::operations::TriggerSync,
+            trigger_sync,
             limits: function_limits,
             signatures: function_signatures,
             artifacts: function_artifacts,

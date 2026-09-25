@@ -103,11 +103,15 @@ fn router(
             versions: app.repos.function_version_repo.clone(),
             applications: app.repos.application_repo.clone(),
             clients: app.repos.client_repo.clone(),
-            settings,
+            settings: settings.clone(),
             policies: app.repos.function_policy_repo.clone(),
             domains: app.repos.function_domain_repo.clone(),
             routes: app.repos.function_route_repo.clone(),
-            trigger_sync: TriggerSync,
+            trigger_sync: TriggerSync::from_repositories(
+                &app.repos,
+                settings.clone(),
+                fc_platform::function::PoolUrlTemplate::parse("http://fn-{pool}:8080").unwrap(),
+            ),
             limits,
             signatures,
             artifacts,
@@ -795,7 +799,7 @@ async fn publish_checks_and_the_manifest_check() {
          whitespace-separated fields (sec min hour dom mon dow), got 5: '0 * * * *'"
     );
     assert_eq!(check["errors"][0]["details"], json!({}));
-    assert!(check.get("plan").is_none(), "no plan until promote wiring");
+    assert!(check.get("plan").is_none(), "no plan for an invalid manifest");
     // A manifest problem carries its pointer.
     let (_, bad) = post(
         &r,
@@ -814,7 +818,17 @@ async fn publish_checks_and_the_manifest_check() {
         json!({"manifest": manifest()}),
     )
     .await;
-    assert_eq!(good, json!({"valid": true, "errors": []}));
+    // Valid: the plan for promoting it to live as the next version.
+    let pool = format!("fn-{}", fid["fnc_".len()..].to_lowercase());
+    assert_eq!(
+        good,
+        json!({"valid": true, "errors": [], "plan": {"alias": "live", "toVersion": 1,
+            "settingsMissing": ["GREETING"], "httpOnly": false,
+            "pool": {"action": "create", "key": pool, "changedFields": []},
+            "subscriptions": [], "schedules": [],
+            "publicRoutes": {"action": "unchanged", "added": [], "removed": []},
+            "conflicts": []}})
+    );
     assert_eq!(version_count(&app, &fid).await, 0);
 
     // Resolve both: the event type exists, the application signs.

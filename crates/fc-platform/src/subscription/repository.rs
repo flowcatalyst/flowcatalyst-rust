@@ -337,6 +337,21 @@ impl SubscriptionRepository {
         }
     }
 
+    /// Every subscription named by `ids`, hydrated in one pass; an id with
+    /// no row is simply absent.
+    pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Subscription>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_as::<_, SubscriptionRow>(
+            "SELECT * FROM msg_subscriptions WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?;
+        self.hydrate_all(rows).await
+    }
+
     pub async fn find_all(&self) -> Result<Vec<Subscription>> {
         let rows = sqlx::query_as::<_, SubscriptionRow>(
             "SELECT * FROM msg_subscriptions ORDER BY code ASC",

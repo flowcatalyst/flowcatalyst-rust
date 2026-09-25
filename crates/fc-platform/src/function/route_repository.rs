@@ -1,14 +1,24 @@
-//! `fn_routes`, read side (Java `function/FunctionRouteRepository.java`).
-//! Routes are materialised wholesale from the live manifest at promote,
-//! which is P5; this workstream reads them.
+//! `fn_routes` (Java `function/FunctionRouteRepository.java`). Routes are
+//! materialised wholesale from the live manifest at promote: not an
+//! aggregate with an event of its own but the `live` alias's projection, so
+//! they are written by [`PromotedFunctionRepository`], in the same
+//! transaction and the same commit as the alias change that makes that
+//! manifest live.
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use super::entity::FunctionRoute;
+use super::entity::{Function, FunctionRoute};
+use super::repository::FunctionRepository;
 use super::{Hostname, RoutePattern};
 use crate::shared::enum_str::corrupt_value;
-use crate::shared::error::Result;
+use crate::shared::error::{PlatformError, Result};
+use crate::usecase::{DbTx, HasId, Persist};
+
+/// The unique `(hostname, path_prefix)` constraint (Java
+/// `PUBLIC_ROUTE_UNIQUE_CONSTRAINT`).
+const UNIQUE_CONSTRAINT: &str = "fn_routes_hostname_path_prefix_key";
 
 #[derive(sqlx::FromRow)]
 struct RouteRow {
@@ -89,6 +99,92 @@ impl FunctionRouteRepository {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(to_entity).collect()
+    }
+}
+
+impl FunctionRouteRepository {
+    /// `fn_routes` for `function_id` := `routes` (Java `replaceForFunction`).
+    /// Two promotes racing for one route past the plan's own check meet the
+    /// unique constraint: that one constraint, by name, is `409
+    /// PUBLIC_ROUTE_TAKEN`, never a 500; any other failure stays a failure.
+    async fn replace_for_function(
+        &self,
+        function_id: &str,
+        routes: &[FunctionRoute],
+        tx: &mut DbTx<'_>,
+    ) -> Result<()> {
+        sqlx::query("DELETE FROM fn_routes WHERE function_id = $1")
+            .bind(function_id)
+            .execute(&mut **tx.inner)
+            .await?;
+        for r in routes {
+            let inserted = sqlx::query(
+                "INSERT INTO fn_routes \
+                    (id, function_id, hostname, path_prefix, alias_prefixes, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(&r.id)
+            .bind(&r.function_id)
+            .bind(r.hostname.value())
+            .bind(r.path_prefix.value())
+            .bind(&r.alias_prefixes)
+            .bind(r.created_at)
+            .execute(&mut **tx.inner)
+            .await;
+            match inserted {
+                Ok(_) => {}
+                Err(sqlx::Error::Database(db)) if db.constraint() == Some(UNIQUE_CONSTRAINT) => {
+                    return Err(PlatformError::BusinessRule {
+                        code: "PUBLIC_ROUTE_TAKEN".into(),
+                        message: "route is already taken (detected by the database's own \
+                                  unique constraint)"
+                            .into(),
+                    })
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A function whose alias change also materialises its public routes:
+/// `routes` is `Some` only when promoting `live` changes them.
+pub struct PromotedFunction {
+    pub function: Function,
+    pub routes: Option<Vec<FunctionRoute>>,
+}
+
+impl HasId for PromotedFunction {
+    fn id(&self) -> &str {
+        &self.function.id
+    }
+}
+
+/// Persists a [`PromotedFunction`]: the function through its own
+/// repository, then its routes.
+pub struct PromotedFunctionRepository<'r> {
+    pub functions: &'r FunctionRepository,
+    pub routes: &'r FunctionRouteRepository,
+}
+
+#[async_trait]
+impl Persist<PromotedFunction> for PromotedFunctionRepository<'_> {
+    async fn persist(&self, p: &PromotedFunction, tx: &mut DbTx<'_>) -> Result<()> {
+        self.functions.persist(&p.function, tx).await?;
+        match &p.routes {
+            Some(routes) => {
+                self.routes
+                    .replace_for_function(&p.function.id, routes, tx)
+                    .await
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// The routes cascade with the function.
+    async fn delete(&self, p: &PromotedFunction, tx: &mut DbTx<'_>) -> Result<()> {
+        self.functions.delete(&p.function, tx).await
     }
 }
 
