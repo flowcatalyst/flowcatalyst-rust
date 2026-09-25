@@ -193,7 +193,7 @@ async fn an_unpinned_multi_tenant_mapping_cannot_sign_in() {
 
     let (status, body) = read_json(send(&app, oidc_login_request("legacy.test")).await).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    assert_eq!(body["code"], "TENANT_NOT_PINNED", "{body}");
+    assert_eq!(body["error"], "TENANT_NOT_PINNED", "{body}");
 
     let mut pinned = EmailDomainMapping::new("pinned.test", &multi, ScopeType::Anchor);
     pinned.required_oidc_tenant_id = Some("tenant-a".to_string());
@@ -210,8 +210,8 @@ async fn an_unmapped_domain_is_404_email_domain_not_mapped() {
     let app = TestApp::setup().await;
     let (status, body) = read_json(send(&app, oidc_login_request("nowhere.test")).await).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(body["code"], "EMAIL_DOMAIN_NOT_MAPPED", "{body}");
-    assert!(body["error"].as_str().unwrap().contains("nowhere.test"));
+    assert_eq!(body["error"], "EMAIL_DOMAIN_NOT_MAPPED", "{body}");
+    assert!(body["message"].as_str().unwrap().contains("nowhere.test"));
 }
 
 /// A user in the database, with a password, for the session tests.
@@ -769,10 +769,10 @@ async fn refresh_rotation_is_atomic_with_family_reuse_detection() {
     .await
     .unwrap();
     let (status, body) = refresh(&app, &second).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     for token in [&third_a, &third_b] {
         let (status, body) = refresh(&app, token).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     }
 }
 

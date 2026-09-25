@@ -627,6 +627,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(
                 PATH_OAUTH,
                 oauth_router(self.oauth)
+                    .layer(axum::middleware::map_response(
+                        crate::auth::oauth_api::oauth_errors_no_store,
+                    ))
                     .layer(distributed_oauth_token_layer)
                     .layer(oauth_layer.clone()),
             )

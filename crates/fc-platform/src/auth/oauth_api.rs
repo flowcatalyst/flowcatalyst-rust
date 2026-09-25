@@ -214,32 +214,17 @@ pub async fn authorize(
     jar: axum_extra::extract::cookie::CookieJar,
     Query(req): Query<AuthorizeRequest>,
 ) -> Response {
-    // Validate response_type
-    if req.response_type != "code" {
-        return error_redirect(
-            &req.redirect_uri,
-            "unsupported_response_type",
-            "Only 'code' response type is supported",
-            req.state.as_deref(),
-        );
-    }
-
     // Require `state` for CSRF protection on the callback. Missing/empty
     // `state` is rejected with 400 (not a redirect) — we can't safely bounce
     // the user-agent back to the caller without proving the caller is who
     // they claim to be, and `state` is the mechanism by which they do that.
     if req.state.as_deref().is_none_or(|s| s.trim().is_empty()) {
         warn!(client_id = %req.client_id, "authorize rejected: missing `state` parameter");
-        return (
+        return oauth_error(
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "invalid_request".to_string(),
-                error_description: Some(
-                    "`state` parameter is required for CSRF protection".to_string(),
-                ),
-            }),
-        )
-            .into_response();
+            "invalid_request",
+            "`state` parameter is required for CSRF protection",
+        );
     }
 
     // Cluster-wide per-`client_id` rate limit. Runs before the DB lookup so a
@@ -257,7 +242,11 @@ pub async fn authorize(
         return resp;
     }
 
-    // Validate client
+    // Resolve and validate the client and redirect_uri BEFORE any error
+    // redirect (Go `Authorize`, oauthapi/authorize.go:64-86). RFC 6749
+    // §4.1.2.1: with an unknown or inactive client, or an unregistered
+    // redirect_uri, the user-agent must not be sent to that URI; every such
+    // failure is a direct 400.
     let client = match state
         .oauth_client_repo
         .find_by_client_id(&req.client_id)
@@ -265,42 +254,47 @@ pub async fn authorize(
     {
         Ok(Some(c)) if c.active => c,
         Ok(Some(_)) => {
-            return error_redirect(
-                &req.redirect_uri,
+            return oauth_error(
+                StatusCode::BAD_REQUEST,
                 "unauthorized_client",
                 "Client is not active",
-                req.state.as_deref(),
             );
         }
         Ok(None) => {
-            return error_redirect(
-                &req.redirect_uri,
+            return oauth_error(
+                StatusCode::BAD_REQUEST,
                 "unauthorized_client",
                 "Unknown client",
-                req.state.as_deref(),
             );
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup client");
-            return error_redirect(
-                &req.redirect_uri,
+            return oauth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "server_error",
                 "Internal error",
-                req.state.as_deref(),
             );
         }
     };
 
     // Validate redirect_uri (exact match first, then wildcard pattern matching)
     if !matches_redirect_uri(&req.redirect_uri, &client.redirect_uris) {
-        return (
+        return oauth_error(
             StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "invalid_request".to_string(),
-                error_description: Some("Invalid redirect_uri".to_string()),
-            }),
-        )
-            .into_response();
+            "invalid_request",
+            "Invalid redirect_uri",
+        );
+    }
+
+    // The redirect_uri is now the client's own: from here on an error may
+    // go back to it with OAuth error parameters.
+    if req.response_type != "code" {
+        return error_redirect(
+            &req.redirect_uri,
+            "unsupported_response_type",
+            "Only 'code' response type is supported",
+            req.state.as_deref(),
+        );
     }
 
     // Validate PKCE if required
@@ -1015,14 +1009,13 @@ async fn confine_to_client(
 }
 
 /// The access token an interactive login (authorization_code and its
-/// refresh) returns. Go mints an identity-only token unless the client is
-/// flagged `apiAccess`, and for such a client an authority-bearing token
-/// narrowed to the client's applications (`mintInteractiveAccessToken`,
-/// oauthapi/token_apiaccess.go:27-60). Rust has no `apiAccess` flag and
-/// has always returned an API-usable token here, so every client takes
-/// Go's `apiAccess` path: `token_use: api`, roles and applications
-/// narrowed to an app-scoped client, `scope` = the granted permissions of
-/// the narrowed roles, `azp` = the client.
+/// refresh) returns, as Go `mintInteractiveAccessToken`
+/// (oauthapi/token_apiaccess.go:27-60): an identity-only token
+/// (`token_use: identity`, no authority, refused as an API bearer) unless
+/// the client is flagged `api_access`; for such a client an
+/// authority-bearing token narrowed to the client's applications:
+/// `token_use: api`, `scope` = the granted permissions of the narrowed
+/// roles, `azp` = the client.
 async fn mint_interactive_access_token(
     state: &OAuthState,
     principal: &crate::Principal,
@@ -1030,11 +1023,15 @@ async fn mint_interactive_access_token(
     requested_scope: Option<&str>,
 ) -> crate::shared::error::Result<String> {
     let Some(client) = client else {
-        let (granted, _) = granted_scope(state, principal, requested_scope).await?;
         return state
             .auth_service
-            .generate_access_token_with_scope(principal, &granted, None);
+            .generate_identity_access_token(principal, None);
     };
+    if !client.api_access {
+        return state
+            .auth_service
+            .generate_identity_access_token(principal, Some(&client.client_id));
+    }
     let (narrowed, _) = confine_to_client(state, principal, client).await?;
     let (granted, _) = granted_scope(state, &narrowed, requested_scope).await?;
     state.auth_service.generate_access_token_with_scope(
@@ -1418,35 +1415,24 @@ async fn handle_refresh_token_grant(
                 requesting_client_id = ?requesting_client_id,
                 "Refresh token client binding mismatch"
             );
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: Some("Token was not issued to this client".to_string()),
-                }),
-            )
-                .into_response();
+            // RFC 6749 §5.2: every token-endpoint error but invalid_client
+            // is a 400 (Go handleRefreshTokenGrant, oauthapi/token.go:835-846).
+            return oauth_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "Token was not issued to this client",
+            );
         }
         Ok(Err(_)) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: Some("Invalid or expired refresh token".to_string()),
-                }),
-            )
-                .into_response();
+            return oauth_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "Invalid or expired refresh token",
+            );
         }
         Err(e) => {
             error!(error = %e, "Failed to rotate refresh token");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: None,
-                }),
-            )
-                .into_response();
+            return oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", "");
         }
     };
     let stored_token = rotated.stored;
@@ -1459,14 +1445,11 @@ async fn handle_refresh_token_grant(
     {
         Ok(Some(p)) => p,
         Ok(None) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: Some("Principal not found".to_string()),
-                }),
-            )
-                .into_response();
+            return oauth_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "Principal not found",
+            );
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup principal");
@@ -1483,14 +1466,11 @@ async fn handle_refresh_token_grant(
 
     // Check if principal is still active
     if !principal.active {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "invalid_grant".to_string(),
-                error_description: Some("Account is not active".to_string()),
-            }),
-        )
-            .into_response();
+        return oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            "Account is not active",
+        );
     }
 
     // The refreshed access token follows the original login's rule,
@@ -1687,18 +1667,32 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
     }
 
     // Look up the real service account principal (with roles/permissions)
+    // A confidential client with no linked principal, or a dangling one, is
+    // a client-side misconfiguration (RFC 6749 §5.2), not a server fault:
+    // 400 `unauthorized_client`, as Go (oauthapi/token.go:555-577).
+    let misconfigured = |reason: &'static str| {
+        let attempt = LoginAttempt {
+            identifier: Some(client_id.clone()),
+            failure_reason: Some(reason.to_string()),
+            ..LoginAttempt::new(AttemptType::ServiceAccountToken, LoginOutcome::Failure)
+        };
+        let repo = state.login_attempt_repo.clone();
+        async move {
+            if let Err(e) = repo.create(&attempt).await {
+                warn!(error = %e, "Failed to log service account login attempt");
+            }
+            oauth_error(
+                StatusCode::BAD_REQUEST,
+                "unauthorized_client",
+                "Client is not configured for this grant",
+            )
+        }
+    };
     let principal_id = match &client.service_account_principal_id {
         Some(id) => id,
         None => {
-            error!(client_id = %client_id, "Client has no service account principal configured");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: Some("Client not properly configured".to_string()),
-                }),
-            )
-                .into_response();
+            warn!(client_id = %client_id, "Client has no service account principal configured");
+            return misconfigured("Client not properly configured (no linked principal)").await;
         }
     };
 
@@ -1742,15 +1736,9 @@ async fn handle_client_credentials_grant(state: OAuthState, req: TokenRequest) -
                 .into_response();
         }
         Ok(None) => {
-            error!(client_id = %client_id, principal_id = %principal_id, "Service account principal not found");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: "server_error".to_string(),
-                    error_description: Some("Client not properly configured".to_string()),
-                }),
-            )
-                .into_response();
+            warn!(client_id = %client_id, principal_id = %principal_id, "Service account principal not found");
+            return misconfigured("Client not properly configured (linked principal not found)")
+                .await;
         }
         Err(e) => {
             error!(error = %e, "Failed to lookup service account principal");
@@ -1972,6 +1960,45 @@ fn wildcard_matches(uri: &str, pattern: &str) -> bool {
 
     // If pattern ends with '*', remaining must be a single segment (no dots)
     !remaining.contains('.') && !remaining.is_empty()
+}
+
+/// Every OAuth error response is uncacheable: Go's `writeOAuthError`
+/// (oauthapi/token.go:1152-1162) sets `Cache-Control: no-store` and
+/// `Pragma: no-cache` on each one, whichever endpoint answers. Mounted on
+/// the `/oauth` router so no handler can forget it.
+pub async fn oauth_errors_no_store(mut response: Response) -> Response {
+    if response.status().is_client_error() || response.status().is_server_error() {
+        let headers = response.headers_mut();
+        if !headers.contains_key(header::CACHE_CONTROL) {
+            headers.insert(
+                header::CACHE_CONTROL,
+                header::HeaderValue::from_static("no-store"),
+            );
+        }
+        if !headers.contains_key(header::PRAGMA) {
+            headers.insert(header::PRAGMA, header::HeaderValue::from_static("no-cache"));
+        }
+    }
+    response
+}
+
+/// An OAuth error answered directly (never redirected), as Go's
+/// `writeOAuthError` (oauthapi/token.go:1152-1162): `{error,
+/// error_description}` with `Cache-Control: no-store` and `Pragma:
+/// no-cache`.
+fn oauth_error(status: StatusCode, error: &str, description: &str) -> Response {
+    (
+        status,
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::PRAGMA, "no-cache"),
+        ],
+        Json(ErrorResponse {
+            error: error.to_string(),
+            error_description: (!description.is_empty()).then(|| description.to_string()),
+        }),
+    )
+        .into_response()
 }
 
 fn error_redirect(
